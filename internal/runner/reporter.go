@@ -34,9 +34,9 @@ type ReportHub interface {
 var _ ReportHub = (*hubclient.Client)(nil)
 
 // Reporter uploads one connection's spooled events and delivers its outbox.
-// Everything it sends is already on disk, so it holds no state of its own: a
-// restart, or a hub that was down for an hour, resumes exactly where the store
-// says — after the hub's acked_through, and at every result still owed.
+// Everything it sends is already on disk, so it holds nothing that must
+// survive it: a restart, or a hub that was down for an hour, resumes exactly
+// where the store says — after the hub's acked_through, and at every result still owed.
 type Reporter struct {
 	Connection string
 	Hub        ReportHub
@@ -46,11 +46,15 @@ type Reporter struct {
 	Log *slog.Logger
 
 	wake chan struct{}
+	// batch is a smaller batch size for a run whose upload was refused as too
+	// large — by the hub, or by a proxy in front of it with a lower limit.
+	batch map[string]int64
 }
 
 func (r *Reporter) init() {
 	if r.wake == nil {
 		r.wake = make(chan struct{}, 1)
+		r.batch = map[string]int64{}
 	}
 	if r.Now == nil {
 		r.Now = time.Now
@@ -94,7 +98,8 @@ func (r *Reporter) Run(ctx context.Context) {
 
 // Flush uploads every run's unacknowledged events, then sends every result
 // that is due. A run's result waits until its events are in: a hub that shows
-// a run finished should already hold what led there.
+// a run finished should already hold what led there. Flush runs on one
+// goroutine at a time.
 func (r *Reporter) Flush(ctx context.Context) {
 	r.init()
 	runs, err := r.Store.RunsWithUnackedEvents(ctx, r.Connection)
@@ -102,14 +107,11 @@ func (r *Reporter) Flush(ctx context.Context) {
 		r.Log.Error("spool not read", "connection", r.Connection, "err", err)
 		return
 	}
-	behind := map[string]bool{}
 	for _, run := range runs {
 		if ctx.Err() != nil {
 			return
 		}
-		if !r.upload(ctx, run) {
-			behind[run] = true
-		}
+		r.upload(ctx, run)
 	}
 	due, err := r.Store.DueOutbox(ctx, db.DueOutboxParams{Connection: r.Connection, NextAttemptAt: r.Now().UnixMilli()})
 	if err != nil {
@@ -120,57 +122,79 @@ func (r *Reporter) Flush(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if !behind[o.RunID] {
+		// Asked now, not taken from the uploads above: the executor may have
+		// spooled a run's last events and written its result since. Its
+		// result is written only after its last event, so a spool found
+		// empty here stays empty.
+		behind, err := r.Store.HasUnackedEvents(ctx, db.HasUnackedEventsParams{Connection: r.Connection, RunID: o.RunID})
+		if err != nil {
+			r.Log.Error("spool not read", "connection", r.Connection, "run", o.RunID, "err", err)
+			continue
+		}
+		if !behind {
 			r.deliver(ctx, o)
 		}
 	}
 }
 
-// upload sends a run's unacknowledged events in batches and reports whether
-// the hub now has all of them.
-func (r *Reporter) upload(ctx context.Context, runID string) bool {
+// upload sends a run's unacknowledged events in batches until the hub has
+// them all or an answer says to stop for now.
+func (r *Reporter) upload(ctx context.Context, runID string) {
 	log := r.Log.With("connection", r.Connection, "run", runID)
 	for {
-		rows, err := r.Store.UnackedEvents(ctx, db.UnackedEventsParams{Connection: r.Connection, RunID: runID, Limit: eventBatch})
+		limit := int64(eventBatch)
+		if n, ok := r.batch[runID]; ok {
+			limit = n
+		}
+		rows, err := r.Store.UnackedEvents(ctx, db.UnackedEventsParams{Connection: r.Connection, RunID: runID, Limit: limit})
 		if err != nil {
 			log.Error("spool not read", "err", err)
-			return false
+			return
 		}
 		if len(rows) == 0 {
-			return true
+			delete(r.batch, runID)
+			return
 		}
 		batch := v1.EventBatch{Events: make([]v1.Event, 0, len(rows))}
 		for _, row := range rows {
 			var ev v1.Event
 			if err := json.Unmarshal([]byte(row.Body), &ev); err != nil {
 				log.Error("spooled event unreadable", "seq", row.Seq, "err", err)
-				return false
+				return
 			}
 			batch.Events = append(batch.Events, ev)
 		}
 		ack, err := r.Hub.Events(ctx, runID, batch)
+		var se *hubclient.StatusError
 		switch {
 		case err != nil && final(err):
-			// The hub will never take these: it does not know the run, or it
-			// is not this runner's. Resending forever would only keep the
-			// result behind them from going out.
+			// The hub will never take these: the run is not this runner's, or
+			// the hub judged them invalid. Resending forever would only keep
+			// the result behind them from going out.
 			log.Error("the hub refused the run's events; they stay only in the local spool", "err", err)
 			if err := r.Store.DropEvents(ctx, db.DropEventsParams{Connection: r.Connection, RunID: runID}); err != nil {
 				log.Error("spool not updated", "err", err)
 			}
-			return true
+			delete(r.batch, runID)
+			return
+		case errors.As(err, &se) && se.Status == http.StatusRequestEntityTooLarge && limit > 1:
+			// A proxy's body limit is not the hub's verdict: the same events
+			// go again in halves, down to one at a time.
+			r.batch[runID] = limit / 2
+			log.Warn("event batch too large for the hub or a proxy before it; halving", "batch", limit/2)
+			continue
 		case err != nil:
 			log.Warn("events not uploaded; retrying", "err", err)
-			return false
+			return
 		}
 		if err := r.Store.AckEvents(ctx, db.AckEventsParams{AckedThrough: ack.AckedThrough, Connection: r.Connection, RunID: runID}); err != nil {
 			log.Error("spool not updated", "err", err)
-			return false
+			return
 		}
 		if ack.AckedThrough < rows[len(rows)-1].Seq {
 			// The hub is missing something before this batch: what it lacks is
 			// unacknowledged again and goes with the next tick.
-			return false
+			return
 		}
 	}
 }
@@ -191,9 +215,9 @@ func (r *Reporter) deliver(ctx context.Context, o db.Outbox) {
 	switch {
 	case err == nil:
 		log.Info("result delivered", "state", res.State)
-	case errors.As(err, &se) && se.Status == http.StatusConflict:
+	case errors.As(err, &se) && se.Status == http.StatusConflict && hubclient.Code(err) == v1.CodeConflict:
 		// §2: the hub already holds a different terminal state, and the
-		// hub's wins — decision 0021. Ours stays in the local record.
+		// hub's wins — decision 0023. Ours stays in the local record.
 		log.Warn("the hub holds a different terminal state for this run; the hub's stands", "ours", res.State, "err", err)
 	case final(err):
 		log.Error("the hub refused the result; it will not be sent again", "state", res.State, "err", err)
@@ -217,20 +241,22 @@ func (r *Reporter) remove(ctx context.Context, o db.Outbox) {
 	}
 }
 
-// final is a hub answer no retry can change. A 401 is not: a rotated
-// credential or a hub restored from backup can make it pass again, and giving
-// up would lose the result. Neither are the statuses that mean "later".
+// final is a hub answer no retry can change: the hub itself, in the
+// protocol's envelope, said the run is not this runner's or the report is
+// invalid. Everything else is retried — a 404 may be a wrong connection URL
+// rather than an unknown run, a 401 a credential about to be replaced, and a
+// bare 4xx a proxy in front of the hub. Giving up on any of those would lose
+// a report the hub never saw.
 func final(err error) bool {
 	var se *hubclient.StatusError
 	if !errors.As(err, &se) || se.Status < 400 || se.Status >= 500 {
 		return false
 	}
-	switch se.Status {
-	case http.StatusUnauthorized, http.StatusRequestTimeout, http.StatusTooEarly,
-		http.StatusUpgradeRequired, http.StatusTooManyRequests:
-		return false
+	switch hubclient.Code(err) {
+	case v1.CodeNotHolder, v1.CodeInvalid:
+		return true
 	}
-	return true
+	return false
 }
 
 // resultBackoff doubles from firstResultRetry to maxResultInterval.

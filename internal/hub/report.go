@@ -110,7 +110,7 @@ func advance(ctx context.Context, q *db.Queries, run db.Run) (int64, error) {
 // submitResult applies a run's terminal state at most once. The same result
 // again is acknowledged; a different one is 409, and the state the hub already
 // holds stands — including lost, which a result arriving after the lease
-// lapsed does not overturn (decision 0021).
+// lapsed does not overturn (decision 0023).
 func (h *Hub) submitResult(ctx context.Context, in *resultInput) (*ackOutput, error) {
 	runner, err := h.caller(ctx)
 	if err != nil {
@@ -192,7 +192,7 @@ func reporting(r db.Run, runnerID string, result bool) bool {
 func missingRun(id string, err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return Fail(http.StatusNotFound, v1.CodeNotFound, "this hub has no run "+id,
-			"stop reporting it: the hub never issued it, or its database was reset")
+			"check the connection URL points at the hub that issued the run; a runner keeps retrying, since a wrong URL answers 404 too")
 	}
 	return err
 }

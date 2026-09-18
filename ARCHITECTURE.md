@@ -183,7 +183,7 @@ claimed ─► preparing ─► running ─► succeeded | failed | cancelled | 
 `running` only once its workdir exists (Multica #3999). Non-terminal states
 travel in syncs; the terminal one travels in the result. A finished run whose
 result is not yet acknowledged stays listed, as `running`, so its lease outlasts
-a hub outage — [0021](docs/decisions/0021-lost-stands-against-a-late-result.md).
+a hub outage — [0023](docs/decisions/0023-lost-stands-against-a-late-result.md).
 
 ### Events
 
@@ -213,10 +213,12 @@ after it ends; anyone else gets `403 not_holder`.
 Written to the outbox, in the same transaction as the run's terminal state,
 before the first attempt; sent once the run's events are all acknowledged;
 deleted on a 2xx, retried with backoff to five minutes and replayed at every
-start. A `409` means the hub already has a different terminal state — `lost`,
-when the lease lapsed first — and the runner keeps the hub's
-([0021](docs/decisions/0021-lost-stands-against-a-late-result.md)). A `403
-not_holder` or `404` is final too; a `401` or `5xx` is retried. The hub applies
+start. A `409 conflict` means the hub already has a different terminal state —
+`lost`, when the lease lapsed first — and the runner keeps the hub's
+([0023](docs/decisions/0023-lost-stands-against-a-late-result.md)). `403
+not_holder` and an `invalid` refusal are final too. Anything else — a `404`
+that may be a wrong URL, a `401`, a `5xx`, a proxy's bare 4xx — is retried; an
+events batch a proxy refuses as too large goes again in halves. The hub applies
 a result from the runner the run was offered to or claimed by, once; the same
 state again is acknowledged.
 
@@ -453,9 +455,12 @@ line here is a reviewed change.
 - Tokens: `0600` files, never logged, never printed, never in argv, never in an
   event. Grants are deleted when their run ends. An `env` grant is `NAME=value`
   in the harness's environment; a `file` grant is a `0600` file whose path is
-  in `NAME`. A grant may not name a variable the runner, a harness, a language
-  runtime or the dynamic loader reads (`PATH`, `LD_*`, `NODE_OPTIONS`,
-  `CLAUDE*` …): a secret for the run must not become a way to steer it.
+  in `NAME`. A grant is named as the secret it is — upper case, ending in
+  `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD` or `_CREDENTIAL(S)` — and never in a
+  loader, runtime or harness namespace (`LD_*`, `NODE_*`, `ANTHROPIC_*` …). An
+  allowlist of shape, because the variables that steer a harness — `PATH`,
+  proxies, CA bundles, shell options, runtime hooks — are too many to deny one
+  by one, and a secret for the run must not become a way to steer it.
 - Permission mode and sandbox are runner configuration per harness; no protocol
   field can set them — [0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md).
 - A hub is untrusted input; harness output is data. Neither is ever executed or

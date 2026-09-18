@@ -387,8 +387,9 @@ func (l *Loop) refuse(runID, reason string) {
 }
 
 // sendRefusals reports each refused run as failed, so the hub stops offering
-// it. A refusal the hub answered — accepted, or refused with a 4xx — is done;
-// one lost to the network or a 5xx is sent again after the next sync.
+// it. A refusal the hub settled — accepted, answered with a terminal state it
+// already holds, or refused in the protocol's own terms — is done; anything
+// else, a proxy's bare 4xx included, is sent again after the next sync.
 func (l *Loop) sendRefusals(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, refusalBudget)
 	defer cancel()
@@ -399,8 +400,7 @@ func (l *Loop) sendRefusals(ctx context.Context) {
 		}
 		sent++
 		err := l.Hub.Result(ctx, id, res)
-		var se *hubclient.StatusError
-		if err == nil || errors.As(err, &se) && se.Status < 500 {
+		if err == nil || final(err) || hubclient.Code(err) == v1.CodeConflict {
 			delete(l.refused, id)
 		}
 	}

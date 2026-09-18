@@ -188,7 +188,7 @@ func TestResultAppliedAtMostOnce(t *testing.T) {
 }
 
 // A runner back from a partition reports a result for a run the hub already
-// marked lost. Lost stands (decision 0021); a result that agrees is recorded.
+// marked lost. Lost stands (decision 0023); a result that agrees is recorded.
 func TestLostStandsAgainstALateResult(t *testing.T) {
 	f := newFixture(t)
 	cred := f.register(t, "r1")

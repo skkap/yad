@@ -270,12 +270,7 @@ func (e *Exec) stream(ctx context.Context, c Claim, turn adapter.Turn, kill cont
 			if !ok {
 				return w
 			}
-			if !idle.Stop() {
-				select {
-				case <-idle.C:
-				default:
-				}
-			}
+			// Since Go 1.23 a Reset leaves no stale fire to drain.
 			idle.Reset(idleFor)
 			if w.firstEventMS < 0 {
 				w.firstEventMS = time.Since(started).Milliseconds()
@@ -484,26 +479,28 @@ func pathName(id string) string {
 	return "_" + hex.EncodeToString(sum[:12])
 }
 
-var grantName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var grantName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|CREDENTIALS)$`)
 
-// reservedGrant is whether a grant name is a variable the runner, a harness,
-// a language runtime or the dynamic loader reads. A grant is a secret for the
-// run to use; a hub must not be able to use one to steer what runs or how —
-// that would widen what the owner configured (decision 0015).
-func reservedGrant(name string) bool {
-	n := strings.ToUpper(name)
-	switch n {
-	case "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "TMPDIR", "IFS", "ENV", "BASH_ENV",
-		"NODE_OPTIONS", "NODE_PATH", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PERL5LIB", "PERL5OPT",
-		"RUBYOPT", "RUBYLIB", "SSH_AUTH_SOCK":
-		return true
+// grantPrefixes are namespaces a grant may not use even with a secret-shaped
+// name: the loader's, the runner's, and the harnesses' own, where a key moves
+// billing or configuration (ANTHROPIC_API_KEY, OPENAI_API_KEY).
+var grantPrefixes = []string{"LD_", "DYLD_", "YAD_", "CLAUDE", "ANTHROPIC_", "CODEX_", "OPENAI_", "GIT_", "NODE_", "NPM_CONFIG_", "BUN_"}
+
+// grantAllowed is whether a hub may set this variable. A grant is a secret
+// for the run to use, never a way to steer what runs or how (decision 0015),
+// and the variables that steer — PATH, proxies, CA bundles, shell options,
+// loader and runtime hooks — are too many to list. So the rule is an
+// allowlist of shape: upper case, named as the secret it is.
+func grantAllowed(name string) bool {
+	if !grantName.MatchString(name) {
+		return false
 	}
-	for _, p := range []string{"LD_", "DYLD_", "CLAUDE", "ANTHROPIC_", "CODEX_", "OPENAI_", "YAD_", "GIT_", "XDG_", "NPM_CONFIG_", "BUN_"} {
-		if strings.HasPrefix(n, p) {
-			return true
+	for _, p := range grantPrefixes {
+		if strings.HasPrefix(name, p) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // grants delivers the run's grants: an env grant as NAME=value, a file grant
@@ -513,8 +510,8 @@ func (e *Exec) grants(c Claim) (env []string, cleanup func(), err error) {
 	cleanup = func() {}
 	var dir string
 	for _, g := range c.Run.Grants {
-		if !grantName.MatchString(g.Name) || reservedGrant(g.Name) {
-			return nil, cleanup, fmt.Errorf("grant %q names a variable a grant may not set — use a name of its own, such as ZUMINO_TOKEN", g.Name)
+		if !grantAllowed(g.Name) {
+			return nil, cleanup, fmt.Errorf("grant %q is not a name a grant may use — a grant is named as the secret it is, in upper case and ending in _TOKEN, _KEY, _SECRET, _PASSWORD or _CREDENTIAL(S), such as ZUMINO_TOKEN; harness, runtime and loader namespaces are refused", g.Name)
 		}
 		switch g.As {
 		case v1.GrantEnv:

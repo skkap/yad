@@ -27,6 +27,10 @@ type tap struct {
 	// hub. ackAt, when set, is returned as acked_through after the call.
 	eventsErr, resultErr error
 	ackAt                *int64
+	// eventsFor, when set, answers an events call in the hub's place.
+	eventsFor func(v1.EventBatch) (v1.EventAck, error)
+	// beforeEvents runs at the start of each events call.
+	beforeEvents func()
 }
 
 func (t *tap) Events(ctx context.Context, runID string, b v1.EventBatch) (v1.EventAck, error) {
@@ -36,8 +40,16 @@ func (t *tap) Events(ctx context.Context, runID string, b v1.EventBatch) (v1.Eve
 		seqs = append(seqs, e.Seq)
 	}
 	t.batches = append(t.batches, seqs)
-	err, ack := t.eventsErr, t.ackAt
+	err, ack, answer, before := t.eventsErr, t.ackAt, t.eventsFor, t.beforeEvents
 	t.mu.Unlock()
+	if before != nil {
+		before()
+	}
+	if answer != nil {
+		if a, err := answer(b); err != nil {
+			return a, err
+		}
+	}
 	if err != nil {
 		return v1.EventAck{}, err
 	}
@@ -135,14 +147,28 @@ func TestAckedThroughIsAuthoritative(t *testing.T) {
 		t.Errorf("spool %d, results sent %d", spooled(t, e), tp.results)
 	}
 
-	// A hub that has lost events it acknowledged gets them again.
-	zero := int64(0)
-	tp.ackAt = &zero
-	if err := e.store.AckEvents(context.Background(), db.AckEventsParams{AckedThrough: 3, Connection: "hub", RunID: "a"}); err != nil {
-		t.Fatal(err)
+}
+
+// A hub that answers an upload with an acked_through below what it had
+// acknowledged before has lost events: everything after it goes again.
+func TestHubThatLostEventsGetsThemAgain(t *testing.T) {
+	e := newEnv(t)
+	_, r, tp := ranRun(t, e, 5)
+	three, one := int64(3), int64(1)
+	tp.ackAt = &three
+	r.Flush(context.Background())
+	tp.ackAt = &one
+	r.Flush(context.Background())
+	if spooled(t, e) != 4 {
+		t.Fatalf("spool depth %d after the hub fell back to 1, want 4", spooled(t, e))
 	}
-	if spooled(t, e) != 2 {
-		t.Errorf("an ack below what was acknowledged left %d unacknowledged, want 2", spooled(t, e))
+	tp.ackAt = nil
+	r.Flush(context.Background())
+	if last := tp.batches[len(tp.batches)-1]; !slices.Equal(last, []int64{2, 3, 4, 5}) {
+		t.Errorf("resent %v, want [2 3 4 5]", last)
+	}
+	if spooled(t, e) != 0 || tp.results != 1 {
+		t.Errorf("spool %d, results sent %d", spooled(t, e), tp.results)
 	}
 }
 
@@ -201,7 +227,12 @@ func TestResultAnswers(t *testing.T) {
 	}{
 		{"conflict: the hub's state stands", &hubclient.StatusError{Status: 409, Protocol: &v1.Error{Code: v1.CodeConflict}}, false},
 		{"not the holder", &hubclient.StatusError{Status: 403, Protocol: &v1.Error{Code: v1.CodeNotHolder}}, false},
-		{"unknown run", status(404), false},
+		{"invalid", &hubclient.StatusError{Status: 422, Protocol: &v1.Error{Code: v1.CodeInvalid}}, false},
+		{"not found, which may be a wrong URL", &hubclient.StatusError{Status: 404, Protocol: &v1.Error{Code: v1.CodeNotFound}}, true},
+		{"a proxy's 409", status(409), true},
+		{"a proxy's 403", status(403), true},
+		{"a proxy's 404", status(404), true},
+		{"a proxy's body limit", status(413), true},
 		{"credential refused, may come back", status(401), true},
 		{"too many requests", status(429), true},
 		{"hub error", status(500), true},
@@ -301,4 +332,75 @@ func TestLateResultAfterLostStopsReporting(t *testing.T) {
 	if got := localRun(t, e, "a"); got.State != "succeeded" {
 		t.Errorf("local state = %s", got.State)
 	}
+}
+
+// A batch a proxy refuses as too large is sent again in halves rather than
+// dropped: a proxy's limit is not the hub's verdict.
+func TestTooLargeBatchesAreHalved(t *testing.T) {
+	e := newEnv(t)
+	_, r, tp := ranRun(t, e, 100)
+	tp.eventsFor = func(b v1.EventBatch) (v1.EventAck, error) {
+		if len(b.Events) > 30 {
+			return v1.EventAck{}, status(413)
+		}
+		return v1.EventAck{}, nil
+	}
+	r.Flush(context.Background())
+	var sizes []int
+	for _, b := range tp.batches {
+		sizes = append(sizes, len(b))
+	}
+	if !slices.Equal(sizes, []int{100, 50, 25, 25, 25, 25}) {
+		t.Errorf("batch sizes %v", sizes)
+	}
+	if spooled(t, e) != 0 || tp.results != 1 {
+		t.Errorf("spool %d, results %d", spooled(t, e), tp.results)
+	}
+}
+
+// A result written while a flush is under way — its run's last events spooled
+// after the flush looked at the spool — waits for those events.
+func TestResultNeverOvertakesItsEvents(t *testing.T) {
+	e := newEnv(t)
+	_, r, tp := ranRun(t, e, 1)
+	ctx := context.Background()
+	var once sync.Once
+	tp.beforeEvents = func() {
+		once.Do(func() {
+			// What the executor does for a second run mid-flush: its last
+			// event, then its result.
+			for _, err := range []error{
+				e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: "s2", Harness: "claude"}),
+				e.store.CreateRun(ctx, db.CreateRunParams{Connection: "hub", ID: "b", SessionID: "s2", Harness: "claude", Spec: "{}"}),
+				e.store.AppendEvent(ctx, db.AppendEventParams{Connection: "hub", RunID: "b", Seq: 1, Body: `{"seq":1,"kind":"text"}`}),
+				e.store.PutOutbox(ctx, db.PutOutboxParams{Connection: "hub", RunID: "b", Body: `{"state":"succeeded"}`}),
+			} {
+				if err != nil {
+					t.Error(err)
+				}
+			}
+		})
+	}
+	var sent []string
+	tp.next = resultSpy{ReportHub: tp.next, sent: &sent}
+	r.Flush(ctx)
+	if slices.Contains(sent, "b") {
+		t.Error("b's result went out while its event was still in the spool")
+	}
+	if !slices.Contains(sent, "a") {
+		t.Errorf("results sent %v, want a's", sent)
+	}
+}
+
+type resultSpy struct {
+	ReportHub
+	sent *[]string
+}
+
+func (s resultSpy) Result(ctx context.Context, runID string, res v1.Result) error {
+	*s.sent = append(*s.sent, runID)
+	if runID == "b" {
+		return nil
+	}
+	return s.ReportHub.Result(ctx, runID, res)
 }
