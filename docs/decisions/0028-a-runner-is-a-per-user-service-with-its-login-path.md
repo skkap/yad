@@ -33,10 +33,11 @@ carried: in particular no token.
 **Names carry no person and no domain.** The launchd label is
 `yad.runner.<profile>` and the systemd unit is `yad-runner-<profile>.service`.
 The default profile is `default`. There is one unit per profile, so profiles
-coexist. The systemd unit goes in the user manager's own
-`$XDG_CONFIG_HOME/systemd/user`, which install asks for with
-`systemctl --user show-environment`. The installing shell's value can differ
-from the manager's, and the manager only searches its own.
+coexist. The systemd unit goes in the first `systemd/user`
+directory under the owner's home on the running user manager's own unit search
+path (`systemctl --user show --property=UnitPath`). That path is fixed by the
+manager's start-up environment, and it can differ from the installing shell's
+`XDG_CONFIG_HOME` and from what environment.d hands to services.
 
 **Install is idempotent: it replaces.** It unloads a loaded job, writes the new
 file atomically and loads it again. On launchd that is bootout, enable and

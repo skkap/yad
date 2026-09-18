@@ -15,41 +15,44 @@ import (
 // user manager, as the owner, and is restarted when it crashes.
 type Systemd struct {
 	Host Host
-	// configHome is the user manager's own XDG config directory, once asked.
-	configHome string
+	// unitDir is the user manager's own directory for the owner's units, once
+	// asked.
+	unitDir string
 }
 
 // Name is the unit's name; one unit per profile, so profiles coexist.
 func (s *Systemd) Name(profile string) string { return "yad-runner-" + profile + ".service" }
 
-// File is under the user manager's systemd/user directory, so installing
-// needs no privilege. Install, Uninstall and Status ask the manager where that
-// is first; before they have, it is the default under the owner's home.
+// File is in the owner's systemd/user directory, so installing needs no
+// privilege. Install, Uninstall and Status ask the manager where that is
+// first; before they have, it is the default under the owner's home.
 func (s *Systemd) File(profile string) string {
-	base := s.configHome
-	if base == "" {
-		base = filepath.Join(s.Host.Home, ".config")
+	dir := s.unitDir
+	if dir == "" {
+		dir = filepath.Join(s.Host.Home, ".config", "systemd", "user")
 	}
-	return filepath.Join(base, "systemd", "user", s.Name(profile))
+	return filepath.Join(dir, s.Name(profile))
 }
 
-// resolve asks the user manager for its XDG_CONFIG_HOME. The manager builds its
-// unit search path from its own environment — PAM, environment.d — not from
-// the shell running install, so a value exported in a shell rc would put the
-// unit where the manager never looks, and uninstall would look somewhere else
-// again.
+// resolve asks the running user manager for its unit search path and takes
+// the first systemd/user directory in the owner's home — the config directory,
+// which the manager searches before the data directory. The path is fixed from
+// the manager's own start-up environment; the installing shell's
+// XDG_CONFIG_HOME, and even what the manager hands its services
+// (environment.d, set-environment), can name a directory it never searches.
 func (s *Systemd) resolve(ctx context.Context) error {
-	out, err := s.systemctl(ctx, "show-environment")
+	out, err := s.systemctl(ctx, "show", "--property=UnitPath", "--value")
 	if err != nil {
 		return err
 	}
-	s.configHome = ""
-	for _, line := range strings.Split(string(out), "\n") {
-		if v, ok := strings.CutPrefix(line, "XDG_CONFIG_HOME="); ok && filepath.IsAbs(v) {
-			s.configHome = v
+	home := filepath.Clean(s.Host.Home) + string(filepath.Separator)
+	for _, dir := range strings.Fields(string(out)) {
+		if filepath.IsAbs(dir) && strings.HasPrefix(dir, home) && filepath.Base(dir) == "user" && filepath.Base(filepath.Dir(dir)) == "systemd" {
+			s.unitDir = dir
+			return nil
 		}
 	}
-	return nil
+	return fmt.Errorf("the systemd user manager searches no directory in %s for units (UnitPath: %s) — if SYSTEMD_UNIT_PATH is set for it, add ~/.config/systemd/user to it and run this again", s.Host.Home, strings.TrimSpace(string(out)))
 }
 
 var unitTmpl = template.Must(template.New("unit").Funcs(template.FuncMap{"exec": quoteExec, "env": quoteEnv, "path": escapeSpecifiers}).Parse(`# Written by yad service install. Run it again to rewrite this file; yad service uninstall removes it.

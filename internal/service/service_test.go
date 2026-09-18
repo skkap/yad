@@ -19,6 +19,7 @@ var update = flag.Bool("update", false, "rewrite the golden files")
 // fakeRunner answers service-manager commands from a script and records them.
 // Nothing here ever reaches launchctl, systemctl or a shell.
 type fakeRunner struct {
+	home   string // the default user manager's unit path is under it
 	calls  []string
 	answer func(call string, n int) ([]byte, error) // n: how many times this call was seen before
 	seen   map[string]int
@@ -32,15 +33,25 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte
 	}
 	n := f.seen[call]
 	f.seen[call]++
-	if f.answer == nil {
-		return nil, nil
+	var out []byte
+	var err error
+	if f.answer != nil {
+		out, err = f.answer(call, n)
 	}
-	return f.answer(call, n)
+	// Unless a test says otherwise, the user manager has the stock layout.
+	if out == nil && err == nil && strings.HasSuffix(call, "--property=UnitPath --value") {
+		out = []byte(f.home + "/.config/systemd/user.control " + f.home + "/.config/systemd/user /etc/systemd/user /usr/lib/systemd/user\n")
+	}
+	return out, err
 }
 
 func host(t *testing.T, r Runner) Host {
 	t.Helper()
-	return Host{Home: t.TempDir(), UID: 501, EUID: 501, User: "owner", Getenv: func(string) string { return "" }, Run: r}
+	h := Host{Home: t.TempDir(), UID: 501, EUID: 501, User: "owner", Getenv: func(string) string { return "" }, Run: r}
+	if f, ok := r.(*fakeRunner); ok {
+		f.home = h.Home
+	}
+	return h
 }
 
 // goldenSpec has the characters each format must escape: a space, an
@@ -515,7 +526,7 @@ func TestSystemdInstall(t *testing.T) {
 				t.Fatal(err)
 			}
 			checkCalls(t, r.calls, []string{
-				"systemctl --user show-environment",
+				"systemctl --user show --property=UnitPath --value",
 				"systemctl --user daemon-reload",
 				"systemctl --user enable yad-runner-work.service",
 				"systemctl --user restart yad-runner-work.service",
@@ -554,18 +565,18 @@ func TestSystemdUninstall(t *testing.T) {
 		calls int
 	}{
 		{"nothing there", "not-found", false, []string{
-			"systemctl --user show-environment",
+			"systemctl --user show --property=UnitPath --value",
 			"systemctl --user show yad-runner-work.service --property=LoadState,ActiveState,SubState,MainPID,Result",
 		}, 2},
 		{"loaded and on disk", "loaded", true, []string{
-			"systemctl --user show-environment",
+			"systemctl --user show --property=UnitPath --value",
 			"systemctl --user show yad-runner-work.service --property=LoadState,ActiveState,SubState,MainPID,Result",
 			"systemctl --user disable --now yad-runner-work.service",
 			"systemctl --user daemon-reload",
 			"systemctl --user reset-failed yad-runner-work.service",
 		}, 5},
 		{"file never loaded", "not-found", true, []string{
-			"systemctl --user show-environment",
+			"systemctl --user show --property=UnitPath --value",
 			"systemctl --user show yad-runner-work.service --property=LoadState,ActiveState,SubState,MainPID,Result",
 			"systemctl --user daemon-reload",
 			"systemctl --user reset-failed yad-runner-work.service",
@@ -574,8 +585,8 @@ func TestSystemdUninstall(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &fakeRunner{answer: func(call string, n int) ([]byte, error) {
 				switch {
-				case strings.HasSuffix(call, "show-environment"):
-					return []byte("HOME=/home/owner\nLANG=C.UTF-8\n"), nil
+				case strings.Contains(call, "UnitPath"):
+					return nil, nil // the stock layout
 				case strings.Contains(call, " show ") && n == 0:
 					return []byte("LoadState=" + tc.load + "\nActiveState=active\n"), nil
 				case strings.Contains(call, " show "):
@@ -620,7 +631,7 @@ func TestSystemdStatus(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) {
-				if strings.HasSuffix(call, "show-environment") {
+				if strings.Contains(call, "UnitPath") {
 					return nil, nil
 				}
 				return []byte(tc.out), nil
@@ -650,34 +661,33 @@ func checkCalls(t *testing.T, got, want []string, file string) {
 	}
 }
 
-// The user manager searches its own XDG_CONFIG_HOME, not the one exported in
-// the shell running install; the unit, and uninstall's removal, follow the
-// manager's.
+// The unit goes where the running user manager searches, whatever the
+// installing shell or environment.d say XDG_CONFIG_HOME is; uninstall asks
+// again and removes it from the same place.
 func TestSystemdUnitGoesWhereTheManagerLooks(t *testing.T) {
 	for _, tc := range []struct {
-		name, managerEnv, shellXDG string
-		inManagerDir               bool
+		name, unitPath, shellXDG string
+		want                     string // relative to home; "" means refused
 	}{
-		{"manager sets it, shell does not", "XDG_CONFIG_HOME={dir}\n", "", true},
-		{"shell sets it, manager does not", "HOME=/home/owner\n", "{other}", false},
-		{"both, differently", "XDG_CONFIG_HOME={dir}\n", "{other}", true},
-		{"manager's is relative, ignored", "XDG_CONFIG_HOME=cfg\n", "", false},
+		{"default layout", "{home}/.config/systemd/user.control /run/user/501/systemd/user.control {home}/.config/systemd/user /etc/systemd/user {home}/.local/share/systemd/user /usr/lib/systemd/user", "", ".config/systemd/user"},
+		{"manager started with its own XDG_CONFIG_HOME", "{home}/cfg/systemd/user.control {home}/cfg/systemd/user /etc/systemd/user {home}/.local/share/systemd/user", "", "cfg/systemd/user"},
+		{"shell's XDG_CONFIG_HOME is not searched", "{home}/.config/systemd/user.control {home}/.config/systemd/user /etc/systemd/user", "{home}/elsewhere", ".config/systemd/user"},
+		{"only the data directory", "/etc/systemd/user {home}/.local/share/systemd/user /usr/lib/systemd/user", "", ".local/share/systemd/user"},
+		{"nothing in the home", "/opt/units /etc/systemd/user /usr/lib/systemd/user", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir, other := t.TempDir(), t.TempDir()
-			sub := func(s string) string {
-				return strings.NewReplacer("{dir}", dir, "{other}", other).Replace(s)
-			}
-			r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) {
+			r := &fakeRunner{}
+			h := host(t, r)
+			sub := func(s string) string { return strings.ReplaceAll(s, "{home}", h.Home) }
+			r.answer = func(call string, _ int) ([]byte, error) {
 				switch {
-				case strings.HasSuffix(call, "show-environment"):
-					return []byte(sub(tc.managerEnv)), nil
+				case strings.Contains(call, "UnitPath"):
+					return []byte(sub(tc.unitPath) + "\n"), nil
 				case strings.Contains(call, " show "):
 					return []byte("LoadState=loaded\n"), nil
 				}
 				return nil, nil
-			}}
-			h := host(t, r)
+			}
 			h.Getenv = func(k string) string {
 				if k == "XDG_CONFIG_HOME" {
 					return sub(tc.shellXDG)
@@ -685,21 +695,25 @@ func TestSystemdUnitGoesWhereTheManagerLooks(t *testing.T) {
 				return ""
 			}
 			s := &Systemd{Host: h}
-			if _, err := s.Install(context.Background(), specIn(t, h)); err != nil {
+			_, err := s.Install(context.Background(), specIn(t, h))
+			if tc.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "SYSTEMD_UNIT_PATH") {
+					t.Fatalf("err = %v", err)
+				}
+				return
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
-			want := filepath.Join(h.Home, ".config", "systemd", "user", "yad-runner-work.service")
-			if tc.inManagerDir {
-				want = filepath.Join(dir, "systemd", "user", "yad-runner-work.service")
-			}
+			want := filepath.Join(h.Home, tc.want, "yad-runner-work.service")
 			if _, err := os.Stat(want); err != nil {
 				t.Fatalf("unit not at %s: %v", want, err)
 			}
-			if _, err := os.Stat(filepath.Join(other, "systemd")); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("unit written under the shell's XDG_CONFIG_HOME")
+			if tc.shellXDG != "" {
+				if _, err := os.Stat(sub(tc.shellXDG)); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("something written under the shell's XDG_CONFIG_HOME")
+				}
 			}
-			// A fresh manager value, as a new process would see it: uninstall
-			// asks again rather than trusting what install found.
 			if err := (&Systemd{Host: h}).Uninstall(context.Background(), "work"); err != nil {
 				t.Fatal(err)
 			}
