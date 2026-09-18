@@ -407,7 +407,10 @@ harness process. Recording new ones is a manual step, behind a build tag
 `$YAD_CONFIG_DIR` and `$YAD_DATA_DIR` override both. The config directory holds
 `config.toml`, `runner-id` and `credentials/<connection>` (each `0600`); the
 data directory holds `state.db`, `workdirs/`, `repos/`, `accounts/`,
-`transcripts/`, `logs/` and the control socket `yad.sock` — and `hub.db` when
+`transcripts/`, `logs/` (the daemon's JSON log `yad.log`, rotated at 10 MiB into
+`yad.log.1`–`.3`, and `stderr.log` for what a background start printed before
+its log was open), the control socket `yad.sock` and the daemon lock `yad.lock`
+([0026](docs/decisions/0026-the-daemon-lock-is-a-held-flock-beside-the-socket.md)) — and `hub.db` when
 the machine also runs `yad hub`. A machine that submits to a hub keeps its
 admin token in the config directory's `hub-admin-token` (`0600`).
 
@@ -462,8 +465,10 @@ yad doctor                         what is installed, and what YAD can drive
 yad harnesses [--json]             the capability document, as a hub receives it
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
 yad disconnect <name>
-yad daemon start|stop|status|logs  the runner process
-yad status                         runs, sessions, accounts, connections — via the socket
+yad daemon start|stop|restart|status|logs [-f] [-n N]
+                                   the runner process
+yad status [--json]                connections, capacity, runs, sessions and recent
+                                   errors — via the socket
 yad sessions [close <id>]
 yad account add|list|use|remove
 yad service install|uninstall      launchd user agent, systemd user unit
@@ -485,9 +490,20 @@ yad hub token create [--ttl 1h] [--runner id]
 yad conformance <url>              check any hub against v1
 ```
 
-`yad daemon start` backgrounds itself; `--foreground` is what service units run.
-Logs are JSON through `log/slog`, rotated by size. The control socket is `0600`
-in the data directory; its protocol is internal and unversioned.
+`yad daemon start` backgrounds itself — it re-executes `yad daemon start
+--foreground` in a session of its own and returns once that process answers on
+its socket; `--foreground` is what service units run. Logs are JSON through
+`log/slog`, rotated by size. The control socket is `0600` in a data directory
+that must itself be private, one JSON request and answer per connection; its
+protocol is internal and unversioned. The daemon holds `yad.lock` with
+`flock(2)` for its life, which is the single-instance lock per profile: a
+socket file a crash left behind never blocks a start
+([0026](docs/decisions/0026-the-daemon-lock-is-a-held-flock-beside-the-socket.md)).
+A socket path past the kernel's limit (103 bytes on macOS) is refused with the
+fix, never moved elsewhere. `yad daemon stop` asks for a graceful stop through
+the socket and falls back to signals; `restart` checks every credential locally
+before it stops anything
+([0027](docs/decisions/0027-stop-asks-then-signals-and-restart-checks-first.md)).
 
 ## §6 Dependencies
 

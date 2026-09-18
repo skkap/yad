@@ -7,7 +7,6 @@ import "fmt"
 // saying "not implemented".
 var arrivesIn = map[string]string{
 	"disconnect":  "E7",
-	"status":      "E3",
 	"sessions":    "E4",
 	"account":     "E6",
 	"service":     "E3",

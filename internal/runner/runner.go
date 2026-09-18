@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -25,6 +26,8 @@ type Options struct {
 	// capacity and claims nothing.
 	Adapters *Registry
 	Log      *slog.Logger
+	// Monitor, when set, is kept current for the control socket.
+	Monitor *Monitor
 }
 
 // Serve syncs every configured connection until ctx ends, all of them drawing
@@ -46,6 +49,9 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	defer st.Close()
 	pool := NewPool(o.Capabilities().Capacity)
+	o.Monitor.attach(pool, st)
+	// Runs before the store closes: a status read after it would fail.
+	defer o.Monitor.attach(nil, nil)
 
 	var (
 		wg   sync.WaitGroup
@@ -56,6 +62,7 @@ func Serve(ctx context.Context, o Options) error {
 	// keep the process running, so the return value may be hours away.
 	fail := func(conn string, err error) {
 		o.Log.Error("connection stopped", "connection", conn, "err", err)
+		o.Monitor.failed(conn, err, time.Now(), ConnStopped)
 		mu.Lock()
 		defer mu.Unlock()
 		errs = append(errs, fmt.Errorf("connection %s: %w", conn, err))
@@ -78,6 +85,7 @@ func Serve(ctx context.Context, o Options) error {
 		executor = exec
 	}
 	for _, conn := range o.Config.Connections {
+		o.Monitor.starting(conn.Name)
 		cred, err := o.Paths.Credential(conn.Name)
 		if err != nil {
 			fail(conn.Name, err)
@@ -91,7 +99,7 @@ func Serve(ctx context.Context, o Options) error {
 		reporters[conn.Name] = NewReporter(conn.Name, client, st, o.Log)
 		loops = append(loops, &Loop{
 			Connection: conn.Name, RunnerID: o.RunnerID, Hub: client, Store: st, Pool: pool,
-			Capabilities: o.Capabilities, Executor: executor, Log: o.Log,
+			Capabilities: o.Capabilities, Executor: executor, Log: o.Log, Monitor: o.Monitor,
 		})
 	}
 	for _, l := range loops {

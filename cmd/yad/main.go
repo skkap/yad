@@ -67,7 +67,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cmdErr = cmdHub(ctx, g, rest, stdout, stderr)
 	case "connect":
 		cmdErr = cmdConnect(ctx, g, rest, stdout)
-	case "disconnect", "status", "sessions", "account", "service", "conformance", "upgrade":
+	case "status":
+		cmdErr = cmdStatus(ctx, g, rest, stdout)
+	case "disconnect", "sessions", "account", "service", "conformance", "upgrade":
 		cmdErr = notYet(cmd, rest)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
@@ -78,11 +80,32 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		usage(stderr)
 		return 2
 	}
+	var exit exitError
+	if errors.As(cmdErr, &exit) {
+		if exit.msg != "" {
+			fmt.Fprintln(stderr, "yad:", exit.msg)
+		}
+		return exit.code
+	}
 	if cmdErr != nil {
 		fmt.Fprintln(stderr, "yad:", cmdErr)
 		return 1
 	}
 	return 0
+}
+
+// exitError is a command's answer that is an exit code rather than a failure:
+// `yad daemon status` finding no daemon exits 3 having already said so.
+type exitError struct {
+	code int
+	msg  string
+}
+
+func (e exitError) Error() string {
+	if e.msg != "" {
+		return e.msg
+	}
+	return fmt.Sprintf("exit %d", e.code)
 }
 
 func usage(w io.Writer) {
@@ -94,7 +117,13 @@ usage: yad [--profile name] <command> [flags]
   harnesses [--json]  the capability document, exactly as a hub receives it
   connect <url> --token T [--name n]
                       register this runner with a hub
-  daemon start        the runner (--foreground; background arrives in E3)
+  daemon start        the runner, in the background (--foreground in this terminal)
+  daemon stop|restart|status
+                      stop it gracefully, restart it, or say whether it is up
+  daemon logs [-f] [-n N]
+                      its log: the last lines, then (-f) what follows
+  status [--json]     what the runner is doing: connections, capacity, runs,
+                      sessions and recent errors
   hub serve           the standalone hub (headless)
   hub token create    a one-time registration token for yad connect
   hub admin-token create|list|revoke
@@ -108,7 +137,7 @@ usage: yad [--profile name] <command> [flags]
                       add input to a running turn
   version             version and build
 
-  disconnect · status · sessions · account · service · conformance
+  disconnect · sessions · account · service · conformance
                       exist, and each says which epic brings it
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.
