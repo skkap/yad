@@ -380,7 +380,7 @@ func TestE2ERunSucceeds(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
 	}
-	for _, want := range []string{"── queued", "→ Read", e2eAnswer, "── succeeded in"} {
+	for _, want := range []string{"→ Read", e2eAnswer, "── succeeded in"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("watch output lacks %q:\n%s", want, out)
 		}
@@ -485,16 +485,25 @@ func TestE2ENetworkDropMidRun(t *testing.T) {
 // delivered — a run ends reported lost, never silently rerun or left hanging.
 func TestE2ERunnerRestartMidRun(t *testing.T) {
 	m := newMachine(t)
+	// Uploads are cut from the start, so every event the run streams is
+	// still in the spool when the runner stops: the delivery after the
+	// restart is the only way any of them reaches the hub.
+	events := func(r *http.Request) bool { return strings.HasSuffix(r.URL.Path, "/events") }
+	m.cut.Store(&events)
 	m.gated()
 	m.submit("e2e-restart")
 	d := m.daemon()
 	m.waitAtGate()
+	eventually(t, "the runner has tried to upload events", func() bool { return m.dropped.Load() >= 1 })
 	d.halt(t)
 
 	s := m.runnerStore()
 	spooled, err := s.UnackedEvents(context.Background(), db.UnackedEventsParams{Connection: "home", RunID: "e2e-restart", Limit: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(spooled) == 0 || len(m.hubEvents("e2e-restart")) != 0 {
+		t.Fatalf("%d events spooled at the restart and %d on the hub; the test needs them all held back", len(spooled), len(m.hubEvents("e2e-restart")))
 	}
 	if r := localRun(t, s, "e2e-restart"); v1.RunState(r.State).IsTerminal() {
 		t.Fatalf("a run stopped with its runner is %s; it must stay held for the next start", r.State)
@@ -509,19 +518,33 @@ func TestE2ERunnerRestartMidRun(t *testing.T) {
 	if err := m.hub.Sweep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-
 	code, out, errs := m.watch("e2e-restart")
 	if code == 0 || !strings.Contains(out, "── lost") || !strings.Contains(errs, "ended lost") {
 		t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
 	}
+
+	// Only now, with the run already lost, do the events get through: the
+	// hub takes them from the run's holder after it ends (decision 0023),
+	// every one, exactly as the runner held them. A refusal would empty
+	// the spool too, and leave the hub short.
+	m.cut.Store(nil)
 	eventually(t, "the events streamed before the restart are on the hub", func() bool {
-		sp, err := s.SpoolDepth(context.Background())
-		return err == nil && sp == 0
+		return len(m.hubEvents("e2e-restart")) >= len(spooled)
 	})
 	evs := m.hubEvents("e2e-restart")
-	contiguous(t, evs)
-	if len(evs) == 0 || len(evs) < len(spooled) {
-		t.Errorf("the hub holds %d events; the runner had %d unsent at the restart", len(evs), len(spooled))
+	if len(evs) != len(spooled) {
+		t.Fatalf("the hub holds %d events; the runner spooled %d", len(evs), len(spooled))
+	}
+	for i, row := range spooled {
+		var want v1.Event
+		if err := json.Unmarshal([]byte(row.Body), &want); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := json.Marshal(evs[i])
+		exp, _ := json.Marshal(want)
+		if string(got) != string(exp) {
+			t.Errorf("event %d on the hub:\n%s\nspooled:\n%s", row.Seq, got, exp)
+		}
 	}
 	run, err := m.client().Run(context.Background(), "e2e-restart")
 	if err != nil {

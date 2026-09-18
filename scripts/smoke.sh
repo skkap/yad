@@ -46,7 +46,10 @@ echo "smoke: yad hub at $hub"
 "$yad" hub admin-token create >/dev/null
 # The registration token goes from one command to the other through a pipe,
 # never through argv or the terminal (decision 0020).
-"$yad" hub token create 2>/dev/null | "$yad" connect "$hub/v1" --token - --name smoke
+# Its notice goes to a file rather than the terminal; on a failure, the cause
+# is shown from there.
+"$yad" hub token create 2>"$work/token.err" | "$yad" connect "$hub/v1" --token - --name smoke ||
+	{ echo "smoke: registering the runner failed:" >&2; cat "$work/token.err" >&2; exit 1; }
 
 "$yad" daemon start --foreground >"$work/runner.log" 2>&1 &
 pids+=($!)
@@ -59,6 +62,7 @@ echo "smoke: submitted $run"
 # and its output is followed live from the file it writes.
 "$yad" hub watch --hub "$hub" "$run" >"$work/watch.log" 2>&1 &
 watch=$!
+pids+=("$watch")
 tail -f "$work/watch.log" &
 pids+=($!)
 deadline=$((SECONDS + ${SMOKE_TIMEOUT:-180}))
