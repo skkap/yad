@@ -274,6 +274,8 @@ components:
         disk_free_bytes:
           format: int64
           type: integer
+        draining:
+          type: boolean
         free_capacity:
           $ref: "#/components/schemas/Capacity"
         harnesses:

@@ -28,10 +28,12 @@ type global struct {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
 }
+
+// stopSignals are the signals that stop a command. The runner counts them
+// (decision 0029); every other command ends at the first.
+var stopSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("yad", flag.ContinueOnError)
@@ -53,6 +55,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	g := global{paths: paths}
 
 	cmd, rest := fs.Arg(0), fs.Args()[1:]
+	// A foreground runner counts stop signals itself (decision 0029); a
+	// background start, which installs no handler, ends at the first as
+	// every other command does.
+	if !(cmd == "daemon" && len(rest) > 0 && rest[0] == "start") {
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(ctx, stopSignals...)
+		defer stop()
+	}
 	var cmdErr error
 	switch cmd {
 	case "version":
@@ -110,7 +120,9 @@ usage: yad [--profile name] <command> [flags]
                       register this runner with a hub
   daemon start        the runner, in the background (--foreground in this terminal)
   daemon stop|restart|status
-                      stop it gracefully, restart it, or say whether it is up
+                      stop it gracefully (it drains: no new runs, the ones it
+                      holds finish), restart it, or say whether it is up.
+                      Stop signals drain, then cancel runs, then exit at once
   daemon logs [-f] [-n N]
                       its log: the last lines, then (-f) what follows
   status [--json]     what the runner is doing: connections, capacity, runs,
@@ -126,6 +138,8 @@ usage: yad [--profile name] <command> [flags]
   hub interrupt <run> end a run's turn and keep its session
   hub steer <run> <text | ->
                       add input to a running turn
+  hub drain <runner>  the runner takes no new runs, finishes those it holds
+                      and exits
   service install|uninstall|status [--profile name]
                       run this profile's runner as a launchd agent or a
                       systemd user unit, as you, restarted after a crash

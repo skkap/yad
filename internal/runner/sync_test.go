@@ -364,17 +364,41 @@ func TestLoopStopsOnARefusedCredential(t *testing.T) {
 	}
 }
 
-// Runs a previous process held have no process now; they are lost locally
-// and no longer listed, so their leases lapse and the hub reports them.
-func TestOrphansAreAbandoned(t *testing.T) {
+// Runs a previous process held have no process now. Each that began is
+// reported lost — never run again — with a result that names the last event it
+// spooled, and stays listed until that result is delivered. Its session keeps
+// its native id and its workdir, so a new run can resume it. A claim that
+// never began — maybe never even listed back — is withdrawn instead, with the
+// empty session it opened.
+func TestOrphansAreReportedLost(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: "s1", Harness: "claude", CreatedAt: 1, LastUsedAt: 1}); err != nil {
+	for _, s := range []string{"s1", "s2"} {
+		if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: s, Harness: "claude", Workdir: "/work/" + s, CreatedAt: 1, LastUsedAt: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.store.SetSessionNativeID(ctx, db.SetSessionNativeIDParams{NativeID: sql.NullString{String: "native-1", Valid: true}, LastUsedAt: 1, Connection: "hub", ID: "s1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.CreateRun(ctx, db.CreateRunParams{Connection: "hub", ID: "old", SessionID: "s1", Harness: "claude", Spec: "{}", CreatedAt: 1, UpdatedAt: 1}); err != nil {
+	for id, sess := range map[string]string{"running": "s1", "claimed": "s2"} {
+		if err := e.store.CreateRun(ctx, db.CreateRunParams{Connection: "hub", ID: id, SessionID: sess, Harness: "claude", Spec: "{}", CreatedAt: 1, UpdatedAt: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.store.SetRunState(ctx, db.SetRunStateParams{State: "running", UpdatedAt: 1, Connection: "hub", ID: "running"}); err != nil {
 		t.Fatal(err)
 	}
+	for seq := int64(1); seq <= 3; seq++ {
+		if err := e.store.AppendEvent(ctx, db.AppendEventParams{Connection: "hub", RunID: "running", Seq: seq, Body: `{"kind":"text"}`}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Acknowledged events count too: last_seq is the run's, not the spool's.
+	if err := e.store.AckEvents(ctx, db.AckEventsParams{AckedThrough: 2, Connection: "hub", RunID: "running"}); err != nil {
+		t.Fatal(err)
+	}
+
 	cctx, cancel := context.WithCancel(ctx)
 	e.clock.stopAfter, e.clock.cancel = 1, cancel
 	h := &scriptedHub{}
@@ -384,23 +408,124 @@ func TestOrphansAreAbandoned(t *testing.T) {
 	if err := l.Run(cctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.syncs) != 1 || len(h.syncs[0].Runs) != 0 {
-		t.Errorf("listed %+v", h.syncs)
-	}
-	r, _ := e.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "old"})
-	if r.State != "lost" || r.Reason != (sql.NullString{String: "the runner restarted while holding it", Valid: true}) {
+	r := localRun(t, e, "running")
+	if r.State != "lost" || !strings.Contains(r.Reason.String, "never run twice") {
 		t.Errorf("orphan = %+v", r)
 	}
+	res, ok := outboxResult(t, e, "running")
+	if !ok || res.State != v1.RunLost || res.Error == nil || res.Error.Class != ClassRunnerRestarted || res.LastSeq != 3 {
+		t.Errorf("result owed: %+v (error %+v), %v; want lost, %s, last_seq 3", res, res.Error, ok, ClassRunnerRestarted)
+	}
+	if _, err := e.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "claimed"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("an unstarted claim is still recorded: %v", err)
+	}
+	if _, ok := outboxResult(t, e, "claimed"); ok {
+		t.Error("an unstarted claim owes a result")
+	}
+	if _, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "hub", ID: "s2"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("the empty session the claim opened is still recorded: %v", err)
+	}
+	// Listed until the result lands, so its lease outlasts a hub outage.
+	if len(h.syncs) != 1 || len(h.syncs[0].Runs) != 1 || h.syncs[0].Runs[0].Reason != "reporting its result" {
+		t.Errorf("listed %+v", h.syncs)
+	}
+	sess, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "hub", ID: "s1"})
+	if err != nil || sess.NativeID.String != "native-1" || sess.Workdir != "/work/s1" || sess.State != "open" {
+		t.Errorf("session after the restart %+v, %v: its native id, workdir and state must survive", sess, err)
+	}
 
-	// The hub, which never saw it claimed, offers it again: refused, not
-	// dropped, so the offers stop.
-	h.offer = []v1.Run{testRun("old", "s1")}
+	// Recovering again is a no-op: nothing is reported twice.
+	if err := l.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The hub offers one again: refused, not run, so the offers stop.
+	h.offer = []v1.Run{testRun("running", "s1")}
 	mustSync(t, l)
-	if res, ok := h.results["old"]; !ok || !strings.Contains(res.Error.Message, "not run twice") {
+	if res, ok := h.results["running"]; !ok || !strings.Contains(res.Error.Message, "not run twice") {
 		t.Errorf("re-offered orphan: %+v, %v", res, ok)
 	}
 	if got := e.exec.ids(); len(got) != 0 {
 		t.Errorf("started %v", got)
+	}
+}
+
+// Through yad hub: a process that claimed a run and stopped before listing it
+// leaves the run to the hub's queue, not lost — the next process withdraws it,
+// and the hub offers it again.
+func TestUnlistedClaimIsWithdrawnAtRestart(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	mustSync(t, l) // offered and claimed; the process dies before listing it
+
+	l2 := &Loop{Connection: l.Connection, RunnerID: l.RunnerID, Hub: l.Hub, Store: e.store, Pool: NewPool(v1.Capacity{Total: 1}),
+		Capabilities: l.Capabilities, Executor: e.exec, Clock: e.clock, Rand: l.Rand}
+	if err := l2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := e.store.OutboxDepth(ctx); err != nil || o != 0 {
+		t.Fatalf("outbox %d %v: an unstarted claim owes nothing", o, err)
+	}
+	res := mustSync(t, l2)
+	if len(res.Runs) != 1 || res.Runs[0].RunID != "a" {
+		t.Fatalf("offered %+v; the hub should offer the run again", res.Runs)
+	}
+	mustSync(t, l2)
+	if got := e.exec.ids(); len(got) != 1 || got[0] != "a" {
+		t.Errorf("started %v", got)
+	}
+}
+
+// Through yad hub: the lost result reaches the hub at the first flush, which
+// comes before the new process claims anything, and the hub marks the run
+// lost at once rather than when its lease lapses.
+func TestLostIsReportedBeforeClaims(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("old", "s1"))
+	mustSync(t, l)
+	mustSync(t, l)
+	if got := e.exec.ids(); len(got) != 1 {
+		t.Fatalf("started %v", got)
+	}
+	if err := e.store.SetRunState(ctx, db.SetRunStateParams{State: "running", UpdatedAt: 1, Connection: "hub", ID: "old"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A new process, with a new run waiting on the hub.
+	e.enqueue(t, testRun("new", "s2"))
+	l2 := &Loop{Connection: l.Connection, RunnerID: l.RunnerID, Hub: l.Hub, Store: e.store, Pool: NewPool(v1.Capacity{Total: 1}),
+		Capabilities: l.Capabilities, Executor: e.exec, Clock: e.clock, Rand: l.Rand}
+	rep := e.reporter(l2)
+	l2.ClaimAfter = rep.Replayed()
+	if err := l2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	res := mustSync(t, l2)
+	if len(res.Runs) != 0 {
+		t.Fatalf("offered %d runs before the replay", len(res.Runs))
+	}
+	if got := e.hubState(t, "old"); got != "running" {
+		t.Fatalf("hub state %s before the replay", got)
+	}
+
+	rctx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { rep.Run(rctx); close(done) }()
+	<-rep.Replayed()
+	stop()
+	<-done
+	if got := e.hubState(t, "old"); got != "lost" {
+		t.Errorf("hub state %s after the replay, want lost", got)
+	}
+	if got := hubResult(t, e, "old"); got.Error == nil || got.Error.Class != ClassRunnerRestarted {
+		t.Errorf("hub result %+v", got)
+	}
+	if res := mustSync(t, l2); len(res.Runs) != 1 || res.Runs[0].RunID != "new" {
+		t.Errorf("after the replay offered %+v", res.Runs)
 	}
 }
 

@@ -250,6 +250,26 @@ components:
             $ref: "#/components/schemas/Usage"
           type: object
       type: object
+    Runner:
+      additionalProperties: true
+      properties:
+        drain_requested_at:
+          format: date-time
+          type: string
+        draining:
+          type: boolean
+        last_sync_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        runner_id:
+          type: string
+      required:
+        - runner_id
+        - name
+        - draining
+      type: object
     SessionChoice:
       additionalProperties: true
       properties:
@@ -376,6 +396,58 @@ info:
   version: 1.0.0
 openapi: 3.1.0
 paths:
+  /runners/{runner}/drain:
+    post:
+      description: "The runner hears it at its next sync: it stops taking runs, lets the ones it holds finish — up to its owner's drain wait, after which it cancels them — and exits. It keeps syncing until then, so leases renew and results land, and this hub offers it nothing. The request stands until a sync made after it says the runner is draining. A runner that does not advertise the drain feature is 409: it would ignore the control."
+      operationId: drainRunner
+      parameters:
+        - description: The runner id, as its daemon prints it at start.
+          in: path
+          name: runner
+          required: true
+          schema:
+            description: The runner id, as its daemon prints it at start.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Runner"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Drain a runner
   /runs:
     post:
       description: Answers with the queued run. Submitting a run_id the hub already has gives the same answer, with the run as it is now, when the content is the same — a safe retry — and 409 when it differs.

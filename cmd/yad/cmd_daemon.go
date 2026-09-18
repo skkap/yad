@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"sync"
 	"time"
 
@@ -123,8 +124,16 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 		return err
 	}
 	started := time.Now()
+	// The first stop signal drains, the second cancels the runs held, the
+	// third ends runCtx: exit now (decision 0029). The caller's ctx ending
+	// is the third step too, and `yad daemon stop` is the first.
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
+	drain := runner.NewDrain()
+	sigs := make(chan os.Signal, 3)
+	signal.Notify(sigs, stopSignals...)
+	defer signal.Stop(sigs)
+	go runner.OnSignals(runCtx, sigs, drain, stop, log)
 
 	doc := capability.Build(runCtx, id, cfg)
 	last := capability.Fingerprint(doc)
@@ -158,7 +167,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			Status: func(ctx context.Context) control.Status {
 				return statusOf(ctx, g.paths, cfg, current(), started, monitor, recent)
 			},
-			Stop: gracefulStop(log, stop),
+			Stop: gracefulStop(log, drain),
 		})
 	}()
 	defer func() {
@@ -173,6 +182,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			// The catalog decides what is advertised; an adapter here with a
 			// harness still recognised there is never offered a run.
 			Adapters: runner.NewRegistry(claude.Adapter{}),
+			Drain:    drain,
 			Log:      log,
 			Monitor:  monitor,
 		})
@@ -183,13 +193,17 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	for {
 		select {
 		case err := <-served:
-			if runCtx.Err() == nil {
+			switch {
+			case runCtx.Err() != nil:
+				fmt.Fprintln(w, "\nshut down — runs cut short are reported lost at the next start")
+				log.Info("daemon stopped", "drained", false)
+			case drain.IsDraining():
+				fmt.Fprintln(w, "\ndrained — every run held has ended")
+				log.Info("daemon stopped", "drained", true, "reason", drain.Reason())
+			default:
 				// Every connection stopped on its own: nothing left to do.
 				log.Error("daemon exiting: every connection stopped", "err", err)
-				return err
 			}
-			fmt.Fprintln(w, "\nshut down — runs in flight stay held and are settled at the next start")
-			log.Info("daemon stopped")
 			return err
 		case t := <-tick.C:
 			next := capability.Build(runCtx, id, cfg)
@@ -223,16 +237,17 @@ func shownOnlyToAPerson(w io.Writer) io.Writer {
 // see a pattern, few enough to read.
 const recentErrors = 20
 
-// gracefulStop is what `yad daemon stop` asks for through the control socket.
-// It is the seam with drain (DEV-13): today a graceful stop is what Ctrl-C
-// does — the runner's context ends, runs in flight stop and stay held for the
-// next start — and drain replaces this body with "stop claiming, let live runs
-// finish, then exit". It must return at once; the socket answers `yad status`
-// until the process exits.
-func gracefulStop(log *slog.Logger, cancel context.CancelFunc) func() {
+// gracefulStop is what `yad daemon stop` asks for through the control socket:
+// the drain a first stop signal starts (decisions 0027, 0029) — no new runs,
+// the ones held finish for up to the drain wait and are then cancelled, and
+// the process exits. It is the owner's first stop request, so a SIGTERM after
+// it — `yad daemon stop --force` sends one — cancels the runs held.
+// It returns at once; the socket answers `yad status` until the process exits.
+func gracefulStop(log *slog.Logger, drain *runner.Drain) func() {
 	return func() {
-		log.Info("stop requested through the control socket")
-		cancel()
+		if drain.Stop("`yad daemon stop` asked through the control socket") {
+			log.Warn("draining: stop requested through the control socket — no new runs; exiting once the runs held have ended")
+		}
 	}
 }
 

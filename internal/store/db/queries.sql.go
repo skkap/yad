@@ -306,6 +306,23 @@ func (q *Queries) HasUnackedEvents(ctx context.Context, arg HasUnackedEventsPara
 	return exists, err
 }
 
+const lastEventSeq = `-- name: LastEventSeq :one
+SELECT CAST(COALESCE(MAX(seq), 0) AS INTEGER) FROM events WHERE connection = ? AND run_id = ?
+`
+
+type LastEventSeqParams struct {
+	Connection string
+	RunID      string
+}
+
+// The last event a run spooled, acknowledged or not: a result's last_seq.
+func (q *Queries) LastEventSeq(ctx context.Context, arg LastEventSeqParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, lastEventSeq, arg.Connection, arg.RunID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listAccounts = `-- name: ListAccounts :many
 SELECT harness, label, limited_until FROM accounts WHERE harness = ? ORDER BY label
 `

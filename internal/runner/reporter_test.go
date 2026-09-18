@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"sync"
 	"testing"
@@ -415,4 +416,40 @@ func (s resultSpy) Result(ctx context.Context, runID string, res v1.Result) erro
 		return nil
 	}
 	return s.ReportHub.Result(ctx, runID, res)
+}
+
+// A result a previous process had backed off into the future is still offered
+// by the replay that claims wait on; after that, the backoff holds again.
+func TestReplayOffersDeferredResults(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	future := time.Now().Add(5 * time.Minute).UnixMilli()
+	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: "s1", Harness: "claude", CreatedAt: 1, LastUsedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.CreateRun(ctx, db.CreateRunParams{Connection: "hub", ID: "old", SessionID: "s1", Harness: "claude", Spec: "{}", CreatedAt: 1, UpdatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.PutOutbox(ctx, db.PutOutboxParams{Connection: "hub", RunID: "old", Body: `{"state":"succeeded"}`, NextAttemptAt: future}); err != nil {
+		t.Fatal(err)
+	}
+	h := &scriptedHub{}
+	r := NewReporter("hub", h, e.store, slog.New(slog.DiscardHandler))
+	r.Flush(ctx)
+	if _, ok := h.results["old"]; ok {
+		t.Fatal("a flush ignored the backoff")
+	}
+	rctx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { r.Run(rctx); close(done) }()
+	<-r.Replayed()
+	stop()
+	<-done
+	if _, ok := h.results["old"]; !ok {
+		t.Error("the replay did not offer a result that was backed off")
+	}
+}
+
+func (h *scriptedHub) Events(context.Context, string, v1.EventBatch) (v1.EventAck, error) {
+	return v1.EventAck{}, nil
 }

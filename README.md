@@ -76,7 +76,10 @@ yad service uninstall [--profile name]   # stops it and removes the unit; safe t
 The service runs `yad daemon start --foreground` as you, never as root, and
 restarts it after a crash. It uses the PATH your login shell had when you ran
 `install`, so run `install` again after changing PATH, upgrading or moving the
-binary; a re-install replaces the unit. On Linux a user unit stops when you log
+binary; a re-install replaces the unit. Stopping the service drains the
+runner — no new runs, the ones it holds finish for up to `[drain] wait`
+(default 30m), then are cancelled — and the unit's stop timeout is derived
+from that wait when you install, so run `install` again after changing it. On Linux a user unit stops when you log
 out unless lingering is on — `install` tells you, and `loginctl enable-linger`
 is yours to run. Why it is shaped this way: [0028](docs/decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md).
 

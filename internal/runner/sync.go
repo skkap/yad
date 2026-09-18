@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"sync"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -96,7 +97,14 @@ type Loop struct {
 	// advertises no free capacity and claims nothing, and syncs only to stay
 	// known to the hub.
 	Executor Executor
-	Clock    Clock
+	// Drain is the runner's way down, shared by every connection: while it
+	// drains, the loop claims nothing and keeps syncing. Nil never drains.
+	Drain *Drain
+	// ClaimAfter, until closed, keeps the loop from claiming: what a previous
+	// process left owed goes out before new work comes in (decision 0030).
+	// Syncs go on meanwhile, so leases renew. Nil claims from the first sync.
+	ClaimAfter <-chan struct{}
+	Clock      Clock
 	// Rand returns a number in [0, 1) for jitter; nil is math/rand.
 	Rand func() float64
 	Log  *slog.Logger
@@ -113,6 +121,13 @@ type Loop struct {
 	// hub is owed. Kept in memory: a run that was never started has nothing
 	// on disk to recover, and a hub that re-offers it hears the refusal again.
 	refused map[string]v1.Result
+	// quiesced is closed at the first sync that begins while draining: from
+	// then on this loop starts nothing, so once the executor is idle it stays
+	// idle.
+	quiesced     chan struct{}
+	quiescedOnce sync.Once
+	// recovered is set once the runs a previous process held are settled.
+	recovered bool
 }
 
 type pendingRun struct {
@@ -127,6 +142,7 @@ func (l *Loop) init() {
 	if l.pending == nil {
 		l.pending = map[string]pendingRun{}
 		l.refused = map[string]v1.Result{}
+		l.quiesced = make(chan struct{})
 	}
 	if l.Clock == nil {
 		l.Clock = realClock{}
@@ -144,11 +160,21 @@ func (l *Loop) init() {
 // or the hub requires a newer yad.
 func (l *Loop) Run(ctx context.Context) error {
 	l.init()
-	if err := l.abandonOrphans(ctx); err != nil {
+	if err := l.Recover(ctx); err != nil {
 		return err
 	}
+	var drain <-chan struct{}
+	if l.Drain != nil {
+		drain = l.Drain.Draining()
+	}
+	// A sync that went out before the replay finished claimed nothing; the
+	// next goes the moment it has, not an interval later.
+	replayed := l.ClaimAfter
 	failures := 0
 	for {
+		if l.mayClaim() {
+			replayed = nil
+		}
 		res, err := l.SyncOnce(ctx)
 		if ctx.Err() != nil {
 			return nil
@@ -176,15 +202,37 @@ func (l *Loop) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-drain:
+			// The hub hears at once that this runner is draining, and
+			// stops offering it work.
+			drain = nil
+		case <-replayed:
+			replayed = nil
 		case <-l.Clock.After(l.jitter(wait)):
 		}
 	}
+}
+
+// Quiesced is closed once the loop will start no more runs: it has begun a
+// sync while draining.
+func (l *Loop) Quiesced() <-chan struct{} {
+	l.init()
+	return l.quiesced
 }
 
 // SyncOnce is one sync: take the free capacity, tell the hub what this runner
 // holds, act on the answer, give back what was not used.
 func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	l.init()
+	draining := l.Drain.IsDraining()
+	if draining {
+		// Claimed and never listed: the hub still has them as offered, and
+		// gives them to another runner once this sync leaves them out.
+		for id := range l.pending {
+			l.withdraw(ctx, id)
+		}
+		defer l.quiescedOnce.Do(func() { close(l.quiesced) })
+	}
 	held, err := l.Store.ListHeldRuns(ctx, l.Connection)
 	if err != nil {
 		return v1.SyncResponse{}, err
@@ -196,12 +244,13 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	doc := l.Capabilities()
 	fp := capability.Fingerprint(doc)
 	res := emptyReservation()
-	if l.Executor != nil {
+	if l.Executor != nil && !draining && l.mayClaim() {
 		res = l.Pool.Reserve()
 	}
 	defer res.Close()
 
 	req := v1.SyncRequest{RunnerID: l.RunnerID, Fingerprint: fp, Health: l.health(ctx, res)}
+	req.Health.Draining = draining
 	// The document goes with the first sync of every process, after any move
 	// and whenever the hub asks; otherwise the fingerprint stands for it.
 	if l.wantDocument || fp != l.sentFingerprint {
@@ -239,6 +288,13 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 		switch {
 		case c.Kind == v1.ControlReportCapabilities:
 			l.wantDocument = true
+		case c.Kind == v1.ControlDrain:
+			// Repeated until a sync says draining; only the first moves it.
+			if l.Drain == nil {
+				l.Log.Warn("the hub asked this runner to drain, and nothing here can", "connection", l.Connection)
+			} else if l.Drain.Begin("the hub " + l.Connection + " asked the runner to drain") {
+				l.Log.Warn("draining at the hub's request: no new runs; exiting once the runs held have ended", "connection", l.Connection)
+			}
 		case c.Kind == v1.ControlCancel && l.isPending(c.RunID):
 			l.withdraw(ctx, c.RunID)
 		case l.Executor != nil:
@@ -252,13 +308,30 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 			l.Executor.Start(ctx, Claim{Connection: l.Connection, Run: p.run, Release: p.release})
 		}
 	}
-	for _, run := range out.Runs {
-		l.claim(ctx, run, doc, res)
+	// A runner draining since the hub's answer takes none of what it
+	// offered: left out of the next listing, each goes back in the queue.
+	if !l.Drain.IsDraining() {
+		for _, run := range out.Runs {
+			l.claim(ctx, run, doc, res)
+		}
 	}
 	// What was not claimed goes back before anything else can wait on the hub.
 	res.Close()
 	l.sendRefusals(ctx)
 	return out, nil
+}
+
+// mayClaim is whether the replay that must come first is done.
+func (l *Loop) mayClaim() bool {
+	if l.ClaimAfter == nil {
+		return true
+	}
+	select {
+	case <-l.ClaimAfter:
+		return true
+	default:
+		return false
+	}
 }
 
 func (l *Loop) isPending(runID string) bool {
@@ -436,12 +509,24 @@ func (l *Loop) withdraw(ctx context.Context, runID string) {
 	}
 }
 
-// abandonOrphans settles runs a previous process held. Nothing here can
-// resume them yet (restart safety is epic E3), and listing them would renew
-// their leases forever for work nobody is doing. They become lost locally and
-// drop out of the listing, so the hub marks them lost when their leases lapse
-// — reported, never silently retried.
-func (l *Loop) abandonOrphans(ctx context.Context) error {
+// Recover settles runs a previous process held (decision 0030). No
+// process of theirs survived it — a harness is its runner's child, in a
+// process group the runner killed on the way out — so none can be finished,
+// and running one again could do its work twice. Each is reported lost: the
+// state and the result go into the store in one transaction, the reporter
+// delivers the result once the run's spooled events are in, and the run stays
+// listed until then, as any run with a result owed does. A hub that already
+// lost it on a lapsed lease answers 409, which agrees. The run's session keeps
+// its native id and its workdir, so the hub can resume it with a new run.
+//
+// Run recovers first; Serve recovers every connection before any reporter
+// starts, so the lost results are in the outbox for the first flush — the
+// replay that comes before any claim. Recover does its work once.
+func (l *Loop) Recover(ctx context.Context) error {
+	l.init()
+	if l.recovered {
+		return nil
+	}
 	held, err := l.Store.ListHeldRuns(ctx, l.Connection)
 	if err != nil {
 		return err
@@ -451,15 +536,70 @@ func (l *Loop) abandonOrphans(ctx context.Context) error {
 		if l.isPending(r.ID) {
 			continue
 		}
-		l.Log.Warn("a previous process held this run; it is lost", "connection", l.Connection, "run", r.ID, "state", r.State)
-		if err := l.Store.SetRunState(ctx, db.SetRunStateParams{
-			State: string(v1.RunLost), Reason: sql.NullString{String: "the runner restarted while holding it", Valid: true},
-			UpdatedAt: now, Connection: l.Connection, ID: r.ID,
-		}); err != nil {
+		if r.State == string(v1.RunClaimed) {
+			withdrawn, err := l.withdrawOrphan(ctx, r)
+			if err != nil {
+				return err
+			}
+			if withdrawn {
+				continue
+			}
+		}
+		l.Log.Warn("a previous process held this run and no process of it is left; reporting it lost", "connection", l.Connection, "run", r.ID, "state", r.State)
+		msg := fmt.Sprintf("the runner stopped while the run was %s, and a run is never run twice; resume its session with a new run", r.State)
+		err := l.Store.Tx(ctx, func(q *db.Queries) error {
+			last, err := q.LastEventSeq(ctx, db.LastEventSeqParams{Connection: l.Connection, RunID: r.ID})
+			if err != nil {
+				return err
+			}
+			body, err := json.Marshal(v1.Result{
+				State: v1.RunLost, LastSeq: last,
+				Error: &v1.RunError{Class: ClassRunnerRestarted, Message: msg},
+			})
+			if err != nil {
+				return err
+			}
+			if err := q.SetRunState(ctx, db.SetRunStateParams{
+				State: string(v1.RunLost), Reason: sql.NullString{String: msg, Valid: true},
+				UpdatedAt: now, Connection: l.Connection, ID: r.ID,
+			}); err != nil {
+				return err
+			}
+			// Due from the start of time: the first flush sends it, whatever
+			// the reporter's clock says.
+			return q.PutOutbox(ctx, db.PutOutboxParams{Connection: l.Connection, RunID: r.ID, Body: string(body), NextAttemptAt: 0})
+		})
+		if err != nil {
 			return err
 		}
 	}
+	l.recovered = true
 	return nil
+}
+
+// withdrawOrphan drops a run a previous process claimed and never began to
+// prepare: nothing ran, and the claim may never have been listed — the hub
+// may still have it as offered. Left out of the listing, an offer goes back
+// in the hub's queue; a claim the hub had acknowledged lapses into lost on
+// its side, which is the truth of it. Reporting it lost here would end, for
+// good, a run that may only ever have been offered. It reports whether the
+// run is gone; one with events or a result owed is not an unstarted claim.
+func (l *Loop) withdrawOrphan(ctx context.Context, r db.Run) (bool, error) {
+	gone := false
+	err := l.Store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.DeleteUnstartedRun(ctx, db.DeleteUnstartedRunParams{Connection: l.Connection, ID: r.ID}); err != nil {
+			return err
+		}
+		if _, err := q.GetRun(ctx, db.GetRunParams{Connection: l.Connection, ID: r.ID}); !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		gone = true
+		return q.DeleteEmptySession(ctx, db.DeleteEmptySessionParams{Connection: l.Connection, ID: r.SessionID})
+	})
+	if gone && err == nil {
+		l.Log.Warn("a previous process claimed this run and never started it; withdrawn, for the hub to offer again or lose", "connection", l.Connection, "run", r.ID)
+	}
+	return gone && err == nil, err
 }
 
 func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {

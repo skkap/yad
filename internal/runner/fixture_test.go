@@ -12,6 +12,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hub"
 	hubstore "github.com/skkap/yad/internal/hub/store"
@@ -85,7 +86,7 @@ func drivableDoc(id string, capacity int) v1.Capabilities {
 	return v1.Capabilities{
 		RunnerID: id, Name: id, YadVersion: "dev", OS: "linux", Arch: "amd64",
 		Harnesses: []v1.HarnessReport{{ID: "claude", Label: "Claude Code", Kind: "first-class", Present: true, Version: "2.1.276"}},
-		Capacity:  v1.Capacity{Total: capacity},
+		Capacity:  v1.Capacity{Total: capacity}, ProtocolFeatures: capability.Features(),
 	}
 }
 

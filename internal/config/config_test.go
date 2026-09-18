@@ -104,6 +104,9 @@ idle_ttl = "336h"
 	if c.Supervise.Inactivity.Duration != DefaultInactivity {
 		t.Errorf("an unset section lost its default: %v", c.Supervise.Inactivity)
 	}
+	if c.Drain.Wait.Duration != DefaultDrainWait {
+		t.Errorf("an unset drain wait is %v, want the default %v", c.Drain.Wait, DefaultDrainWait)
+	}
 
 	if err := Save(p, c); err != nil {
 		t.Fatal(err)
@@ -122,6 +125,7 @@ func TestLoadRefuses(t *testing.T) {
 	for name, src := range map[string]string{
 		"unknown key":       "capacity = 2\npermision_mode = \"x\"\n",
 		"zero capacity":     "capacity = 0\n",
+		"negative drain":    "[drain]\nwait = \"-1m\"\n",
 		"duplicate account": "[harness.claude]\naccounts = [\"a\", \"a\"]\n",
 		"bad duration":      "[sessions]\nidle_ttl = \"two weeks\"\n",
 		"connection no url": "[[connection]]\nname = \"x\"\n",

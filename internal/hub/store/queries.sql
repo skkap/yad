@@ -173,3 +173,9 @@ DELETE FROM run_controls WHERE run_id = ? AND kind = 'steer' AND id <= ?;
 -- name: CancelUnstartedRun :execrows
 UPDATE runs SET state = 'cancelled', reason = ?, lease_expires_at = NULL, updated_at = ?
 WHERE id = ? AND state IN ('queued', 'offered');
+
+-- name: RequestDrain :exec
+UPDATE runners SET drain_requested_at = COALESCE(drain_requested_at, sqlc.arg(now)) WHERE id = sqlc.arg(id);
+
+-- name: ClearDrain :exec
+UPDATE runners SET drain_requested_at = NULL WHERE id = ?;

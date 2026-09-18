@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
+	"sync"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -46,6 +48,10 @@ type Reporter struct {
 	Log *slog.Logger
 
 	wake chan struct{}
+	// replayed is closed once the first flush has run: what a previous
+	// process left owed has been offered to the hub.
+	replayed     chan struct{}
+	replayedOnce sync.Once
 	// batch is a smaller batch size for a run whose upload was refused as too
 	// large — by the hub, or by a proxy in front of it with a lower limit.
 	batch map[string]int64
@@ -54,6 +60,7 @@ type Reporter struct {
 func (r *Reporter) init() {
 	if r.wake == nil {
 		r.wake = make(chan struct{}, 1)
+		r.replayed = make(chan struct{})
 		r.batch = map[string]int64{}
 	}
 	if r.Now == nil {
@@ -79,20 +86,33 @@ func (r *Reporter) Wake() {
 	}
 }
 
+// Replayed is closed once the first flush has run — delivered what it could
+// of what a previous process left owed, or found the hub out of reach. The
+// sync loop claims nothing before it (decision 0030).
+func (r *Reporter) Replayed() <-chan struct{} {
+	r.init()
+	return r.replayed
+}
+
 // Run flushes every tick, and whenever woken, until ctx ends. The first flush
 // is at once: that is the replay of whatever a previous process left owed.
 func (r *Reporter) Run(ctx context.Context) {
 	r.init()
 	t := time.NewTicker(reportEvery)
 	defer t.Stop()
+	// The replay offers every result owed, even one a previous process had
+	// backed off minutes into the future: claims wait on it, and a hub
+	// should not show a finished run as running for want of a retry timer.
+	r.flush(ctx, true)
+	r.replayedOnce.Do(func() { close(r.replayed) })
 	for {
-		r.Flush(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-r.wake:
 		case <-t.C:
 		}
+		r.Flush(ctx)
 	}
 }
 
@@ -100,7 +120,10 @@ func (r *Reporter) Run(ctx context.Context) {
 // that is due. A run's result waits until its events are in: a hub that shows
 // a run finished should already hold what led there. Flush runs on one
 // goroutine at a time.
-func (r *Reporter) Flush(ctx context.Context) {
+func (r *Reporter) Flush(ctx context.Context) { r.flush(ctx, false) }
+
+// flush is Flush; all sends every result owed, due or not.
+func (r *Reporter) flush(ctx context.Context, all bool) {
 	r.init()
 	runs, err := r.Store.RunsWithUnackedEvents(ctx, r.Connection)
 	if err != nil {
@@ -113,7 +136,11 @@ func (r *Reporter) Flush(ctx context.Context) {
 		}
 		r.upload(ctx, run)
 	}
-	due, err := r.Store.DueOutbox(ctx, db.DueOutboxParams{Connection: r.Connection, NextAttemptAt: r.Now().UnixMilli()})
+	dueBy := r.Now().UnixMilli()
+	if all {
+		dueBy = math.MaxInt64
+	}
+	due, err := r.Store.DueOutbox(ctx, db.DueOutboxParams{Connection: r.Connection, NextAttemptAt: dueBy})
 	if err != nil {
 		r.Log.Error("outbox not read", "connection", r.Connection, "err", err)
 		return

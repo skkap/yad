@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/skkap/yad/internal/config"
 )
@@ -66,6 +68,57 @@ func goldenSpec() Spec {
 		},
 		WorkingDir: "/Users/owner",
 		LogFile:    "/Users/owner/.local/share/yad/profiles/work/logs/service.log",
+		// The default drain wait's budget: 30 min, the ladder, a flush.
+		StopTimeout: 31 * time.Minute,
+	}
+}
+
+// The stop timeout each unit carries is the Spec's — the drain wait's budget —
+// and never below the floor a runner with nothing to drain needs. Launchd's
+// own wait for a stopping job reads it back from the installed plist.
+func TestStopTimeoutReachesTheUnits(t *testing.T) {
+	h := host(t, &fakeRunner{})
+	for _, tc := range []struct {
+		name string
+		stop time.Duration
+		secs string
+	}{
+		{"the drain budget", 2*time.Hour + 75*time.Second, "7275"},
+		{"unset is the floor", 0, "30"},
+		{"below the floor", time.Second, "30"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sp := goldenSpec()
+			sp.StopTimeout = tc.stop
+			l := &Launchd{Host: h}
+			plist, err := l.Render(sp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "<key>ExitTimeOut</key>\n\t<integer>" + tc.secs + "</integer>"; !strings.Contains(string(plist), want) {
+				t.Errorf("plist lacks %q:\n%s", want, plist)
+			}
+			unit, err := (&Systemd{Host: h}).Render(sp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "TimeoutStopSec=" + tc.secs + "s\n"; !strings.Contains(string(unit), want) {
+				t.Errorf("unit lacks %q:\n%s", want, unit)
+			}
+			if err := os.MkdirAll(filepath.Dir(l.File("work")), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(l.File("work"), plist, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			n, _ := strconv.Atoi(tc.secs)
+			if got := l.installedStop("work"); got != time.Duration(n)*time.Second {
+				t.Errorf("installed stop %s, want %ss", got, tc.secs)
+			}
+		})
+	}
+	if got := (&Launchd{Host: h}).installedStop("none"); got != stopTimeout {
+		t.Errorf("no plist: %s, want the floor", got)
 	}
 }
 
@@ -527,6 +580,7 @@ func TestSystemdInstall(t *testing.T) {
 			}
 			checkCalls(t, r.calls, []string{
 				"systemctl --user show --property=UnitPath --value",
+				"systemctl --user stop yad-runner-work.service",
 				"systemctl --user daemon-reload",
 				"systemctl --user enable yad-runner-work.service",
 				"systemctl --user restart yad-runner-work.service",
@@ -766,5 +820,69 @@ func TestSystemdBusAdviceOnlyForTheBus(t *testing.T) {
 		if got := err != nil && strings.Contains(err.Error(), "XDG_RUNTIME_DIR"); got != tc.advice {
 			t.Errorf("%q: advice %v, err %v", tc.msg, got, err)
 		}
+	}
+}
+
+// A reinstall stops the running runner under the unit it started with, before
+// the new unit — whose stop timeout may be shorter — is written and loaded.
+func TestSystemdReinstallStopsUnderTheOldUnit(t *testing.T) {
+	var s *Systemd
+	var atStop []byte
+	r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) {
+		if strings.Contains(call, " stop ") {
+			atStop, _ = os.ReadFile(s.File("work"))
+		}
+		return nil, nil
+	}}
+	h := host(t, r)
+	s = &Systemd{Host: h}
+	// systemd answers a unit it never loaded as the first install finds it.
+	r.answer = func(call string, _ int) ([]byte, error) {
+		if strings.Contains(call, " stop ") {
+			if _, err := os.Stat(s.File("work")); err != nil {
+				return nil, errors.New("exit status 5: Failed to stop yad-runner-work.service: Unit yad-runner-work.service not loaded.")
+			}
+			atStop, _ = os.ReadFile(s.File("work"))
+		}
+		return nil, nil
+	}
+	old := specIn(t, h)
+	old.StopTimeout = 2 * time.Hour
+	if _, err := s.Install(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	r.calls = nil
+	shorter := specIn(t, h)
+	shorter.StopTimeout = time.Minute
+	if _, err := s.Install(context.Background(), shorter); err != nil {
+		t.Fatal(err)
+	}
+	checkCalls(t, r.calls, []string{
+		"systemctl --user show --property=UnitPath --value",
+		"systemctl --user stop yad-runner-work.service",
+		"systemctl --user daemon-reload",
+		"systemctl --user enable yad-runner-work.service",
+		"systemctl --user restart yad-runner-work.service",
+		"loginctl show-user owner --property=Linger --value",
+	}, s.File("work"))
+	if !strings.Contains(string(atStop), "TimeoutStopSec=7200s") {
+		t.Errorf("at the stop the unit said:\n%s\nwant the old unit's 2h timeout", atStop)
+	}
+	if now, _ := os.ReadFile(s.File("work")); !strings.Contains(string(now), "TimeoutStopSec=60s") {
+		t.Errorf("the new unit was not written:\n%s", now)
+	}
+
+	// The file removed under a unit systemd still runs: it is stopped all
+	// the same.
+	if err := os.Remove(s.File("work")); err != nil {
+		t.Fatal(err)
+	}
+	r.answer = func(string, int) ([]byte, error) { return nil, nil }
+	r.calls = nil
+	if _, err := s.Install(context.Background(), shorter); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.calls) < 2 || r.calls[1] != "systemctl --user stop yad-runner-work.service" {
+		t.Errorf("a loaded unit whose file is gone was not stopped first: %q", r.calls)
 	}
 }

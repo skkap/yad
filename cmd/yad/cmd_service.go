@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/runner"
 	"github.com/skkap/yad/internal/service"
 )
 
@@ -98,6 +99,9 @@ func serviceInstall(ctx context.Context, m service.Manager, h service.Host, path
 	if err != nil {
 		return err
 	}
+	// A stop signal drains the runner (decision 0029); the manager must wait
+	// out the drain wait and the cancel ladder before it kills anything.
+	spec.StopTimeout = runner.StopBudget(cfg.Drain.Wait.Duration)
 	if err := paths.Ensure(); err != nil {
 		return err
 	}
@@ -109,6 +113,7 @@ func serviceInstall(ctx context.Context, m service.Manager, h service.Host, path
 	fmt.Fprintf(w, "  unit     %s\n", m.File(paths.Profile))
 	fmt.Fprintf(w, "  runs     %s\n", strings.Join(spec.Args(), " "))
 	fmt.Fprintf(w, "  log      %s\n", spec.LogFile)
+	fmt.Fprintf(w, "  stop     drains for up to %s, then cancels its runs; the service manager waits %s — run install again after changing [drain] wait; a reinstall drains the running runner first\n", cfg.Drain.Wait.Duration, spec.StopTimeout)
 	if note != "" {
 		fmt.Fprintf(w, "  PATH     %s\n", note)
 	} else {

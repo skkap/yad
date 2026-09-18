@@ -4,9 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/runner"
 	"github.com/skkap/yad/internal/service"
 )
 
@@ -83,6 +87,58 @@ func TestServiceInstall(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// The units a service install renders stop the runner no sooner than its
+// drain can end: the drain wait from config.toml, the cancel ladder and a
+// last flush. Changing the wait takes a reinstall.
+func TestServiceInstallDerivesTheStopTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		toml string
+		wait time.Duration
+	}{
+		{"the default drain wait", "", config.DefaultDrainWait},
+		{"a longer one", "capacity = 2\n[drain]\nwait = \"2h\"\n", 2 * time.Hour},
+		{"none at all", "capacity = 2\n[drain]\nwait = \"0s\"\n", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := withFakeService(t, 501)
+			p := newProfile(t)
+			if tc.toml != "" {
+				if err := os.WriteFile(filepath.Join(p.config, "config.toml"), []byte(tc.toml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			code, out, errs := p.yad("", "service", "install", "--profile", "e3-check-stop")
+			if code != 0 || len(m.installed) != 1 {
+				t.Fatalf("exit %d: %s", code, errs)
+			}
+			sp := m.installed[0]
+			budget := runner.StopBudget(tc.wait)
+			if sp.StopTimeout != budget || budget < tc.wait+45*time.Second {
+				t.Fatalf("stop timeout %s, want the budget %s for a %s drain wait", sp.StopTimeout, budget, tc.wait)
+			}
+			secs := strconv.Itoa(int(max(budget, 30*time.Second).Seconds()))
+			plist, err := (&service.Launchd{}).Render(sp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "<key>ExitTimeOut</key>\n\t<integer>" + secs + "</integer>"; !strings.Contains(string(plist), want) {
+				t.Errorf("rendered plist lacks %q", want)
+			}
+			unit, err := (&service.Systemd{}).Render(sp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "TimeoutStopSec=" + secs + "s\n"; !strings.Contains(string(unit), want) {
+				t.Errorf("rendered unit lacks %q", want)
+			}
+			if !strings.Contains(out, "run install again after changing [drain] wait") {
+				t.Errorf("install does not say a changed drain wait needs a reinstall:\n%s", out)
+			}
+		})
 	}
 }
 

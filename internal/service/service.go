@@ -19,10 +19,11 @@ import (
 	"github.com/skkap/yad/internal/config"
 )
 
-// stopTimeout is how long the service manager waits between SIGTERM and
-// SIGKILL. A runner holds its runs in flight across a stop and settles them at
-// the next start, so a stop needs only time to flush the event spool, not to
-// finish a run; drain (DEV-13) is the command that waits for runs.
+// stopTimeout is the least the service manager waits between SIGTERM and
+// SIGKILL. SIGTERM drains the runner (decision 0029), which can take the owner's
+// drain wait and then the cancel ladder, so a unit's own timeout is the Spec's
+// StopTimeout, derived from config.toml; this floor covers a runner with no
+// runs, which needs only time to flush what it owes.
 const stopTimeout = 30 * time.Second
 
 // restartDelay is the pause before a crashed runner is started again. A runner
@@ -43,7 +44,16 @@ type Spec struct {
 	Env        map[string]string // PATH and the directory overrides, captured at install
 	WorkingDir string            // the owner's home: a service's default is /, which no run wants
 	LogFile    string            // standard output and error, until the daemon's own log takes over
+	// StopTimeout is how long a stop may take before the service manager
+	// kills the runner: its drain wait plus the cancel ladder and a last
+	// flush (runner.StopBudget). A changed drain wait reaches the unit only
+	// when `yad service install` runs again.
+	StopTimeout time.Duration
 }
+
+// stopAfter is the unit's timeout between SIGTERM and SIGKILL, never below
+// the floor.
+func (s Spec) stopAfter() time.Duration { return max(s.StopTimeout, stopTimeout) }
 
 // Args is the command line the service runs.
 func (s Spec) Args() []string {

@@ -16,7 +16,7 @@ RestartSec=10s
 RestartSteps=5
 RestartMaxDelaySec=5min
 KillMode=mixed
-TimeoutStopSec=30s
+TimeoutStopSec=1860s
 StandardOutput=append:/Users/owner/.local/share/yad/profiles/work/logs/service.log
 StandardError=append:/Users/owner/.local/share/yad/profiles/work/logs/service.log
 

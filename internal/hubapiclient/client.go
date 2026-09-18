@@ -92,6 +92,14 @@ func (c *Client) Steer(ctx context.Context, runID, text string) (hubapi.Run, err
 	return out, err
 }
 
+// Drain asks a runner to drain: it takes no new runs, lets those it holds
+// finish, and exits.
+func (c *Client) Drain(ctx context.Context, runnerID string) (hubapi.Runner, error) {
+	var out hubapi.Runner
+	err := c.do(ctx, http.MethodPost, "/runners/"+url.PathEscape(runnerID)+"/drain", struct{}{}, &out)
+	return out, err
+}
+
 // Events long-polls once for the events after the cursor, waiting up to wait
 // when there are none.
 func (c *Client) Events(ctx context.Context, runID string, after int64, wait time.Duration) (hubapi.EventPage, error) {

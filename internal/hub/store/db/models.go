@@ -71,6 +71,7 @@ type Runner struct {
 	Health            sql.NullString
 	RegisteredAt      int64
 	LastSyncAt        sql.NullInt64
+	DrainRequestedAt  sql.NullInt64
 }
 
 type Session struct {

@@ -52,6 +52,12 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		if err := sweep(ctx, q, now); err != nil {
 			return err
 		}
+		// Read again inside the transaction: a drain asked for since the
+		// credential was checked must stop this sync's offers.
+		runner, err := q.GetRunner(ctx, runner.ID)
+		if err != nil {
+			return err
+		}
 
 		docJSON, wants := runner.Capabilities, runner.WantsCapabilities != 0
 		switch {
@@ -75,6 +81,16 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		}
 		if wants {
 			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlReportCapabilities})
+		}
+		// A drain asked for goes out until a sync says draining; that sync
+		// is the answer, and the request is done (decision 0029).
+		switch {
+		case runner.DrainRequestedAt.Valid && req.Health.Draining:
+			if err := q.ClearDrain(ctx, runner.ID); err != nil {
+				return err
+			}
+		case runner.DrainRequestedAt.Valid:
+			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlDrain})
 		}
 
 		for _, held := range req.Runs {
@@ -122,6 +138,11 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		var doc v1.Capabilities
 		if err := json.Unmarshal([]byte(docJSON), &doc); err != nil {
 			return fmt.Errorf("stored capability document for %s: %w", runner.ID, err)
+		}
+		// A draining runner takes nothing, and one asked to drain is about
+		// to: an offer now would only come back.
+		if req.Health.Draining || runner.DrainRequestedAt.Valid {
+			return nil
 		}
 		out.Runs, err = h.offer(ctx, q, runner.ID, doc, req.Health.FreeCapacity, lease, now)
 		return err

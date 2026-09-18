@@ -34,6 +34,13 @@ import (
 // replaying a recorded stream. Nothing spends a token or leaves the machine.
 
 func TestMain(m *testing.M) {
+	if os.Getenv(childYad) != "" {
+		// The test binary as yad itself, for tests that signal a runner as a
+		// service manager would; the harness it spawns is still the fake.
+		os.Unsetenv(childYad)
+		main()
+		return
+	}
 	if os.Getenv(fakeClaudeFixture) != "" {
 		fakeClaude()
 		return
@@ -63,6 +70,14 @@ const (
 	// fakeClaudePID, when set, is a file the fake writes its pid to, so a
 	// test can prove no process outlived the run.
 	fakeClaudePID = "E2E_CLAUDE_PID"
+	// fakeClaudeArgs, when set, is a file the fake appends its working
+	// directory and arguments to, one line per start.
+	fakeClaudeArgs = "E2E_CLAUDE_ARGS"
+	// fakeClaudeDeaf makes the fake ignore interrupts at its gate, as a
+	// wedged harness does: only a signal stops it.
+	fakeClaudeDeaf = "E2E_CLAUDE_DEAF"
+	// childYad makes the test binary run as yad.
+	childYad = "E2E_YAD_MAIN"
 )
 
 // e2eFixture is a recorded haiku turn: one Read of a small file, then its
@@ -90,6 +105,13 @@ func fakeClaude() {
 	}
 	if f := os.Getenv(fakeClaudePID); f != "" {
 		os.WriteFile(f, []byte(strconv.Itoa(os.Getpid())), 0o600)
+	}
+	if f := os.Getenv(fakeClaudeArgs); f != "" {
+		wd, _ := os.Getwd()
+		if log, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			log.WriteString(wd + " " + strings.Join(args, " ") + "\n")
+			log.Close()
+		}
 	}
 	users, eof := make(chan struct{}, 16), make(chan struct{})
 	interrupts := make(chan string, 16)
@@ -173,10 +195,13 @@ func awaitGate(interrupts <-chan string) (string, bool) {
 	if at := os.Getenv(fakeClaudeAtGate); at != "" {
 		os.WriteFile(at, nil, 0o600)
 	}
+	deaf := os.Getenv(fakeClaudeDeaf) != ""
 	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		select {
 		case id := <-interrupts:
-			return id, true
+			if !deaf {
+				return id, true
+			}
 		default:
 		}
 		if _, err := os.Stat(gate); err == nil {
@@ -530,12 +555,15 @@ func TestE2ENetworkDropMidRun(t *testing.T) {
 	}
 }
 
-// The runner restarts mid-run. Nothing resumes a run yet (epic E3), so the new
-// process gives it up: it stops listing it, the hub marks it lost when its
-// lease lapses, and the events it streamed before the restart are still
-// delivered — a run ends reported lost, never silently rerun or left hanging.
+// The runner restarts mid-run (decision 0030). The new process reports the run
+// lost — never runs it again — and its result goes out only after the events
+// streamed before the restart, every one, exactly as the runner held them.
+// The session survives: its native id and its workdir are kept, and the next
+// run in it resumes the conversation in the same directory.
 func TestE2ERunnerRestartMidRun(t *testing.T) {
 	m := newMachine(t)
+	argsFile := filepath.Join(t.TempDir(), "claude.args")
+	t.Setenv(fakeClaudeArgs, argsFile)
 	// Uploads are cut from the start, so every event the run streams is
 	// still in the spool when the runner stops: the delivery after the
 	// restart is the only way any of them reaches the hub.
@@ -556,32 +584,36 @@ func TestE2ERunnerRestartMidRun(t *testing.T) {
 	if len(spooled) == 0 || len(m.hubEvents("e2e-restart")) != 0 {
 		t.Fatalf("%d events spooled at the restart and %d on the hub; the test needs them all held back", len(spooled), len(m.hubEvents("e2e-restart")))
 	}
-	if r := localRun(t, s, "e2e-restart"); v1.RunState(r.State).IsTerminal() {
+	r := localRun(t, s, "e2e-restart")
+	if v1.RunState(r.State).IsTerminal() {
 		t.Fatalf("a run stopped with its runner is %s; it must stay held for the next start", r.State)
+	}
+	// Pinned mid-run, before the harness had said anything final.
+	before, err := s.GetSession(context.Background(), db.GetSessionParams{Connection: "home", ID: r.SessionID})
+	if err != nil || !before.NativeID.Valid || before.Workdir == "" {
+		t.Fatalf("session at the restart %+v, %v: the native id and workdir must be recorded mid-run", before, err)
+	}
+	marker := filepath.Join(before.Workdir, "left-by-the-first-run")
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	d = m.daemon()
-	eventually(t, "the new process gives the run up", func() bool {
+	eventually(t, "the new process reports the run lost", func() bool {
 		return localRun(t, s, "e2e-restart").State == string(v1.RunLost)
 	})
-	// The lease lapses; the hub's sweep decides.
-	m.skew.Store(int64(10 * time.Minute))
-	if err := m.hub.Sweep(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	code, out, errs := m.watch("e2e-restart")
-	if code == 0 || !strings.Contains(out, "── lost") || !strings.Contains(errs, "ended lost") {
-		t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
+	// Its result waits behind its events; the run stays listed meanwhile,
+	// so the hub neither has a result nor loses it on a lapsed lease.
+	time.Sleep(200 * time.Millisecond)
+	if run, err := m.client().Run(context.Background(), "e2e-restart"); err != nil || run.State.Terminal() {
+		t.Fatalf("hub run %+v, %v: ended before its events were in", run, err)
 	}
 
-	// Only now, with the run already lost, do the events get through: the
-	// hub takes them from the run's holder after it ends (decision 0023),
-	// every one, exactly as the runner held them. A refusal would empty
-	// the spool too, and leave the hub short.
 	m.cut.Store(nil)
-	eventually(t, "the events streamed before the restart are on the hub", func() bool {
-		return len(m.hubEvents("e2e-restart")) >= len(spooled)
-	})
+	code, out, errs := m.watch("e2e-restart")
+	if code == 0 || !strings.Contains(out, "── lost") || !strings.Contains(errs, "runner_restarted") {
+		t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
+	}
 	evs := m.hubEvents("e2e-restart")
 	if len(evs) != len(spooled) {
 		t.Fatalf("the hub holds %d events; the runner spooled %d", len(evs), len(spooled))
@@ -601,12 +633,46 @@ func TestE2ERunnerRestartMidRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.State != hubapi.RunState(v1.RunLost) || run.Result != nil {
-		t.Errorf("hub run %+v", run)
+	if run.State != hubapi.RunState(v1.RunLost) || run.Result == nil || run.Result.Error == nil ||
+		run.Result.Error.Class != "runner_restarted" || run.Result.LastSeq != int64(len(spooled)) {
+		t.Errorf("hub run %+v, result %+v", run, run.Result)
 	}
-	// Lost is the hub's verdict; the runner owes it no result.
-	if o, err := s.OutboxDepth(context.Background()); err != nil || o != 0 {
-		t.Errorf("outbox %d %v: a lost run owes no result", o, err)
+	eventually(t, "the runner owes nothing", func() bool {
+		o, err1 := s.OutboxDepth(context.Background())
+		sp, err2 := s.SpoolDepth(context.Background())
+		return err1 == nil && err2 == nil && o == 0 && sp == 0
+	})
+
+	// The next run in the session resumes the conversation where it was,
+	// in the same workdir.
+	m.open()
+	out = m.ok("hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku",
+		"--session", run.SessionID, "--run-id", "e2e-resumed", "Carry on.")
+	if strings.TrimSpace(out) != "e2e-resumed" {
+		t.Fatalf("submit printed %q", out)
+	}
+	if code, out, errs := m.watch("e2e-resumed"); code != 0 {
+		t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
+	}
+	after, err := s.GetSession(context.Background(), db.GetSessionParams{Connection: "home", ID: r.SessionID})
+	if err != nil || after.NativeID != before.NativeID || after.Workdir != before.Workdir {
+		t.Errorf("session after the resume %+v, %v; before the restart %+v", after, err, before)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("the workdir lost what the first run left: %v", err)
+	}
+	b, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(starts) != 2 {
+		t.Fatalf("the harness started %d times, want 2:\n%s", len(starts), b)
+	}
+	resume := "--resume " + before.NativeID.String
+	if wd, _ := filepath.EvalSymlinks(before.Workdir); !strings.Contains(starts[1], resume) ||
+		!(strings.HasPrefix(starts[1], before.Workdir+" ") || strings.HasPrefix(starts[1], wd+" ")) {
+		t.Errorf("the second start was %q; want %q in %s", starts[1], resume, before.Workdir)
 	}
 }
 

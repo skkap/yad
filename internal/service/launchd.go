@@ -108,7 +108,7 @@ func (l *Launchd) Render(s Spec) ([]byte, error) {
 	err := plistTmpl.Execute(&b, map[string]any{
 		"Label": l.Name(s.Profile), "Args": s.Args(), "Env": sortedEnv(s.Env),
 		"WorkingDir": s.WorkingDir, "LogFile": s.LogFile,
-		"Throttle": int(restartDelay.Seconds()), "ExitTimeout": int(stopTimeout.Seconds()),
+		"Throttle": int(restartDelay.Seconds()), "ExitTimeout": int(s.stopAfter().Seconds()),
 	})
 	return b.Bytes(), err
 }
@@ -181,7 +181,9 @@ func (l *Launchd) bootout(ctx context.Context, profile string) error {
 	}
 	settle := l.settle
 	if settle == 0 {
-		settle = stopTimeout + 5*time.Second
+		// The job being stopped drains for as long as its own plist allows
+		// before launchd kills it; waiting less would call a drain a failure.
+		settle = l.installedStop(profile) + 5*time.Second
 	}
 	deadline := time.Now().Add(settle)
 	for {
@@ -201,6 +203,26 @@ func (l *Launchd) bootout(ctx context.Context, profile string) error {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+}
+
+var exitTimeOut = regexp.MustCompile(`<key>ExitTimeOut</key>\s*<integer>(\d+)</integer>`)
+
+// installedStop is the ExitTimeOut of the plist installed for a profile, or
+// the floor when there is none to read.
+func (l *Launchd) installedStop(profile string) time.Duration {
+	b, err := os.ReadFile(l.File(profile))
+	if err != nil {
+		return stopTimeout
+	}
+	m := exitTimeOut.FindSubmatch(b)
+	if m == nil {
+		return stopTimeout
+	}
+	n, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		return stopTimeout
+	}
+	return max(time.Duration(n)*time.Second, stopTimeout)
 }
 
 func (l *Launchd) Uninstall(ctx context.Context, profile string) error {
