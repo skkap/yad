@@ -608,7 +608,7 @@ openapi: 3.1.0
 paths:
   /runners/register:
     post:
-      description: Called once by `yad connect`, with the one-time registration token as the bearer. The token is dead afterwards. Registering a runner id the hub already knows replaces its credential; the old one stops working.
+      description: Called once by `yad connect`, with the one-time registration token as the bearer. The token is dead afterwards. Registering a runner id the hub already knows needs a token issued for that runner, and replaces its credential; the old one stops working. With a token for a new runner it is refused with 409.
       operationId: register
       requestBody:
         content:

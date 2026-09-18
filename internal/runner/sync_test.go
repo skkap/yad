@@ -112,8 +112,7 @@ func TestWithdrawnClaimNeverStarts(t *testing.T) {
 	l := e.loop(t, 1)
 	e.enqueue(t, testRun("a", "s1"))
 	mustSync(t, l)
-	// The hub moves on without this runner — its offer lapsed and went
-	// elsewhere, say.
+	// The hub moves on without this runner and settles the run for good.
 	if _, err := e.hubStore.DB.Exec(`UPDATE runs SET state = 'lost' WHERE id = 'a'`); err != nil {
 		t.Fatal(err)
 	}
@@ -121,15 +120,45 @@ func TestWithdrawnClaimNeverStarts(t *testing.T) {
 	if got := e.exec.ids(); len(got) != 0 {
 		t.Fatalf("started %v after the hub cancelled it", got)
 	}
-	local, _ := e.store.GetRun(context.Background(), db.GetRunParams{Connection: "hub", ID: "a"})
-	if local.State != "cancelled" {
-		t.Errorf("local state %s, want cancelled", local.State)
+	if _, err := e.store.GetRun(context.Background(), db.GetRunParams{Connection: "hub", ID: "a"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("withdrawn run still in the store: %v", err)
+	}
+	if _, err := e.store.GetSession(context.Background(), db.GetSessionParams{Connection: "hub", ID: "s1"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("the session the withdrawn claim opened is still there: %v", err)
 	}
 	if l.Pool.Free() != 1 {
 		t.Errorf("free capacity %d, want 1", l.Pool.Free())
 	}
 	if res := mustSync(t, l); len(res.Controls) != 0 {
 		t.Errorf("still listed after withdrawal: %+v", res.Controls)
+	}
+}
+
+// The case the withdrawal exists for: the runner was away past the offer's
+// lease and the hub put the run back in its queue. The next sync cancels the
+// stale claim, which frees its capacity; the one after is offered the run
+// again, and the runner takes it — it starts once, here.
+func TestWithdrawnClaimCanBeOfferedAgain(t *testing.T) {
+	e := newEnv(t)
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	mustSync(t, l)
+	if _, err := e.hubStore.DB.Exec(`UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL WHERE id = 'a'`); err != nil {
+		t.Fatal(err)
+	}
+	res := mustSync(t, l)
+	if !slices.ContainsFunc(res.Controls, func(c v1.Control) bool { return c.Kind == v1.ControlCancel && c.RunID == "a" }) {
+		t.Fatalf("stale claim not cancelled: %+v", res.Controls)
+	}
+	if res := mustSync(t, l); len(res.Runs) != 1 {
+		t.Fatalf("not offered again once its capacity was free: %d runs", len(res.Runs))
+	}
+	mustSync(t, l)
+	if got := e.exec.ids(); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("started %v, want [a] once", got)
+	}
+	if e.hubState(t, "a") != "claimed" {
+		t.Errorf("hub state %s", e.hubState(t, "a"))
 	}
 }
 
@@ -354,6 +383,17 @@ func TestOrphansAreAbandoned(t *testing.T) {
 	if r.State != "lost" || r.Reason != (sql.NullString{String: "the runner restarted while holding it", Valid: true}) {
 		t.Errorf("orphan = %+v", r)
 	}
+
+	// The hub, which never saw it claimed, offers it again: refused, not
+	// dropped, so the offers stop.
+	h.offer = []v1.Run{testRun("old", "s1")}
+	mustSync(t, l)
+	if res, ok := h.results["old"]; !ok || !strings.Contains(res.Error.Message, "not run twice") {
+		t.Errorf("re-offered orphan: %+v, %v", res, ok)
+	}
+	if got := e.exec.ids(); len(got) != 0 {
+		t.Errorf("started %v", got)
+	}
 }
 
 // Refusals the hub cannot take yet are kept and sent again; ones it answered
@@ -390,5 +430,31 @@ func TestRefusalsRetryOnlyTransientFailures(t *testing.T) {
 	mustSync(t, l)
 	if calls["/runs/later/result"] != 2 || calls["/runs/gone/result"] != 1 {
 		t.Errorf("result calls %v", calls)
+	}
+}
+
+// A hub that stalls on results cannot hold the next sync back for long:
+// refusals go out a few per sync, after the reservation is returned.
+func TestRefusalsAreBoundedPerSync(t *testing.T) {
+	e := newEnv(t)
+	h := &scriptedHub{}
+	doc := drivableDoc("r", 2)
+	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
+		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
+	l.init()
+	for i := range 3 * refusalsPerSync {
+		l.refuse(string(rune('a'+i)), "x")
+	}
+	mustSync(t, l)
+	if len(h.results) != refusalsPerSync {
+		t.Errorf("sent %d refusals in one sync, want %d", len(h.results), refusalsPerSync)
+	}
+	if l.Pool.Free() != 2 {
+		t.Errorf("capacity held after the sync: free %d", l.Pool.Free())
+	}
+	mustSync(t, l)
+	mustSync(t, l)
+	if len(h.results) != 3*refusalsPerSync || len(l.refused) != 0 {
+		t.Errorf("after three syncs: sent %d, still owed %d", len(h.results), len(l.refused))
 	}
 }

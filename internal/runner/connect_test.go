@@ -55,8 +55,12 @@ func TestConnectRoundTrip(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already used") || !strings.Contains(err.Error(), "yad hub token create") {
 		t.Errorf("reused token: %v", err)
 	}
-	// A fresh token under the same name rotates the credential.
-	if _, res2, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err != nil || res2.RunnerCredential == res.RunnerCredential {
+	// A token for a new runner cannot replace this one's credential; a token
+	// issued for it can, under the same name.
+	if _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err == nil || !strings.Contains(err.Error(), "--runner "+id) {
+		t.Errorf("re-connect with a new-runner token: %v", err)
+	}
+	if _, res2, err := Connect(ctx, e.paths, e.url, e.token(t, id), "home"); err != nil || res2.RunnerCredential == res.RunnerCredential {
 		t.Errorf("re-connect: %v", err)
 	}
 	if cfg, _ := config.Load(e.paths); len(cfg.Connections) != 1 {

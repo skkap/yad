@@ -31,6 +31,11 @@ const (
 	// maxRefusals bounds the refusals kept for re-sending; past it the oldest
 	// are dropped, and the hub re-offering them brings them back.
 	maxRefusals = 256
+	// Refusals go out after the sync, a few at a time and within a deadline,
+	// so a hub that stalls on them cannot hold back the next sync — and with
+	// it the leases on every run this runner holds.
+	refusalsPerSync = 8
+	refusalBudget   = 10 * time.Second
 )
 
 // Executor runs claimed runs. It is how the next layer (the executor, epic E2)
@@ -111,6 +116,9 @@ type Loop struct {
 type pendingRun struct {
 	run     v1.Run
 	release func()
+	// newSession is whether the claim created the session row, and so
+	// whether withdrawing the claim removes it again.
+	newSession bool
 }
 
 func (l *Loop) init() {
@@ -146,7 +154,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		var wait time.Duration
 		switch {
 		case err != nil && fatal(err):
-			return fmt.Errorf("connection %s: %w", l.Connection, err)
+			return err
 		case err != nil:
 			failures++
 			wait = backoff(failures)
@@ -228,6 +236,8 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	for _, run := range out.Runs {
 		l.claim(ctx, run, doc, res)
 	}
+	// What was not claimed goes back before anything else can wait on the hub.
+	res.Close()
 	l.sendRefusals(ctx)
 	return out, nil
 }
@@ -248,9 +258,13 @@ func (l *Loop) claim(ctx context.Context, run v1.Run, doc v1.Capabilities, res *
 	if _, ok := l.refused[run.RunID]; ok {
 		return
 	}
-	if _, err := l.Store.GetRun(ctx, db.GetRunParams{Connection: l.Connection, ID: run.RunID}); err == nil {
-		// Already in the store: held (and listed every sync) or finished
-		// (and its result on the way). Neither is a new claim.
+	if prev, err := l.Store.GetRun(ctx, db.GetRunParams{Connection: l.Connection, ID: run.RunID}); err == nil {
+		if !v1.RunState(prev.State).IsTerminal() {
+			return // held: it is listed on every sync already
+		}
+		// It ended here — lost at a restart, say — and the hub offers it
+		// again. A run is never run twice; saying so ends the re-offers.
+		l.refuse(run.RunID, fmt.Sprintf("this runner already held run %s and it ended as %s; a run is not run twice", run.RunID, prev.State))
 		return
 	}
 	if reason := refusal(run, doc); reason != "" {
@@ -262,7 +276,8 @@ func (l *Loop) claim(ctx context.Context, run v1.Run, doc v1.Capabilities, res *
 		l.Log.Warn("offered past free capacity; leaving it for the hub to offer again", "connection", l.Connection, "run", run.RunID)
 		return
 	}
-	if err := l.record(ctx, run); err != nil {
+	newSession, err := l.record(ctx, run)
+	if err != nil {
 		res.putBack(run.Harness)
 		var r refused
 		if errors.As(err, &r) {
@@ -272,7 +287,7 @@ func (l *Loop) claim(ctx context.Context, run v1.Run, doc v1.Capabilities, res *
 		l.Log.Error("claim not recorded; leaving it for the hub to offer again", "connection", l.Connection, "run", run.RunID, "err", err)
 		return
 	}
-	l.pending[run.RunID] = pendingRun{run: run, release: release}
+	l.pending[run.RunID] = pendingRun{run: run, release: release, newSession: newSession}
 }
 
 // refused is a reason a run cannot be taken that only the store can see.
@@ -281,16 +296,18 @@ type refused string
 func (r refused) Error() string { return string(r) }
 
 // record writes the claim: the session when the run opens one, and the run as
-// claimed, without its grants — grants never touch this machine's disk.
-func (l *Loop) record(ctx context.Context, run v1.Run) error {
+// claimed, without its grants — grants never touch this machine's disk. It
+// reports whether it created the session.
+func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err error) {
 	stored := run
 	stored.Grants = nil
 	spec, err := json.Marshal(stored)
 	if err != nil {
-		return err
+		return false, err
 	}
 	now := l.Clock.Now().UnixMilli()
-	return l.Store.Tx(ctx, func(q *db.Queries) error {
+	err = l.Store.Tx(ctx, func(q *db.Queries) error {
+		newSession = false
 		sess, err := q.GetSession(ctx, db.GetSessionParams{Connection: l.Connection, ID: run.Session.ID})
 		switch {
 		case err == nil && run.Session.New:
@@ -308,6 +325,7 @@ func (l *Loop) record(ctx context.Context, run v1.Run) error {
 			}); err != nil {
 				return err
 			}
+			newSession = true
 		case err != nil:
 			return err
 		}
@@ -325,6 +343,7 @@ func (l *Loop) record(ctx context.Context, run v1.Run) error {
 			Model: run.Model, Spec: string(spec), CreatedAt: now, UpdatedAt: now,
 		})
 	})
+	return newSession, err
 }
 
 // refusal is why this runner cannot take a run, judged from the run alone and
@@ -358,7 +377,14 @@ func (l *Loop) refuse(runID, reason string) {
 // it. A refusal the hub answered — accepted, or refused with a 4xx — is done;
 // one lost to the network or a 5xx is sent again after the next sync.
 func (l *Loop) sendRefusals(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, refusalBudget)
+	defer cancel()
+	sent := 0
 	for id, res := range l.refused {
+		if sent == refusalsPerSync || ctx.Err() != nil {
+			return
+		}
+		sent++
 		err := l.Hub.Result(ctx, id, res)
 		var se *hubclient.StatusError
 		if err == nil || errors.As(err, &se) && se.Status < 500 {
@@ -368,18 +394,26 @@ func (l *Loop) sendRefusals(ctx context.Context) {
 }
 
 // withdraw drops a run the hub cancelled before this runner listed it: it
-// never started, so there is nothing to stop. No result is owed — the hub
-// already decided its fate, and it may belong to another runner by now.
+// never started, so there is nothing to stop and no result is owed — the hub
+// already decided its fate. Its rows are removed rather than marked, because
+// the hub may offer the same run again (a withdrawn offer goes back in its
+// queue), and a leftover row, or a leftover empty session, would make this
+// runner refuse the very run it gave up.
 func (l *Loop) withdraw(ctx context.Context, runID string) {
 	p := l.pending[runID]
 	delete(l.pending, runID)
 	defer p.release()
-	now := l.Clock.Now().UnixMilli()
-	if err := l.Store.SetRunState(ctx, db.SetRunStateParams{
-		State: string(v1.RunCancelled), Reason: sql.NullString{String: "withdrawn by the hub before it started", Valid: true},
-		UpdatedAt: now, Connection: l.Connection, ID: runID,
-	}); err != nil {
-		l.Log.Error("withdrawn run not recorded", "connection", l.Connection, "run", runID, "err", err)
+	err := l.Store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.DeleteUnstartedRun(ctx, db.DeleteUnstartedRunParams{Connection: l.Connection, ID: runID}); err != nil {
+			return err
+		}
+		if !p.newSession {
+			return nil
+		}
+		return q.DeleteEmptySession(ctx, db.DeleteEmptySessionParams{Connection: l.Connection, ID: p.run.Session.ID})
+	})
+	if err != nil {
+		l.Log.Error("withdrawn run not removed", "connection", l.Connection, "run", runID, "err", err)
 	}
 }
 

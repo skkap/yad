@@ -40,7 +40,12 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) token(t *testing.T, ttl time.Duration) string {
 	t.Helper()
-	tok, _, err := IssueRegistrationToken(context.Background(), f.store, ttl, f.clock.Now())
+	return f.tokenFor(t, ttl, "")
+}
+
+func (f *fixture) tokenFor(t *testing.T, ttl time.Duration, runner string) string {
+	t.Helper()
+	tok, _, err := IssueRegistrationToken(context.Background(), f.store, ttl, f.clock.Now(), runner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,10 +85,15 @@ func serve(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-// register registers a runner that drives claude and returns its credential.
+// register registers a runner that drives claude and returns its credential;
+// a runner the hub already knows is re-registered with a token issued for it.
 func (f *fixture) register(t *testing.T, id string) string {
 	t.Helper()
-	rec := serve(f.hub, newRequest(t, "/v1/runners/register", registerBody(t, doc(id)), headers(f.token(t, time.Hour))))
+	tok := f.token(t, time.Hour)
+	if _, err := f.store.GetRunner(context.Background(), id); err == nil {
+		tok = f.tokenFor(t, time.Hour, id)
+	}
+	rec := serve(f.hub, newRequest(t, "/v1/runners/register", registerBody(t, doc(id)), headers(tok)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("register %s: %d %s", id, rec.Code, rec.Body)
 	}

@@ -1,5 +1,5 @@
 -- name: CreateRegistrationToken :exec
-INSERT INTO registration_tokens (hash, created_at, expires_at) VALUES (?, ?, ?);
+INSERT INTO registration_tokens (hash, created_at, expires_at, for_runner) VALUES (?, ?, ?, ?);
 
 -- name: GetRegistrationToken :one
 SELECT * FROM registration_tokens WHERE hash = ?;
@@ -12,7 +12,8 @@ WHERE hash = sqlc.arg(hash) AND used_at IS NULL AND expires_at > sqlc.arg(now);
 
 -- name: UpsertRunner :exec
 -- Registering an id that exists replaces its credential: the old one dies,
--- which is how a runner that lost its credential file is recovered.
+-- which is how a runner that lost its credential file is recovered. The
+-- caller checks the token was issued for that id first.
 INSERT INTO runners (id, name, credential_hash, capabilities, fingerprint, registered_at)
 VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
@@ -54,16 +55,25 @@ VALUES (?, ?, ?, ?, ?, 'queued', ?, ?);
 SELECT * FROM runs WHERE id = ?;
 
 -- name: OfferCandidates :many
--- Queued runs this runner may be offered: in a session that is unbound or
--- bound to it, and never while another run of that session is out, because a
--- session has at most one live run.
+-- Queued runs this runner may be offered, oldest first, a page at a time
+-- after the (created_at, id) cursor: only harnesses it can take now, only the
+-- oldest queued run of each session, only in a session that is unbound or
+-- bound to it, and never while another run of that session is out, since a
+-- session has at most one live run. Filtering here rather than in Go is what
+-- keeps runs it must skip from filling the page ahead of runs it could take.
 SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
+  AND r.harness IN (SELECT value FROM json_each(sqlc.arg(harnesses_json)))
+  AND (r.created_at > sqlc.arg(after_created_at) OR (r.created_at = sqlc.arg(after_created_at) AND r.id > sqlc.arg(after_id)))
   AND (s.runner_id IS NULL OR s.runner_id = sqlc.arg(runner_id))
   AND NOT EXISTS (
       SELECT 1 FROM runs o
       WHERE o.session_id = r.session_id
         AND o.state IN ('offered', 'claimed', 'preparing', 'running', 'waiting'))
+  AND NOT EXISTS (
+      SELECT 1 FROM runs e
+      WHERE e.session_id = r.session_id AND e.state = 'queued'
+        AND (e.created_at < r.created_at OR (e.created_at = r.created_at AND e.id < r.id)))
 ORDER BY r.created_at, r.id
 LIMIT sqlc.arg(max);
 

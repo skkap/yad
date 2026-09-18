@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -16,11 +17,10 @@ import (
 	"github.com/skkap/yad/internal/hub/store/db"
 )
 
-// candidateWindow is how many queued runs one sync looks at to fill the
-// runner's free capacity. Runs for a harness this runner cannot drive are
-// skipped in Go, so the window is wider than any capacity to keep a queue
-// headed by such runs from starving the rest.
-const candidateWindow = 256
+// candidatePage is how many queued runs one query returns. The query already
+// leaves out everything this runner cannot take, so a page is mostly offers;
+// offer pages on until the free capacity is filled or the queue runs out.
+const candidatePage = 64
 
 func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 	runner, err := h.authenticate(ctx, in.Runner)
@@ -131,43 +131,69 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 // than the free capacity it declared, in total or for any harness it capped,
 // and never a harness it cannot drive: the runner would have to refuse it.
 func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, free v1.Capacity, lease sql.NullInt64, now time.Time) ([]v1.Run, error) {
-	if free.Total <= 0 {
-		return nil, nil
-	}
 	me := sql.NullString{String: runnerID, Valid: true}
-	cands, err := q.OfferCandidates(ctx, db.OfferCandidatesParams{RunnerID: me, Max: candidateWindow})
-	if err != nil {
-		return nil, err
-	}
 	left := map[string]int{}
 	for id, n := range free.ByHarness {
 		left[id] = n
 	}
-	busy := map[string]bool{}
-	var runs []v1.Run
-	for _, c := range cands {
-		if len(runs) >= free.Total {
+	// takeable is the harnesses this runner can drive and still has room
+	// for; it shrinks as caps fill, and the next page asks for fewer.
+	takeable := func() []string {
+		var ids []string
+		for _, hr := range doc.Harnesses {
+			if n, capped := left[hr.ID]; capped && n <= 0 {
+				continue
+			}
+			if capability.Drivable(doc, hr.ID) && !slices.Contains(ids, hr.ID) {
+				ids = append(ids, hr.ID)
+			}
+		}
+		return ids
+	}
+	var (
+		runs   []v1.Run
+		cursor db.Run
+	)
+	for len(runs) < free.Total {
+		harnesses := takeable()
+		if len(harnesses) == 0 {
 			break
 		}
-		if !capability.Drivable(doc, c.Harness) || busy[c.SessionID] {
-			continue
-		}
-		if n, capped := left[c.Harness]; capped && n <= 0 {
-			continue
-		}
-		var run v1.Run
-		if err := json.Unmarshal([]byte(c.Spec), &run); err != nil {
-			return nil, fmt.Errorf("stored run %s: %w", c.ID, err)
-		}
-		if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
+		// A JSON array rather than sqlc.slice: sqlc numbers its parameters,
+		// and expanding a slice of two or more shifted every one after it.
+		list, err := json.Marshal(harnesses)
+		if err != nil {
 			return nil, err
 		}
-		if _, capped := left[c.Harness]; capped {
-			left[c.Harness]--
+		page, err := q.OfferCandidates(ctx, db.OfferCandidatesParams{
+			HarnessesJson: string(list), AfterCreatedAt: cursor.CreatedAt, AfterID: cursor.ID, RunnerID: me, Max: candidatePage,
+		})
+		if err != nil {
+			return nil, err
 		}
-		// Two queued runs of one new session must not go out together.
-		busy[c.SessionID] = true
-		runs = append(runs, run)
+		for _, c := range page {
+			cursor = c
+			if len(runs) >= free.Total {
+				break
+			}
+			if n, capped := left[c.Harness]; capped && n <= 0 {
+				continue
+			}
+			var run v1.Run
+			if err := json.Unmarshal([]byte(c.Spec), &run); err != nil {
+				return nil, fmt.Errorf("stored run %s: %w", c.ID, err)
+			}
+			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
+				return nil, err
+			}
+			if _, capped := left[c.Harness]; capped {
+				left[c.Harness]--
+			}
+			runs = append(runs, run)
+		}
+		if len(page) < candidatePage {
+			break
+		}
 	}
 	return runs, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -124,9 +125,11 @@ func newEnv(t *testing.T) *env {
 	return &env{hub: h, hubStore: hs, url: srv.URL + hub.BasePath, paths: p, store: rs, exec: &executor{}, clock: &fakeClock{now: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)}}
 }
 
-func (e *env) token(t *testing.T) string {
+// token issues a registration token: for a new runner, or with forRunner to
+// re-register that one.
+func (e *env) token(t *testing.T, forRunner ...string) string {
 	t.Helper()
-	tok, _, err := hub.IssueRegistrationToken(context.Background(), e.hubStore, time.Hour, time.Now())
+	tok, _, err := hub.IssueRegistrationToken(context.Background(), e.hubStore, time.Hour, time.Now(), strings.Join(forRunner, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,6 +19,7 @@ type RegistrationToken struct {
 	Hash      string
 	CreatedAt int64
 	ExpiresAt int64
+	ForRunner sql.NullString
 	UsedAt    sql.NullInt64
 	RunnerID  sql.NullString
 }

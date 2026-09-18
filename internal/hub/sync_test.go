@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -274,6 +275,54 @@ func TestSyncAuthentication(t *testing.T) {
 			res, env := f.sync(t, tc.path, tc.cred, tc.body)
 			if res.StatusCode != tc.status || env.Error.NextAction == "" {
 				t.Errorf("%d %+v", res.StatusCode, env.Error)
+			}
+		})
+	}
+}
+
+// Runs this runner must skip cannot hide one it can take, however many there
+// are ahead of it: runs for a harness no runner drives, runs of a harness it
+// has capped, and the later runs of one busy session.
+func TestSkippedRunsDoNotStarveTheQueue(t *testing.T) {
+	const ahead = 300 // past any single page
+	for _, tc := range []struct {
+		name string
+		fill func(i int) v1.Run
+		free v1.Capacity
+		want []string
+	}{
+		{"undrivable harness", func(i int) v1.Run {
+			r := run(fmt.Sprintf("g%03d", i), fmt.Sprintf("gs%03d", i))
+			r.Harness = "gemini"
+			return r
+		}, v1.Capacity{Total: 2}, []string{"wanted"}},
+		{"capped harness", func(i int) v1.Run {
+			r := run(fmt.Sprintf("x%03d", i), fmt.Sprintf("xs%03d", i))
+			r.Harness = "codex"
+			return r
+		}, v1.Capacity{Total: 2, ByHarness: map[string]int{"codex": 1}}, []string{"x000", "wanted"}},
+		{"one session's backlog", func(i int) v1.Run {
+			r := run(fmt.Sprintf("b%03d", i), "busy")
+			r.Session.New = i == 0
+			return r
+		}, v1.Capacity{Total: 2}, []string{"b000", "wanted"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			cred := f.register(t, "r1")
+			for i := range ahead {
+				f.enqueue(t, tc.fill(i))
+				f.clock.Advance(time.Millisecond)
+			}
+			f.enqueue(t, run("wanted", "ws"))
+			r := first("r1", 0)
+			d := doc("r1")
+			d.Harnesses[1].Kind = "first-class" // codex drivable, so its cap is what binds
+			r.Capabilities = &d
+			r.Health.FreeCapacity = tc.free
+			res := f.mustSync(t, "r1", cred, r)
+			if got := ids(res.Runs); !slices.Equal(got, tc.want) {
+				t.Errorf("offered %v, want %v", got, tc.want)
 			}
 		})
 	}

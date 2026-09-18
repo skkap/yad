@@ -72,17 +72,23 @@ func (q *Queries) BurnRegistrationToken(ctx context.Context, arg BurnRegistratio
 }
 
 const createRegistrationToken = `-- name: CreateRegistrationToken :exec
-INSERT INTO registration_tokens (hash, created_at, expires_at) VALUES (?, ?, ?)
+INSERT INTO registration_tokens (hash, created_at, expires_at, for_runner) VALUES (?, ?, ?, ?)
 `
 
 type CreateRegistrationTokenParams struct {
 	Hash      string
 	CreatedAt int64
 	ExpiresAt int64
+	ForRunner sql.NullString
 }
 
 func (q *Queries) CreateRegistrationToken(ctx context.Context, arg CreateRegistrationTokenParams) error {
-	_, err := q.db.ExecContext(ctx, createRegistrationToken, arg.Hash, arg.CreatedAt, arg.ExpiresAt)
+	_, err := q.db.ExecContext(ctx, createRegistrationToken,
+		arg.Hash,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+		arg.ForRunner,
+	)
 	return err
 }
 
@@ -169,7 +175,7 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 }
 
 const getRegistrationToken = `-- name: GetRegistrationToken :one
-SELECT hash, created_at, expires_at, used_at, runner_id FROM registration_tokens WHERE hash = ?
+SELECT hash, created_at, expires_at, for_runner, used_at, runner_id FROM registration_tokens WHERE hash = ?
 `
 
 func (q *Queries) GetRegistrationToken(ctx context.Context, hash string) (RegistrationToken, error) {
@@ -179,6 +185,7 @@ func (q *Queries) GetRegistrationToken(ctx context.Context, hash string) (Regist
 		&i.Hash,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.ForRunner,
 		&i.UsedAt,
 		&i.RunnerID,
 	)
@@ -299,25 +306,43 @@ func (q *Queries) LoseLapsedRuns(ctx context.Context, now int64) (int64, error) 
 const offerCandidates = `-- name: OfferCandidates :many
 SELECT r.id, r.session_id, r.harness, r.model, r.spec, r.state, r.runner_id, r.lease_expires_at, r.resumes_at, r.reason, r.created_at, r.updated_at FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
-  AND (s.runner_id IS NULL OR s.runner_id = ?1)
+  AND r.harness IN (SELECT value FROM json_each(?1))
+  AND (r.created_at > ?2 OR (r.created_at = ?2 AND r.id > ?3))
+  AND (s.runner_id IS NULL OR s.runner_id = ?4)
   AND NOT EXISTS (
       SELECT 1 FROM runs o
       WHERE o.session_id = r.session_id
         AND o.state IN ('offered', 'claimed', 'preparing', 'running', 'waiting'))
+  AND NOT EXISTS (
+      SELECT 1 FROM runs e
+      WHERE e.session_id = r.session_id AND e.state = 'queued'
+        AND (e.created_at < r.created_at OR (e.created_at = r.created_at AND e.id < r.id)))
 ORDER BY r.created_at, r.id
-LIMIT ?2
+LIMIT ?5
 `
 
 type OfferCandidatesParams struct {
-	RunnerID sql.NullString
-	Max      int64
+	HarnessesJson  interface{}
+	AfterCreatedAt int64
+	AfterID        string
+	RunnerID       sql.NullString
+	Max            int64
 }
 
-// Queued runs this runner may be offered: in a session that is unbound or
-// bound to it, and never while another run of that session is out, because a
-// session has at most one live run.
+// Queued runs this runner may be offered, oldest first, a page at a time
+// after the (created_at, id) cursor: only harnesses it can take now, only the
+// oldest queued run of each session, only in a session that is unbound or
+// bound to it, and never while another run of that session is out, since a
+// session has at most one live run. Filtering here rather than in Go is what
+// keeps runs it must skip from filling the page ahead of runs it could take.
 func (q *Queries) OfferCandidates(ctx context.Context, arg OfferCandidatesParams) ([]Run, error) {
-	rows, err := q.db.QueryContext(ctx, offerCandidates, arg.RunnerID, arg.Max)
+	rows, err := q.db.QueryContext(ctx, offerCandidates,
+		arg.HarnessesJson,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.RunnerID,
+		arg.Max,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -556,7 +581,8 @@ type UpsertRunnerParams struct {
 }
 
 // Registering an id that exists replaces its credential: the old one dies,
-// which is how a runner that lost its credential file is recovered.
+// which is how a runner that lost its credential file is recovered. The
+// caller checks the token was issued for that id first.
 func (q *Queries) UpsertRunner(ctx context.Context, arg UpsertRunnerParams) error {
 	_, err := q.db.ExecContext(ctx, upsertRunner,
 		arg.ID,

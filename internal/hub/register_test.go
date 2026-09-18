@@ -75,6 +75,7 @@ func TestRegisterRefusals(t *testing.T) {
 		{"unknown token", "yadreg_nope", registerBody(t, doc("r1")), 401, v1.CodeUnauthorized, "never issued"},
 		{"expired token", expired, registerBody(t, doc("r1")), 401, v1.CodeUnauthorized, "expired"},
 		{"bad runner id", live, registerBody(t, bad), 400, v1.CodeInvalid, "runner_id"},
+		{"dot-dot runner id", live, registerBody(t, doc("..")), 400, v1.CodeInvalid, "runner_id"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res, env := post(t, f.hub, "/v1/runners/register", tc.body, headers(tc.bearer))
@@ -89,8 +90,41 @@ func TestRegisterRefusals(t *testing.T) {
 	}
 }
 
-// Registering an id the hub knows replaces the credential: the recovery for a
-// runner that lost its credential file. The old credential stops working.
+// Runner ids are not secret, so a token for a new runner must not take over
+// one that exists: that would hand its sessions and their grants to whoever
+// holds any token. Only a token issued for that runner replaces its
+// credential, and a refused request burns nothing.
+func TestOnlyATokenForThatRunnerReRegistersIt(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "victim")
+	f.register(t, "other")
+	newRunner := f.token(t, time.Hour)
+	res, env := post(t, f.hub, "/v1/runners/register", registerBody(t, doc("victim")), headers(newRunner))
+	if res.StatusCode != http.StatusConflict || env.Error.Code != v1.CodeConflict || !strings.Contains(env.Error.NextAction, "--runner victim") {
+		t.Fatalf("takeover with a new-runner token: %d %+v", res.StatusCode, env.Error)
+	}
+	if res, _ := f.sync(t, "victim", cred, v1.SyncRequest{RunnerID: "victim"}); res.StatusCode != http.StatusOK {
+		t.Errorf("the victim's credential stopped working: %d", res.StatusCode)
+	}
+	forOther := f.tokenFor(t, time.Hour, "other")
+	if res, env := post(t, f.hub, "/v1/runners/register", registerBody(t, doc("victim")), headers(forOther)); res.StatusCode != http.StatusUnauthorized || !strings.Contains(env.Error.Message, `"other"`) {
+		t.Errorf("takeover with a token for another runner: %d %+v", res.StatusCode, env.Error)
+	}
+	// Both refused tokens still do what they were issued for.
+	if res, env := post(t, f.hub, "/v1/runners/register", registerBody(t, doc("fresh")), headers(newRunner)); res.StatusCode != http.StatusOK {
+		t.Errorf("new-runner token after its refusal: %d %+v", res.StatusCode, env.Error)
+	}
+	if res, env := post(t, f.hub, "/v1/runners/register", registerBody(t, doc("other")), headers(forOther)); res.StatusCode != http.StatusOK {
+		t.Errorf("runner-bound token after its refusal: %d %+v", res.StatusCode, env.Error)
+	}
+	if _, _, err := IssueRegistrationToken(context.Background(), f.store, time.Hour, f.clock.Now(), "nobody"); err == nil {
+		t.Error("issued a re-registration token for a runner the hub does not know")
+	}
+}
+
+// Re-registering with a token issued for the runner replaces the credential:
+// the recovery for a runner that lost its credential file. The old credential
+// stops working.
 func TestReRegisterRotatesTheCredential(t *testing.T) {
 	f := newFixture(t)
 	first := f.register(t, "r1")
@@ -109,11 +143,11 @@ func TestReRegisterRotatesTheCredential(t *testing.T) {
 func TestTokenTTLIsBounded(t *testing.T) {
 	f := newFixture(t)
 	for _, ttl := range []time.Duration{0, -time.Second, MaxTokenTTL + time.Second} {
-		if _, _, err := IssueRegistrationToken(context.Background(), f.store, ttl, f.clock.Now()); err == nil {
+		if _, _, err := IssueRegistrationToken(context.Background(), f.store, ttl, f.clock.Now(), ""); err == nil {
 			t.Errorf("ttl %s accepted", ttl)
 		}
 	}
-	tok, exp, err := IssueRegistrationToken(context.Background(), f.store, DefaultTokenTTL, f.clock.Now())
+	tok, exp, err := IssueRegistrationToken(context.Background(), f.store, DefaultTokenTTL, f.clock.Now(), "")
 	if err != nil || !strings.HasPrefix(tok, registrationTokenPrefix) || !exp.Equal(f.clock.Now().Add(time.Hour)) {
 		t.Errorf("%q %v %v", tok, exp, err)
 	}

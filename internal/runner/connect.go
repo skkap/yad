@@ -20,8 +20,9 @@ import (
 // connection: the credential in credentials/<name> at 0600, the connection in
 // config.toml. The token is used for the one request and kept nowhere.
 //
-// Connecting again under the same name and URL registers again, which gives
-// the runner a fresh credential — the recovery for a lost or leaked one.
+// Connecting again under the same name and URL registers again, with a token
+// the hub issued for this runner, which gives the runner a fresh credential —
+// the recovery for a lost or leaked one.
 func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (config.Connection, v1.RegisterResponse, error) {
 	var none v1.RegisterResponse
 	token = strings.TrimSpace(token)

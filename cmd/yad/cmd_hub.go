@@ -18,7 +18,7 @@ import (
 // no-port rule (decision 0004) binds runners, not hubs.
 func cmdHub(ctx context.Context, g global, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: yad hub serve [--listen addr] | yad hub token create [--ttl 1h]")
+		return fmt.Errorf("usage: yad hub serve [--listen addr] | yad hub token create [--ttl 1h] [--runner id]")
 	}
 	switch args[0] {
 	case "serve":
@@ -84,11 +84,12 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 // alone, so it can be piped; everything said about it goes to stderr.
 func cmdHubToken(ctx context.Context, g global, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] != "create" {
-		return fmt.Errorf("usage: yad hub token create [--ttl 1h]")
+		return fmt.Errorf("usage: yad hub token create [--ttl 1h] [--runner id]")
 	}
 	fs := flag.NewFlagSet("hub token create", flag.ContinueOnError)
 	ttl := fs.Duration("ttl", hub.DefaultTokenTTL, "how long the token can be used, at most "+hub.MaxTokenTTL.String())
 	dbFile := fs.String("db", g.paths.HubDB(), "the hub's database — the one `yad hub serve` uses")
+	forRunner := fs.String("runner", "", "re-register this existing runner id, replacing its credential (default: a token for a new runner)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -97,7 +98,7 @@ func cmdHubToken(ctx context.Context, g global, args []string, stdout, stderr io
 		return err
 	}
 	defer s.Close()
-	tok, exp, err := hub.IssueRegistrationToken(ctx, s, *ttl, time.Now())
+	tok, exp, err := hub.IssueRegistrationToken(ctx, s, *ttl, time.Now(), *forRunner)
 	if err != nil {
 		return err
 	}

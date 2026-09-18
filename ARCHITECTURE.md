@@ -392,7 +392,9 @@ yad sessions [close <id>]
 yad account add|list|use|remove
 yad service install|uninstall      launchd user agent, systemd user unit
 yad hub serve|submit|watch        the standalone hub
-yad hub token create [--ttl 1h]    a one-time registration token
+yad hub token create [--ttl 1h] [--runner id]
+                                   a one-time registration token; --runner re-registers
+                                   that runner, the only way to replace its credential
 yad conformance <url>              check any hub against v1
 ```
 

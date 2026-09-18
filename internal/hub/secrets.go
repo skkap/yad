@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -47,9 +49,20 @@ func hashSecret(s string) string {
 // IssueRegistrationToken creates a one-time registration token valid for ttl
 // and returns it with its expiry. Only its hash is stored: the returned string
 // is the one copy there will ever be.
-func IssueRegistrationToken(ctx context.Context, s *store.Store, ttl time.Duration, now time.Time) (string, time.Time, error) {
+//
+// forRunner empty makes a token for a new runner. A runner id makes a token
+// that re-registers that runner, replacing its credential — and only that
+// runner: a new-runner token refuses an id the hub already knows.
+func IssueRegistrationToken(ctx context.Context, s *store.Store, ttl time.Duration, now time.Time, forRunner string) (string, time.Time, error) {
 	if ttl <= 0 || ttl > MaxTokenTTL {
 		return "", time.Time{}, fmt.Errorf("--ttl %s is out of range — pick a duration above zero and at most %s", ttl, MaxTokenTTL)
+	}
+	if forRunner != "" {
+		if _, err := s.GetRunner(ctx, forRunner); errors.Is(err, sql.ErrNoRows) {
+			return "", time.Time{}, fmt.Errorf("this hub has no runner %q — leave out --runner to register a new one", forRunner)
+		} else if err != nil {
+			return "", time.Time{}, err
+		}
 	}
 	tok, err := newSecret(registrationTokenPrefix)
 	if err != nil {
@@ -58,6 +71,7 @@ func IssueRegistrationToken(ctx context.Context, s *store.Store, ttl time.Durati
 	exp := now.Add(ttl)
 	if err := s.CreateRegistrationToken(ctx, db.CreateRegistrationTokenParams{
 		Hash: hashSecret(tok), CreatedAt: store.Ms(now), ExpiresAt: store.Ms(exp),
+		ForRunner: sql.NullString{String: forRunner, Valid: forRunner != ""},
 	}); err != nil {
 		return "", time.Time{}, err
 	}

@@ -34,13 +34,15 @@ const BasePath = "/v1"
 
 // Timings. The hub owns them (ARCHITECTURE.md §2): a runner syncs at the
 // interval the hub names, within these bounds, and a lease lapses after four
-// missed intervals — long enough to ride out a runner's error backoff, which
-// tops out at 30 s, without losing a run to one dropped request.
+// missed intervals, so one dropped request never loses a run. It is never
+// shorter than minLease, which outlasts the runner's backoff (1 s doubling to
+// 30 s) through five failures in a row — a hub blip of about a minute.
 const (
 	DefaultSyncInterval = 15 * time.Second
 	MinSyncInterval     = 5 * time.Second
 	MaxSyncInterval     = 60 * time.Second
 	missedIntervals     = 4
+	minLease            = 60 * time.Second
 )
 
 // Options configure a hub. Store is required to serve; generating the OpenAPI
@@ -73,7 +75,7 @@ func New(opts Options) *Hub {
 		h.interval = DefaultSyncInterval
 	}
 	h.interval = min(max(h.interval, MinSyncInterval), MaxSyncInterval)
-	h.lease = missedIntervals * h.interval
+	h.lease = max(missedIntervals*h.interval, minLease)
 
 	inner := http.NewServeMux()
 	api := humago.New(inner, Config())
@@ -220,7 +222,8 @@ func (h *Hub) register(api huma.API) {
 		OperationID: "register", Method: http.MethodPost, Path: "/runners/register",
 		Summary: "Exchange a registration token for a runner credential",
 		Description: "Called once by `yad connect`, with the one-time registration token as the bearer. The token is dead afterwards. " +
-			"Registering a runner id the hub already knows replaces its credential; the old one stops working.",
+			"Registering a runner id the hub already knows needs a token issued for that runner, and replaces its credential; " +
+			"the old one stops working. With a token for a new runner it is refused with 409.",
 		Security: security, Errors: []int{400, 401, 409, 426},
 	}, h.registerRunner)
 

@@ -49,15 +49,23 @@ func Serve(ctx context.Context, o Options) error {
 		mu   sync.Mutex
 		errs []error
 	)
+	// fail records a connection that stopped, and says so now: the others
+	// keep the process running, so the return value may be hours away.
+	fail := func(conn string, err error) {
+		o.Log.Error("connection stopped", "connection", conn, "err", err)
+		mu.Lock()
+		defer mu.Unlock()
+		errs = append(errs, fmt.Errorf("connection %s: %w", conn, err))
+	}
 	for _, conn := range o.Config.Connections {
 		cred, err := o.Paths.Credential(conn.Name)
 		if err != nil {
-			errs = append(errs, err)
+			fail(conn.Name, err)
 			continue
 		}
 		client, err := hubclient.New(conn.URL, cred)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("connection %s: %w", conn.Name, err))
+			fail(conn.Name, err)
 			continue
 		}
 		l := &Loop{
@@ -66,10 +74,7 @@ func Serve(ctx context.Context, o Options) error {
 		}
 		wg.Go(func() {
 			if err := l.Run(ctx); err != nil {
-				o.Log.Error("connection stopped", "connection", conn.Name, "err", err)
-				mu.Lock()
-				errs = append(errs, err)
-				mu.Unlock()
+				fail(conn.Name, err)
 			}
 		})
 	}

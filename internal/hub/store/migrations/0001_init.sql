@@ -10,6 +10,10 @@ CREATE TABLE registration_tokens (
     hash       TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
+    -- Set when the token was issued to re-register one runner that already
+    -- exists: only such a token may replace a runner's credential, so a
+    -- token for "a new machine" cannot take over a runner somebody else holds.
+    for_runner TEXT,
     -- Set once, by the exchange that burns it; a second exchange finds it set.
     used_at    INTEGER,
     runner_id  TEXT
