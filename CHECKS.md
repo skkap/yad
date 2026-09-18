@@ -25,12 +25,12 @@ go vet ./...
 go tool staticcheck ./...        # pinned in go.mod as a tool, so everyone runs the same version
 CGO_ENABLED=1 go test -race ./...
 go build ./cmd/yad
-make generate && git diff --exit-code internal/store/db internal/hub/store/db protocol/v1/openapi.yaml
+make generate && git diff --exit-code internal/store/db internal/hub/store/db protocol/v1/openapi.yaml protocol/hubapi/openapi.yaml
 GOOS=… GOARCH=… go build ./...   # linux/amd64, linux/arm64, darwin/arm64, darwin/amd64
 ```
 
-**Generated files.** A change to `internal/store/*.sql`, `internal/hub/store/*.sql` or to a `protocol/v1`
-type needs `make generate` and the regenerated files in the same commit. The
+**Generated files.** A change to `internal/store/*.sql`, `internal/hub/store/*.sql`, or to a `protocol/v1`
+or `protocol/hubapi` type needs `make generate` and the regenerated files in the same commit. The
 check also fails on a generated file that exists but was never added — the
 usual way a new sqlc output file goes missing from a PR.
 

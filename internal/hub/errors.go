@@ -30,38 +30,59 @@ func Fail(status int, code, message, next string) *ErrorResponse {
 	return &ErrorResponse{status: status, Err: v1.Error{Code: code, Message: message, NextAction: next}}
 }
 
-// huma produces its own errors — validation and bad JSON — through NewError.
-// Requests that match no operation never reach huma; protocolRoutes answers
-// those. Replacing it is huma's documented extension point; it is
-// process-wide, which is fine in a binary that only ever serves this protocol.
+// huma produces its own errors — validation and bad JSON — through
+// NewErrorWithContext. Requests that match no operation never reach huma;
+// protocolRoutes and serviceRoutes answer those. Replacing it is huma's
+// documented extension point, and it is process-wide, so the one hook serves
+// both APIs: serviceRoutes marks its requests, and each API's errors point at
+// its own document — a service caller never needs the runner protocol's.
 func init() {
 	// An absent list is an empty list on the wire; "array or null" would make
 	// every TypeScript consumer handle a case that carries no meaning.
 	huma.DefaultArrayNullable = false
 	huma.NewError = func(status int, msg string, errs ...error) huma.StatusError {
-		var details []string
-		for _, e := range errs {
-			if e != nil {
-				details = append(details, e.Error())
-			}
-		}
-		if len(details) > 0 {
-			msg = msg + ": " + strings.Join(details, "; ")
-		}
-		code := v1.CodeInvalid
-		next := "fix the request to match protocol/v1/openapi.yaml"
-		switch status {
-		case http.StatusUnauthorized:
-			code, next = v1.CodeUnauthorized, "register again with a fresh registration token"
-		case http.StatusNotFound:
-			code, next = v1.CodeNotFound, "check the connection URL"
-		case 0:
-			// huma calls NewError(0, "") only to learn the error schema.
-		default:
-			if status >= 500 {
-				code, next = "internal", "retry later; if it persists, the hub's logs have the cause"
-			}
-		}
-		return Fail(status, code, msg, next)
+		return newError(false, status, msg, errs...)
 	}
+	huma.NewErrorWithContext = func(ctx huma.Context, status int, msg string, errs ...error) huma.StatusError {
+		return newError(ctx != nil && ctx.Context().Value(serviceKey{}) != nil, status, msg, errs...)
+	}
+}
+
+// serviceKey marks a request to the service API.
+type serviceKey struct{}
+
+func newError(service bool, status int, msg string, errs ...error) *ErrorResponse {
+	var details []string
+	for _, e := range errs {
+		if e != nil {
+			details = append(details, e.Error())
+		}
+	}
+	if len(details) > 0 {
+		msg = msg + ": " + strings.Join(details, "; ")
+	}
+	code := v1.CodeInvalid
+	next := "fix the request to match protocol/v1/openapi.yaml"
+	if service {
+		next = "fix the request to match protocol/hubapi/openapi.yaml"
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		code, next = v1.CodeUnauthorized, "register again with a fresh registration token"
+		if service {
+			next = newAdminTokenAction
+		}
+	case http.StatusNotFound:
+		code, next = v1.CodeNotFound, "check the connection URL"
+		if service {
+			next = "check the hub URL and the path"
+		}
+	case 0:
+		// huma calls NewError(0, "") only to learn the error schema.
+	default:
+		if status >= 500 {
+			code, next = "internal", "retry later; if it persists, the hub's logs have the cause"
+		}
+	}
+	return Fail(status, code, msg, next)
 }

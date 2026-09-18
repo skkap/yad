@@ -61,9 +61,20 @@ func (s *Store) Tx(ctx context.Context, fn func(q *db.Queries) error) error {
 // Ms is the store's time representation.
 func Ms(t time.Time) int64 { return t.UnixMilli() }
 
-// EnqueueRun puts a run in the queue, creating its session when the hub has
-// not seen it. It is how tests put work in today, and what `yad hub submit`
-// builds on.
+// Why EnqueueRun refused a run. Each is a different next action for whoever
+// submitted it, so the service API answers each with its own status.
+var (
+	ErrRunExists      = errors.New("the hub already has a run with this id")
+	ErrSessionExists  = errors.New("the session already exists")
+	ErrNoSession      = errors.New("the hub has no such session")
+	ErrSessionHarness = errors.New("the session belongs to another harness")
+)
+
+// EnqueueRun puts a run in the queue. A run in a new session creates it; a
+// run continuing one needs the hub to have it. The run's own flag says which,
+// and it is checked rather than trusted, because the runner acts on it: a
+// "new" run in an existing session would start the conversation over, and a
+// continuing one in no session would resume nothing.
 func (s *Store) EnqueueRun(ctx context.Context, run v1.Run, now time.Time) error {
 	if err := run.Validate(); err != nil {
 		return fmt.Errorf("run %q: %w", run.RunID, err)
@@ -76,17 +87,26 @@ func (s *Store) EnqueueRun(ctx context.Context, run v1.Run, now time.Time) error
 		return err
 	}
 	return s.Tx(ctx, func(q *db.Queries) error {
-		if err := q.CreateSession(ctx, db.CreateSessionParams{ID: run.Session.ID, Harness: run.Harness, CreatedAt: Ms(now)}); err != nil {
+		if _, err := q.GetRun(ctx, run.RunID); err == nil {
+			return fmt.Errorf("run %q: %w", run.RunID, ErrRunExists)
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		sess, err := q.GetSession(ctx, run.Session.ID)
-		if err != nil {
+		switch {
+		case err == nil && run.Session.New:
+			return fmt.Errorf("run %q: session %q: %w", run.RunID, run.Session.ID, ErrSessionExists)
+		case errors.Is(err, sql.ErrNoRows) && !run.Session.New:
+			return fmt.Errorf("run %q: session %q: %w", run.RunID, run.Session.ID, ErrNoSession)
+		case errors.Is(err, sql.ErrNoRows):
+			if err := q.CreateSession(ctx, db.CreateSessionParams{ID: run.Session.ID, Harness: run.Harness, CreatedAt: Ms(now)}); err != nil {
+				return err
+			}
+		case err != nil:
 			return err
-		}
-		// A session belongs to one harness: a Codex run cannot resume a Claude
-		// conversation.
-		if sess.Harness != run.Harness {
-			return fmt.Errorf("run %q: session %q is a %s session, not %s — use a new session id", run.RunID, run.Session.ID, sess.Harness, run.Harness)
+		case sess.Harness != run.Harness:
+			// A Codex run cannot resume a Claude conversation.
+			return fmt.Errorf("run %q: session %q is a %s session, not %s: %w", run.RunID, run.Session.ID, sess.Harness, run.Harness, ErrSessionHarness)
 		}
 		return q.CreateRun(ctx, db.CreateRunParams{
 			ID: run.RunID, SessionID: run.Session.ID, Harness: run.Harness, Model: run.Model,
