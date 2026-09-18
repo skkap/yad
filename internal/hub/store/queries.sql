@@ -116,3 +116,18 @@ ON CONFLICT (run_id) DO NOTHING;
 
 -- name: GetResult :one
 SELECT * FROM results WHERE run_id = ?;
+
+-- Admin tokens and the service API (DEV-7). Kept in one block so the runner's
+-- events and result queries can land beside it without a merge fight.
+
+-- name: CreateAdminToken :exec
+INSERT INTO admin_tokens (hash, name, created_at) VALUES (?, ?, ?);
+
+-- name: GetAdminToken :one
+SELECT * FROM admin_tokens WHERE hash = ?;
+
+-- name: ListAdminTokens :many
+SELECT name, created_at FROM admin_tokens ORDER BY name;
+
+-- name: RevokeAdminToken :execrows
+DELETE FROM admin_tokens WHERE name = ?;

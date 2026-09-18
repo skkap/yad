@@ -51,6 +51,15 @@ which is per runner, revocable and rotatable, and is the only secret kept.
 _Rules_: A registration token is dead after its exchange; the runner never stores it.
 _See_: [0010](docs/decisions/0010-registration-token-exchanged-for-runner-credential.md), [0020](docs/decisions/0020-the-registration-token-may-be-typed.md)
 
+**Admin token** — the secret a service or a person presents to `yad hub`'s
+service API to submit runs and follow them. Created on the hub's machine, named,
+revocable, stored by the hub only as a hash. A third kind beside the
+registration token and the runner credential, and never accepted where either
+of them is: a runner cannot submit work, and a service cannot pose as a runner.
+Only `yad hub` has one — a hub that embeds the protocol makes runs its own way.
+_Avoid_: API key, PAT — Zumino's word for a person's token
+_See_: [0021](docs/decisions/0021-hub-service-api-beside-the-protocol.md), `internal/hub/admin.go`
+
 **Capability document** — what a runner advertises to each hub: its id, name,
 OS, arch, labels, `yad` version, the harness list with versions and accounts,
 host tools, capacity, and the protocol features it supports. Public surface —

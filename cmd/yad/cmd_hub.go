@@ -8,8 +8,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
+	"github.com/skkap/yad/protocol/hubapi"
+
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hub"
 	"github.com/skkap/yad/internal/hub/store"
 )
@@ -18,25 +22,27 @@ import (
 // no-port rule (decision 0004) binds runners, not hubs.
 func cmdHub(ctx context.Context, g global, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: yad hub serve [--listen addr] | yad hub token create [--ttl 1h] [--runner id]")
+		return errors.New("usage: yad hub serve | token create | admin-token create|list|revoke | submit | watch <run>")
 	}
 	switch args[0] {
 	case "serve":
 		return cmdHubServe(ctx, g, args[1:], stdout)
 	case "token":
 		return cmdHubToken(ctx, g, args[1:], stdout, stderr)
-	case "submit", "watch":
-		return fmt.Errorf("`yad hub %s` arrives in epic E2 (Zumino yad/dev) — see ARCHITECTURE.md §9", args[0])
+	case "admin-token":
+		return cmdHubAdminToken(ctx, g, args[1:], stdout, stderr)
+	case "submit":
+		return cmdHubSubmit(ctx, g, args[1:], stdout, stderr)
+	case "watch":
+		return cmdHubWatch(ctx, g, args[1:], stdout, stderr)
 	default:
-		return fmt.Errorf("unknown hub subcommand %q — use serve or token", args[0])
+		return fmt.Errorf("unknown hub subcommand %q — use serve, token, admin-token, submit or watch", args[0])
 	}
 }
 
 func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("hub serve", flag.ContinueOnError)
-	// Loopback by default: exposing a hub is a deliberate act, usually behind a
-	// tailnet or a TLS-terminating proxy.
-	listen := fs.String("listen", "127.0.0.1:7878", "address to serve the protocol on")
+	listen := fs.String("listen", defaultHubListen, "address to serve the protocol and the service API on")
 	dbFile := fs.String("db", g.paths.HubDB(), "the hub's database")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -54,6 +60,7 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 	}
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	fmt.Fprintf(w, "yad hub serving protocol v1 at http://%s%s — register a runner with a token from `yad hub token create`\n", ln.Addr(), hub.BasePath)
+	fmt.Fprintf(w, "service API at http://%s%s — submit runs with `yad hub submit` and an admin token from `yad hub admin-token create`\n", ln.Addr(), hubapi.BasePath)
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
@@ -80,6 +87,10 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 	}
 }
 
+// defaultHubListen is loopback: exposing a hub is a deliberate act, usually
+// behind a tailnet or a TLS-terminating proxy.
+const defaultHubListen = "127.0.0.1:7878"
+
 // cmdHubToken prints a one-time registration token. The token goes to stdout
 // alone, so it can be piped; everything said about it goes to stderr.
 func cmdHubToken(ctx context.Context, g global, args []string, stdout, stderr io.Writer) error {
@@ -105,4 +116,88 @@ func cmdHubToken(ctx context.Context, g global, args []string, stdout, stderr io
 	fmt.Fprintln(stdout, tok)
 	fmt.Fprintf(stderr, "registers one runner, once, until %s — on the runner: yad connect <hub url> --token -  (and paste it)\n", exp.Local().Format(time.DateTime))
 	return nil
+}
+
+// cmdHubAdminToken manages the admin tokens the service API accepts. They are
+// created on the hub's machine, against its database, like registration
+// tokens; unlike those, they are long-lived, so by default the token goes
+// straight into a 0600 file and is never shown.
+func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stderr io.Writer) error {
+	const usage = "usage: yad hub admin-token create [--name cli] [--out file|-] | list | revoke <name>"
+	if len(args) == 0 {
+		return errors.New(usage)
+	}
+	fs := flag.NewFlagSet("hub admin-token "+args[0], flag.ContinueOnError)
+	dbFile := fs.String("db", g.paths.HubDB(), "the hub's database — the one `yad hub serve` uses")
+	name := fs.String("name", "cli", "what to call the token, to tell it apart and revoke it")
+	out := fs.String("out", g.paths.HubAdminToken(), "file to save the token in (0600); - prints it once to stdout, for a service's secret store")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	open := func() (*store.Store, error) { return store.Open(ctx, *dbFile) }
+	switch args[0] {
+	case "create":
+		if fs.NArg() > 0 {
+			return fmt.Errorf("unexpected argument %q — %s", fs.Arg(0), usage)
+		}
+		// Checked before the token exists: a token issued and then not
+		// saved is a live secret nobody holds.
+		if *out != "-" {
+			if _, err := os.Stat(*out); err == nil {
+				return fmt.Errorf("%s already holds an admin token — revoke that one (`yad hub admin-token list`, then revoke), delete the file, and create again; or pass --out elsewhere", *out)
+			}
+		}
+		s, err := open()
+		if err != nil {
+			return err
+		}
+		defer s.Close()
+		tok, err := hub.IssueAdminToken(ctx, s, *name, time.Now())
+		if err != nil {
+			return err
+		}
+		if *out == "-" {
+			fmt.Fprintln(stdout, tok)
+			fmt.Fprintf(stderr, "admin token %q — shown this once; store it as the service's secret, never in a command line\n", *name)
+			return nil
+		}
+		if err := config.WriteSecret(*out, tok); err != nil {
+			return errors.Join(fmt.Errorf("the token was created but not saved to %s — revoke it with `yad hub admin-token revoke %s`", *out, *name), err)
+		}
+		fmt.Fprintf(stdout, "admin token %q saved to %s (0600) — `yad hub submit` and `yad hub watch` read it from there\n", *name, *out)
+		return nil
+	case "list":
+		s, err := open()
+		if err != nil {
+			return err
+		}
+		defer s.Close()
+		toks, err := s.ListAdminTokens(ctx)
+		if err != nil {
+			return err
+		}
+		if len(toks) == 0 {
+			fmt.Fprintln(stdout, "no admin tokens — `yad hub admin-token create` makes one")
+		}
+		for _, t := range toks {
+			fmt.Fprintf(stdout, "%s\tcreated %s\n", t.Name, time.UnixMilli(t.CreatedAt).Local().Format(time.DateTime))
+		}
+		return nil
+	case "revoke":
+		if fs.NArg() != 1 {
+			return errors.New("usage: yad hub admin-token revoke <name>")
+		}
+		s, err := open()
+		if err != nil {
+			return err
+		}
+		defer s.Close()
+		if err := hub.RevokeAdminToken(ctx, s, fs.Arg(0)); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "admin token %q revoked — it stops working on its next request\n", fs.Arg(0))
+		return nil
+	default:
+		return fmt.Errorf("unknown admin-token subcommand %q — %s", args[0], usage)
+	}
 }

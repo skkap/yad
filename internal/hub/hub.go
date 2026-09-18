@@ -10,11 +10,16 @@
 // Register and sync are served; events, result and deregister are declared and
 // documented, and answer not_implemented until the rest of epic E2 (Zumino
 // yad/dev) lands.
+//
+// Beside the protocol, under hubapi.BasePath, is the service API — submit a
+// run, read it, long-poll its events — which only this hub has, behind its own
+// admin tokens (decision 0021).
 package hub
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +28,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/skkap/yad/protocol/hubapi"
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/hub/store"
@@ -58,6 +64,8 @@ type Options struct {
 // Hub is the protocol server.
 type Hub struct {
 	api      huma.API
+	service  huma.API
+	bell     bell
 	mux      *http.ServeMux
 	store    *store.Store
 	now      func() time.Time
@@ -81,15 +89,20 @@ func New(opts Options) *Hub {
 	api := humago.New(inner, Config())
 	h.register(api)
 
+	svcMux := http.NewServeMux()
+	svc := humago.New(svcMux, ServiceConfig())
+	h.registerService(svc)
+
 	outer := http.NewServeMux()
 	outer.Handle(BasePath+"/", http.StripPrefix(BasePath, protocolRoutes(inner)))
+	outer.Handle(hubapi.BasePath+"/", http.StripPrefix(hubapi.BasePath, h.serviceRoutes(svcMux)))
 	// Anything outside the base is a wrong connection URL. Say so in the
 	// protocol's own shape, not the mux's plain-text 404.
 	outer.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, Fail(http.StatusNotFound, v1.CodeNotFound, "no protocol at "+r.URL.Path,
 			"the connection URL must end in the hub's base, e.g. https://host"+BasePath))
 	})
-	h.api, h.mux = api, outer
+	h.api, h.service, h.mux = api, svc, outer
 	return h
 }
 
@@ -115,23 +128,52 @@ func protocolRoutes(ops *http.ServeMux) http.Handler {
 		// as a declared header parameter keeps it out of the operations'
 		// parameters: openapi.yaml already declares it as the security scheme.
 		r = r.WithContext(context.WithValue(r.Context(), bearerKey{}, bearerFrom(r)))
-		fallback, pattern := ops.Handler(r)
-		if pattern == "" {
-			rec := &recorder{header: http.Header{}, status: http.StatusNotFound}
-			fallback.ServeHTTP(rec, r)
-			if rec.status == http.StatusMethodNotAllowed {
-				w.Header().Set("Allow", rec.header.Get("Allow"))
-				writeError(w, Fail(http.StatusMethodNotAllowed, v1.CodeInvalid,
-					r.Method+" "+r.URL.Path+" is not an operation",
-					"every protocol call is a POST — see protocol/v1/openapi.yaml"))
-				return
-			}
-			writeError(w, Fail(http.StatusNotFound, v1.CodeNotFound, "no operation at "+r.URL.Path,
-				"check the connection URL and the path against protocol/v1/openapi.yaml"))
+		if unmatched(ops, w, r, "every protocol call is a POST — see protocol/v1/openapi.yaml",
+			"check the connection URL and the path against protocol/v1/openapi.yaml") {
 			return
 		}
 		ops.ServeHTTP(w, r)
 	})
+}
+
+// serviceRoutes guards the service API: an admin token before anything else,
+// so an unauthenticated caller learns nothing about which paths exist, and the
+// same error envelope as the protocol for every path and method.
+func (h *Hub) serviceRoutes(ops *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := h.authenticateAdmin(r.Context(), bearerFrom(r)); err != nil {
+			var e *ErrorResponse
+			if !errors.As(err, &e) {
+				e = Fail(http.StatusInternalServerError, "internal", "the hub could not check the admin token", "retry later; if it persists, the hub's logs have the cause")
+			}
+			writeError(w, e)
+			return
+		}
+		if unmatched(ops, w, r, "see protocol/hubapi/openapi.yaml for each path's method",
+			"check the hub URL and the path against protocol/hubapi/openapi.yaml") {
+			return
+		}
+		ops.ServeHTTP(w, r)
+	})
+}
+
+// unmatched answers a request no operation matches with the error envelope,
+// and reports whether it did. huma sees only requests that match, so the mux's
+// own plain-text 404 or 405 would otherwise reach the caller.
+func unmatched(ops *http.ServeMux, w http.ResponseWriter, r *http.Request, methodHint, pathHint string) bool {
+	fallback, pattern := ops.Handler(r)
+	if pattern != "" {
+		return false
+	}
+	rec := &recorder{header: http.Header{}, status: http.StatusNotFound}
+	fallback.ServeHTTP(rec, r)
+	if rec.status == http.StatusMethodNotAllowed {
+		w.Header().Set("Allow", rec.header.Get("Allow"))
+		writeError(w, Fail(http.StatusMethodNotAllowed, v1.CodeInvalid, r.Method+" "+r.URL.Path+" is not an operation", methodHint))
+		return true
+	}
+	writeError(w, Fail(http.StatusNotFound, v1.CodeNotFound, "no operation at "+r.URL.Path, pathHint))
+	return true
 }
 
 // recorder captures what the mux's own fallback would have written, so its
@@ -148,8 +190,11 @@ func (r *recorder) WriteHeader(status int)      { r.status = status }
 // ServeHTTP serves the protocol under BasePath.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
 
-// OpenAPI returns the generated document as YAML.
+// OpenAPI returns the protocol's generated document as YAML.
 func (h *Hub) OpenAPI() ([]byte, error) { return h.api.OpenAPI().YAML() }
+
+// ServiceOpenAPI returns the service API's generated document as YAML.
+func (h *Hub) ServiceOpenAPI() ([]byte, error) { return h.service.OpenAPI().YAML() }
 
 // Config is the OpenAPI frame. Its version is the protocol's, never the
 // binary's, so a yad release that changes no wire type changes no byte of the

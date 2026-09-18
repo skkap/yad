@@ -124,6 +124,9 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A sync moves run states — offered, claimed, running, lost — and a
+	// watcher waiting on one hears it now rather than at its next poll.
+	h.bell.ring()
 	return &syncOutput{Body: out}, nil
 }
 
@@ -202,7 +205,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 // first; `yad hub serve` also sweeps on a timer, so a hub whose only runner
 // went away still marks that runner's runs lost.
 func (h *Hub) Sweep(ctx context.Context) error {
-	return h.store.Tx(ctx, func(q *db.Queries) error { return sweep(ctx, q, h.now()) })
+	err := h.store.Tx(ctx, func(q *db.Queries) error { return sweep(ctx, q, h.now()) })
+	h.bell.ring()
+	return err
 }
 
 // SweepEvery is how often `yad hub serve` should call Sweep.

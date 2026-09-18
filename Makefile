@@ -10,7 +10,7 @@ export CGO_ENABLED := 0
 
 # Files `make generate` owns. check-generated fails when any of them differ from
 # what the code produces, including when one is new and uncommitted.
-GENERATED := internal/store/db internal/hub/store/db protocol/v1/openapi.yaml
+GENERATED := internal/store/db internal/hub/store/db protocol/v1/openapi.yaml protocol/hubapi/openapi.yaml
 
 TARGETS := linux/amd64 linux/arm64 darwin/arm64 darwin/amd64
 
@@ -34,7 +34,7 @@ build:
 generate:
 	cd internal/store && sqlc generate
 	cd internal/hub/store && sqlc generate
-	go run ./internal/hub/cmd/openapigen protocol/v1/openapi.yaml
+	go run ./internal/hub/cmd/openapigen protocol/v1/openapi.yaml protocol/hubapi/openapi.yaml
 
 check-generated: generate
 	@git diff --exit-code -- $(GENERATED) || { echo "generated files are stale — run 'make generate' and commit"; exit 1; }

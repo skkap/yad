@@ -60,6 +60,8 @@ a run, runs a harness, streams what happened, and says whether it is alive.
 cmd/yad/                 the CLI — one file per command group, no logic
 protocol/v1/             the wire types; public, so Go hubs can import them;
                          openapi.yaml generated from them and committed
+protocol/hubapi/         yad hub's service API types, and its own generated
+                         openapi.yaml — not part of the protocol (0021)
 internal/config          profiles, config.toml, credentials on disk
 internal/store           SQLite: schema, migrations, sqlc-generated queries
 internal/harness         the catalog, detection, versions
@@ -74,6 +76,7 @@ internal/supervise       spawn, process groups, watchdogs, cancel ladder
 internal/workdir         sources, bare caches, worktrees, setup hook, slots, GC
 internal/runner          connections, sync loop, capacity, executor, spool, outbox
 internal/hubclient       the runner side of the protocol
+internal/hubapiclient    the caller side of yad hub's service API
 internal/hub             `yad hub`: huma server, store, submit/watch API
 internal/control         the Unix control socket, server and client
 internal/conformance     the protocol conformance suite, run against any hub
@@ -217,6 +220,20 @@ strings — the runner in its capability document, the hub in its register
 response — and nothing is used that the other side did not advertise. A hub may
 refuse a runner below `min_version` with `version_too_old` and a next action.
 
+### yad hub's service API
+
+Not part of the protocol, and never implemented by a hub that embeds it:
+`yad hub`'s own way for a service or a person to make runs —
+[0021](docs/decisions/0021-hub-service-api-beside-the-protocol.md). Mounted at
+`/api/v1` beside the protocol, described by `protocol/hubapi/openapi.yaml`
+(generated, committed, drift-checked), authenticated by an **admin token**.
+
+| | |
+|---|---|
+| `POST /runs` | queue a run: harness, model, brief, optional sources, grants and session; idempotent by `run_id` |
+| `GET /runs/{run}` | the run's hub-side state (`queued`, `offered`, then the protocol's) and its result; never its grants |
+| `GET /runs/{run}/events?after=N&wait_ms=…` | long poll: events after `N`, the run, and `done` once the stream is complete |
+
 ## §3 Running a harness
 
 A run is: take capacity → prepare (workdir, setup hook, account) → spawn →
@@ -333,7 +350,8 @@ build tag; the suite never runs a real harness.
 `config.toml`, `runner-id` and `credentials/<connection>` (each `0600`); the
 data directory holds `state.db`, `workdirs/`, `repos/`, `accounts/`,
 `transcripts/`, `logs/` and the control socket `yad.sock` — and `hub.db` when
-the machine also runs `yad hub`.
+the machine also runs `yad hub`. A machine that submits to a hub keeps its
+admin token in the config directory's `hub-admin-token` (`0600`).
 
 ### `config.toml`
 
@@ -374,8 +392,8 @@ user_version`; migrations are embedded and run on open.
 ### `hub.db`
 
 `yad hub`'s own store, a separate SQLite file opened the same way, with its
-queries in `internal/hub/store/*.sql`. Tables: `registration_tokens` and
-`runners` (secrets only as SHA-256 hashes), `sessions` (the runner each is bound
+queries in `internal/hub/store/*.sql`. Tables: `registration_tokens`,
+`runners` and `admin_tokens` (secrets only as SHA-256 hashes), `sessions` (the runner each is bound
 to), `runs`, `events` (unique `(run_id, seq)`) and `results` (one per run). A
 run's hub-side state adds two before the protocol's: `queued` and `offered`.
 
@@ -391,7 +409,14 @@ yad status                         runs, sessions, accounts, connections — via
 yad sessions [close <id>]
 yad account add|list|use|remove
 yad service install|uninstall      launchd user agent, systemd user unit
-yad hub serve|submit|watch        the standalone hub
+yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1
+yad hub submit --harness h --model m [--session id | --new-session id] <instruction | ->
+                                   queue a run; prints its id (--watch follows it)
+yad hub watch <run>                a run's events as they arrive, then its result;
+                                   exits non-zero unless it succeeded
+yad hub admin-token create|list|revoke
+                                   the service API's tokens; create saves to a 0600
+                                   file and prints nothing secret (--out - prints once)
 yad hub token create [--ttl 1h] [--runner id]
                                    a one-time registration token; --runner re-registers
                                    that runner, the only way to replace its credential
@@ -435,7 +460,11 @@ line here is a reviewed change.
 
 - The runner runs as an ordinary user, never root; the service units say so.
 - Tokens: `0600` files, never logged, never printed, never in argv, never in an
-  event. Grants are deleted when their run ends.
+  event. Grants are deleted when their run ends, and the service API never
+  returns one.
+- Three secret kinds, never interchangeable: registration token, runner
+  credential, admin token. The protocol accepts only the first two, the service
+  API only the third.
 - Permission mode and sandbox are runner configuration per harness; no protocol
   field can set them — [0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md).
 - A hub is untrusted input; harness output is data. Neither is ever executed or

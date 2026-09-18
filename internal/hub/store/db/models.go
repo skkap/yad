@@ -8,6 +8,12 @@ import (
 	"database/sql"
 )
 
+type AdminToken struct {
+	Hash      string
+	Name      string
+	CreatedAt int64
+}
+
 type Event struct {
 	RunID      string
 	Seq        int64

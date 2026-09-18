@@ -97,6 +97,11 @@ usage: yad [--profile name] <command> [flags]
   daemon start        the runner (--foreground; background arrives in E3)
   hub serve           the standalone hub (headless)
   hub token create    a one-time registration token for yad connect
+  hub admin-token create|list|revoke
+                      tokens for the hub's service API
+  hub submit --harness h --model m <instruction>
+                      queue a run on a hub; prints its id
+  hub watch <run>     a run's events as they arrive, then its result
   version             version and build
 
   disconnect · status · sessions · account · service · conformance

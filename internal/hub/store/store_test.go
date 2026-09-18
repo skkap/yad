@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -180,5 +181,39 @@ func TestEnqueueRefusesAnotherHarnessInOneSession(t *testing.T) {
 	}
 	if err := s.EnqueueRun(ctx, v1.Run{RunID: "bad"}, t0); err == nil {
 		t.Error("an invalid run was queued")
+	}
+}
+
+// The session flag on a run is what the runner acts on — create or resume —
+// so the store holds it to the truth instead of trusting it.
+func TestEnqueueHoldsTheSessionFlagToTheTruth(t *testing.T) {
+	cont := func(id, session string) v1.Run {
+		r := run(id, session)
+		r.Session.New = false
+		return r
+	}
+	for _, tc := range []struct {
+		name string
+		runs []v1.Run
+		want error
+	}{
+		{"new session", []v1.Run{run("r1", "s1")}, nil},
+		{"continue a session", []v1.Run{run("r1", "s1"), cont("r2", "s1")}, nil},
+		{"start a session twice", []v1.Run{run("r1", "s1"), run("r2", "s1")}, ErrSessionExists},
+		{"continue no session", []v1.Run{cont("r1", "s1")}, ErrNoSession},
+		{"same run id twice", []v1.Run{run("r1", "s1"), cont("r1", "s1")}, ErrRunExists},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := open(t)
+			var err error
+			for _, r := range tc.runs {
+				if err = s.EnqueueRun(context.Background(), r, t0); err != nil {
+					break
+				}
+			}
+			if !errors.Is(err, tc.want) || (tc.want == nil) != (err == nil) {
+				t.Errorf("err = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }
