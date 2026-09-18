@@ -711,6 +711,42 @@ func TestLingeringClaudeIsStopped(t *testing.T) {
 	}
 }
 
+// A claude whose output ends with no result but which never exits is stopped
+// too: nothing it could still do would reach the run.
+func TestMuteClaudeIsStopped(t *testing.T) {
+	old := exitGrace
+	exitGrace, termGrace = 100*time.Millisecond, 100*time.Millisecond
+	t.Cleanup(func() { exitGrace, termGrace = old, 5*time.Second })
+	path := derive(t, "plain", func(l []string) []string { return l[:indexOf(l, "result")] })
+	h := &harness{fixture: path, env: map[string]string{"CLAUDE_TEST_MODE": "mute"}}
+	_, out, _ := drive(t, context.Background(), h.spec(t), nil)
+	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassHarnessExited {
+		t.Errorf("outcome %+v", out)
+	}
+}
+
+// Claude took a steer, answered the turn before it, and died: the earlier
+// result is not the run's answer.
+func TestDeathAfterATakenSteerFails(t *testing.T) {
+	path := derive(t, "steer-followup", func(l []string) []string {
+		var replays []int
+		for i, s := range l {
+			if strings.Contains(s, `"isReplay":true`) {
+				replays = append(replays, i)
+			}
+		}
+		return l[:replays[1]+1]
+	})
+	h := &harness{fixture: path, env: map[string]string{"CLAUDE_TEST_MODE": "died"}}
+	_, out, _ := drive(t, context.Background(), h.spec(t), steerOn(v1.EventText, "reply: steered"))
+	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassHarnessExited || out.FinalText != "" {
+		t.Fatalf("outcome %+v", out)
+	}
+	if !strings.Contains(out.Error.Message, "steer") {
+		t.Errorf("message %q does not say a steer went unanswered", out.Error.Message)
+	}
+}
+
 func TestStartRefuses(t *testing.T) {
 	good := adapter.Spec{Binary: os.Args[0], Workdir: t.TempDir()}
 	cases := []struct {

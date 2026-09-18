@@ -411,6 +411,9 @@ type ended struct {
 	cancelled   bool   // the run's context ended
 	exitErr     error  // the process's exit status
 	stderr      string // its last words
+	// unanswered: the last result in hand was not the last one — Claude had
+	// taken a steer, or had one queued, and never answered it.
+	unanswered bool
 }
 
 // outcome decides how the turn ended. Only a result decides success: exit 0
@@ -429,6 +432,7 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 	}
 	fail := func(class, msg string) adapter.Outcome {
 		o.State = v1.RunFailed
+		o.FinalText = ""
 		o.Error = &v1.RunError{Class: class, Message: msg}
 		t.emitErr(class, msg)
 		return o
@@ -440,6 +444,10 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		o.State = v1.RunFailed
 		o.Error = &v1.RunError{Class: adapter.ClassSessionMismatch, Message: t.mismatchMessage()}
 		return o
+	case r != nil && e.unanswered && !e.cancelled && !r.IsError && r.Subtype == "success":
+		// The result in hand answered the turn before a steer; reporting it as
+		// the run's would claim an answer to input Claude never got to.
+		return fail(adapter.ClassHarnessExited, "claude exited after taking a steer and before answering it"+exitDetail(e)+" — send the steer again as a new run in the same session")
 	case r != nil && !r.IsError && r.Subtype == "success":
 		// Even after an interrupt: a turn that finished first really succeeded,
 		// and reporting it cancelled would throw its answer away.
@@ -453,7 +461,6 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		return fail(adapter.ClassHarnessExited, exitedMessage(e))
 	}
 	msg := resultMessage(r)
-	o.FinalText = ""
 	switch {
 	case r.TerminalReason == "prompt_too_long" || strings.HasPrefix(r.Result, "Prompt is too long"):
 		return fail(adapter.ClassPromptTooLong, msg)
@@ -473,14 +480,18 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 }
 
 func exitedMessage(e ended) string {
-	msg := "claude exited without reporting a result"
+	return "claude exited without reporting a result" + exitDetail(e) + " — check that it runs and is logged in: `claude -p hello`"
+}
+
+func exitDetail(e ended) string {
+	var msg string
 	if e.exitErr != nil {
 		msg += " (" + e.exitErr.Error() + ")"
 	}
 	if s := strings.TrimSpace(e.stderr); s != "" {
 		msg += ": " + lastLine(s)
 	}
-	return msg + " — check that it runs and is logged in: `claude -p hello`"
+	return msg
 }
 
 func lastLine(s string) string {

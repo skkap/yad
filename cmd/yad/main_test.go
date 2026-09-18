@@ -103,10 +103,18 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 		t.Errorf("claude not reported ready:\n%s", o.String())
 	}
 
-	os.Remove(codex)
+	// A broken Claude beside a working Codex: the fix is the probe error, not
+	// an install.
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	o.Reset()
+	run(context.Background(), []string{"doctor"}, &o, &e)
+	if !strings.Contains(o.String(), "failed its version probe") || strings.Contains(o.String(), "install Claude Code") {
+		t.Errorf("claude broken, codex present:\n%s", o.String())
+	}
+
+	os.Remove(codex)
 	o.Reset()
 	run(context.Background(), []string{"doctor"}, &o, &e)
 	if !strings.Contains(o.String(), "failed its version probe") {

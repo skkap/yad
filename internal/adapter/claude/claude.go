@@ -97,6 +97,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		wake:      make(chan struct{}, 1),
 		done:      make(chan struct{}),
 		final:     make(chan struct{}),
+		eof:       make(chan struct{}),
 		exitGrace: exitGrace, drainGrace: drainGrace, termGrace: termGrace,
 	}
 	// The instruction goes out from the writer goroutine, never from here: a
@@ -212,6 +213,7 @@ type turn struct {
 	replayed    int  // user frames Claude has taken
 	interrupted bool
 	requests    int
+	settled     bool // the last result is in and input is closed
 
 	// Events are queued without bound between the reader and the consumer. The
 	// reader must never block on a consumer that has stopped reading, or Claude
@@ -224,6 +226,7 @@ type turn struct {
 	out    chan v1.Event
 
 	final   chan struct{} // closed once the last result is in
+	eof     chan struct{} // closed once Claude's output has ended
 	done    chan struct{}
 	outcome adapter.Outcome
 
@@ -323,6 +326,7 @@ func (t *turn) settle(queued int) {
 		return
 	}
 	t.closing = true
+	t.settled = true
 	close(t.frames)
 	close(t.final)
 }
@@ -403,10 +407,17 @@ loop:
 	}
 	t.p.Stdout().Close()
 	t.closeInput()
+	close(t.eof)
 	exitErr := t.p.Wait()
 
 	t.mu.Lock()
-	e := ended{interrupted: t.interrupted, cancelled: t.ctx.Err() != nil, exitErr: exitErr, stderr: t.p.Stderr()}
+	e := ended{
+		interrupted: t.interrupted,
+		cancelled:   t.ctx.Err() != nil,
+		exitErr:     exitErr,
+		stderr:      t.p.Stderr(),
+		unanswered:  tr.result != nil && !t.settled && !t.interrupted,
+	}
 	t.mu.Unlock()
 	t.outcome = tr.outcome(e)
 	t.qmu.Lock()
@@ -437,11 +448,17 @@ func (t *turn) handle(tr *translator, line []byte) {
 }
 
 // reap makes sure the reader ends: Claude is stopped if it lingers after its
-// last result, and the pipe is closed if something outlives Claude holding it.
+// last result or after its output has ended, and the pipe is closed if
+// something outlives Claude holding it.
 func (t *turn) reap() {
+	lingering := true
 	select {
 	case <-t.p.Done():
+		lingering = false
 	case <-t.final:
+	case <-t.eof:
+	}
+	if lingering {
 		select {
 		case <-t.p.Done():
 		case <-time.After(t.exitGrace):

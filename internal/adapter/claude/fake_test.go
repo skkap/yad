@@ -31,7 +31,8 @@ import (
 //
 // CLAUDE_TEST_MODE picks the ending: "" waits for stdin to close and exits
 // with CLAUDE_TEST_EXIT; "died" exits 1 at once with something on stderr;
-// "linger" ignores the closed stdin and SIGTERM, as a wedged claude would.
+// "linger" ignores the closed stdin and SIGTERM, as a wedged claude would;
+// "mute" closes stdout and then lingers the same way.
 func fakeClaude() {
 	logf := openLog()
 	defer logf.Close()
@@ -143,6 +144,11 @@ func fakeClaude() {
 		os.Stderr.WriteString("Error: something went badly wrong\n")
 		os.Exit(1)
 	case "linger":
+		signal.Ignore(syscall.SIGTERM)
+		time.Sleep(time.Hour)
+	case "mute":
+		// Output over, process not: stdout closed, stdin ignored.
+		os.Stdout.Close()
 		signal.Ignore(syscall.SIGTERM)
 		time.Sleep(time.Hour)
 	}
