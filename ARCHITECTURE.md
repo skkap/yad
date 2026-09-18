@@ -226,6 +226,7 @@ type Turn interface {
 	Events() <-chan protocol.Event
 	Steer(text string) error
 	Interrupt() error
+	NativeSessionID() string // as soon as the harness has one, for pinning
 	Wait() Outcome // terminal state, final text, usage, native session id, limit
 }
 ```
@@ -234,16 +235,23 @@ type Turn interface {
 
 ```
 claude -p --input-format stream-json --output-format stream-json --verbose
-       --include-partial-messages --permission-mode <owner config>
+       --include-partial-messages --replay-user-messages
+       --disallowed-tools AskUserQuestion --permission-mode <owner config>
        (--session-id <uuid> | --resume <uuid>) [--model m]
-       --append-system-prompt-file <context file>
+       [--append-system-prompt-file <context file>]
 ```
 
 The instruction is one stream-json `user` frame on stdin, written from its own
-goroutine; stdin stays open for `control_request` (interrupt) until `result`.
-YAD chooses the session id, so nothing has to be scraped; an echoed id that
-differs means the resume silently failed. `AskUserQuestion` is disallowed —
-headless, it returns an empty answer.
+goroutine; stdin stays open for `control_request` (interrupt) and steers until
+the last `result`, and closing it is what lets Claude exit. YAD chooses the
+session id, so nothing has to be scraped; an echoed id that differs means the
+resume silently failed, and the run fails with `session_mismatch`.
+`AskUserQuestion` is disallowed — headless, it returns an empty answer. A steer
+is another `user` frame: Claude reads it at the next tool boundary, or answers
+it as a follow-up turn in the same process; `--replay-user-messages` echoes
+each frame as it is taken, which is how the adapter knows which result is the
+last. The outcome rules and the rest are
+[0019](docs/decisions/0019-claude-runs-end-at-the-last-result.md).
 
 **Codex** — `codex app-server --listen stdio://`: `initialize` → `initialized` →
 `thread/start` or `thread/resume` → `turn/start`; `turn/interrupt`, `turn/steer`;
@@ -253,8 +261,10 @@ thread id — Codex multiplexes subagent threads on one pipe. Validated against
 the schema `generate-json-schema` emits for the installed version.
 
 **Fixtures.** Every adapter test replays recorded JSONL named by harness version
-(`testdata/claude-2.1.276/*.jsonl`). Recording new ones is a manual step, behind a
-build tag; the suite never runs a real harness.
+(`internal/adapter/claude/testdata/claude-2.1.276/*.jsonl`) through a fake
+harness process. Recording new ones is a manual step, behind a build tag
+(`YAD_REAL_HARNESS=1 go test -tags realharness -run TestRecord
+./internal/adapter/claude/`); the suite never runs a real harness.
 
 ### Supervisor
 
@@ -262,8 +272,9 @@ build tag; the suite never runs a real harness.
   starts through `supervise.Start`: its own process group, a scrubbed environment
   (`CLAUDECODE`, every `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY` unless configured,
   anything `YAD_*`), and a stderr tail kept at 2 KiB. `Start` hands back the raw
-  stdout pipe; the 32 MiB line cap belongs to each adapter's line reader, which
-  arrives with the adapter (E2).
+  stdout pipe; the 32 MiB line cap belongs to the adapters' line reader
+  (`adapter.LineReader`), which skips an oversized line and reports it rather
+  than ending the run.
 - **Cancel ladder**: the adapter's interrupt → 10 s → `SIGTERM` to the group →
   5 s → `SIGKILL` to the group. Descendants are killed even after the leader
   exits cleanly — they hold pipes and git locks.
@@ -402,8 +413,9 @@ line here is a reviewed change.
 - **Two fakes.** `internal/adapter/fake` plays a scripted run in memory, for
   runner and hub logic. Child-process behaviour — hangs, ignored `SIGTERM`,
   oversized lines, orphaned grandchildren — is tested by re-executing the test
-  binary as the child (`SUPERVISE_TEST_CHILD=<mode>`). A fake harness that is a
-  real process speaking stream-json arrives with the Claude adapter in E2.
+  binary as the child (`SUPERVISE_TEST_CHILD=<mode>`). The Claude adapter's
+  tests re-execute it as a fake `claude` that plays a recorded stream and reads
+  stdin as Claude does (`CLAUDE_TEST_FIXTURE=<file>`).
   Re-executed children set `GORACE=atexit_sleep_ms=0`, or each costs a second.
 - **The runner is tested against `yad hub`**, in process, on a random port. The
   conformance suite is the same tests pointed at a URL.

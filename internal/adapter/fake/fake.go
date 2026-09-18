@@ -51,6 +51,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, e
 
 	t := &turn{events: make(chan v1.Event), done: make(chan struct{}), interrupt: make(chan struct{})}
 	s := a.Next(spec)
+	t.native = s.Outcome.NativeSessionID
 	go t.play(ctx, s)
 	return t, nil
 }
@@ -63,6 +64,7 @@ type turn struct {
 	mu        sync.Mutex
 	steered   []string
 	outcome   adapter.Outcome
+	native    string
 }
 
 func (t *turn) play(ctx context.Context, s Script) {
@@ -102,6 +104,8 @@ func (t *turn) play(ctx context.Context, s Script) {
 }
 
 func (t *turn) Events() <-chan v1.Event { return t.events }
+
+func (t *turn) NativeSessionID() string { return t.native }
 
 func (t *turn) Steer(text string) error {
 	t.mu.Lock()
