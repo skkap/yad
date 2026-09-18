@@ -1,69 +1,69 @@
 # YAD
 
-**One process per machine that runs coding agents for something else.**
+**One small binary that runs coding-agent harnesses on machines you own, for
+whatever asks.**
 
-YAD sits on a Mac or a Linux box, notices which coding-agent CLIs are installed,
-tells a control plane what it can do, and then runs those agents when the control
-plane asks — against a named session, with a named agent, on a named model.
+YAD sits on a Mac or a Linux box, notices which harnesses are installed —
+Claude Code, Codex — and connects outbound to one or more **hubs**. When a hub
+has work, YAD claims a run, prepares a workdir, drives the harness against a
+durable session, streams what happened, and reports how it ended. It survives
+restarts and usage limits, fails over between accounts, and never opens a port.
 
-It is the half that is missing from both of the things it serves:
+A hub is anything that hosts the server half of the runner protocol:
 
-- **[zumino](../zumino)** has the queue and no way to execute anything. Its README
-  is explicit that agents are ordinary participants and that there is *no
-  executor registry*.
-- **[yashiki](../yashiki)** runs `claude -p --resume` on the one machine it is
-  installed on, and cannot reach any other.
+- **[Zumino](https://zumino.cc)** — the task tracker. Its customers can attach
+  their own runners and have Zumino's work run on their own machines and
+  subscriptions.
+- **yashiki** — the resident assistant, which today runs everything on one Mac
+  mini.
+- **`yad hub`** — the same binary in server mode, for anything that would rather
+  not embed the protocol.
 
-YAD is deliberately not a tracker, a UI, or an orchestrator. It claims work,
-runs a process, streams what happened, and says whether it is still alive.
+YAD is deliberately not a tracker, a UI, an orchestrator or a sandbox. The
+vocabulary is in [`DOMAIN.md`](DOMAIN.md), the shape and the protocol in
+[`ARCHITECTURE.md`](ARCHITECTURE.md), and the reasons in
+[`docs/decisions/`](docs/decisions/).
 
 ```
 $ yad doctor
-AGENT               STATUS      VERSION                PATH
-Claude Code         ready       2.1.276 (Claude Code)  /Users/me/.local/bin/claude
-Codex               ready       codex-cli 0.147.0      /Users/me/.local/bin/codex
+HARNESS             STATUS      VERSION                PATH
+Claude Code         no adapter  2.1.276 (Claude Code)  /Users/me/.local/bin/claude
+Codex               no adapter  codex-cli 0.147.0      /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
-GitHub Copilot CLI  —
-OpenCode            —
 Cursor Agent        no adapter  2025.09.12-4852336     /Users/me/.local/bin/cursor-agent
 
-2 agent(s) this runner can be given work for.
+No drivable harness: what is installed has no adapter in this yad yet — Claude Code arrives in epic E2, Codex in E5.
 ```
+
+Claude Code and Codex become `ready` as their adapters land; until then a runner
+advertises them as recognised and refuses runs for them.
 
 ## Status
 
-**M0 — scaffolding, working.** Detection, the capability document, runner
-identity and a heartbeat loop that talks to nobody. No protocol yet, no process
-supervision yet, no sessions yet. `DESIGN.md` has the shape and the order.
+**Foundation.** Harness detection, the capability document, the v1 protocol
+types and their generated OpenAPI document, the local store, the process
+supervisor, config and profiles, and a `yad hub` that answers every call with
+"not yet". Nothing runs a harness yet. The build order is `ARCHITECTURE.md §9`;
+the epics and tasks are in Zumino, project `yad/dev`.
+
+## Run it safely
+
+A runner auto-approves everything its harness does — nobody is there to answer a
+prompt. Run it on a machine, VM or container you would let an unknown repository
+execute code on, never on a laptop holding credentials you care about, and one
+runner per trust domain: personal and work are two runners.
 
 ## Build
 
 ```bash
-make check      # gofmt, vet, test, build — the whole bar, see CHECKS.md
+make check      # lint, test, build, generated-file drift, cross-compile — see CHECKS.md
 make build      # ./bin/yad
 make install    # ~/.local/bin/yad
-make dist       # linux/amd64, linux/arm64, darwin/arm64
+make generate   # sqlc and the OpenAPI document
 ```
 
-Go 1.27, standard library only. No dependencies is a choice, not an accident —
-this binary is copied onto machines by hand for now, and every dependency is
-something that has to be audited on each of them.
-
-## Commands today
-
-| | |
-|---|---|
-| `yad doctor` | what is installed here, and what YAD can drive |
-| `yad agents` | the capability document, exactly as a control plane would receive it |
-| `yad daemon start --foreground` | the runner loop: identity, re-probe, heartbeat, clean shutdown |
-| `yad version` | version and commit |
-
-Everything else — `run`, `sessions`, `config`, `service`, `setup` — refuses with
-the milestone that will bring it.
-
-## The name
-
-YAD. That is all it is.
+Go 1.27 and `sqlc` 1.31. Dependencies are a curated list with a reason for each,
+in `ARCHITECTURE.md §6`.
 
 ## Prior art
 
@@ -71,8 +71,13 @@ Read before adding anything; most of this problem is solved somewhere.
 
 | | What it is |
 |---|---|
-| **Anthropic self-hosted environments** | The official version of this idea, and the source of the word *runner*: long-lived processes that pick up sessions and start one Claude Code process each, in fixed or on-demand pools. Claude only |
-| **[multica](https://github.com/multica-ai/multica)** — `~/projects/multica` | The closest complete implementation: `multica daemon` detects CLIs, registers a runtime per agent per workspace, polls every 3s, heartbeats every 15s, GCs workspaces. ~14k lines of Go adapters in `server/pkg/agent`, modified Apache-2.0. **The reference for every adapter written here** |
-| **Paseo** | Self-hosted TypeScript/AGPL daemon running Claude Code, Codex, Copilot, OpenCode and Pi in parallel, driven from desktop/web/mobile |
-| **Open Session**, **claude-code-runner**, **Agents Anywhere** | Self-hosted control planes driving sessions in git worktrees |
-| **ACP** (Agent Client Protocol) | The emerging agent↔client protocol. Multica already uses it for kiro, qoder and trae; it is the likely answer to "must we write an adapter per CLI forever" |
+| **Anthropic self-hosted runners** | The official version of this idea for Claude, and the source of *runner*, *lease* and *release*: outbound polling, the poll is the heartbeat, drain and retire-at |
+| **[Multica](https://github.com/multica-ai/multica)** | The closest complete implementation: a daemon that detects CLIs, claims tasks and drives Claude and Codex. Read for shapes only — its licence restricts derived code ([0014](docs/decisions/0014-multica-shapes-never-code.md)) |
+| **GitHub Actions, Buildkite and GitLab runners** | Registration-token exchange, leases, idempotent results, chunked logs, cancel on the channel already polled |
+| **Paseo, vibe-kanban, happy** | The adapter split this repo follows: Claude by stream-json, Codex by app-server, ACP for the long tail |
+| **ACP** (Agent Client Protocol) | The likely answer for the recognised harnesses; not for Claude or Codex, which speak it only through Node adapters |
+| **Coder agentapi** | TUI scraping behind HTTP; archived in September 2026. The approach this repo does not take |
+
+## The name
+
+YAD. That is all it is.

@@ -1,5 +1,6 @@
 ---
 date: 2026-09-18
+status: superseded in part by 0003 — the generic core stands; "one control plane per runner" and per-control-plane drivers do not
 ---
 
 # A generic runner protocol, with Zumino as the first driver

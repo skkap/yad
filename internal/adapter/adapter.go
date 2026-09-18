@@ -1,0 +1,83 @@
+// Package adapter is the seam between the runner and a harness.
+//
+// An adapter knows one harness: how to start a turn, how to translate its stream
+// into protocol events, how to resume, steer and interrupt it, and how to read
+// its usage. The runner knows none of that — it holds capacity, workdirs,
+// accounts and the hub, and hands an adapter a Spec. Adapters never import the
+// runner.
+package adapter
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	v1 "github.com/skkap/yad/protocol/v1"
+)
+
+// Spec is everything an adapter needs to execute one run. The runner resolves
+// it: the workdir exists, the account's harness home is chosen, grants are
+// already in Env or on disk.
+type Spec struct {
+	RunID   string
+	Model   string
+	Workdir string
+	// SessionID is YAD's; NativeSessionID is the harness's own, empty for a new
+	// session. Claude lets YAD choose it up front; Codex assigns its own.
+	SessionID       string
+	NativeSessionID string
+	Brief           v1.Brief
+	// Home is the account's harness home (CLAUDE_CONFIG_DIR, CODEX_HOME).
+	Home string
+	// Env is added to the child's environment: grants delivered as env, and the
+	// home variable.
+	Env []string
+	// Binary is the resolved harness path from detection.
+	Binary string
+	// Settings is the owner's harness configuration: permission mode, sandbox,
+	// approval policy. Never from the hub (decision 0015).
+	Settings map[string]string
+}
+
+// Adapter drives one first-class harness.
+type Adapter interface {
+	Harness() string
+	Start(ctx context.Context, spec Spec) (Turn, error)
+}
+
+// Turn is one run in flight.
+type Turn interface {
+	// Events yields normalised events in order and is closed when the turn ends.
+	// Seq is assigned by the runner, not the adapter.
+	Events() <-chan v1.Event
+	// Steer adds input to the running turn.
+	Steer(text string) error
+	// Interrupt ends the turn and keeps the session resumable.
+	Interrupt() error
+	// Wait blocks until the turn is over and the process is gone.
+	Wait() Outcome
+}
+
+// Outcome is how a turn ended, as the harness itself reported it. Exit status
+// alone never decides it: `prompt_too_long` arrives as a successful exit.
+type Outcome struct {
+	State           v1.RunState
+	FinalText       string
+	Error           *v1.RunError
+	Usage           map[string]v1.Usage
+	NativeSessionID string
+	// Limit is set when the turn stopped on a usage limit. The runner, not the
+	// adapter, decides whether to fail over or wait.
+	Limit *Limit
+	// APIRetries counts transient rate-limit retries the harness did itself.
+	APIRetries int
+}
+
+// Limit is a usage limit hit by the account a turn ran on.
+type Limit struct {
+	Window  string // "five_hour", "weekly", "primary", "secondary" — the harness's name
+	ResetAt time.Time
+}
+
+// ErrNotFirstClass is returned when a run targets a harness with no adapter.
+var ErrNotFirstClass = errors.New("no adapter for this harness — it is recognised, not first-class")

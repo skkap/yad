@@ -1,61 +1,99 @@
-// Command yad is the runner: the process that sits on a machine, says what
-// coding agents it has, and runs them when a control plane asks it to.
+// Command yad runs coding-agent harnesses on this machine for any number of
+// hubs, and — as `yad hub` — is a hub itself.
 //
-// What exists today is the half that needs no server: detection, the capability
-// document, and a heartbeat loop you can watch. See DESIGN.md for the rest.
+// This file only dispatches. Each command group lives in its own file, and
+// holds no logic beyond parsing flags and printing: the behaviour is in
+// internal/, where it is tested.
 package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/skkap/yad/internal/config"
 )
+
+// global is what every command can see.
+type global struct {
+	paths config.Paths
+}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	if len(os.Args) < 2 {
-		usage(os.Stderr)
-		os.Exit(2)
-	}
-
-	var err error
-	switch cmd := os.Args[1]; cmd {
-	case "version":
-		err = cmdVersion(os.Args[2:])
-	case "doctor":
-		err = cmdDoctor(ctx, os.Args[2:])
-	case "agents":
-		err = cmdAgents(ctx, os.Args[2:])
-	case "daemon":
-		err = cmdDaemon(ctx, os.Args[2:])
-	case "help", "-h", "--help":
-		usage(os.Stdout)
-	default:
-		fmt.Fprintf(os.Stderr, "yad: unknown command %q\n\n", cmd)
-		usage(os.Stderr)
-		os.Exit(2)
-	}
-
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "yad:", err)
-		os.Exit(1)
-	}
+	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func usage(w *os.File) {
-	fmt.Fprint(w, `yad — run coding agents on this machine, on someone else's say-so
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("yad", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	profile := fs.String("profile", os.Getenv("YAD_PROFILE"), "which runner on this machine (default: the default profile)")
+	fs.Usage = func() { usage(stderr) }
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() == 0 {
+		usage(stderr)
+		return 2
+	}
+	paths, err := config.Resolve(*profile)
+	if err != nil {
+		fmt.Fprintln(stderr, "yad:", err)
+		return 2
+	}
+	g := global{paths: paths}
 
-usage: yad <command> [flags]
+	cmd, rest := fs.Arg(0), fs.Args()[1:]
+	var cmdErr error
+	switch cmd {
+	case "version":
+		cmdErr = cmdVersion(stdout)
+	case "doctor":
+		cmdErr = cmdDoctor(ctx, g, rest, stdout)
+	case "harnesses":
+		cmdErr = cmdHarnesses(ctx, g, rest, stdout)
+	case "daemon":
+		cmdErr = cmdDaemon(ctx, g, rest, stdout)
+	case "hub":
+		cmdErr = cmdHub(ctx, rest, stdout)
+	case "connect", "disconnect", "status", "sessions", "account", "service", "conformance", "upgrade":
+		cmdErr = notYet(cmd, rest)
+	case "agents":
+		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
+	case "help", "-h", "--help":
+		usage(stdout)
+	default:
+		fmt.Fprintf(stderr, "yad: unknown command %q\n\n", cmd)
+		usage(stderr)
+		return 2
+	}
+	if cmdErr != nil {
+		fmt.Fprintln(stderr, "yad:", cmdErr)
+		return 1
+	}
+	return 0
+}
 
-  doctor          what is installed here, and what YAD can drive
-  agents          the capability document, as a control plane sees it
-  daemon start    the runner loop (currently --foreground only)
-  version         version and build
+func usage(w io.Writer) {
+	fmt.Fprint(w, `yad — run coding-agent harnesses on this machine, for any number of hubs
 
-Not built yet: run, sessions, config, service, setup. DESIGN.md says in what order.
+usage: yad [--profile name] <command> [flags]
+
+  doctor              what is installed here, and what YAD can drive
+  harnesses [--json]  the capability document, exactly as a hub receives it
+  daemon start        the runner (--foreground; background arrives in E3)
+  hub serve           the standalone hub (headless)
+  version             version and build
+
+  connect · disconnect · status · sessions · account · service · conformance
+                      exist, and each says which epic brings it
+
+ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.
 `)
 }
