@@ -21,6 +21,14 @@ result waits behind the run's spooled events, so the hub holds the whole stream
 when it learns the run ended. A hub that lost the run first answers 409, which
 agrees. Re-offered, it is refused: a run is never run twice.
 
+**A claim that never began is withdrawn, not lost.** A run still `claimed` —
+recorded when offered, and never prepared — may never have been listed back:
+the process can die in the round trip between the offer and the listing, and
+the hub then still has it as offered. Such a run is removed, with the empty
+session it opened, and left out of the listing, so the hub offers it again;
+one the hub had acknowledged lapses into lost on its side. Reporting it lost
+here would end, for good, a run nobody ever started.
+
 **What is owed goes out before new work comes in.** Every connection settles
 its orphans before any reporter starts, and its sync loop claims nothing until
 its reporter's first flush — the replay of the spool and the outbox — has run.

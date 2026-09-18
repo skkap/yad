@@ -52,6 +52,12 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		if err := sweep(ctx, q, now); err != nil {
 			return err
 		}
+		// Read again inside the transaction: a drain asked for since the
+		// credential was checked must stop this sync's offers.
+		runner, err := q.GetRunner(ctx, runner.ID)
+		if err != nil {
+			return err
+		}
 
 		docJSON, wants := runner.Capabilities, runner.WantsCapabilities != 0
 		switch {

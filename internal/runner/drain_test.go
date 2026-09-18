@@ -184,7 +184,8 @@ func TestWayDown(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
 			l := e.loop(t, 2)
-			l.Clock = realClock{}
+			// Syncing often, so a hub that starts refusing is noticed soon.
+			l.Clock = shortClock{}
 			x := e.executor(fakeHarness(tc.script))
 			d := NewDrain()
 			sv := e.server(l, x, d, tc.wait)
@@ -278,22 +279,33 @@ func TestWayDownBeforeTheHarnessStarts(t *testing.T) {
 // not killed with them: it runs to its end and its result waits in the outbox.
 func TestWayDownWithAConnectionStopped(t *testing.T) {
 	finishes := fake.Script{Events: manyEvents(5), Delay: 40 * time.Millisecond, Outcome: adapter.Outcome{State: v1.RunSucceeded}}
+	hangs := fake.Script{Hang: true}
 	for _, tc := range []struct {
-		name string
+		name   string
+		script fake.Script
+		wait   time.Duration
 		// alsoStops refuses the healthy connection too, once its run is in
 		// hand: every connection has stopped.
 		alsoStops bool
+		// stoppedFirst waits for every connection to stop before the drain
+		// begins.
+		stoppedFirst bool
+		state        v1.RunState
 	}{
-		{"one of two", false},
-		{"every one", true},
+		{"one of two", finishes, time.Hour, false, false, v1.RunSucceeded},
+		{"every one", finishes, time.Hour, true, false, v1.RunSucceeded},
+		// With nothing left to sync with, the ladder still holds: the drain
+		// wait runs out and the run is cancelled.
+		{"every one, then a drain", hangs, 50 * time.Millisecond, true, true, v1.RunCancelled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
 			l := e.loop(t, 2)
-			l.Clock = realClock{}
-			x := e.executor(fakeHarness(finishes))
+			// Syncing often, so a hub that starts refusing is noticed soon.
+			l.Clock = shortClock{}
+			x := e.executor(fakeHarness(tc.script))
 			d := NewDrain()
-			sv := e.server(l, x, d, time.Hour)
+			sv := e.server(l, x, d, tc.wait)
 			refuse := &switchHub{Hub: l.Hub}
 			l.Hub = refuse
 			dead := &Loop{Connection: "dead", RunnerID: "r", Hub: refusingHub{}, Store: e.store,
@@ -313,14 +325,21 @@ func TestWayDownWithAConnectionStopped(t *testing.T) {
 			if tc.alsoStops {
 				refuse.refuse.Store(true)
 			}
+			if tc.stoppedFirst {
+				eventually(t, "every connection has stopped", func() bool {
+					sv.mu.Lock()
+					defer sv.mu.Unlock()
+					return len(sv.errs) == 2
+				})
+			}
 			d.Begin("test")
 			select {
 			case <-done:
 			case <-time.After(20 * time.Second):
 				t.Fatal("the drain never finished")
 			}
-			if got := localRun(t, e, "a").State; got != string(v1.RunSucceeded) {
-				t.Errorf("the run in hand ended %s; it must run to its end", got)
+			if got := localRun(t, e, "a").State; got != string(tc.state) {
+				t.Errorf("the run in hand ended %s, want %s", got, tc.state)
 			}
 			if !tc.alsoStops && e.hubState(t, "a") != string(v1.RunSucceeded) {
 				t.Errorf("hub state %s: the healthy connection delivers before the exit", e.hubState(t, "a"))
@@ -328,6 +347,13 @@ func TestWayDownWithAConnectionStopped(t *testing.T) {
 		})
 	}
 }
+
+// shortClock is the real clock with every wait cut to a few milliseconds.
+type shortClock struct{}
+
+func (shortClock) Now() time.Time { return time.Now() }
+
+func (shortClock) After(d time.Duration) <-chan time.Time { return time.After(min(d, 20*time.Millisecond)) }
 
 // switchHub is a hub that starts refusing the runner's credential on demand.
 type switchHub struct {

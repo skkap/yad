@@ -166,9 +166,12 @@ func (s *server) run(ctx context.Context) error {
 
 	select {
 	case <-stopped:
-		// Every connection stopped on its own: nothing left to sync with.
+		// Every connection stopped on its own: nothing left to sync with,
+		// and the runs in hand still answer the ladder on their way to an end.
 	case <-ctx.Done():
 	case <-s.drain.Draining():
+	}
+	if ctx.Err() == nil {
 		s.wayDown(ctx, ended, stopped)
 	}
 	stopLoops()
@@ -187,16 +190,15 @@ type runsOn struct {
 
 func (r runsOn) Start(_ context.Context, c Claim) { r.Executor.Start(r.ctx, c) }
 
-// wayDown is the drain (decision 0029): wait for every loop to stop starting
+// wayDown is the drain (decision 0029), and what is left of it once every
+// connection has stopped on its own: wait for every loop to stop starting
 // runs — by syncing while draining, or by stopping — and for the runs held to
 // end, cancelling them once the drain wait is up or at once when asked; then
-// give the reporters a bounded last chance to deliver what is owed. It returns
-// early only when ctx ends: a connection that stopped, or every one of them,
-// leaves the runs in hand to the same wait and the same cancel.
+// give the reporters a bounded last chance to deliver what is owed. The drain
+// wait runs from the drain's start, so a runner whose connections all stopped
+// still waits on its runs until a signal drains or cancels them. It returns
+// early only when ctx ends.
 func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-chan struct{}) {
-	s.log.Warn("draining", "reason", s.drain.Reason(), "drain_wait", s.wait)
-	timer := time.NewTimer(s.wait)
-	defer timer.Stop()
 	quiet := make(chan struct{})
 	go func() {
 		for i, l := range s.loops {
@@ -207,10 +209,19 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 		}
 		close(quiet)
 	}()
-	cancelling := s.drain.Cancelling()
-	var idle <-chan struct{}
+	draining, cancelling := s.drain.Draining(), s.drain.Cancelling()
+	var (
+		idle  <-chan struct{}
+		timer <-chan time.Time
+	)
 	for {
 		select {
+		case <-draining:
+			draining = nil
+			s.log.Warn("draining", "reason", s.drain.Reason(), "drain_wait", s.wait)
+			t := time.NewTimer(s.wait)
+			defer t.Stop()
+			timer = t.C
 		case <-quiet:
 			// No loop starts anything from here on, so an idle executor
 			// stays idle.
@@ -218,7 +229,8 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 		case <-idle:
 			s.settle(ctx, stopped)
 			return
-		case <-timer.C:
+		case <-timer:
+			timer = nil
 			s.drain.Cancel(fmt.Sprintf("the drain wait of %s ran out", s.wait))
 		case <-cancelling:
 			cancelling = nil

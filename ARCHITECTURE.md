@@ -359,8 +359,9 @@ harness process. Recording new ones is a manual step, behind a build tag
   the outbox up to 30 s and exits. A third signal exits at once. A service
   manager's stop timeout must exceed the drain wait plus the ladder.
 - **Restart** — [0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md).
-  Every run a previous process held is reported lost (`runner_restarted`,
-  `last_seq` its last spooled event) through the outbox, never run again. The
+  Every run a previous process began is reported lost (`runner_restarted`,
+  `last_seq` its last spooled event) through the outbox, never run again; a
+  claim it never began is withdrawn, for the hub to offer again. The
   spool and the outbox are replayed before the first claim. Sessions keep their
   native id and workdir, so the next run resumes them.
 - **Watchdogs**: inactivity on the event stream (owner default 30 min; a run may

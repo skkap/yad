@@ -364,10 +364,12 @@ func TestLoopStopsOnARefusedCredential(t *testing.T) {
 	}
 }
 
-// Runs a previous process held have no process now. Each is reported lost —
-// never run again — with a result that names the last event it spooled, and
-// stays listed until that result is delivered. Its session keeps its native id
-// and its workdir, so a new run can resume it.
+// Runs a previous process held have no process now. Each that began is
+// reported lost — never run again — with a result that names the last event it
+// spooled, and stays listed until that result is delivered. Its session keeps
+// its native id and its workdir, so a new run can resume it. A claim that
+// never began — maybe never even listed back — is withdrawn instead, with the
+// empty session it opened.
 func TestOrphansAreReportedLost(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -406,21 +408,25 @@ func TestOrphansAreReportedLost(t *testing.T) {
 	if err := l.Run(cctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		run  string
-		last int64
-	}{{"running", 3}, {"claimed", 0}} {
-		r := localRun(t, e, tc.run)
-		if r.State != "lost" || !strings.Contains(r.Reason.String, "never run twice") {
-			t.Errorf("orphan %s = %+v", tc.run, r)
-		}
-		res, ok := outboxResult(t, e, tc.run)
-		if !ok || res.State != v1.RunLost || res.Error == nil || res.Error.Class != ClassRunnerRestarted || res.LastSeq != tc.last {
-			t.Errorf("result owed for %s: %+v (error %+v), %v; want lost, %s, last_seq %d", tc.run, res, res.Error, ok, ClassRunnerRestarted, tc.last)
-		}
+	r := localRun(t, e, "running")
+	if r.State != "lost" || !strings.Contains(r.Reason.String, "never run twice") {
+		t.Errorf("orphan = %+v", r)
 	}
-	// Listed until the results land, so their leases outlast a hub outage.
-	if len(h.syncs) != 1 || len(h.syncs[0].Runs) != 2 || h.syncs[0].Runs[0].Reason != "reporting its result" {
+	res, ok := outboxResult(t, e, "running")
+	if !ok || res.State != v1.RunLost || res.Error == nil || res.Error.Class != ClassRunnerRestarted || res.LastSeq != 3 {
+		t.Errorf("result owed: %+v (error %+v), %v; want lost, %s, last_seq 3", res, res.Error, ok, ClassRunnerRestarted)
+	}
+	if _, err := e.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "claimed"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("an unstarted claim is still recorded: %v", err)
+	}
+	if _, ok := outboxResult(t, e, "claimed"); ok {
+		t.Error("an unstarted claim owes a result")
+	}
+	if _, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "hub", ID: "s2"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("the empty session the claim opened is still recorded: %v", err)
+	}
+	// Listed until the result lands, so its lease outlasts a hub outage.
+	if len(h.syncs) != 1 || len(h.syncs[0].Runs) != 1 || h.syncs[0].Runs[0].Reason != "reporting its result" {
 		t.Errorf("listed %+v", h.syncs)
 	}
 	sess, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "hub", ID: "s1"})
@@ -440,6 +446,34 @@ func TestOrphansAreReportedLost(t *testing.T) {
 		t.Errorf("re-offered orphan: %+v, %v", res, ok)
 	}
 	if got := e.exec.ids(); len(got) != 0 {
+		t.Errorf("started %v", got)
+	}
+}
+
+// Through yad hub: a process that claimed a run and stopped before listing it
+// leaves the run to the hub's queue, not lost — the next process withdraws it,
+// and the hub offers it again.
+func TestUnlistedClaimIsWithdrawnAtRestart(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	mustSync(t, l) // offered and claimed; the process dies before listing it
+
+	l2 := &Loop{Connection: l.Connection, RunnerID: l.RunnerID, Hub: l.Hub, Store: e.store, Pool: NewPool(v1.Capacity{Total: 1}),
+		Capabilities: l.Capabilities, Executor: e.exec, Clock: e.clock, Rand: l.Rand}
+	if err := l2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := e.store.OutboxDepth(ctx); err != nil || o != 0 {
+		t.Fatalf("outbox %d %v: an unstarted claim owes nothing", o, err)
+	}
+	res := mustSync(t, l2)
+	if len(res.Runs) != 1 || res.Runs[0].RunID != "a" {
+		t.Fatalf("offered %+v; the hub should offer the run again", res.Runs)
+	}
+	mustSync(t, l2)
+	if got := e.exec.ids(); len(got) != 1 || got[0] != "a" {
 		t.Errorf("started %v", got)
 	}
 }

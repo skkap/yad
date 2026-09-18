@@ -530,6 +530,15 @@ func (l *Loop) Recover(ctx context.Context) error {
 		if l.isPending(r.ID) {
 			continue
 		}
+		if r.State == string(v1.RunClaimed) {
+			withdrawn, err := l.withdrawOrphan(ctx, r)
+			if err != nil {
+				return err
+			}
+			if withdrawn {
+				continue
+			}
+		}
 		l.Log.Warn("a previous process held this run and no process of it is left; reporting it lost", "connection", l.Connection, "run", r.ID, "state", r.State)
 		msg := fmt.Sprintf("the runner stopped while the run was %s, and a run is never run twice; resume its session with a new run", r.State)
 		err := l.Store.Tx(ctx, func(q *db.Queries) error {
@@ -560,6 +569,31 @@ func (l *Loop) Recover(ctx context.Context) error {
 	}
 	l.recovered = true
 	return nil
+}
+
+// withdrawOrphan drops a run a previous process claimed and never began to
+// prepare: nothing ran, and the claim may never have been listed — the hub
+// may still have it as offered. Left out of the listing, an offer goes back
+// in the hub's queue; a claim the hub had acknowledged lapses into lost on
+// its side, which is the truth of it. Reporting it lost here would end, for
+// good, a run that may only ever have been offered. It reports whether the
+// run is gone; one with events or a result owed is not an unstarted claim.
+func (l *Loop) withdrawOrphan(ctx context.Context, r db.Run) (bool, error) {
+	gone := false
+	err := l.Store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.DeleteUnstartedRun(ctx, db.DeleteUnstartedRunParams{Connection: l.Connection, ID: r.ID}); err != nil {
+			return err
+		}
+		if _, err := q.GetRun(ctx, db.GetRunParams{Connection: l.Connection, ID: r.ID}); !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		gone = true
+		return q.DeleteEmptySession(ctx, db.DeleteEmptySessionParams{Connection: l.Connection, ID: r.SessionID})
+	})
+	if gone && err == nil {
+		l.Log.Warn("a previous process claimed this run and never started it; withdrawn, for the hub to offer again or lose", "connection", l.Connection, "run", r.ID)
+	}
+	return gone && err == nil, err
 }
 
 func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
