@@ -81,8 +81,11 @@ type Run struct {
 	// Reason says why a run is waiting or was lost.
 	Reason    string     `json:"reason,omitempty"`
 	ResumesAt *time.Time `json:"resumes_at,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	// CancelRequestedAt is when a cancel was asked for a run a runner holds,
+	// until the run ends; the runner stops it at its next sync.
+	CancelRequestedAt *time.Time `json:"cancel_requested_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 	// Result is the runner's terminal report, once the hub has it. A run lost
 	// by its runner is terminal with no result.
 	Result *v1.Result `json:"result,omitempty"`
@@ -103,6 +106,11 @@ type EventPage struct {
 	NextAfter int64      `json:"next_after"`
 	Done      bool       `json:"done"`
 	Run       Run        `json:"run"`
+}
+
+// SteerRequest is input for a running turn.
+type SteerRequest struct {
+	Text string `json:"text" minLength:"1" maxLength:"65536" doc:"What to tell the harness, as a user message."`
 }
 
 // Longest and default time the hub holds an events request open when there is

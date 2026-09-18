@@ -10,6 +10,29 @@ import (
 	"database/sql"
 )
 
+const addControl = `-- name: AddControl :exec
+
+INSERT INTO run_controls (run_id, kind, text, created_at) VALUES (?, ?, ?, ?)
+`
+
+type AddControlParams struct {
+	RunID     string
+	Kind      string
+	Text      string
+	CreatedAt int64
+}
+
+// Cancel, interrupt and steer (DEV-8).
+func (q *Queries) AddControl(ctx context.Context, arg AddControlParams) error {
+	_, err := q.db.ExecContext(ctx, addControl,
+		arg.RunID,
+		arg.Kind,
+		arg.Text,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const appendEvent = `-- name: AppendEvent :execrows
 INSERT INTO events (run_id, seq, body, received_at) VALUES (?, ?, ?, ?)
 ON CONFLICT (run_id, seq) DO NOTHING
@@ -69,6 +92,60 @@ func (q *Queries) BurnRegistrationToken(ctx context.Context, arg BurnRegistratio
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const cancelUnstartedRun = `-- name: CancelUnstartedRun :execrows
+UPDATE runs SET state = 'cancelled', reason = ?, lease_expires_at = NULL, updated_at = ?
+WHERE id = ? AND state IN ('queued', 'offered')
+`
+
+type CancelUnstartedRunParams struct {
+	Reason    sql.NullString
+	UpdatedAt int64
+	ID        string
+}
+
+// A run no runner has started ends on the hub alone. An offered run keeps its
+// runner: that runner lists it once more, hears cancel, and withdraws it.
+func (q *Queries) CancelUnstartedRun(ctx context.Context, arg CancelUnstartedRunParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelUnstartedRun, arg.Reason, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const controlsFor = `-- name: ControlsFor :many
+SELECT id, run_id, kind, text, created_at FROM run_controls WHERE run_id = ? ORDER BY id
+`
+
+func (q *Queries) ControlsFor(ctx context.Context, runID string) ([]RunControl, error) {
+	rows, err := q.db.QueryContext(ctx, controlsFor, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunControl{}
+	for rows.Next() {
+		var i RunControl
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Kind,
+			&i.Text,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const createAdminToken = `-- name: CreateAdminToken :exec
@@ -151,6 +228,20 @@ type CreateSessionParams struct {
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
 	_, err := q.db.ExecContext(ctx, createSession, arg.ID, arg.Harness, arg.CreatedAt)
+	return err
+}
+
+const deleteSteersThrough = `-- name: DeleteSteersThrough :exec
+DELETE FROM run_controls WHERE run_id = ? AND kind = 'steer' AND id <= ?
+`
+
+type DeleteSteersThroughParams struct {
+	RunID string
+	ID    int64
+}
+
+func (q *Queries) DeleteSteersThrough(ctx context.Context, arg DeleteSteersThroughParams) error {
+	_, err := q.db.ExecContext(ctx, deleteSteersThrough, arg.RunID, arg.ID)
 	return err
 }
 
@@ -292,6 +383,28 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) error {
 		arg.ID,
 	)
 	return err
+}
+
+const firstControl = `-- name: FirstControl :one
+SELECT id, run_id, kind, text, created_at FROM run_controls WHERE run_id = ? AND kind = ? ORDER BY id LIMIT 1
+`
+
+type FirstControlParams struct {
+	RunID string
+	Kind  string
+}
+
+func (q *Queries) FirstControl(ctx context.Context, arg FirstControlParams) (RunControl, error) {
+	row := q.db.QueryRowContext(ctx, firstControl, arg.RunID, arg.Kind)
+	var i RunControl
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.Kind,
+		&i.Text,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getAdminToken = `-- name: GetAdminToken :one

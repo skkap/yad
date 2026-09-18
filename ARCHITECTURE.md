@@ -142,6 +142,12 @@ plain-text 404 or 405.
 - **Control kinds**: `cancel`, `interrupt`, `steer`, `close_session`, `drain`,
   `report_capabilities`, `update` (reserved —
   [0018](docs/decisions/0018-no-self-update-in-v1.md)).
+- **Controls are not acknowledged**, so a hub repeats `cancel` and `interrupt`
+  in every response to a sync listing the run, until the run ends; the runner
+  acts on the first. A `steer` is sent once — twice, the harness would read it
+  twice. An interrupt that reaches a run before its harness is up ends it as a
+  cancel does, with nothing spawned —
+  [0025](docs/decisions/0025-a-cancel-is-repeated-and-an-answer-that-landed-stands.md).
 - **Claim by listing.** A run offered in a sync response is claimed when the
   runner lists it in its next sync. An offered run that the next sync does not
   list was never received, and the hub offers it again. The runner takes the
@@ -249,6 +255,9 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `POST /runs` | queue a run: harness, model, brief, optional sources, grants and session; idempotent by `run_id` |
 | `GET /runs/{run}` | the run's hub-side state (`queued`, `offered`, then the protocol's) and its result; never its grants |
 | `GET /runs/{run}/events?after=N&wait_ms=…` | long poll: events after `N`, the run, and `done` once the stream is complete |
+| `POST /runs/{run}/cancel` | a run no runner started ends `cancelled` here; a held one gets a `cancel` control, and shows `cancel_requested_at` until it ends |
+| `POST /runs/{run}/interrupt` | an `interrupt` control for a held run; 409 before it starts |
+| `POST /runs/{run}/steer` | a `steer` control with `{text}` for a held run, sent once; 409 before it starts |
 
 ## §3 Running a harness
 
@@ -327,12 +336,18 @@ harness process. Recording new ones is a manual step, behind a build tag
   than ending the run.
 - **Cancel ladder**: the adapter's interrupt → 10 s → `SIGTERM` to the group →
   5 s → `SIGKILL` to the group. Descendants are killed even after the leader
-  exits cleanly — they hold pipes and git locks.
+  exits cleanly — they hold pipes and git locks. The executor climbs it around
+  the event stream (`Turn.Interrupt`, `Turn.Terminate`, then the run's context),
+  so what the harness says on the way down is spooled. A run waiting on its
+  `start_at` or still preparing is cancelled without spawning. The result's
+  `cancel_latency_ms` is from the control's arrival to the turn's end. A
+  harness whose own result landed before the cancel reached it keeps that
+  result — [0025](docs/decisions/0025-a-cancel-is-repeated-and-an-answer-that-landed-stands.md).
 - **Watchdogs**: inactivity on the event stream (owner default 30 min; a run may
   lower it) and an optional wall-clock cap. "Force-stopping a healthy run throws
   away the work" — the inactivity default errs long. A watchdog that fires
-  interrupts the turn, which keeps the session resumable; a harness still going
-  after the interrupt grace has its process group killed. The run is
+  climbs the same ladder, starting with the interrupt, which keeps the session
+  resumable. The run is
   `timed_out`, with the error class `inactivity_timeout` or
   `wall_clock_timeout`, whatever the stopped harness said last.
 - **Exit 0 is not success.** Only the harness's result event decides the state;
@@ -456,6 +471,10 @@ yad hub submit --harness h --model m [--session id | --new-session id] <instruct
                                    queue a run; prints its id (--watch follows it)
 yad hub watch <run>                a run's events as they arrive, then its result;
                                    exits non-zero unless it succeeded
+yad hub cancel <run>               stop a run: at once when no runner started it,
+                                   else by its runner, down the cancel ladder
+yad hub interrupt <run>            end a run's turn, keep its session
+yad hub steer <run> <text | ->     add input to a running turn
 yad hub admin-token create|list|revoke
                                    the service API's tokens; create saves to a 0600
                                    file and prints nothing secret (--out - prints once)

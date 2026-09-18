@@ -33,7 +33,8 @@ import (
 // with CLAUDE_TEST_EXIT; "died" exits 1 at once with something on stderr;
 // "linger" ignores the closed stdin and SIGTERM, as a wedged claude would;
 // "mute" closes stdout and then lingers the same way; "die-on-interrupt"
-// keeps working until an interrupt arrives, then exits without answering it.
+// keeps working until an interrupt arrives, then exits without answering it;
+// "deaf" never takes the interrupt at all, and dies only by signal.
 func fakeClaude() {
 	logf := openLog()
 	defer logf.Close()
@@ -128,6 +129,10 @@ func fakeClaude() {
 				credit++
 			case f.Type == "control_response" && f.Response != nil:
 				out.Flush()
+				if os.Getenv("CLAUDE_TEST_MODE") == "deaf" {
+					// Never answers the interrupt; SIGTERM still ends it.
+					time.Sleep(time.Hour)
+				}
 				id, ok := awaitString(controls)
 				if !ok {
 					os.Exit(1)

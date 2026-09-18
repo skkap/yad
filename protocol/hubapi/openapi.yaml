@@ -182,6 +182,9 @@ components:
     Run:
       additionalProperties: true
       properties:
+        cancel_requested_at:
+          format: date-time
+          type: string
         created_at:
           format: date-time
           type: string
@@ -266,6 +269,17 @@ components:
           $ref: "#/components/schemas/GitSource"
         path:
           type: string
+      type: object
+    SteerRequest:
+      additionalProperties: true
+      properties:
+        text:
+          description: What to tell the harness, as a user message.
+          maxLength: 65536
+          minLength: 1
+          type: string
+      required:
+        - text
       type: object
     SubmitRequest:
       additionalProperties: true
@@ -463,9 +477,61 @@ paths:
       security:
         - admin: []
       summary: Read a run's state, and its result once it has one
+  /runs/{run}/cancel:
+    post:
+      description: "A run no runner has started — queued, or offered and not yet claimed — is cancelled here and now. A run a runner holds is cancelled by that runner at its next sync, down the cancel ladder: the harness is interrupted, then its process group gets SIGTERM, then SIGKILL; cancel_requested_at is set until then, and the result's cancel_latency_ms says how long the harness took to stop. A harness that finished before the cancel reached it keeps its own result. Cancelling a cancelled run answers it as it is; any other finished run is 409."
+      operationId: cancelRun
+      parameters:
+        - description: The run id.
+          in: path
+          name: run
+          required: true
+          schema:
+            description: The run id.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Cancel a run
   /runs/{run}/events:
     get:
-      description: Answers at once with every event after `after` (up to a page), or when the run's state moves, or when it finishes; otherwise holds the request up to wait_ms and answers with no events. Ask again with after = next_after until done, which is true once the run is terminal and every event it will have has been returned.
+      description: Answers at once with every event after `after` (up to a page), or when the run's state moves or a cancel is asked for it, or when it finishes; otherwise holds the request up to wait_ms and answers with no events. Ask again with after = next_after until done, which is true once the run is terminal and every event it will have has been returned.
       operationId: runEvents
       parameters:
         - description: The run id.
@@ -534,6 +600,122 @@ paths:
       security:
         - admin: []
       summary: Long-poll a run's events
+  /runs/{run}/interrupt:
+    post:
+      description: "Ends the harness's current turn and keeps its session, so the next run in the session resumes it; the run ends cancelled unless the turn finished first. Delivered at the runner's next sync. Unlike a cancel it asks only: a harness that ignores it keeps going. A run that has not started is 409 — cancel it instead."
+      operationId: interruptRun
+      parameters:
+        - description: The run id.
+          in: path
+          name: run
+          required: true
+          schema:
+            description: The run id.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Interrupt a run's turn
+  /runs/{run}/steer:
+    post:
+      description: "Delivered once, at the runner's next sync. The harness reads it at its next tool boundary, or answers it after the turn in the same run. A steer the harness would not take appears in the run's events as an error with class steer_failed. A run that has not started is 409: put the text in the brief of a new run instead."
+      operationId: steerRun
+      parameters:
+        - description: The run id.
+          in: path
+          name: run
+          required: true
+          schema:
+            description: The run id.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteerRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Add input to a running turn
 servers:
   - description: where `yad hub` mounts it
     url: /api/v1

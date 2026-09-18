@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -292,5 +293,83 @@ func TestSubmitIntoSessions(t *testing.T) {
 	run, err := r.s.GetRun(context.Background(), strings.TrimSpace(out))
 	if err != nil || !strings.Contains(run.Spec, `a long\ninstruction`) {
 		t.Errorf("stored %q, %v", run.Spec, err)
+	}
+}
+
+// A run no runner has taken is cancelled on the spot, and watch ends on it
+// saying why.
+func TestCancelAQueuedRun(t *testing.T) {
+	r := newHubRig(t)
+	id := r.submit(t, "never mind")
+	code, out, errs := r.p.yad("", "hub", "cancel", id)
+	if code != 0 || !strings.Contains(out, "is cancelled") {
+		t.Fatalf("cancel: exit %d %q %q", code, out, errs)
+	}
+	wout, werrs, exit := r.watch(t, id)
+	select {
+	case code := <-exit:
+		if code != 1 || !strings.Contains(werrs.String(), "cancelled on the hub before a runner started it") || !strings.Contains(wout.String(), "── cancelled") {
+			t.Errorf("watch: exit %d out %q err %q", code, wout, werrs)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("watch did not end")
+	}
+	// Interrupting or steering what never started is refused with the way out.
+	id2 := r.submit(t, "another")
+	if code, _, errs := r.p.yad("", "hub", "interrupt", id2); code == 0 || !strings.Contains(errs, "has not started") {
+		t.Errorf("interrupt of a queued run: exit %d %q", code, errs)
+	}
+}
+
+// On a run a runner holds, cancel, interrupt and steer are queued for that
+// runner's next sync, and watch says a cancel is on its way.
+func TestControlsForAHeldRun(t *testing.T) {
+	r := newHubRig(t)
+	id := r.submit(t, "work")
+	if _, err := r.s.DB.ExecContext(context.Background(), "UPDATE runs SET state = 'running' WHERE id = ?", id); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := r.watch(t, id)
+	waitFor(t, "watch", out, "── running")
+	for _, c := range []struct {
+		stdin string
+		args  []string
+		want  string
+	}{
+		{"", []string{"hub", "steer", id, "use tabs"}, "hands the steer"},
+		{"from\nstdin\n", []string{"hub", "steer", id, "-"}, "hands the steer"},
+		{"", []string{"hub", "interrupt", id}, "interrupts the turn"},
+		{"", []string{"hub", "cancel", id}, "cancels it at its next sync"},
+	} {
+		if code, got, errs := r.p.yad(c.stdin, c.args...); code != 0 || !strings.Contains(got, c.want) {
+			t.Errorf("%v: exit %d %q %q", c.args, code, got, errs)
+		}
+	}
+	waitFor(t, "watch", out, "cancel requested")
+	rows, err := r.s.ControlsFor(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range rows {
+		got = append(got, c.Kind+":"+c.Text)
+	}
+	if want := []string{"steer:use tabs", "steer:from\nstdin\n", "interrupt:", "cancel:"}; !slices.Equal(got, want) {
+		t.Errorf("queued %q, want %q", got, want)
+	}
+}
+
+func TestControlUsage(t *testing.T) {
+	p := newProfile(t)
+	for _, args := range [][]string{
+		{"hub", "cancel"},
+		{"hub", "cancel", "a", "b"},
+		{"hub", "interrupt"},
+		{"hub", "steer", "a"},
+		{"hub", "steer", "a", "   "},
+	} {
+		if code, _, errs := p.yad("", args...); code == 0 || errs == "" {
+			t.Errorf("%v: exit %d %q", args, code, errs)
+		}
 	}
 }

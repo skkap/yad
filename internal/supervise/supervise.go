@@ -192,6 +192,16 @@ func (p *Process) Stop(l Ladder) Step {
 	return StepKilled
 }
 
+// Terminate sends SIGTERM to the group, unless the leader has exited: its
+// group is killed with it then, and the id may already belong to another.
+// For a caller that runs the ladder's steps itself, around a stream it must
+// keep reading.
+func (p *Process) Terminate() {
+	if !p.exited(0) {
+		p.signalGroup(syscall.SIGTERM)
+	}
+}
+
 func (p *Process) exited(within time.Duration) bool {
 	if within <= 0 {
 		select {

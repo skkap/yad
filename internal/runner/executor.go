@@ -42,6 +42,12 @@ const (
 	ClassWallClock = "wall_clock_timeout"
 	// ClassAdapter — the adapter ended the turn without a terminal state.
 	ClassAdapter = "adapter_error"
+	// ClassSteer — a steer from the hub did not reach the harness; the run
+	// carries on without it. Only ever an event, never a result.
+	ClassSteer = "steer_failed"
+	// ClassInterrupt — an interrupt from the hub did not reach the harness.
+	// Only ever an event, never a result.
+	ClassInterrupt = "interrupt_failed"
 )
 
 // maxTextBytes caps an event's text and error message and a result's final
@@ -76,11 +82,13 @@ type Exec struct {
 	// Report wakes a connection's reporter, so a result or a full batch goes
 	// out now rather than at the next tick. Nil is fine: the tick finds it.
 	Report func(connection string)
-	// Grace is how long a harness gets to end its turn after a watchdog
-	// interrupts it before its process group is killed; zero is the cancel
-	// ladder's interrupt grace.
-	Grace time.Duration
-	Log   *slog.Logger
+	// Grace is how long a harness gets to end its turn once interrupted —
+	// by a cancel or a watchdog — before its process group gets SIGTERM, and
+	// TermGrace how long after that before SIGKILL. Zero is the cancel
+	// ladder's own (supervise.DefaultLadder).
+	Grace     time.Duration
+	TermGrace time.Duration
+	Log       *slog.Logger
 
 	once   sync.Once
 	mu     sync.Mutex
@@ -92,12 +100,68 @@ var _ Executor = (*Exec)(nil)
 
 type runKey struct{ connection, run string }
 
-// activeRun is a run the executor has in hand. It is the seam the cancel
-// ladder (DEV-8) acts through: Control finds the run here and reaches its turn.
+// activeRun is a run the executor has in hand, and how the hub's controls
+// reach it: Control finds the run here, and the run's own goroutine acts on
+// them, so a control never races the turn it is aimed at.
 type activeRun struct {
-	mu     sync.Mutex
-	turn   adapter.Turn
-	cancel context.CancelFunc
+	mu sync.Mutex
+	// started is set once the harness is up; before that there is no turn to
+	// interrupt, and an interrupt ends the run as a cancel does.
+	started bool
+	// cancelled is closed by the first cancel, or by an interrupt before
+	// the harness is up; cancelAt is when it arrived.
+	cancelled chan struct{}
+	cancelAt  time.Time
+	// controls carries interrupts and steers to the running turn. A steer
+	// sent while the run prepares waits here for the harness.
+	controls chan control
+}
+
+// control is an interrupt or a steer, with when the runner received it.
+type control struct {
+	v1.Control
+	at time.Time
+}
+
+// pendingControls bounds the interrupts and steers waiting for one run. A hub
+// that sends more before the run can take them has lost track of it; the
+// excess is dropped and logged.
+const pendingControls = 16
+
+func newActiveRun() *activeRun {
+	return &activeRun{cancelled: make(chan struct{}), controls: make(chan control, pendingControls)}
+}
+
+// stop cancels the run — always for a cancel, and for an interrupt only while
+// the harness is not up — and reports whether it did (ok) and whether this was
+// the first time (first). One lock covers the check and the close, so an
+// interrupt is never lost between the two.
+func (a *activeRun) stop(at time.Time, cancel bool) (first, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !cancel && a.started {
+		return false, false
+	}
+	select {
+	case <-a.cancelled:
+		return false, true
+	default:
+	}
+	a.cancelAt = at
+	close(a.cancelled)
+	return true, true
+}
+
+// cancelledAt reports whether the run was cancelled, and when.
+func (a *activeRun) cancelledAt() (time.Time, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	select {
+	case <-a.cancelled:
+		return a.cancelAt, true
+	default:
+		return time.Time{}, false
+	}
 }
 
 func (e *Exec) init() {
@@ -108,6 +172,9 @@ func (e *Exec) init() {
 		}
 		if e.Grace <= 0 {
 			e.Grace = supervise.DefaultLadder.InterruptGrace
+		}
+		if e.TermGrace <= 0 {
+			e.TermGrace = supervise.DefaultLadder.TermGrace
 		}
 		if e.Log == nil {
 			e.Log = slog.New(slog.DiscardHandler)
@@ -120,7 +187,7 @@ func (e *Exec) init() {
 func (e *Exec) Start(ctx context.Context, c Claim) {
 	e.init()
 	key := runKey{c.Connection, c.Run.RunID}
-	a := &activeRun{}
+	a := newActiveRun()
 	e.mu.Lock()
 	e.active[key] = a
 	e.mu.Unlock()
@@ -139,23 +206,40 @@ func (e *Exec) Start(ctx context.Context, c Claim) {
 // runner.
 func (e *Exec) Wait() { e.wg.Wait() }
 
-// Control receives the hub's instructions for runs. Acting on them — the
-// interrupt, the cancel ladder, steering — is DEV-8; until then an instruction
-// for a run in hand is logged, so an operator can see the hub asked.
+// Control receives the hub's instructions for runs. It only hands them over —
+// the run's own goroutine acts — so it never blocks the sync loop.
+//
+// A cancel is delivered on every sync until the run ends (decision 0025), so
+// only the first counts. An interrupt before the harness is up has no turn to
+// end: the run ends as cancelled, never started, which keeps the session as
+// an interrupt would.
 func (e *Exec) Control(_ context.Context, connection string, c v1.Control) {
 	e.init()
 	switch c.Kind {
 	case v1.ControlCancel, v1.ControlInterrupt, v1.ControlSteer:
 		e.mu.Lock()
-		_, ok := e.active[runKey{connection, c.RunID}]
+		a, ok := e.active[runKey{connection, c.RunID}]
 		e.mu.Unlock()
 		if !ok {
 			// Most often a finished run still listed while its result is on
 			// its way; the hub's answer to it is already settled.
 			return
 		}
-		e.Log.Warn("the hub sent a control this runner does not act on yet; the run carries on (DEV-8)",
-			"connection", connection, "run", c.RunID, "kind", c.Kind)
+		log := e.Log.With("connection", connection, "run", c.RunID, "kind", c.Kind)
+		now := time.Now()
+		if c.Kind == v1.ControlCancel || c.Kind == v1.ControlInterrupt {
+			if first, ok := a.stop(now, c.Kind == v1.ControlCancel); ok {
+				if first {
+					log.Info("the hub stopped the run")
+				}
+				return
+			}
+		}
+		select {
+		case a.controls <- control{Control: c, at: now}:
+		default:
+			log.Warn("too many controls are waiting for this run; this one is dropped")
+		}
 	case v1.ControlCloseSession, v1.ControlDrain:
 		e.Log.Warn("the hub sent a control this runner does not act on yet (epics E3, E4)", "connection", connection, "kind", c.Kind)
 	}
@@ -174,6 +258,18 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		e.finish(bg, c, v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: class, Message: msg},
 			Metrics: v1.Metrics{DurationMS: time.Since(started).Milliseconds()}})
 	}
+	// A run stopped before its harness is up is cancelled with nothing
+	// spawned: no process, no events, and the session as it was.
+	stoppedEarly := func() bool {
+		at, ok := a.cancelledAt()
+		if !ok {
+			return false
+		}
+		log.Info("run cancelled before it started")
+		e.finish(bg, c, v1.Result{State: v1.RunCancelled,
+			Metrics: v1.Metrics{DurationMS: time.Since(started).Milliseconds(), CancelLatencyMS: latency(at)}})
+		return true
+	}
 
 	// A start time is a moment the run must not start before; the hub may
 	// hand the run over early so it starts on time. It waits here, claimed
@@ -184,6 +280,10 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			t := time.NewTimer(d)
 			select {
 			case <-t.C:
+			case <-a.cancelled:
+				t.Stop()
+				stoppedEarly()
+				return
 			case <-ctx.Done():
 				t.Stop()
 				log.Warn("runner stopped before the run's start time; it stays held")
@@ -227,6 +327,9 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		Env: env, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
 	}
 
+	if stoppedEarly() {
+		return
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	turn, err := ad.Start(runCtx, spec)
@@ -234,19 +337,24 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassStart, err.Error())
 		return
 	}
+	// From here an interrupt reaches the turn; one that arrived while the
+	// harness started closed cancelled instead, which the stream sees at once.
 	a.mu.Lock()
-	a.turn, a.cancel = turn, cancel
+	a.started = true
 	a.mu.Unlock()
 	// Running only once the workdir exists and the harness is up (§2).
 	e.setState(bg, c, v1.RunRunning)
 	log.Info("run started", "harness", run.Harness, "model", run.Model, "workdir", workdir)
 
-	w := e.stream(bg, c, turn, cancel, native, started)
+	w := e.stream(bg, c, a, turn, cancel, native, started)
 	out := turn.Wait()
+	if !w.stopAt.IsZero() {
+		w.latency = latency(w.stopAt)
+	}
 	if out.NativeSessionID != "" && out.NativeSessionID != w.native {
 		e.setNative(bg, c, out.NativeSessionID)
 	}
-	if ctx.Err() != nil && w.stopped == "" && out.State == v1.RunCancelled {
+	if ctx.Err() != nil && w.stopped == "" && w.stopAt.IsZero() && out.State == v1.RunCancelled {
 		// Stopped because the runner is stopping, not because the run ended:
 		// no result is owed yet. The next start settles it (E3).
 		log.Warn("run stopped with the runner; it stays held")
@@ -255,11 +363,24 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	e.finish(bg, c, e.result(out, w, started))
 }
 
+// latency is the time from a control's arrival to now, for cancel_latency_ms.
+func latency(since time.Time) *int64 {
+	ms := time.Since(since).Milliseconds()
+	return &ms
+}
+
 // watch is what streaming a turn observed.
 type watch struct {
 	// stopped is the watchdog class that stopped the turn, or "".
-	stopped      string
-	stoppedMsg   string
+	stopped    string
+	stoppedMsg string
+	// cancelled: the hub cancelled the run; interrupted: it interrupted the
+	// turn. stopAt is when the first of either arrived, and latency how long
+	// the turn took to end after it.
+	cancelled    bool
+	interrupted  bool
+	stopAt       time.Time
+	latency      *int64
 	stalls       int
 	firstEventMS int64
 	toolCalls    int
@@ -268,11 +389,13 @@ type watch struct {
 }
 
 // stream spools the turn's events until it closes them, under the two
-// watchdogs. A watchdog that fires interrupts the turn, which keeps the session
-// resumable; a harness that has not ended its turn Grace later loses its
-// process group.
-func (e *Exec) stream(ctx context.Context, c Claim, turn adapter.Turn, kill context.CancelFunc, native string, started time.Time) watch {
+// watchdogs and the hub's controls. A cancel or a watchdog climbs the cancel
+// ladder: interrupt, which keeps the session resumable; SIGTERM to the
+// process group Grace later; SIGKILL TermGrace after that. Events keep being
+// spooled all the way down, so what the harness says as it stops is kept.
+func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.Turn, kill context.CancelFunc, native string, started time.Time) watch {
 	w := watch{firstEventMS: -1, native: native}
+	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	idleFor := e.inactivity(c.Run)
 	idle := time.NewTimer(idleFor)
 	defer idle.Stop()
@@ -282,17 +405,26 @@ func (e *Exec) stream(ctx context.Context, c Claim, turn adapter.Turn, kill cont
 		defer t.Stop()
 		wall = t.C
 	}
-	var grace <-chan time.Time
+	cancelled := a.cancelled
+	var term, sigkill <-chan time.Time
+	climbing := false
+	climb := func() {
+		if climbing {
+			return
+		}
+		climbing = true
+		// A failed interrupt only means SIGTERM comes sooner in effect; the
+		// timers below do not depend on the harness cooperating.
+		_ = turn.Interrupt()
+		term = time.After(e.Grace)
+	}
 	stop := func(class, msg string) {
-		if w.stopped != "" {
+		if w.stopped != "" || w.cancelled {
 			return
 		}
 		w.stopped, w.stoppedMsg = class, msg
-		e.Log.Warn("watchdog stopping run", "connection", c.Connection, "run", c.Run.RunID, "class", class)
-		// A failed interrupt only means the kill comes sooner in effect; the
-		// grace timer below does not depend on the harness cooperating.
-		_ = turn.Interrupt()
-		grace = time.After(e.Grace)
+		log.Warn("watchdog stopping run", "class", class)
+		climb()
 	}
 	unreported := 0
 	for {
@@ -323,15 +455,73 @@ func (e *Exec) stream(ctx context.Context, c Claim, turn adapter.Turn, kill cont
 				w.native = id
 				e.setNative(ctx, c, id)
 			}
+		case <-cancelled:
+			cancelled = nil
+			at, _ := a.cancelledAt()
+			if w.stopped == "" {
+				w.cancelled = true
+			}
+			if w.stopAt.IsZero() {
+				w.stopAt = at
+			}
+			log.Info("cancelling run")
+			e.note(ctx, c, &w, v1.Event{Kind: v1.EventStatus, Status: "cancelling"})
+			climb()
+		case ctl := <-a.controls:
+			e.control(ctx, c, &w, turn, ctl)
 		case <-idle.C:
 			w.stalls++
 			stop(ClassInactivity, fmt.Sprintf("the harness produced no event for %s and was stopped", idleFor))
 		case <-wall:
 			stop(ClassWallClock, fmt.Sprintf("the run reached its wall-clock cap of %s and was stopped", time.Duration(c.Run.WallClockMS)*time.Millisecond))
-		case <-grace:
-			grace = nil
+		case <-term:
+			term = nil
+			log.Warn("the harness did not stop when interrupted; sending SIGTERM to its process group")
+			_ = turn.Terminate()
+			sigkill = time.After(e.TermGrace)
+		case <-sigkill:
+			sigkill = nil
+			log.Warn("the harness did not stop on SIGTERM; killing its process group")
 			kill()
 		}
+	}
+}
+
+// control acts on an interrupt or a steer for the running turn. What the hub
+// asked for, and a steer the harness would not take, go into the run's own
+// event stream, where whoever sent it is watching.
+func (e *Exec) control(ctx context.Context, c Claim, w *watch, turn adapter.Turn, ctl control) {
+	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
+	switch ctl.Kind {
+	case v1.ControlInterrupt:
+		// Repeated on every sync until the run ends; the first is the one.
+		if w.interrupted {
+			return
+		}
+		w.interrupted = true
+		if w.stopAt.IsZero() {
+			w.stopAt = ctl.at
+		}
+		log.Info("interrupting run")
+		e.note(ctx, c, w, v1.Event{Kind: v1.EventStatus, Status: "interrupting"})
+		if err := turn.Interrupt(); err != nil {
+			e.note(ctx, c, w, v1.Event{Kind: v1.EventError, Error: &v1.RunError{Class: ClassInterrupt, Message: "the interrupt did not reach the harness: " + err.Error() + " — cancel the run to stop it for certain"}})
+		}
+	case v1.ControlSteer:
+		if err := turn.Steer(ctl.Text); err != nil {
+			log.Warn("steer not delivered", "err", err)
+			e.note(ctx, c, w, v1.Event{Kind: v1.EventError, Error: &v1.RunError{Class: ClassSteer, Message: "the steer was not delivered: " + err.Error()}})
+			return
+		}
+		e.note(ctx, c, w, v1.Event{Kind: v1.EventStatus, Status: "steered"})
+	}
+}
+
+// note spools an event of the runner's own into the run's stream.
+func (e *Exec) note(ctx context.Context, c Claim, w *watch, ev v1.Event) {
+	if e.spool(ctx, c, &ev, w.lastSeq+1) {
+		w.lastSeq = ev.Seq
+		e.report(c.Connection)
 	}
 }
 
@@ -383,14 +573,26 @@ func capBytes(s string, n int) (string, bool) {
 }
 
 // result turns the adapter's outcome into the protocol's terminal report. A
-// watchdog's verdict wins over whatever the stopped harness said last.
+// watchdog's verdict wins over whatever the stopped harness said last. A
+// cancel's does not: the harness's own answer, when it had one before the
+// cancel reached it, stands (decision 0025); only a turn that ended without
+// one is cancelled.
 func (e *Exec) result(out adapter.Outcome, w watch, started time.Time) v1.Result {
 	res := v1.Result{
 		State: out.State, FinalText: out.FinalText, Error: out.Error, LastSeq: w.lastSeq,
 		Metrics: v1.Metrics{
 			DurationMS: time.Since(started).Milliseconds(), FirstEventMS: max(w.firstEventMS, 0),
 			ToolCalls: w.toolCalls, APIRetries: out.APIRetries, Stalls: w.stalls,
+			CancelLatencyMS: w.latency,
 		},
+	}
+	stoppedByHub := w.cancelled || w.interrupted
+	if stoppedByHub && (!out.State.IsTerminal() || out.State == v1.RunLost ||
+		out.State == v1.RunFailed && out.Error != nil && out.Error.Class == adapter.ClassHarnessExited) {
+		// A harness killed on the way down exits without a result of its
+		// own; that is the cancel, not a crash.
+		res.State, res.Error, res.FinalText = v1.RunCancelled, nil, ""
+		return res
 	}
 	if len(out.Usage) > 0 {
 		res.Usage.ByModel = out.Usage

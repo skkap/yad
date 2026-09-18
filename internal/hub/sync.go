@@ -100,6 +100,11 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 					return err
 				}
 			}
+			controls, err := deliver(ctx, q, run.ID)
+			if err != nil {
+				return err
+			}
+			out.Controls = append(out.Controls, controls...)
 		}
 
 		// Whatever is still offered to this runner was in the last response

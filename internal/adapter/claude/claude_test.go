@@ -661,6 +661,29 @@ func TestInterruptTwice(t *testing.T) {
 	}
 }
 
+// The cancel ladder's second rung: a claude deaf to the interrupt is ended
+// by SIGTERM to its group, and the run is cancelled, not a crash.
+func TestTerminateEndsADeafClaude(t *testing.T) {
+	h := &harness{fixture: fixture("interrupt"), env: map[string]string{"CLAUDE_TEST_MODE": "deaf"}}
+	_, out, _ := drive(t, context.Background(), h.spec(t), func(tr adapter.Turn, e v1.Event) bool {
+		if e.Kind != v1.EventText {
+			return false
+		}
+		tr.Interrupt()
+		go func() {
+			time.Sleep(100 * time.Millisecond) // the interrupt went unanswered
+			tr.Terminate()
+		}()
+		return true
+	})
+	if out.State != v1.RunCancelled || out.Error != nil {
+		t.Errorf("state %s (%+v)", out.State, out.Error)
+	}
+	if n := len(h.seen(t).frames("control_request")); n != 1 {
+		t.Errorf("%d interrupt requests", n)
+	}
+}
+
 func TestContextCancelEndsTheTurn(t *testing.T) {
 	// No result ever comes: the fake blocks waiting for an interrupt that is
 	// never sent, as a wedged claude would.

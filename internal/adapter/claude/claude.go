@@ -63,6 +63,10 @@ var geteuid = os.Geteuid
 
 var newline = []byte{'\n'}
 
+// requestPrefix marks the control requests YAD sends — interrupts — so their
+// acknowledgements can be told from anything else Claude answers.
+const requestPrefix = "yad-"
+
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // Start spawns Claude for one run and writes the instruction to it.
@@ -310,7 +314,7 @@ func (t *turn) Interrupt() error {
 	t.requests++
 	frame, _ := json.Marshal(map[string]any{
 		"type":       "control_request",
-		"request_id": fmt.Sprintf("yad-%d", t.requests),
+		"request_id": fmt.Sprintf("%s%d", requestPrefix, t.requests),
 		"request":    map[string]any{"subtype": "interrupt"},
 	})
 	select {
@@ -320,6 +324,13 @@ func (t *turn) Interrupt() error {
 	default:
 		return errors.New("claude is not reading its input — the cancel ladder's signals will stop it")
 	}
+}
+
+// Terminate is the ladder's SIGTERM, for a Claude that did not stop when
+// interrupted.
+func (t *turn) Terminate() error {
+	t.p.Terminate()
+	return nil
 }
 
 // deny refuses a permission prompt. The prompt only exists because the owner's
