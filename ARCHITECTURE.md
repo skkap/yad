@@ -466,7 +466,8 @@ yad daemon start|stop|status|logs  the runner process
 yad status                         runs, sessions, accounts, connections — via the socket
 yad sessions [close <id>]
 yad account add|list|use|remove
-yad service install|uninstall      launchd user agent, systemd user unit
+yad service install|uninstall|status
+                                   launchd user agent, systemd user unit (0028)
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1
 yad hub submit --harness h --model m [--session id | --new-session id] <instruction | ->
                                    queue a run; prints its id (--watch follows it)
