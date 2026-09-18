@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Written by yad service install. Run it again to rewrite this file; yad service uninstall removes it. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>yad.runner.work</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/owner/My Tools/yad</string>
+		<string>--profile</string>
+		<string>work</string>
+		<string>daemon</string>
+		<string>start</string>
+		<string>--foreground</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/Users/owner/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+		<key>YAD_DATA_DIR</key>
+		<string>/Volumes/R&amp;D 100%/yad $data &#34;x&#34;</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/owner</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ExitTimeOut</key>
+	<integer>1860</integer>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>StandardOutPath</key>
+	<string>/Users/owner/.local/share/yad/profiles/work/logs/service.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/owner/.local/share/yad/profiles/work/logs/service.log</string>
+</dict>
+</plist>

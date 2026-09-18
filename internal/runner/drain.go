@@ -6,6 +6,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // Drain is the runner's way down (DOMAIN.md, decision 0029), in two steps a
@@ -118,8 +120,20 @@ func OnSignals(ctx context.Context, sigs <-chan os.Signal, d *Drain, exit func()
 	}
 }
 
+// StopBudget is the longest a first stop signal can take to end the runner:
+// the drain wait, then the cancel ladder on whatever is still running, then
+// the last delivery, and slack for the syncs in between. A service manager's
+// stop timeout must be at least this, or it kills the runner mid-drain and the
+// runs it holds end lost at the next start.
+func StopBudget(drainWait time.Duration) time.Duration {
+	return max(drainWait, 0) + supervise.DefaultLadder.InterruptGrace + supervise.DefaultLadder.TermGrace + flushWait + stopSlack
+}
+
 // Timings of the way down.
 const (
+	// stopSlack covers what StopBudget cannot time: a sync or an upload in
+	// flight when a step begins, bounded by the hub client's own timeouts.
+	stopSlack = 15 * time.Second
 	// flushWait bounds the last delivery once every run has ended: long enough
 	// for a reachable hub to take what is owed, short enough that a hub which
 	// is down does not hold an exit that loses nothing — the spool and the

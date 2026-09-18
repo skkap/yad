@@ -68,6 +68,7 @@ internal/harness         the catalog, detection, versions
 internal/capability      the capability document and its fingerprint
 internal/hostool         probing host tools (gh, git, docker, zumino)
 internal/account         accounts per harness, homes, limit state, failover
+internal/service         yad service: launchd agent and systemd user unit, login PATH (0028)
 internal/adapter         the Adapter interface and event normalisation
 internal/adapter/claude  stream-json both ways
 internal/adapter/codex   app-server JSON-RPC
@@ -356,8 +357,9 @@ harness process. Recording new ones is a manual step, behind a build tag
   (`[drain] wait`, default 30 min) running out, or a second signal, cancels
   every run held down the cancel ladder, each result `cancelled` with class
   `runner_stopping`. Once every run has ended the runner gives the spool and
-  the outbox up to 30 s and exits. A third signal exits at once. A service
-  manager's stop timeout must exceed the drain wait plus the ladder.
+  the outbox up to 30 s and exits. A third signal exits at once. The service
+  units' stop timeout is derived from the drain wait at `yad service install`
+  (`runner.StopBudget`), so a changed wait takes a reinstall.
 - **Restart** — [0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md).
   Every run a previous process began is reported lost (`runner_restarted`,
   `last_seq` its last spooled event) through the outbox, never run again; a
@@ -489,7 +491,8 @@ yad daemon start|stop|status|logs  the runner process
 yad status                         runs, sessions, accounts, connections — via the socket
 yad sessions [close <id>]
 yad account add|list|use|remove
-yad service install|uninstall      launchd user agent, systemd user unit
+yad service install|uninstall|status
+                                   launchd user agent, systemd user unit (0028)
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1
 yad hub submit --harness h --model m [--session id | --new-session id] <instruction | ->
                                    queue a run; prints its id (--watch follows it)

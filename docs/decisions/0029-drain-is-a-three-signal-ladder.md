@@ -62,9 +62,13 @@ third. Signals, the hub's control and — with DEV-10/11 — the control socket'
 
 A service manager's stop timeout must exceed the drain wait plus the cancel
 ladder (about 15 s), or it kills the runner mid-drain and its runs end `lost`
-at the next start. The service units (DEV-12, decision 0028) were written
-before this and stop after 30 s; reconciling the two is left to whichever lands
-second.
+at the next start. So `yad service install` derives the units' stop timeout
+(`ExitTimeOut`, `TimeoutStopSec`) from the drain wait — `runner.StopBudget`:
+the wait, the ladder, the last flush and 15 s of slack — instead of the flat
+30 s decision 0028 chose before drains existed, which stays the floor. A unit
+holds the timeout it was rendered with: a changed drain wait takes a
+`yad service install` again, and that reinstall itself drains the running
+runner first.
 
 ## Considered options
 
