@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,10 +34,11 @@ func (d Detected) Ready() bool {
 // failure is reported as text. A variable so tests can shorten it.
 var versionTimeout = 5 * time.Second
 
-// probeCloseGrace is how long output already written may still drain after the
-// deadline, before the pipe is closed under a reader that would otherwise wait
-// on a detached descendant. The WaitDelay the probe had before supervise.
-const probeCloseGrace = time.Second
+// probeDrain is how long the reader gets, once the leader has exited or timed
+// out, to collect what is already in the pipe before it is closed. What the
+// leader printed is buffered by then, so this is short; it only has to outlast
+// the reader goroutine's next wakeup, not any process.
+const probeDrain = 250 * time.Millisecond
 
 // versionOutputCap bounds what a probe may print. A version is one line; a CLI
 // that prints megabytes is broken, and must not grow the runner's memory.
@@ -85,31 +85,47 @@ func detectOne(ctx context.Context, h Harness) Detected {
 		d.Error = err.Error()
 		return d
 	}
-	// The read needs its own deadline. Killing the group at the timeout ends
-	// every process in it, but a descendant that called setsid — a node
-	// launcher spawning a detached updater with inherited stdio — is not in the
-	// group, keeps the pipe open, and would hold a bare ReadAll forever, and
-	// with it every daemon tick. Closing our end is what finally unblocks it.
+	// The read cannot simply run to EOF. When the leader exits the group dies,
+	// but a descendant that left it with setsid — a node launcher spawning a
+	// detached updater with inherited stdio — keeps the pipe open, and EOF
+	// never comes. So the leader's own fate decides: once it has exited, what it
+	// printed is already in the pipe and a short drain collects it; if the
+	// deadline comes first, the probe timed out. Closing our end is what ends a
+	// read the detached process would otherwise hold forever.
 	read := make(chan []byte, 1)
 	go func() {
 		b, _ := io.ReadAll(io.LimitReader(p.Stdout(), versionOutputCap))
 		read <- b
 	}()
 	var raw []byte
+	gotEOF, timedOut := false, false
 	select {
 	case raw = <-read:
+		gotEOF = true
+	case <-p.Done():
 	case <-ctx.Done():
-		grace := time.NewTimer(probeCloseGrace)
+		select {
+		case <-p.Done():
+		default:
+			timedOut = true
+		}
+	}
+	if !gotEOF {
+		drain := time.NewTimer(probeDrain)
 		select {
 		case raw = <-read:
-		case <-grace.C:
+			gotEOF = true
+		case <-drain.C:
 		}
-		grace.Stop()
+		drain.Stop()
 	}
 	p.Stdout().Close()
+	if !gotEOF {
+		raw = <-read // ReadAll returns what it read before the close
+	}
 	werr := p.Wait()
 	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+	case timedOut:
 		d.Error = fmt.Sprintf("no answer to %s within %s", strings.Join(h.VersionArgs, " "), versionTimeout)
 	case werr != nil:
 		d.Error = strings.TrimSpace(werr.Error() + " " + p.Stderr())

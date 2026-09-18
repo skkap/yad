@@ -195,37 +195,61 @@ func TestKindsMatchDomain(t *testing.T) {
 	}
 }
 
-// A descendant that leaves the process group survives the group kill and keeps
-// stdout open. The probe must still return, or every daemon tick stalls on it.
-func TestProbeReturnsWhenADetachedDescendantHoldsStdout(t *testing.T) {
-	dir := t.TempDir()
-	pidfile := filepath.Join(dir, "detached.pid")
-	script := filepath.Join(dir, "codex")
-	body := "#!/bin/sh\nperl -MPOSIX -e 'POSIX::setsid(); sleep 60' &\necho $! > " + pidfile + "\nsleep 60\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("YAD_CODEX_PATH", script)
+// The probe's outcome is the leader's, whoever else holds the pipe. Every
+// leader fate against every kind of descendant.
+func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 	old := versionTimeout
 	versionTimeout = 1500 * time.Millisecond
 	t.Cleanup(func() { versionTimeout = old })
-	t.Cleanup(func() {
-		if raw, err := os.ReadFile(pidfile); err == nil {
-			if pid, _ := strconv.Atoi(strings.TrimSpace(string(raw))); pid > 0 {
-				syscall.Kill(pid, syscall.SIGKILL)
+	// Each child records its pid only once it is in place, and the leader waits
+	// for that: a leader that exited at once would have its group killed before
+	// the child had left it, and the test would not be testing a detached child.
+	detached := "perl -MPOSIX -e 'POSIX::setsid(); open(F, \">>\", $ENV{PIDS}); print F \"$$\\n\"; close F; sleep 60' &\n" +
+		"while [ ! -s \"$PIDS\" ]; do sleep 0.02; done\n"
+	inGroup := "sleep 60 &\necho $! >> \"$PIDS\"\n"
+	for _, tc := range []struct {
+		name, body  string
+		wantVersion string
+		wantErr     string
+		within      time.Duration
+	}{
+		{"exits 0, alone", "echo 'codex-cli 1.0'\n", "codex-cli 1.0", "", time.Second},
+		{"exits 0, in-group child holds stdout", inGroup + "echo 'codex-cli 1.0'\n", "codex-cli 1.0", "", time.Second},
+		{"exits 0, detached child holds stdout", detached + "echo 'codex-cli 1.0'\n", "codex-cli 1.0", "", time.Second},
+		{"exits 3", "echo oops >&2\nexit 3\n", "", "exit status 3", time.Second},
+		{"exits 3, detached child holds stdout", detached + "exit 3\n", "", "exit status 3", time.Second},
+		{"hangs", "sleep 60\n", "", "no answer", 3 * time.Second},
+		{"hangs, detached child holds stdout", detached + "sleep 60\n", "", "no answer", 3 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pids := filepath.Join(dir, "pids")
+			script := filepath.Join(dir, "codex")
+			if err := os.WriteFile(script, []byte("#!/bin/sh\n"+tc.body), 0o755); err != nil {
+				t.Fatal(err)
 			}
-		}
-	})
-
-	h, _ := Lookup("codex")
-	done := make(chan Detected, 1)
-	go func() { done <- detectOne(context.Background(), h) }()
-	select {
-	case d := <-done:
-		if !strings.Contains(d.Error, "no answer") {
-			t.Errorf("Error = %q, want a timeout report", d.Error)
-		}
-	case <-time.After(8 * time.Second):
-		t.Fatal("the probe never returned: a detached descendant is holding its stdout")
+			t.Setenv("PIDS", pids)
+			t.Setenv("YAD_CODEX_PATH", script)
+			t.Cleanup(func() {
+				raw, _ := os.ReadFile(pids)
+				for _, f := range strings.Fields(string(raw)) {
+					if pid, _ := strconv.Atoi(f); pid > 0 {
+						syscall.Kill(pid, syscall.SIGKILL)
+					}
+				}
+			})
+			h, _ := Lookup("codex")
+			start := time.Now()
+			d := detectOne(context.Background(), h)
+			if took := time.Since(start); took > tc.within {
+				t.Errorf("took %s, want under %s", took, tc.within)
+			}
+			if d.Version != tc.wantVersion {
+				t.Errorf("Version = %q, want %q", d.Version, tc.wantVersion)
+			}
+			if (tc.wantErr == "") != (d.Error == "") || !strings.Contains(d.Error, tc.wantErr) {
+				t.Errorf("Error = %q, want %q", d.Error, tc.wantErr)
+			}
+		})
 	}
 }
