@@ -11,7 +11,10 @@ run reaches exactly one (DOMAIN.md), so the result is answered `409` and the hub
 keeps lost. The runner drops the result from its outbox and keeps its own
 record locally, for diagnosis. A result that agrees — the runner itself reports
 lost — is recorded and acknowledged. Events from the run's holder still land
-after it ends, lost or not, so the stream is complete for whoever reads it.
+after it ends, lost or not, so the stream is complete for whoever reads it
+afterwards. A watcher following a lost run live has already been told the
+stream is done — a lost run has no result naming its last event — and sees
+the late events only on a fresh read.
 
 A late result is only acceptable if it is rare, so the runner keeps listing a
 finished run in its syncs — as `running`, with the reason "reporting its
