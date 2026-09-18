@@ -145,3 +145,11 @@ UPDATE runs SET events_through = ? WHERE id = ?;
 -- name: FinishRun :exec
 UPDATE runs SET state = ?, reason = ?, lease_expires_at = NULL, resumes_at = NULL, updated_at = ?
 WHERE id = ?;
+
+-- A watcher reads only as far as the stream is contiguous: an event stored
+-- past a gap waits until the gap is filled, or a cursor would move past the
+-- missing seq and never see it.
+-- name: EventsContiguous :many
+SELECT e.seq, e.body FROM events e JOIN runs r ON r.id = e.run_id
+WHERE e.run_id = sqlc.arg(run_id) AND e.seq > sqlc.arg(after) AND e.seq <= r.events_through
+ORDER BY e.seq LIMIT sqlc.arg(max);

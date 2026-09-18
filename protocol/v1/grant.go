@@ -26,8 +26,8 @@ import (
 // variables that steer a program — HTTPS_PROXY, NODE_EXTRA_CA_CERTS,
 // SHELLOPTS, PS4, JAVA_TOOL_OPTIONS and the next one somebody invents — are
 // not named like secrets. The reserved list catches the secret-shaped names
-// that steer anyway (ANTHROPIC_API_KEY moves billing; GIT_* and NODE_* belong
-// to tools a harness runs).
+// that steer anyway (ANTHROPIC_API_KEY and the cloud providers' credentials
+// move billing; GIT_* and NODE_* belong to tools a harness runs).
 
 // grantNamePattern is an environment variable name as POSIX shells accept it,
 // upper case only: no lower case, so no name differs from a reserved one by
@@ -62,6 +62,14 @@ var reservedGrantPrefixes = []struct{ prefix, why string }{
 	{"NODE_", "Node's runtime settings, which the Claude CLI reads"},
 	{"NPM_CONFIG_", "npm's configuration, which a harness's tools read"},
 	{"BUN_", "Bun's runtime settings"},
+	// A harness pointed at a cloud provider reads that provider's own
+	// credential chain: a grant there would sign the owner's model traffic as
+	// the hub's account, which moves billing and puts prompts where the hub can
+	// read them. A deploy credential for AWS, Google or Azure is exactly what
+	// an owner's allowlist of grants (epic E7) is for; until then, none.
+	{"AWS_", "Claude on Bedrock reads the AWS credential chain (AWS_BEARER_TOKEN_BEDROCK, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN)"},
+	{"GOOGLE_", "Claude on Vertex reads Google's application credentials (GOOGLE_APPLICATION_CREDENTIALS)"},
+	{"AZURE_", "Codex on Azure reads the Azure OpenAI credentials (AZURE_OPENAI_API_KEY)"},
 }
 
 // Validate checks a grant's name and delivery. A run carrying a grant that

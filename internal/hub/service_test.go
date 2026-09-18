@@ -280,18 +280,52 @@ func TestSubmittedRunIsOfferedAndGrantsStayHidden(t *testing.T) {
 	}
 }
 
-// event writes an event as the runner's upload will, until the protocol's
-// events call lands (DEV-6).
+// event stores an event as the protocol's events call does — acked_through
+// advanced over it — without a runner holding the run.
 func (f *fixture) event(t *testing.T, runID string, seq int64, text string) {
 	t.Helper()
 	b, err := json.Marshal(v1.Event{Seq: seq, At: f.clock.Now(), Kind: v1.EventText, Text: text})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.AppendEvent(context.Background(), db.AppendEventParams{RunID: runID, Seq: seq, Body: string(b), ReceivedAt: store.Ms(f.clock.Now())}); err != nil {
+	ctx := context.Background()
+	err = f.store.Tx(ctx, func(q *db.Queries) error {
+		if _, err := q.AppendEvent(ctx, db.AppendEventParams{RunID: runID, Seq: seq, Body: string(b), ReceivedAt: store.Ms(f.clock.Now())}); err != nil {
+			return err
+		}
+		run, err := q.GetRun(ctx, runID)
+		if err != nil {
+			return err
+		}
+		_, err = advance(ctx, q, run)
+		return err
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	f.hub.Changed()
+}
+
+// A watcher reads a stream only as far as it is contiguous: an event stored
+// past a gap is held back until the gap fills, so the cursor never moves past
+// a seq that arrives later.
+func TestEventPageStopsAtAGap(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	f.enqueue(t, run("a", "s1"))
+	f.event(t, "a", 1, "one")
+	f.event(t, "a", 2, "two")
+	f.event(t, "a", 4, "four")
+	f.finish(t, "a", v1.RunSucceeded, &v1.Result{State: v1.RunSucceeded, LastSeq: 4})
+	p := f.page(t, tok, "a", 0, 0)
+	if !slices.Equal(seqs(p), []int64{1, 2}) || p.NextAfter != 2 || p.Done {
+		t.Fatalf("before the gap fills: seqs %v next %d done %v", seqs(p), p.NextAfter, p.Done)
+	}
+	f.event(t, "a", 3, "three")
+	p = f.page(t, tok, "a", p.NextAfter, 0)
+	if !slices.Equal(seqs(p), []int64{3, 4}) || !p.Done {
+		t.Errorf("after the gap fills: seqs %v done %v", seqs(p), p.Done)
+	}
 }
 
 // finish ends a run as a result upload will; a nil result is a run lost with

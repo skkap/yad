@@ -215,7 +215,7 @@ func TestGrantNames(t *testing.T) {
 		want string // "" when allowed, else a word the refusal must contain
 	}{
 		{"ZUMINO_TOKEN", ""}, {"GH_TOKEN", ""}, {"DEPLOY_KEY", ""}, {"DB_PASSWORD", ""},
-		{"AWS_SECRET", ""}, {"GCP_CREDENTIALS", ""}, {"SERVICE_CREDENTIAL", ""}, {"_X_TOKEN", ""},
+		{"STRIPE_SECRET", ""}, {"SERVICE_CREDENTIALS", ""}, {"SERVICE_CREDENTIAL", ""}, {"_X_TOKEN", ""},
 
 		// Not an environment variable name, or not a plain file name.
 		{"", "environment variable name"}, {"zumino_token", "environment variable name"},
@@ -235,6 +235,8 @@ func TestGrantNames(t *testing.T) {
 		{"OPENAI_BASE_URL", "OPENAI_"}, {"OPENAI_API_KEY", "OPENAI_"},
 		{"GIT_SSH_COMMAND", "GIT_"}, {"GIT_TOKEN", "GIT_"}, {"NODE_AUTH_TOKEN", "NODE_"},
 		{"NPM_CONFIG__AUTH_TOKEN", "NPM_CONFIG_"}, {"BUN_AUTH_TOKEN", "BUN_"},
+		{"AWS_BEARER_TOKEN_BEDROCK", "AWS_"}, {"AWS_SECRET_ACCESS_KEY", "AWS_"}, {"AWS_SESSION_TOKEN", "AWS_"},
+		{"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_"}, {"AZURE_OPENAI_API_KEY", "AZURE_"},
 
 		// Steering variables nobody listed: refused for not being secrets.
 		{"HTTPS_PROXY", "not named as a secret"}, {"HTTP_PROXY", "not named as a secret"},

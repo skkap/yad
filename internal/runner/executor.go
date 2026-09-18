@@ -175,6 +175,24 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			Metrics: v1.Metrics{DurationMS: time.Since(started).Milliseconds()}})
 	}
 
+	// A start time is a moment the run must not start before; the hub may
+	// hand the run over early so it starts on time. It waits here, claimed
+	// and holding its capacity.
+	if run.StartAt != nil {
+		if d := time.Until(*run.StartAt); d > 0 {
+			log.Info("run waits for its start time", "start_at", run.StartAt.UTC())
+			t := time.NewTimer(d)
+			select {
+			case <-t.C:
+			case <-ctx.Done():
+				t.Stop()
+				log.Warn("runner stopped before the run's start time; it stays held")
+				return
+			}
+			// The run's duration is from its start, not from its claim.
+			started = time.Now()
+		}
+	}
 	e.setState(bg, c, v1.RunPreparing)
 	// The claim checked the run already; checked again here because this is
 	// where a grant's name becomes a variable and a file (decision 0024).

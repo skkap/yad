@@ -25,9 +25,14 @@ beside each reserved entry:
 2. not reserved: `PATH`, `HOME`, `SHELL`, `TMPDIR`, `BASH_ENV`, `ENV`,
    `NODE_OPTIONS` and `IS_SANDBOX` by name; `LD_`, `DYLD_`, `YAD_`, `CLAUDE`,
    `ANTHROPIC_`, `CODEX_`, `OPENAI_`, `GIT_`, `NODE_`, `NPM_CONFIG_` and `BUN_`
-   as namespaces;
+   as namespaces, and `AWS_`, `GOOGLE_` and `AZURE_`, whose credential chains a
+   harness pointed at Bedrock, Vertex or Azure reads — a grant there signs the
+   owner's model traffic as the hub's account;
 3. named as a secret: it ends in `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`,
    `_CREDENTIAL` or `_CREDENTIALS`.
+
+The cloud namespaces also refuse a legitimate deploy credential for AWS,
+Google or Azure; handing one over safely needs the owner's allowlist below.
 
 The third rule is what lets the list in the second be incomplete. The variables
 that steer a program — proxies, CA bundles, `SHELLOPTS` and `PS4`,

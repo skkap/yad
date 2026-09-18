@@ -407,8 +407,9 @@ func contains(xs []string, s string) bool {
 	return false
 }
 
-// Text is capped so that one event, and one result, always fits a hub's body
-// limit: a report that can never be accepted would be retried forever.
+// Text, error messages and final text are capped at maxTextBytes each, cut on
+// a rune boundary, so one event or one result stays well under yad hub's body
+// limit.
 func TestTextIsCapped(t *testing.T) {
 	e := newEnv(t)
 	l := e.loop(t, 1)
@@ -464,5 +465,45 @@ func TestExecutorRefusesReservedGrants(t *testing.T) {
 	}
 	if len(ad.Starts) != 0 || !released {
 		t.Errorf("starts %d, released %v", len(ad.Starts), released)
+	}
+}
+
+// A run is never started before its start time; one whose time has passed
+// starts at once.
+func TestStartAtIsHonoured(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		delay time.Duration
+	}{
+		{"in the future", 150 * time.Millisecond},
+		{"already past", -time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			l := e.loop(t, 1)
+			run := testRun("a", "s1")
+			at := time.Now().Add(tc.delay)
+			run.StartAt = &at
+			e.enqueue(t, run)
+			var (
+				mu      sync.Mutex
+				started time.Time
+			)
+			ad := &fake.Adapter{ID: "claude", Next: func(adapter.Spec) fake.Script {
+				mu.Lock()
+				defer mu.Unlock()
+				started = time.Now()
+				return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
+			}}
+			claimAndRun(t, l, e.executor(ad))
+			mu.Lock()
+			defer mu.Unlock()
+			if started.IsZero() || started.Before(at) {
+				t.Errorf("started at %v, start time %v", started, at)
+			}
+			if res, _ := outboxResult(t, e, "a"); res.State != v1.RunSucceeded {
+				t.Errorf("result %+v", res)
+			}
+		})
 	}
 }

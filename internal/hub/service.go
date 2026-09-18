@@ -235,7 +235,7 @@ func (h *Hub) eventPage(ctx context.Context, runID string, after int64) (hubapi.
 			return err
 		}
 		page.Run = view
-		rows, err := q.EventsAfter(ctx, db.EventsAfterParams{RunID: runID, Seq: after, Limit: hubapi.MaxPage})
+		rows, err := q.EventsContiguous(ctx, db.EventsContiguousParams{RunID: runID, After: after, Max: hubapi.MaxPage})
 		if err != nil {
 			return err
 		}

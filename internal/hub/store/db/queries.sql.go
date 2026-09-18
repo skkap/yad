@@ -227,6 +227,49 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 	return items, nil
 }
 
+const eventsContiguous = `-- name: EventsContiguous :many
+SELECT e.seq, e.body FROM events e JOIN runs r ON r.id = e.run_id
+WHERE e.run_id = ?1 AND e.seq > ?2 AND e.seq <= r.events_through
+ORDER BY e.seq LIMIT ?3
+`
+
+type EventsContiguousParams struct {
+	RunID string
+	After int64
+	Max   int64
+}
+
+type EventsContiguousRow struct {
+	Seq  int64
+	Body string
+}
+
+// A watcher reads only as far as the stream is contiguous: an event stored
+// past a gap waits until the gap is filled, or a cursor would move past the
+// missing seq and never see it.
+func (q *Queries) EventsContiguous(ctx context.Context, arg EventsContiguousParams) ([]EventsContiguousRow, error) {
+	rows, err := q.db.QueryContext(ctx, eventsContiguous, arg.RunID, arg.After, arg.Max)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventsContiguousRow{}
+	for rows.Next() {
+		var i EventsContiguousRow
+		if err := rows.Scan(&i.Seq, &i.Body); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const finishRun = `-- name: FinishRun :exec
 UPDATE runs SET state = ?, reason = ?, lease_expires_at = NULL, resumes_at = NULL, updated_at = ?
 WHERE id = ?
