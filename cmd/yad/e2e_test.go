@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,6 +50,9 @@ const (
 	fakeClaudeGate = "E2E_CLAUDE_GATE"
 	// fakeClaudeAtGate is a file the fake creates when it reaches the gate.
 	fakeClaudeAtGate = "E2E_CLAUDE_AT_GATE"
+	// fakeClaudePID, when set, is a file the fake writes its pid to, so a
+	// test can prove no process outlived the run.
+	fakeClaudePID = "E2E_CLAUDE_PID"
 )
 
 // e2eFixture is a recorded haiku turn: one Read of a small file, then its
@@ -73,14 +78,27 @@ func fakeClaude() {
 			session = args[i+1]
 		}
 	}
+	if f := os.Getenv(fakeClaudePID); f != "" {
+		os.WriteFile(f, []byte(strconv.Itoa(os.Getpid())), 0o600)
+	}
 	users, eof := make(chan struct{}, 16), make(chan struct{})
+	interrupts := make(chan string, 16)
 	go func() {
 		sc := bufio.NewScanner(os.Stdin)
 		sc.Buffer(nil, 64<<20)
 		for sc.Scan() {
-			var f struct{ Type string }
-			if json.Unmarshal(sc.Bytes(), &f) == nil && f.Type == "user" {
+			var f struct {
+				Type      string `json:"type"`
+				RequestID string `json:"request_id"`
+			}
+			if json.Unmarshal(sc.Bytes(), &f) != nil {
+				continue
+			}
+			switch f.Type {
+			case "user":
 				users <- struct{}{}
+			case "control_request":
+				interrupts <- f.RequestID
 			}
 		}
 		close(eof)
@@ -112,7 +130,19 @@ func fakeClaude() {
 			}
 		case f.Type == "result":
 			out.Flush()
-			awaitGate()
+			if id, ok := awaitGate(interrupts); ok {
+				// As the recorded interrupt stream has it: the request is
+				// acknowledged, then the turn ends in an aborted result, and
+				// claude exits 1 once its input closes.
+				out.WriteString(`{"type":"control_response","response":{"subtype":"success","request_id":` + strconv.Quote(id) + `,"response":{"still_queued":[]}}}` + "\n")
+				out.WriteString(`{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming","session_id":` + strconv.Quote(session) + `}` + "\n")
+				out.Flush()
+				select {
+				case <-eof:
+				case <-time.After(30 * time.Second):
+				}
+				os.Exit(1)
+			}
 		}
 		out.WriteString(line)
 	}
@@ -123,20 +153,28 @@ func fakeClaude() {
 	}
 }
 
-func awaitGate() {
+// awaitGate holds the turn at its gate until the test opens it, or until an
+// interrupt arrives, whose request id it returns.
+func awaitGate(interrupts <-chan string) (string, bool) {
 	gate := os.Getenv(fakeClaudeGate)
 	if gate == "" {
-		return
+		return "", false
 	}
 	if at := os.Getenv(fakeClaudeAtGate); at != "" {
 		os.WriteFile(at, nil, 0o600)
 	}
 	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		select {
+		case id := <-interrupts:
+			return id, true
+		default:
+		}
 		if _, err := os.Stat(gate); err == nil {
-			return
+			return "", false
 		}
 	}
 	os.Exit(1)
+	return "", false
 }
 
 // machine is one profile holding both sides: the hub's database and admin
@@ -182,7 +220,10 @@ func newMachine(t *testing.T) *machine {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { m.hubDB.Close() })
-	m.hub = hub.New(hub.Options{Store: m.hubDB, Now: func() time.Time { return time.Now().Add(time.Duration(m.skew.Load())) }})
+	// The shortest interval a hub may name, so a cancel reaches the runner
+	// within seconds.
+	m.hub = hub.New(hub.Options{Store: m.hubDB, SyncInterval: hub.MinSyncInterval,
+		Now: func() time.Time { return time.Now().Add(time.Duration(m.skew.Load())) }})
 
 	service := httptest.NewServer(m.hub)
 	t.Cleanup(service.Close)
@@ -556,5 +597,48 @@ func TestE2ERunnerRestartMidRun(t *testing.T) {
 	// Lost is the hub's verdict; the runner owes it no result.
 	if o, err := s.OutboxDepth(context.Background()); err != nil || o != 0 {
 		t.Errorf("outbox %d %v: a lost run owes no result", o, err)
+	}
+}
+
+// Cancel and interrupt, from the operator's side: a run mid-flight is stopped
+// with `yad hub cancel` or `yad hub interrupt`, the runner hears it at its
+// next sync, the harness answers the interrupt, and the run ends cancelled —
+// with the latency measured, the watcher told, and no process left behind.
+func TestE2EStopMidRun(t *testing.T) {
+	for _, verb := range []string{"cancel", "interrupt"} {
+		t.Run(verb, func(t *testing.T) {
+			m := newMachine(t)
+			pidFile := filepath.Join(t.TempDir(), "claude.pid")
+			t.Setenv(fakeClaudePID, pidFile)
+			m.gated()
+			runID := "e2e-" + verb
+			m.submit(runID)
+			d := m.daemon()
+			m.waitAtGate()
+
+			m.ok("hub", verb, "--hub", m.service, runID)
+			code, out, errs := m.watch(runID)
+			if code == 0 || !strings.Contains(out, "── cancelled") {
+				t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
+			}
+			run, err := m.client().Run(context.Background(), runID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if run.Result == nil || run.Result.State != v1.RunCancelled || run.Result.Metrics.CancelLatencyMS == nil {
+				t.Fatalf("result %+v", run.Result)
+			}
+			contiguous(t, m.hubEvents(runID))
+
+			b, err := os.ReadFile(pidFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pid, err := strconv.Atoi(string(b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			eventually(t, "the harness process is gone", func() bool { return syscall.Kill(pid, 0) != nil })
+		})
 	}
 }

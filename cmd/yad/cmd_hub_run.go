@@ -314,7 +314,7 @@ func (p *printer) result(r hubapi.Run) error {
 			return nil
 		}
 		if r.Reason != "" {
-			return fmt.Errorf("run %s %s: %s", r.RunID, r.State, clean(r.Reason))
+			return fmt.Errorf("run %s ended %s: %s", r.RunID, r.State, clean(r.Reason))
 		}
 		return fmt.Errorf("run %s ended %s with no result from its runner", r.RunID, r.State)
 	}
