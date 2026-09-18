@@ -233,6 +233,7 @@ func TestResultAnswers(t *testing.T) {
 		{"a proxy's 403", status(403), true},
 		{"a proxy's 404", status(404), true},
 		{"a proxy's body limit", status(413), true},
+		{"the hub's own body limit", &hubclient.StatusError{Status: 413, Protocol: &v1.Error{Code: v1.CodeInvalid}}, true},
 		{"credential refused, may come back", status(401), true},
 		{"too many requests", status(429), true},
 		{"hub error", status(500), true},
@@ -334,27 +335,38 @@ func TestLateResultAfterLostStopsReporting(t *testing.T) {
 	}
 }
 
-// A batch a proxy refuses as too large is sent again in halves rather than
-// dropped: a proxy's limit is not the hub's verdict.
+// A batch refused as too large is sent again in halves rather than dropped,
+// whoever refused it: a size limit is not a verdict on the events. yad hub's
+// own 413 carries the protocol's invalid code, and must not read as final.
 func TestTooLargeBatchesAreHalved(t *testing.T) {
-	e := newEnv(t)
-	_, r, tp := ranRun(t, e, 100)
-	tp.eventsFor = func(b v1.EventBatch) (v1.EventAck, error) {
-		if len(b.Events) > 30 {
-			return v1.EventAck{}, status(413)
-		}
-		return v1.EventAck{}, nil
-	}
-	r.Flush(context.Background())
-	var sizes []int
-	for _, b := range tp.batches {
-		sizes = append(sizes, len(b))
-	}
-	if !slices.Equal(sizes, []int{100, 50, 25, 25, 25, 25}) {
-		t.Errorf("batch sizes %v", sizes)
-	}
-	if spooled(t, e) != 0 || tp.results != 1 {
-		t.Errorf("spool %d, results %d", spooled(t, e), tp.results)
+	for _, tc := range []struct {
+		name     string
+		tooLarge error
+	}{
+		{"a proxy's bare 413", status(413)},
+		{"the hub's own 413", &hubclient.StatusError{Status: 413, Protocol: &v1.Error{Code: v1.CodeInvalid}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			_, r, tp := ranRun(t, e, 100)
+			tp.eventsFor = func(b v1.EventBatch) (v1.EventAck, error) {
+				if len(b.Events) > 30 {
+					return v1.EventAck{}, tc.tooLarge
+				}
+				return v1.EventAck{}, nil
+			}
+			r.Flush(context.Background())
+			var sizes []int
+			for _, b := range tp.batches {
+				sizes = append(sizes, len(b))
+			}
+			if !slices.Equal(sizes, []int{100, 50, 25, 25, 25, 25}) {
+				t.Errorf("batch sizes %v", sizes)
+			}
+			if spooled(t, e) != 0 || tp.results != 1 {
+				t.Errorf("spool %d, results %d", spooled(t, e), tp.results)
+			}
+		})
 	}
 }
 

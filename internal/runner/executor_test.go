@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -432,6 +433,39 @@ func TestGrantNames(t *testing.T) {
 	} {
 		if got := grantAllowed(name); got != ok {
 			t.Errorf("grantAllowed(%q) = %v, want %v", name, got, ok)
+		}
+	}
+}
+
+// Text is capped so that one event, and one result, always fits a hub's body
+// limit: a report that can never be accepted would be retried forever.
+func TestTextIsCapped(t *testing.T) {
+	e := newEnv(t)
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	huge := strings.Repeat("é", maxTextBytes) // two bytes a rune, so the cut lands mid-rune
+	claimAndRun(t, l, e.executor(fakeHarness(fake.Script{
+		Events: []v1.Event{
+			{Kind: v1.EventText, Text: huge},
+			{Kind: v1.EventError, Error: &v1.RunError{Class: "x", Message: huge}},
+		},
+		Outcome: adapter.Outcome{State: v1.RunFailed, FinalText: huge, Error: &v1.RunError{Class: "x", Message: huge}},
+	})))
+	rows, err := e.store.UnackedEvents(context.Background(), db.UnackedEventsParams{Connection: "hub", RunID: "a", Limit: 10})
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("spool %d rows, %v", len(rows), err)
+	}
+	var text, errEv v1.Event
+	if err := json.Unmarshal([]byte(rows[0].Body), &text); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(rows[1].Body), &errEv); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := outboxResult(t, e, "a")
+	for name, s := range map[string]string{"text": text.Text, "event error": errEv.Error.Message, "final text": res.FinalText, "result error": res.Error.Message} {
+		if len(s) > maxTextBytes || len(s) < maxTextBytes-1 || !utf8.ValidString(s) {
+			t.Errorf("%s is %d bytes, valid UTF-8 %v", name, len(s), utf8.ValidString(s))
 		}
 	}
 }

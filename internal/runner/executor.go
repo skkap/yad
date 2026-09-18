@@ -45,6 +45,13 @@ const (
 	ClassAdapter = "adapter_error"
 )
 
+// maxTextBytes caps an event's text and a result's final text. The protocol
+// caps only tool payloads, but a hub or a proxy before it limits a body, and a
+// report that can never fit would be retried forever — an event batch halves
+// down to one event, so one event, and one result, must always fit. A MiB of
+// prose is past anything a person reads from a stream.
+const maxTextBytes = 1 << 20
+
 // eventBatch is the most events one upload carries, and how many a run may
 // spool before its reporter is woken ahead of its one-second tick
 // (ARCHITECTURE.md §2).
@@ -319,12 +326,18 @@ func (e *Exec) spool(ctx context.Context, c Claim, ev *v1.Event, seq int64) bool
 	if ev.At.IsZero() {
 		ev.At = time.Now().UTC()
 	}
+	ev.Text, _ = capBytes(ev.Text, maxTextBytes)
+	if ev.Error != nil {
+		e := *ev.Error
+		e.Message, _ = capBytes(e.Message, maxTextBytes)
+		ev.Error = &e
+	}
 	if ev.Tool != nil {
 		t := *ev.Tool
 		var cut bool
-		t.Input, cut = capText(t.Input)
+		t.Input, cut = capBytes(t.Input, v1.MaxToolOutputBytes)
 		t.Truncated = t.Truncated || cut
-		t.Output, cut = capText(t.Output)
+		t.Output, cut = capBytes(t.Output, v1.MaxToolOutputBytes)
 		t.Truncated = t.Truncated || cut
 		ev.Tool = &t
 	}
@@ -339,13 +352,13 @@ func (e *Exec) spool(ctx context.Context, c Claim, ev *v1.Event, seq int64) bool
 	return true
 }
 
-// capText holds a tool payload to the protocol's cap without splitting a rune.
-// Adapters cap too; this is the last line, because a hub stores what it gets.
-func capText(s string) (string, bool) {
-	if len(s) <= v1.MaxToolOutputBytes {
+// capBytes holds a string to n bytes without splitting a rune. Adapters cap
+// tool payloads too; this is the last line, because a hub stores what it gets.
+func capBytes(s string, n int) (string, bool) {
+	if len(s) <= n {
 		return s, false
 	}
-	cut := v1.MaxToolOutputBytes
+	cut := n
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
@@ -381,6 +394,12 @@ func (e *Exec) result(out adapter.Outcome, w watch, started time.Time) v1.Result
 // two cannot leave a finished run with nothing owed.
 func (e *Exec) finish(ctx context.Context, c Claim, res v1.Result) {
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
+	res.FinalText, _ = capBytes(res.FinalText, maxTextBytes)
+	if res.Error != nil {
+		e := *res.Error
+		e.Message, _ = capBytes(e.Message, maxTextBytes)
+		res.Error = &e
+	}
 	body, err := json.Marshal(res)
 	if err != nil {
 		log.Error("result not recorded", "err", err)

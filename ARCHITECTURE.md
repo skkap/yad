@@ -197,7 +197,8 @@ a hub outage — [0023](docs/decisions/0023-lost-stands-against-a-late-result.md
 100 events, from the SQLite spool, so a network loss drops nothing; the hub's
 `acked_through` — the highest `seq` up to which it holds every event — is
 authoritative, and the runner resends after it. Tool output is capped at 8 KiB
-per event. Only the runner a run was claimed by may append to it, before or
+per event; the runner caps text, error messages and a result's final text at
+1 MiB, so that one event, and one result, always fits a hub's body limit. Only the runner a run was claimed by may append to it, before or
 after it ends; anyone else gets `403 not_holder`.
 
 ### Result
@@ -218,7 +219,8 @@ start. A `409 conflict` means the hub already has a different terminal state —
 ([0023](docs/decisions/0023-lost-stands-against-a-late-result.md)). `403
 not_holder` and an `invalid` refusal are final too. Anything else — a `404`
 that may be a wrong URL, a `401`, a `5xx`, a proxy's bare 4xx — is retried; an
-events batch a proxy refuses as too large goes again in halves. The hub applies
+events batch refused as too large — by the hub or a proxy — goes again in
+halves. The hub applies
 a result from the runner the run was offered to or claimed by, once; the same
 state again is acknowledged.
 

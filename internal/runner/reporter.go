@@ -167,6 +167,13 @@ func (r *Reporter) upload(ctx context.Context, runID string) {
 		ack, err := r.Hub.Events(ctx, runID, batch)
 		var se *hubclient.StatusError
 		switch {
+		case errors.As(err, &se) && se.Status == http.StatusRequestEntityTooLarge && limit > 1:
+			// A size limit — the hub's or a proxy's before it — is not a
+			// verdict on the events: the same ones go again in halves, down
+			// to one at a time, which always fits (the executor caps text).
+			r.batch[runID] = limit / 2
+			log.Warn("event batch too large for the hub or a proxy before it; halving", "batch", limit/2)
+			continue
 		case err != nil && final(err):
 			// The hub will never take these: the run is not this runner's, or
 			// the hub judged them invalid. Resending forever would only keep
@@ -177,12 +184,6 @@ func (r *Reporter) upload(ctx context.Context, runID string) {
 			}
 			delete(r.batch, runID)
 			return
-		case errors.As(err, &se) && se.Status == http.StatusRequestEntityTooLarge && limit > 1:
-			// A proxy's body limit is not the hub's verdict: the same events
-			// go again in halves, down to one at a time.
-			r.batch[runID] = limit / 2
-			log.Warn("event batch too large for the hub or a proxy before it; halving", "batch", limit/2)
-			continue
 		case err != nil:
 			log.Warn("events not uploaded; retrying", "err", err)
 			return
@@ -249,7 +250,9 @@ func (r *Reporter) remove(ctx context.Context, o db.Outbox) {
 // a report the hub never saw.
 func final(err error) bool {
 	var se *hubclient.StatusError
-	if !errors.As(err, &se) || se.Status < 400 || se.Status >= 500 {
+	if !errors.As(err, &se) || se.Status < 400 || se.Status >= 500 || se.Status == http.StatusRequestEntityTooLarge {
+		// A size limit says nothing about the report itself, whatever code
+		// the hub put on it.
 		return false
 	}
 	switch hubclient.Code(err) {
