@@ -608,7 +608,7 @@ openapi: 3.1.0
 paths:
   /runners/register:
     post:
-      description: Called once by `yad connect`, with the one-time registration token as the bearer. The token is dead afterwards.
+      description: Called once by `yad connect`, with the one-time registration token as the bearer. The token is dead afterwards. Registering a runner id the hub already knows replaces its credential; the old one stops working.
       operationId: register
       requestBody:
         content:
@@ -716,7 +716,7 @@ paths:
       summary: Retire this runner's credential
   /runners/{runner}/sync:
     post:
-      description: Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed here was never received and will be offered again.
+      description: Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed here was never received and will be offered again. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — is answered with a cancel control for that run.
       operationId: sync
       parameters:
         - description: The runner id.

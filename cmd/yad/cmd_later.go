@@ -6,7 +6,6 @@ import "fmt"
 // to the epic that builds it, so the refusal names the next action rather than
 // saying "not implemented".
 var arrivesIn = map[string]string{
-	"connect":     "E2",
 	"disconnect":  "E7",
 	"status":      "E3",
 	"sessions":    "E4",

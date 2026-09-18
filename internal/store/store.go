@@ -39,15 +39,28 @@ type Store struct {
 }
 
 // Open opens (creating if needed) the state database at path and brings its
-// schema up to date. The file is created 0600 before SQLite touches it: it holds
-// run specs and harness output, which contain whatever the repositories do.
+// schema up to date.
 func Open(ctx context.Context, file string) (*Store, error) {
+	conn, err := OpenSQLite(ctx, file, migrations)
+	if err != nil {
+		return nil, fmt.Errorf("state database %s: %w", file, err)
+	}
+	return &Store{Queries: db.New(conn), DB: conn}, nil
+}
+
+// OpenSQLite opens a SQLite file the way every YAD database is opened, and
+// applies the numbered migrations under migrations/ in fsys. The hub's store
+// uses it too, so the two databases cannot drift in how they are opened.
+//
+// The file is created 0600 before SQLite touches it: both databases hold run
+// specs, and the hub's holds credential hashes and grants.
+func OpenSQLite(ctx context.Context, file string, fsys fs.FS) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open state database %s: %w", file, err)
+		return nil, fmt.Errorf("open %s: %w", file, err)
 	}
 	f.Close()
 
@@ -66,11 +79,11 @@ func Open(ctx context.Context, file string) (*Store, error) {
 	// One writer at a time is SQLite's model anyway; a single connection makes
 	// that explicit and keeps transactions from surprising each other.
 	conn.SetMaxOpenConns(1)
-	if err := migrate(ctx, conn); err != nil {
+	if err := migrate(ctx, conn, fsys); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("state database %s: %w — if this follows a downgrade, run the newer yad", file, err)
+		return nil, fmt.Errorf("%w — if this follows a downgrade, run the newer yad", err)
 	}
-	return &Store{Queries: db.New(conn), DB: conn}, nil
+	return conn, nil
 }
 
 // Close closes the database.
@@ -91,12 +104,12 @@ func (s *Store) Tx(ctx context.Context, fn func(q *db.Queries) error) error {
 // migrate applies every embedded migration newer than PRAGMA user_version, each
 // in its own transaction. A database newer than this binary is refused, never
 // guessed at.
-func migrate(ctx context.Context, conn *sql.DB) error {
+func migrate(ctx context.Context, conn *sql.DB, fsys fs.FS) error {
 	var current int
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
 		return err
 	}
-	files, err := fs.Glob(migrations, "migrations/*.sql")
+	files, err := fs.Glob(fsys, "migrations/*.sql")
 	if err != nil {
 		return err
 	}
@@ -111,7 +124,7 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		if n <= current {
 			continue
 		}
-		body, err := migrations.ReadFile(name)
+		body, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return err
 		}

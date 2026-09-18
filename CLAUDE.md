@@ -55,8 +55,9 @@ rebuilds them and `make check` fails when they drift.
   `internal/adapter` — streaming format, resume, interrupt — may change its kind.
   A runner must never accept a run it cannot actually drive.
 - **Never log, print or transmit a token** — not in an event, not in
-  `yad harnesses`, not in a debug line, not in argv. Credentials and grants are
-  `0600` files.
+  `yad harnesses`, not in a debug line, not in argv (a registration token typed
+  into `yad connect` is the one exception — [0020](docs/decisions/0020-the-registration-token-may-be-typed.md)).
+  Credentials and grants are `0600` files.
 - **Permission mode is runner configuration, never a protocol field.** A hub must
   not be able to set or widen what a harness may do on someone's machine.
 - **The runner listens on no network port.** Outbound only; its one socket is a

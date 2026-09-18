@@ -102,3 +102,16 @@ func sortedCopy(xs []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// Drivable is DOMAIN.md's rule for accepting a run, applied to a document: the
+// harness is first-class, present, and passed its version probe. A hub checks
+// it before offering and a runner again before claiming, because a hub's copy
+// of the document may be stale — or the hub may not check at all.
+func Drivable(doc v1.Capabilities, harnessID string) bool {
+	for _, h := range doc.Harnesses {
+		if h.ID == harnessID {
+			return h.Kind == string(harness.FirstClass) && h.Present && h.Error == ""
+		}
+	}
+	return false
+}
