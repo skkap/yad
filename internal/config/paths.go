@@ -22,7 +22,7 @@ var profileName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 type Paths struct {
 	Profile string
 	Config  string // config.toml, runner-id, credentials/
-	Data    string // state.db, workdirs/, repos/, accounts/, transcripts/, logs/, yad.sock
+	Data    string // state.db, workdirs/, repos/, accounts/, transcripts/, logs/, yad.sock, yad.lock
 }
 
 // Resolve returns the directories for a profile. $YAD_CONFIG_DIR and
@@ -74,6 +74,18 @@ func (p Paths) HubDB() string { return filepath.Join(p.Data, "hub.db") }
 
 // Socket is the control socket for this profile's CLI.
 func (p Paths) Socket() string { return filepath.Join(p.Data, "yad.sock") }
+
+// Lock is the file a running daemon holds locked for its whole life, with its
+// pid inside: the kernel drops the lock when the process dies, however it
+// dies, so it is the one liveness fact a crash cannot leave stale.
+func (p Paths) Lock() string { return filepath.Join(p.Data, "yad.lock") }
+
+// Logs is the daemon's log directory; Log is the live file in it, rotated by
+// size into Log()+".1" and on.
+func (p Paths) Logs() string { return filepath.Join(p.Data, "logs") }
+
+// Log is the daemon's current JSON log file.
+func (p Paths) Log() string { return filepath.Join(p.Logs(), "yad.log") }
 
 // Ensure creates both directories, private to the owner: they hold credentials
 // and harness transcripts.

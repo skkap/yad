@@ -12,10 +12,23 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
+// shortDir is a private temporary directory short enough to hold the
+// control socket: t.TempDir() under macOS's $TMPDIR, with a long test name,
+// passes the 103-byte limit on its own.
+func shortDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "yad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
 func yad(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	t.Setenv("YAD_CONFIG_DIR", t.TempDir())
-	t.Setenv("YAD_DATA_DIR", t.TempDir())
+	t.Setenv("YAD_DATA_DIR", shortDir(t))
 	t.Setenv("PATH", t.TempDir())
 	var out, errb bytes.Buffer
 	code := run(context.Background(), args, &out, &errb)

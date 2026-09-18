@@ -111,3 +111,12 @@ DELETE FROM runs WHERE runs.connection = sqlc.arg(connection) AND runs.id = sqlc
 -- name: DeleteEmptySession :exec
 DELETE FROM sessions WHERE sessions.connection = sqlc.arg(connection) AND sessions.id = sqlc.arg(id)
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id);
+
+-- What `yad status` lists: every run held, across connections.
+-- name: ListAllHeldRuns :many
+SELECT * FROM runs
+WHERE state IN ('claimed', 'preparing', 'running', 'waiting')
+ORDER BY created_at;
+
+-- name: CountOpenSessions :one
+SELECT count(*) FROM sessions WHERE state = 'open';

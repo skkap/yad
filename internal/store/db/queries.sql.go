@@ -49,6 +49,17 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) error 
 	return err
 }
 
+const countOpenSessions = `-- name: CountOpenSessions :one
+SELECT count(*) FROM sessions WHERE state = 'open'
+`
+
+func (q *Queries) CountOpenSessions(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOpenSessions)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRun = `-- name: CreateRun :exec
 INSERT INTO runs (connection, id, session_id, harness, model, state, spec, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?)
@@ -309,6 +320,49 @@ func (q *Queries) ListAccounts(ctx context.Context, harness string) ([]Account, 
 	for rows.Next() {
 		var i Account
 		if err := rows.Scan(&i.Harness, &i.Label, &i.LimitedUntil); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllHeldRuns = `-- name: ListAllHeldRuns :many
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at FROM runs
+WHERE state IN ('claimed', 'preparing', 'running', 'waiting')
+ORDER BY created_at
+`
+
+// What `yad status` lists: every run held, across connections.
+func (q *Queries) ListAllHeldRuns(ctx context.Context) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listAllHeldRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.Connection,
+			&i.ID,
+			&i.SessionID,
+			&i.Harness,
+			&i.Model,
+			&i.State,
+			&i.Spec,
+			&i.Account,
+			&i.ResumesAt,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -39,6 +39,34 @@ func (p Paths) Credential(connection string) (string, error) {
 	return c, err
 }
 
+// CheckCredential is the local half of proving a connection can authenticate:
+// the credential is there, 0600, readable, and shaped like something an
+// Authorization header can carry. It is what `yad daemon restart` checks
+// before it stops a working daemon, so a broken credential leaves the old
+// process running rather than trading it for one that cannot sync.
+//
+// It is not proof the hub still accepts the credential. That needs a protocol
+// call, and the only authenticated one is a sync — which, from a second
+// process, would renew or drop the running daemon's leases and could be
+// handed offers it then never lists. A real probe needs a call of its own.
+func (p Paths) CheckCredential(connection string) error {
+	c, err := p.Credential(connection)
+	if err != nil {
+		return err
+	}
+	if c == "" {
+		return fmt.Errorf("the credential for %q is empty — run `yad connect` again", connection)
+	}
+	for _, r := range c {
+		// Visible ASCII is what a bearer token may hold; anything else is a
+		// file that was edited or truncated, and every sync would fail on it.
+		if r <= ' ' || r > '~' {
+			return fmt.Errorf("the credential for %q is not a single token (it holds whitespace or a non-ASCII character) — run `yad connect` again", connection)
+		}
+	}
+	return nil
+}
+
 // HubAdminToken is where `yad hub submit` and `watch` find the admin token
 // `yad hub admin-token create` saved for this profile.
 func (p Paths) HubAdminToken() string { return filepath.Join(p.Config, "hub-admin-token") }

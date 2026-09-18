@@ -100,6 +100,8 @@ type Loop struct {
 	// Rand returns a number in [0, 1) for jitter; nil is math/rand.
 	Rand func() float64
 	Log  *slog.Logger
+	// Monitor, when set, hears how every sync went.
+	Monitor *Monitor
 
 	sentFingerprint string
 	wantDocument    bool
@@ -151,6 +153,9 @@ func (l *Loop) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		if err == nil {
+			l.Monitor.synced(l.Connection, l.Clock.Now())
+		}
 		var wait time.Duration
 		switch {
 		case err != nil && fatal(err):
@@ -158,6 +163,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		case err != nil:
 			failures++
 			wait = backoff(failures)
+			l.Monitor.failed(l.Connection, err, l.Clock.Now(), ConnRetrying)
 			l.Log.Warn("sync failed", "connection", l.Connection, "err", err, "retry_in", wait)
 		case len(l.pending) > 0:
 			// Offers arrived: list them back at once, so a run starts in one
