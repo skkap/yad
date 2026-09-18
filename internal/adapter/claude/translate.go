@@ -411,9 +411,11 @@ type ended struct {
 	cancelled   bool   // the run's context ended
 	exitErr     error  // the process's exit status
 	stderr      string // its last words
-	// unanswered: the last result in hand was not the last one — Claude had
-	// taken a steer, or had one queued, and never answered it.
-	unanswered bool
+	// final: the result in hand was the run's last — every frame we sent had
+	// been taken and answered, or an interrupt ended the turn. A result that
+	// is not final answered a turn Claude had more input for, whatever
+	// happened next.
+	final bool
 }
 
 // outcome decides how the turn ended. Only a result decides success: exit 0
@@ -444,15 +446,22 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		o.State = v1.RunFailed
 		o.Error = &v1.RunError{Class: adapter.ClassSessionMismatch, Message: t.mismatchMessage()}
 		return o
-	case r != nil && e.unanswered && !e.cancelled && !r.IsError && r.Subtype == "success":
-		// The result in hand answered the turn before a steer; reporting it as
-		// the run's would claim an answer to input Claude never got to.
-		return fail(adapter.ClassHarnessExited, "claude exited after taking a steer and before answering it"+exitDetail(e)+" — send the steer again as a new run in the same session")
 	case r != nil && !r.IsError && r.Subtype == "success":
-		// Even after an interrupt: a turn that finished first really succeeded,
-		// and reporting it cancelled would throw its answer away.
-		o.State = v1.RunSucceeded
-		return o
+		switch {
+		case e.final:
+			// Even after an interrupt: a turn that finished first really
+			// succeeded, and reporting it cancelled would throw its answer away.
+			o.State = v1.RunSucceeded
+			return o
+		case e.interrupted || e.cancelled:
+			o.State = v1.RunCancelled
+			o.FinalText = ""
+			return o
+		}
+		// The result answered the turn before a steer Claude had taken;
+		// reporting it as the run's would claim an answer to input Claude never
+		// got to.
+		return fail(adapter.ClassHarnessExited, "claude exited after taking a steer and before answering it"+exitDetail(e)+" — send the steer again as a new run in the same session")
 	case e.interrupted || (e.cancelled && r == nil):
 		o.State = v1.RunCancelled
 		o.FinalText = ""

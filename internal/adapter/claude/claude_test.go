@@ -747,6 +747,62 @@ func TestDeathAfterATakenSteerFails(t *testing.T) {
 	}
 }
 
+// A result followed by a steer Claude took is not final, and it never decides
+// the run — not when Claude dies, not on an interrupt, not on a cancel.
+func TestNonFinalResultNeverSucceeds(t *testing.T) {
+	// Claude answered the first turn, took the steer and started thinking
+	// about it; the stream ends there.
+	path := derive(t, "steer-followup", func(l []string) []string {
+		replays := 0
+		for i, s := range l {
+			if strings.Contains(s, `"isReplay":true`) {
+				replays++
+			}
+			if replays == 2 && strings.Contains(s, `"content_block_start"`) {
+				return l[:i+1]
+			}
+		}
+		t.Fatal("fixture has no second turn")
+		return nil
+	})
+	cases := []struct {
+		name  string
+		mode  string
+		stop  func(tr adapter.Turn, cancel context.CancelFunc) // on the second turn's first sign of life
+		state v1.RunState
+	}{
+		{"interrupted, then died unanswered", "die-on-interrupt", func(tr adapter.Turn, _ context.CancelFunc) { tr.Interrupt() }, v1.RunCancelled},
+		{"cancelled", "linger", func(_ adapter.Turn, cancel context.CancelFunc) { cancel() }, v1.RunCancelled},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			h := &harness{fixture: path, env: map[string]string{"CLAUDE_TEST_MODE": c.mode}}
+			steered, stopped := false, false
+			_, out, _ := drive(t, ctx, h.spec(t), func(tr adapter.Turn, e v1.Event) bool {
+				switch {
+				case !steered && e.Kind == v1.EventText:
+					steered = true
+					if err := tr.Steer("reply: steered"); err != nil {
+						t.Error(err)
+					}
+				case steered && !stopped && hasStatus([]v1.Event{e}, "thinking"):
+					stopped = true
+					c.stop(tr, cancel)
+				}
+				return stopped
+			})
+			if !stopped {
+				t.Fatal("the second turn never started")
+			}
+			if out.State != c.state || out.FinalText != "" {
+				t.Errorf("outcome %+v, want %s with no final text", out, c.state)
+			}
+		})
+	}
+}
+
 func TestStartRefuses(t *testing.T) {
 	good := adapter.Spec{Binary: os.Args[0], Workdir: t.TempDir()}
 	cases := []struct {

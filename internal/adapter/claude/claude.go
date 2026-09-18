@@ -213,7 +213,7 @@ type turn struct {
 	replayed    int  // user frames Claude has taken
 	interrupted bool
 	requests    int
-	settled     bool // the last result is in and input is closed
+	settled     bool // the result in hand is the last: input is closed on it
 
 	// Events are queued without bound between the reader and the consumer. The
 	// reader must never block on a consumer that has stopped reading, or Claude
@@ -416,7 +416,7 @@ loop:
 		cancelled:   t.ctx.Err() != nil,
 		exitErr:     exitErr,
 		stderr:      t.p.Stderr(),
-		unanswered:  tr.result != nil && !t.settled && !t.interrupted,
+		final:       t.settled,
 	}
 	t.mu.Unlock()
 	t.outcome = tr.outcome(e)
