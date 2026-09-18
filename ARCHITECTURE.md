@@ -131,7 +131,7 @@ plain-text 404 or 405.
 → { runner_id, fingerprint, capabilities?,        // document only when asked
     health: { load, free_capacity: {total, by_harness}, disk_free_bytes,
               harnesses: [{id, ready, accounts: [{label, limited_until?}]}],
-              spool_depth, outbox_depth, recent_errors[] },
+              spool_depth, outbox_depth, recent_errors[], draining? },
     runs: [{ run_id, state, resumes_at?, reason? }] }   // every run held
 ← { next_sync_ms, lease_ms,
     runs: [Run],                                  // never more than free capacity
@@ -148,6 +148,11 @@ plain-text 404 or 405.
   twice. An interrupt that reaches a run before its harness is up ends it as a
   cancel does, with nothing spawned —
   [0025](docs/decisions/0025-a-cancel-is-repeated-and-an-answer-that-landed-stands.md).
+- **Drain** — [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md).
+  A hub sends `drain` only to a runner advertising the `drain` feature, and
+  repeats it until a sync's health says `draining`. A draining runner declares
+  no free capacity, keeps listing what it holds and is offered nothing; it
+  exits once its runs have ended.
 - **Claim by listing.** A run offered in a sync response is claimed when the
   runner lists it in its next sync. An offered run that the next sync does not
   list was never received, and the hub offers it again. The runner takes the
@@ -258,6 +263,7 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `POST /runs/{run}/cancel` | a run no runner started ends `cancelled` here; a held one gets a `cancel` control, and shows `cancel_requested_at` until it ends |
 | `POST /runs/{run}/interrupt` | an `interrupt` control for a held run; 409 before it starts |
 | `POST /runs/{run}/steer` | a `steer` control with `{text}` for a held run, sent once; 409 before it starts |
+| `POST /runners/{runner}/drain` | a `drain` control, repeated until the runner says it is draining; 409 for a runner without the `drain` feature |
 
 ## §3 Running a harness
 
@@ -344,6 +350,19 @@ harness process. Recording new ones is a manual step, behind a build tag
   `cancel_latency_ms` is from the control's arrival to the turn's end. A
   harness whose own result landed before the cancel reached it keeps that
   result — [0025](docs/decisions/0025-a-cancel-is-repeated-and-an-answer-that-landed-stands.md).
+- **The way down** — [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md).
+  The first stop signal, or the hub's `drain`, stops claiming: offers never
+  listed are withdrawn, runs held go on, syncs go on. The drain wait
+  (`[drain] wait`, default 30 min) running out, or a second signal, cancels
+  every run held down the cancel ladder, each result `cancelled` with class
+  `runner_stopping`. Once every run has ended the runner gives the spool and
+  the outbox up to 30 s and exits. A third signal exits at once. A service
+  manager's stop timeout must exceed the drain wait plus the ladder.
+- **Restart** — [0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md).
+  Every run a previous process held is reported lost (`runner_restarted`,
+  `last_seq` its last spooled event) through the outbox, never run again. The
+  spool and the outbox are replayed before the first claim. Sessions keep their
+  native id and workdir, so the next run resumes them.
 - **Watchdogs**: inactivity on the event stream (owner default 30 min; a run may
   lower it) and an optional wall-clock cap. "Force-stopping a healthy run throws
   away the work" — the inactivity default errs long. A watchdog that fires
@@ -436,6 +455,9 @@ cap  = 2
 
 [sessions]
 idle_ttl = "336h"
+
+[drain]
+wait = "30m"   # how long a drain lets runs finish before cancelling them — 0029
 ```
 
 ### `state.db`
@@ -476,6 +498,8 @@ yad hub cancel <run>               stop a run: at once when no runner started it
                                    else by its runner, down the cancel ladder
 yad hub interrupt <run>            end a run's turn, keep its session
 yad hub steer <run> <text | ->     add input to a running turn
+yad hub drain <runner>             the runner takes no new runs, finishes those it
+                                   holds and exits
 yad hub admin-token create|list|revoke
                                    the service API's tokens; create saves to a 0600
                                    file and prints nothing secret (--out - prints once)
@@ -486,6 +510,7 @@ yad conformance <url>              check any hub against v1
 ```
 
 `yad daemon start` backgrounds itself; `--foreground` is what service units run.
+A stop signal drains it, a second cancels its runs, a third exits at once.
 Logs are JSON through `log/slog`, rotated by size. The control socket is `0600`
 in the data directory; its protocol is internal and unversioned.
 
@@ -519,9 +544,12 @@ line here is a reviewed change.
   token, connect, daemon, submit, watch, cancel, interrupt — against `yad hub`
   in process, with the Claude adapter driving the test binary as a fake
   `claude`. A run succeeds; the network drops mid-run and every event and the
-  result still land; the runner restarts mid-run and the run ends lost, with
-  its events delivered; a run cancelled or interrupted mid-run ends
-  cancelled, with its latency measured and no process left.
+  result still land; the runner restarts mid-run and the run is reported lost,
+  with its events delivered, and the next run resumes its session in the same
+  workdir; a run cancelled or interrupted mid-run ends cancelled, with its
+  latency measured and no process left; a runner process gets one, two and
+  three real stop signals and drains, cancels, or exits; `yad hub drain`
+  drains a runner, which exits by itself.
 - **Real harnesses** only behind `//go:build realharness` and
   `YAD_REAL_HARNESS=1`, run by hand — and `make smoke`, the same path as the
   end-to-end tests with the real `claude`, the built binary and `yad hub

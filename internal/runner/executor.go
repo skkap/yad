@@ -48,6 +48,14 @@ const (
 	// ClassInterrupt — an interrupt from the hub did not reach the harness.
 	// Only ever an event, never a result.
 	ClassInterrupt = "interrupt_failed"
+	// ClassRunnerStopping — the runner cancelled the run on its way down: a
+	// drain ran out of time, or its owner asked twice (decision 0029). The
+	// state is cancelled; the class says it was not the hub's doing.
+	ClassRunnerStopping = "runner_stopping"
+	// ClassRunnerRestarted — the run's process ended with a runner that
+	// stopped without finishing it; the next start reports it lost
+	// (decision 0030).
+	ClassRunnerRestarted = "runner_restarted"
 )
 
 // maxTextBytes caps an event's text and error message and a result's final
@@ -93,7 +101,9 @@ type Exec struct {
 	once   sync.Once
 	mu     sync.Mutex
 	active map[runKey]*activeRun
-	wg     sync.WaitGroup
+	// idle are waiters closed when the last active run ends.
+	idle []chan struct{}
+	wg   sync.WaitGroup
 }
 
 var _ Executor = (*Exec)(nil)
@@ -112,6 +122,9 @@ type activeRun struct {
 	// the harness is up; cancelAt is when it arrived.
 	cancelled chan struct{}
 	cancelAt  time.Time
+	// byRunner is why the runner itself cancelled the run, when it was the
+	// runner's own way down rather than the hub.
+	byRunner string
 	// controls carries interrupts and steers to the running turn. A steer
 	// sent while the run prepares waits here for the harness.
 	controls chan control
@@ -137,6 +150,11 @@ func newActiveRun() *activeRun {
 // the first time (first). One lock covers the check and the close, so an
 // interrupt is never lost between the two.
 func (a *activeRun) stop(at time.Time, cancel bool) (first, ok bool) {
+	return a.stopBy(at, cancel, "")
+}
+
+// stopBy is stop, saying why when the runner is the one stopping it.
+func (a *activeRun) stopBy(at time.Time, cancel bool, byRunner string) (first, ok bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !cancel && a.started {
@@ -147,9 +165,16 @@ func (a *activeRun) stop(at time.Time, cancel bool) (first, ok bool) {
 		return false, true
 	default:
 	}
-	a.cancelAt = at
+	a.cancelAt, a.byRunner = at, byRunner
 	close(a.cancelled)
 	return true, true
+}
+
+// stoppedByRunner is the runner's reason for cancelling the run, or "".
+func (a *activeRun) stoppedByRunner() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.byRunner
 }
 
 // cancelledAt reports whether the run was cancelled, and when.
@@ -195,6 +220,12 @@ func (e *Exec) Start(ctx context.Context, c Claim) {
 		defer func() {
 			e.mu.Lock()
 			delete(e.active, key)
+			if len(e.active) == 0 {
+				for _, ch := range e.idle {
+					close(ch)
+				}
+				e.idle = nil
+			}
 			e.mu.Unlock()
 			c.Release()
 		}()
@@ -205,6 +236,36 @@ func (e *Exec) Start(ctx context.Context, c Claim) {
 // Wait blocks until every run started has finished or been stopped with the
 // runner.
 func (e *Exec) Wait() { e.wg.Wait() }
+
+// Idle is closed once no run is in hand — at once if none is now. Unlike Wait
+// it may be asked while runs are still being started; a run started after it
+// closed needs a new ask.
+func (e *Exec) Idle() <-chan struct{} {
+	e.init()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ch := make(chan struct{})
+	if len(e.active) == 0 {
+		close(ch)
+		return ch
+	}
+	e.idle = append(e.idle, ch)
+	return ch
+}
+
+// CancelAll cancels every run in hand down the cancel ladder, as a cancel
+// from the hub would, and says in each result that the runner did it.
+func (e *Exec) CancelAll(reason string) {
+	e.init()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := time.Now()
+	for k, a := range e.active {
+		if first, _ := a.stopBy(now, true, reason); first {
+			e.Log.Warn("the runner is cancelling the run on its way down", "connection", k.connection, "run", k.run, "reason", reason)
+		}
+	}
+}
 
 // Control receives the hub's instructions for runs. It only hands them over —
 // the run's own goroutine acts — so it never blocks the sync loop.
@@ -240,8 +301,8 @@ func (e *Exec) Control(_ context.Context, connection string, c v1.Control) {
 		default:
 			log.Warn("too many controls are waiting for this run; this one is dropped")
 		}
-	case v1.ControlCloseSession, v1.ControlDrain:
-		e.Log.Warn("the hub sent a control this runner does not act on yet (epics E3, E4)", "connection", connection, "kind", c.Kind)
+	case v1.ControlCloseSession:
+		e.Log.Warn("the hub sent a control this runner does not act on yet (epic E4)", "connection", connection, "kind", c.Kind)
 	}
 }
 
@@ -266,7 +327,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			return false
 		}
 		log.Info("run cancelled before it started")
-		e.finish(bg, c, v1.Result{State: v1.RunCancelled,
+		e.finish(bg, c, v1.Result{State: v1.RunCancelled, Error: runnerStopped(a.stoppedByRunner()),
 			Metrics: v1.Metrics{DurationMS: time.Since(started).Milliseconds(), CancelLatencyMS: latency(at)}})
 		return true
 	}
@@ -286,7 +347,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 				return
 			case <-ctx.Done():
 				t.Stop()
-				log.Warn("runner stopped before the run's start time; it stays held")
+				log.Warn("runner stopped before the run's start time; the next start reports it lost")
 				return
 			}
 			// The run's duration is from its start, not from its claim.
@@ -355,12 +416,26 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		e.setNative(bg, c, out.NativeSessionID)
 	}
 	if ctx.Err() != nil && w.stopped == "" && w.stopAt.IsZero() && out.State == v1.RunCancelled {
-		// Stopped because the runner is stopping, not because the run ended:
-		// no result is owed yet. The next start settles it (E3).
-		log.Warn("run stopped with the runner; it stays held")
+		// Killed because the runner is exiting now, not because the run
+		// ended: it stays held, and the next start reports it lost
+		// (decision 0030).
+		log.Warn("run killed with the runner; the next start reports it lost")
 		return
 	}
-	e.finish(bg, c, e.result(out, w, started))
+	res := e.result(out, w, started)
+	if res.State == v1.RunCancelled && w.cancelled {
+		res.Error = runnerStopped(a.stoppedByRunner())
+	}
+	e.finish(bg, c, res)
+}
+
+// runnerStopped is the error a result carries when the runner, not the hub,
+// cancelled the run; nil when it was the hub.
+func runnerStopped(reason string) *v1.RunError {
+	if reason == "" {
+		return nil
+	}
+	return &v1.RunError{Class: ClassRunnerStopping, Message: "the runner cancelled the run on its way down: " + reason}
 }
 
 // latency is the time from a control's arrival to now, for cancel_latency_ms.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -46,6 +47,10 @@ type Reporter struct {
 	Log *slog.Logger
 
 	wake chan struct{}
+	// replayed is closed once the first flush has run: what a previous
+	// process left owed has been offered to the hub.
+	replayed     chan struct{}
+	replayedOnce sync.Once
 	// batch is a smaller batch size for a run whose upload was refused as too
 	// large — by the hub, or by a proxy in front of it with a lower limit.
 	batch map[string]int64
@@ -54,6 +59,7 @@ type Reporter struct {
 func (r *Reporter) init() {
 	if r.wake == nil {
 		r.wake = make(chan struct{}, 1)
+		r.replayed = make(chan struct{})
 		r.batch = map[string]int64{}
 	}
 	if r.Now == nil {
@@ -79,6 +85,14 @@ func (r *Reporter) Wake() {
 	}
 }
 
+// Replayed is closed once the first flush has run — delivered what it could
+// of what a previous process left owed, or found the hub out of reach. The
+// sync loop claims nothing before it (decision 0030).
+func (r *Reporter) Replayed() <-chan struct{} {
+	r.init()
+	return r.replayed
+}
+
 // Run flushes every tick, and whenever woken, until ctx ends. The first flush
 // is at once: that is the replay of whatever a previous process left owed.
 func (r *Reporter) Run(ctx context.Context) {
@@ -87,6 +101,7 @@ func (r *Reporter) Run(ctx context.Context) {
 	defer t.Stop()
 	for {
 		r.Flush(ctx)
+		r.replayedOnce.Do(func() { close(r.replayed) })
 		select {
 		case <-ctx.Done():
 			return

@@ -217,7 +217,12 @@ from interrupt to the process group's signals. **Steer** — add input to a turn
 already running.
 
 **Drain** — stop claiming, let live runs finish, then exit. What an upgrade, a
-reboot or a retiring machine does.
+reboot or a retiring machine does. A draining runner keeps syncing, so leases
+renew and results land, and says `draining` in its health.
+_Rules_: Stop signals are counted: the first drains, the second cancels the runs
+held, the third exits at once. A drain lets runs finish for the owner's drain
+wait, then cancels them. The hub's `drain` control is the first step.
+_See_: [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md), `internal/runner/drain.go`
 
 **Watchdog** — the runner's two timers on a run: an inactivity timeout on the
 event stream, which catches a wedged harness, and an optional wall-clock cap set
@@ -257,7 +262,9 @@ per run.
 - Permission mode is the runner owner's configuration. No hub can set or widen it.
 - Exit 0 is not success. A run's terminal state comes from the harness's own
   result event.
-- A lost run is reported, never silently retried. Continuing a **waiting** run
+- A lost run is reported, never silently retried. A run a previous process held
+  is reported lost by the next start
+  ([0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md)). Continuing a **waiting** run
   after its limit resets is not a retry — no process died, and nothing is redone.
 - A terminal state is reported at least once and applied at most once.
 - Harness output is data. It is streamed and stored, never acted on.

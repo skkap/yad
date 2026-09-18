@@ -26,6 +26,12 @@ type Health struct {
 	SpoolDepth    int             `json:"spool_depth"`
 	OutboxDepth   int             `json:"outbox_depth"`
 	RecentErrors  []string        `json:"recent_errors,omitempty"`
+	// Draining says the runner has stopped claiming and exits once the runs
+	// it holds have ended. It keeps syncing until then, so their leases renew
+	// and their results land; its free capacity is zero, and a hub offers it
+	// nothing. Sent by runners that advertise the "drain" feature, which also
+	// act on the drain control.
+	Draining bool `json:"draining,omitempty"`
 }
 
 // HarnessHealth is per-harness readiness, including which accounts are limited.
@@ -73,7 +79,9 @@ func ControlKinds() []ControlKind {
 }
 
 // Control is one instruction. Which of the optional fields are set depends on
-// the kind: runs for cancel/interrupt/steer, sessions for close_session.
+// the kind: runs for cancel/interrupt/steer, sessions for close_session, none
+// for drain — which a hub sends only to a runner advertising the "drain"
+// feature, and repeats until the runner's health says it is draining.
 type Control struct {
 	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update"`
 	RunID     string      `json:"run_id,omitempty"`

@@ -24,6 +24,7 @@ type Config struct {
 	Connections []Connection             `toml:"connection,omitempty"`
 	Sessions    SessionsConfig           `toml:"sessions"`
 	Supervise   SuperviseConfig          `toml:"supervise"`
+	Drain       DrainConfig              `toml:"drain"`
 }
 
 // HarnessConfig is the owner's settings for one harness.
@@ -56,6 +57,13 @@ type SuperviseConfig struct {
 	Inactivity Duration `toml:"inactivity"`
 }
 
+// DrainConfig governs the runner's way down (decision 0029).
+type DrainConfig struct {
+	// Wait is how long a drain lets the runs held finish on their own before
+	// cancelling them down the cancel ladder. "0s" cancels them at once.
+	Wait Duration `toml:"wait"`
+}
+
 // Duration is a time.Duration written as "336h" in TOML.
 type Duration struct{ time.Duration }
 
@@ -72,10 +80,15 @@ func (d *Duration) UnmarshalText(b []byte) error {
 
 // Defaults. The inactivity watchdog errs long: Multica's grew from 5 minutes to
 // 2 hours because "force-stopping a healthy run throws away the work".
+//
+// The drain wait is long enough for a typical run to end on its own. A service
+// manager's stop timeout must be longer than it plus the cancel ladder, or the
+// manager kills the runner mid-drain and the runs held end lost.
 const (
 	DefaultCapacity   = 4
 	DefaultIdleTTL    = 14 * 24 * time.Hour
 	DefaultInactivity = 30 * time.Minute
+	DefaultDrainWait  = 30 * time.Minute
 )
 
 // Default is the config a new profile starts with.
@@ -84,6 +97,7 @@ func Default() Config {
 		Capacity:  DefaultCapacity,
 		Sessions:  SessionsConfig{IdleTTL: Duration{DefaultIdleTTL}},
 		Supervise: SuperviseConfig{Inactivity: Duration{DefaultInactivity}},
+		Drain:     DrainConfig{Wait: Duration{DefaultDrainWait}},
 	}
 }
 
@@ -141,6 +155,9 @@ func (c Config) Validate() error {
 	var errs []error
 	if c.Capacity < 1 {
 		errs = append(errs, fmt.Errorf("capacity must be at least 1, got %d", c.Capacity))
+	}
+	if c.Drain.Wait.Duration < 0 {
+		errs = append(errs, fmt.Errorf("drain.wait must not be negative, got %s — it is how long a drain lets runs finish, like \"30m\"", c.Drain.Wait.Duration))
 	}
 	for id, h := range c.Harness {
 		if h.Cap < 0 {

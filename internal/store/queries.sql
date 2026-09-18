@@ -111,3 +111,7 @@ DELETE FROM runs WHERE runs.connection = sqlc.arg(connection) AND runs.id = sqlc
 -- name: DeleteEmptySession :exec
 DELETE FROM sessions WHERE sessions.connection = sqlc.arg(connection) AND sessions.id = sqlc.arg(id)
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id);
+
+-- The last event a run spooled, acknowledged or not: a result's last_seq.
+-- name: LastEventSeq :one
+SELECT CAST(COALESCE(MAX(seq), 0) AS INTEGER) FROM events WHERE connection = ? AND run_id = ?;

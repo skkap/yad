@@ -108,6 +108,21 @@ type EventPage struct {
 	Run       Run        `json:"run"`
 }
 
+// Runner is a runner as a service sees it: enough to know whether it is taking
+// work.
+type Runner struct {
+	RunnerID string `json:"runner_id"`
+	Name     string `json:"name"`
+	// LastSyncAt is absent for a runner that registered and never synced.
+	LastSyncAt *time.Time `json:"last_sync_at,omitempty"`
+	// Draining is what the runner said at its last sync: it takes no new
+	// runs, and exits once the ones it holds have ended.
+	Draining bool `json:"draining"`
+	// DrainRequestedAt is when a drain was asked for and the runner has not
+	// yet said it is draining; the runner hears it at its next sync.
+	DrainRequestedAt *time.Time `json:"drain_requested_at,omitempty"`
+}
+
 // SteerRequest is input for a running turn.
 type SteerRequest struct {
 	Text string `json:"text" minLength:"1" maxLength:"65536" doc:"What to tell the harness, as a user message."`

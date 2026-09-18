@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"os/signal"
 	"sync"
 	"time"
 
@@ -26,7 +28,7 @@ func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error 
 	switch args[0] {
 	case "start":
 	case "stop", "status", "logs":
-		return fmt.Errorf("`yad daemon %s` needs the control socket, which arrives in epic E3 (Zumino yad/dev) — stop a foreground runner with Ctrl-C", args[0])
+		return fmt.Errorf("`yad daemon %s` needs the control socket, which arrives in epic E3 (Zumino yad/dev) — stop a foreground runner with Ctrl-C or SIGTERM: once drains, twice cancels its runs, three times exits now", args[0])
 	default:
 		return fmt.Errorf("unknown daemon subcommand %q — use start", args[0])
 	}
@@ -74,6 +76,18 @@ func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error 
 		defer mu.Unlock()
 		return doc
 	}
+	// The first stop signal drains, the second cancels the runs held, the
+	// third ends this context: exit now (decision 0029). The caller's ctx
+	// ending is the third step too.
+	log := slog.New(slog.NewTextHandler(w, nil))
+	ctx, exitNow := context.WithCancel(ctx)
+	defer exitNow()
+	drain := runner.NewDrain()
+	sigs := make(chan os.Signal, 3)
+	signal.Notify(sigs, stopSignals...)
+	defer signal.Stop(sigs)
+	go runner.OnSignals(ctx, sigs, drain, exitNow, log)
+
 	served := make(chan error, 1)
 	go func() {
 		served <- runner.Serve(ctx, runner.Options{
@@ -81,7 +95,7 @@ func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error 
 			// The catalog decides what is advertised; an adapter here with a
 			// harness still recognised there is never offered a run.
 			Adapters: runner.NewRegistry(claude.Adapter{}),
-			Log:      slog.New(slog.NewTextHandler(w, nil)),
+			Drain:    drain, Log: log,
 		})
 	}()
 
@@ -90,11 +104,14 @@ func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error 
 	for {
 		select {
 		case err := <-served:
-			if ctx.Err() == nil {
-				// Every connection stopped on its own: nothing left to do.
-				return err
+			switch {
+			case ctx.Err() != nil:
+				fmt.Fprintln(w, "\nshut down — runs cut short are reported lost at the next start")
+			case drain.IsDraining():
+				fmt.Fprintln(w, "\ndrained — every run held has ended")
 			}
-			fmt.Fprintln(w, "\nshut down — runs in flight stay held and are settled at the next start")
+			// Otherwise every connection stopped on its own: nothing left
+			// to do.
 			return err
 		case t := <-tick.C:
 			next := capability.Build(ctx, id, cfg)

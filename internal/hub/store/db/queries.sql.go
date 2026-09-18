@@ -115,6 +115,15 @@ func (q *Queries) CancelUnstartedRun(ctx context.Context, arg CancelUnstartedRun
 	return result.RowsAffected()
 }
 
+const clearDrain = `-- name: ClearDrain :exec
+UPDATE runners SET drain_requested_at = NULL WHERE id = ?
+`
+
+func (q *Queries) ClearDrain(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, clearDrain, id)
+	return err
+}
+
 const controlsFor = `-- name: ControlsFor :many
 SELECT id, run_id, kind, text, created_at FROM run_controls WHERE run_id = ? ORDER BY id
 `
@@ -478,7 +487,7 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 }
 
 const getRunner = `-- name: GetRunner :one
-SELECT id, name, credential_hash, capabilities, fingerprint, wants_capabilities, health, registered_at, last_sync_at FROM runners WHERE id = ?
+SELECT id, name, credential_hash, capabilities, fingerprint, wants_capabilities, health, registered_at, last_sync_at, drain_requested_at FROM runners WHERE id = ?
 `
 
 func (q *Queries) GetRunner(ctx context.Context, id string) (Runner, error) {
@@ -494,12 +503,13 @@ func (q *Queries) GetRunner(ctx context.Context, id string) (Runner, error) {
 		&i.Health,
 		&i.RegisteredAt,
 		&i.LastSyncAt,
+		&i.DrainRequestedAt,
 	)
 	return i, err
 }
 
 const getRunnerByCredential = `-- name: GetRunnerByCredential :one
-SELECT id, name, credential_hash, capabilities, fingerprint, wants_capabilities, health, registered_at, last_sync_at FROM runners WHERE credential_hash = ?
+SELECT id, name, credential_hash, capabilities, fingerprint, wants_capabilities, health, registered_at, last_sync_at, drain_requested_at FROM runners WHERE credential_hash = ?
 `
 
 func (q *Queries) GetRunnerByCredential(ctx context.Context, credentialHash string) (Runner, error) {
@@ -515,6 +525,7 @@ func (q *Queries) GetRunnerByCredential(ctx context.Context, credentialHash stri
 		&i.Health,
 		&i.RegisteredAt,
 		&i.LastSyncAt,
+		&i.DrainRequestedAt,
 	)
 	return i, err
 }
@@ -749,6 +760,20 @@ func (q *Queries) RenewRun(ctx context.Context, arg RenewRunParams) error {
 		arg.ID,
 		arg.RunnerID,
 	)
+	return err
+}
+
+const requestDrain = `-- name: RequestDrain :exec
+UPDATE runners SET drain_requested_at = COALESCE(drain_requested_at, ?1) WHERE id = ?2
+`
+
+type RequestDrainParams struct {
+	Now sql.NullInt64
+	ID  string
+}
+
+func (q *Queries) RequestDrain(ctx context.Context, arg RequestDrainParams) error {
+	_, err := q.db.ExecContext(ctx, requestDrain, arg.Now, arg.ID)
 	return err
 }
 

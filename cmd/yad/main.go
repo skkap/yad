@@ -28,10 +28,12 @@ type global struct {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
 }
+
+// stopSignals are the signals that stop a command. The runner counts them
+// (decision 0029); every other command ends at the first.
+var stopSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("yad", flag.ContinueOnError)
@@ -53,6 +55,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	g := global{paths: paths}
 
 	cmd, rest := fs.Arg(0), fs.Args()[1:]
+	if cmd != "daemon" {
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(ctx, stopSignals...)
+		defer stop()
+	}
 	var cmdErr error
 	switch cmd {
 	case "version":
@@ -94,7 +101,9 @@ usage: yad [--profile name] <command> [flags]
   harnesses [--json]  the capability document, exactly as a hub receives it
   connect <url> --token T [--name n]
                       register this runner with a hub
-  daemon start        the runner (--foreground; background arrives in E3)
+  daemon start        the runner (--foreground; background arrives in E3). A
+                      stop signal drains it, a second cancels its runs, a
+                      third exits at once
   hub serve           the standalone hub (headless)
   hub token create    a one-time registration token for yad connect
   hub admin-token create|list|revoke
@@ -106,6 +115,8 @@ usage: yad [--profile name] <command> [flags]
   hub interrupt <run> end a run's turn and keep its session
   hub steer <run> <text | ->
                       add input to a running turn
+  hub drain <runner>  the runner takes no new runs, finishes those it holds
+                      and exits
   version             version and build
 
   disconnect · status · sessions · account · service · conformance

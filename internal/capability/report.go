@@ -25,8 +25,12 @@ import (
 // A hub must not use a feature the runner did not advertise, so "live_sessions"
 // is absent until it is built.
 func Features() []string {
-	return []string{"start_at", "steer", "interrupt"}
+	return []string{"start_at", "steer", "interrupt", FeatureDrain}
 }
+
+// FeatureDrain is a runner that acts on the drain control and reports
+// draining in its health (decision 0029).
+const FeatureDrain = "drain"
 
 // Build probes the machine and assembles the document from it and the owner's
 // config. Accounts and host tools are filled in by their packages as they land.

@@ -219,6 +219,34 @@ func cmdHubControl(ctx context.Context, g global, verb string, args []string, st
 	return nil
 }
 
+// cmdHubDrain is `yad hub drain`: the runner stops taking runs at its next
+// sync, finishes those it holds and exits. It prints where that stands.
+func cmdHubDrain(ctx context.Context, g global, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("hub drain", flag.ContinueOnError)
+	hf := addHubFlags(fs, g)
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return errors.New("usage: yad hub drain [--hub url] [--token-file f] <runner>")
+	}
+	c, err := hf.client()
+	if err != nil {
+		return err
+	}
+	r, err := c.Drain(ctx, pos[0])
+	if err != nil {
+		return err
+	}
+	if r.Draining {
+		fmt.Fprintf(stdout, "runner %s (%s) is draining: it takes no new runs, and exits once the runs it holds have ended\n", r.RunnerID, r.Name)
+		return nil
+	}
+	fmt.Fprintf(stdout, "runner %s (%s) drains at its next sync: it takes no new runs, finishes those it holds — cancelling them after its drain wait — and exits\n", r.RunnerID, r.Name)
+	return nil
+}
+
 func follow(ctx context.Context, c *hubapiclient.Client, run hubapi.Run, w io.Writer) error {
 	p := &printer{w: w}
 	p.state(run)
