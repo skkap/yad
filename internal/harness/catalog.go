@@ -43,14 +43,15 @@ type Harness struct {
 // run it cannot drive.
 func Catalog() []Harness {
 	return []Harness{
-		// Claude and Codex are the two harnesses YAD exists to drive, and both are
-		// recognised until their adapters land: a runner must never advertise a
-		// run it would refuse. DEV-5 promotes claude, DEV-21 codex.
+		// Claude and Codex are the two harnesses YAD exists to drive. Claude has
+		// its adapter (internal/adapter/claude); Codex stays recognised until
+		// DEV-21 lands its own — a runner must never advertise a run it would
+		// refuse.
 		{
 			ID:          "claude",
 			Binary:      "claude",
 			Label:       "Claude Code",
-			Kind:        Recognised,
+			Kind:        FirstClass,
 			VersionArgs: []string{"--version"},
 			EnvPath:     "YAD_CLAUDE_PATH",
 			Models:      []string{"opus", "sonnet", "haiku"},

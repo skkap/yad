@@ -67,7 +67,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	switch {
 	case ready > 0:
 	case noAdapter > 0:
-		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — Claude Code arrives in epic E2, Codex in E5.")
+		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — install Claude Code, which has one; Codex arrives in epic E5.")
 		return nil
 	case broken > 0:
 		fmt.Fprintln(w, "No drivable harness: every installed one failed its version probe — fix the errors above and run this again.")

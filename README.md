@@ -27,23 +27,27 @@ vocabulary is in [`DOMAIN.md`](DOMAIN.md), the shape and the protocol in
 ```
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
-Claude Code         no adapter  2.1.276 (Claude Code)  /Users/me/.local/bin/claude
+Claude Code         ready       2.1.276 (Claude Code)  /Users/me/.local/bin/claude
 Codex               no adapter  codex-cli 0.147.0      /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 Cursor Agent        no adapter  2025.09.12-4852336     /Users/me/.local/bin/cursor-agent
 
-No drivable harness: what is installed has no adapter in this yad yet — Claude Code arrives in epic E2, Codex in E5.
+profile default — config /Users/me/.config/yad
+1 harness(es) this runner can be given work for.
 ```
 
-Claude Code and Codex become `ready` as their adapters land; until then a runner
-advertises them as recognised and refuses runs for them.
+Claude Code is `ready`: it has an adapter. Codex becomes `ready` when its adapter
+lands in epic E5; until then a runner advertises it as recognised and refuses
+runs for it.
 
 ## Status
 
-**Foundation.** Harness detection, the capability document, the v1 protocol
-types and their generated OpenAPI document, the local store, the process
-supervisor, config and profiles, and a `yad hub` that answers every call with
-"not yet". Nothing runs a harness yet. The build order is `ARCHITECTURE.md §9`;
+**Foundation, and the Claude adapter.** Harness detection, the capability
+document, the v1 protocol types and their generated OpenAPI document, the local
+store, the process supervisor, config and profiles, a `yad hub` that answers
+every call with "not yet", and the adapter that drives Claude Code — tested
+against recorded streams. Nothing hands it a run yet: the runner that does is
+the rest of epic E2. The build order is `ARCHITECTURE.md §9`;
 the epics and tasks are in Zumino, project `yad/dev`.
 
 ## Run it safely
