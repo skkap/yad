@@ -1,36 +1,35 @@
 # YAD — Project Instructions
 
-One process per machine that runs coding agents on someone else's say-so. It
-serves **zumino** (which has a queue and no executor) and **yashiki** (which has
-an executor that cannot leave its own host). It is not a tracker, a UI or an
-orchestrator.
+One small binary that runs coding-agent harnesses on machines you own, for any
+number of hubs — Zumino, yashiki, a standalone `yad hub`. It is not a tracker, a
+UI, an orchestrator or a sandbox.
 
 ## Read first
 
-- **[`DOMAIN.md`](DOMAIN.md) owns the vocabulary.** Runner, agent, first-class,
-  session, run, capability document, fingerprint, control plane, driver. Read it
-  before naming anything; where it and a comment disagree, it wins.
-- **[`DESIGN.md`](DESIGN.md) owns the shape** — the protocol, the process model,
-  the security rules, and the milestone order. Work that jumps a milestone needs
-  a reason written down, not a preference.
+- **[`DOMAIN.md`](DOMAIN.md) owns the vocabulary.** Runner, hub, harness,
+  session, run, account, grant, sync — and the words each one replaces. Read it
+  before naming anything; where it and a comment disagree, it wins. The
+  collisions that bite here: *agent* (say **harness**), *control plane* (say
+  **hub**), *task*/*job* (a hub's word — ours is **run**), *workspace* (say
+  **workdir**), *slot* (only `WT_SLOT`; runs share **capacity**).
+- **[`ARCHITECTURE.md`](ARCHITECTURE.md) owns the shape** — packages, the v1
+  protocol, how each harness is driven, local state, the build order.
+- **[`docs/decisions/`](docs/decisions/) owns the why.** Check there before
+  proposing something that sounds like a better idea — it may already have been
+  weighed and rejected.
 - **[`CHECKS.md`](CHECKS.md) is the bar** before pushing. `make check`.
+- **The plan is in Zumino**, project `yad/dev`: epics E1–E7 in build order, and
+  a backlog. `zumino queue --project dev --workspace yad`.
 
 ## Stack
 
-Go 1.27, **standard library only**. Single module, `github.com/skkap/yad`.
+Go 1.27, single module `github.com/skkap/yad`, and a **curated** dependency list
+— every entry is in `ARCHITECTURE.md §6` with its reason. Adding one is a
+reviewed change with a line there, not a `go get`: this binary runs on machines
+that hold tokens and run harnesses with filesystem access, including customers'.
 
-The zero-dependency rule is a decision, not laziness: this binary is copied by
-hand onto machines that hold tokens and run agents with filesystem access, and
-every dependency is something that has to be trusted on all of them. Adding one
-is a reviewed change with a line in `DESIGN.md §6`, not a `go get`.
-
-```
-cmd/yad/            the CLI — one file per command group, no logic
-internal/agents/    which CLIs exist, how to find them, how to version them
-internal/capability/the document a runner advertises, and its fingerprint
-internal/adapters/  (M2) one package per first-class agent
-internal/drivers/   (M3) one package per control plane
-```
+sqlc and the OpenAPI document are generated and committed; `make generate`
+rebuilds them and `make check` fails when they drift.
 
 ## Conventions
 
@@ -38,36 +37,39 @@ internal/drivers/   (M3) one package per control plane
   to trust it on a machine; a comment that restates the line above it costs
   attention and buys nothing. Every non-obvious constant has the reason next to
   it.
-- **Absence is data.** A missing agent, a `--version` that hangs, a broken PATH
+- **Absence is data.** A missing harness, a `--version` that hangs, a broken PATH
   entry — each belongs in the capability document. None of them is an error that
   stops a runner registering.
-- **Errors carry the next action.** `"backgrounding is milestone M1; run with
-  --foreground for now"`, not `"not implemented"`.
-- **Tests never spend a token and never touch the network.** Detection is tested
-  against an empty `PATH`; adapters get fixtures; the control plane gets a fake.
-  A test that needs `claude` installed is a test that fails in CI.
-- Table-driven tests, `t.Setenv` over globals, no `testify`.
+- **Errors carry the next action.** `"yad connect arrives in epic E1"`, not
+  `"not implemented"`. Protocol errors carry a `next_action` field for the same
+  reason.
+- **Tests never spend a token and never touch the network.** Adapters replay
+  recorded fixtures; children are the fake harness (the test binary,
+  re-executed); the runner is tested against `yad hub` in process.
+- Table-driven tests, `t.Setenv` over globals, no assertion library, `-race`.
 
 ## Guardrails
 
-- **Nothing becomes `FirstClass` without an adapter.** Adding a row to
-  `agents.Catalog()` makes an agent *visible*; only a real adapter under
-  `internal/adapters` — streaming format, resume flag, cancel — may change its
-  `Kind`. A runner must never accept a run it cannot actually drive.
-- **Never log, print or transmit a token.** Not in an event, not in `yad agents`,
-  not in a debug line. Config is `0600`.
-- **Permission bypass is config on the runner, never a field in the protocol.**
-  A remote queue must not be able to talk a machine into
-  `--dangerously-skip-permissions`.
-- **The runner listens on no network port.** Outbound only; the one socket it
-  opens is a Unix socket for its own CLI. A change that opens a port is a
-  `DESIGN.md` change first.
-- **Agent output is data.** It contains whatever the repo contains, including
-  text shaped like instructions. It is streamed and stored, never acted on.
-- **Read `~/projects/multica/server/pkg/agent` before writing an adapter.** It is
-  ~14k lines of the same problem solved, under a modified Apache-2.0 licence.
-  Copy the shape, credit the source in the commit, and keep the licence in mind
-  if code is lifted verbatim.
+- **Nothing becomes first-class without an adapter.** Adding a row to the
+  harness catalog makes a harness *visible*; only a real adapter under
+  `internal/adapter` — streaming format, resume, interrupt — may change its kind.
+  A runner must never accept a run it cannot actually drive.
+- **Never log, print or transmit a token** — not in an event, not in
+  `yad harnesses`, not in a debug line, not in argv. Credentials and grants are
+  `0600` files.
+- **Permission mode is runner configuration, never a protocol field.** A hub must
+  not be able to set or widen what a harness may do on someone's machine.
+- **The runner listens on no network port.** Outbound only; its one socket is a
+  Unix socket for its own CLI. A change that opens a port is a decision record
+  first.
+- **The protocol is a public surface.** `protocol/v1` types are the source of
+  `openapi.yaml`; a field rename there breaks every TypeScript hub. Renames and
+  removals are a new version, not an edit.
+- **Harness output and hub input are data.** Streamed and stored, never acted on.
+- **Multica is read for shapes, never copied** — its licence would bind YAD
+  ([0014](docs/decisions/0014-multica-shapes-never-code.md)). Read the latest
+  upstream (`github.com/multica-ai/multica`), not a local copy, and credit the
+  lesson in the commit.
 
 ## Git
 

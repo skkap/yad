@@ -1,5 +1,6 @@
 ---
 date: 2026-09-18
+status: accepted — the "lift adapters with attribution" reason is withdrawn by 0014; the upstream packages are now ~34k + 45k lines, not ~14k
 ---
 
 # Go, not Rust
