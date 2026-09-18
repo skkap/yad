@@ -28,11 +28,14 @@ type Config struct {
 
 // HarnessConfig is the owner's settings for one harness.
 type HarnessConfig struct {
-	PermissionMode string   `toml:"permission_mode,omitempty"` // claude: --permission-mode
-	Sandbox        string   `toml:"sandbox,omitempty"`         // codex: sandbox policy
-	Approval       string   `toml:"approval,omitempty"`        // codex: approval policy
-	Cap            int      `toml:"cap,omitempty"`             // 0 = only the runner's capacity limits it
-	Accounts       []string `toml:"accounts,omitempty"`        // failover order
+	// PermissionMode is claude's --permission-mode. Unset means
+	// bypassPermissions: runs are unattended and auto-approve (0015), and
+	// Claude's own default would deny every tool that needs a prompt.
+	PermissionMode string   `toml:"permission_mode,omitempty"`
+	Sandbox        string   `toml:"sandbox,omitempty"`  // codex: sandbox policy
+	Approval       string   `toml:"approval,omitempty"` // codex: approval policy
+	Cap            int      `toml:"cap,omitempty"`      // 0 = only the runner's capacity limits it
+	Accounts       []string `toml:"accounts,omitempty"` // failover order
 }
 
 // Connection is one hub this runner is registered with. Its credential lives in

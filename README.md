@@ -61,6 +61,10 @@ prompt. Run it on a machine, VM or container you would let an unknown repository
 execute code on, never on a laptop holding credentials you care about, and one
 runner per trust domain: personal and work are two runners.
 
+Claude Code runs with `--permission-mode bypassPermissions` unless
+`permission_mode` under `[harness.claude]` in `config.toml` says otherwise.
+Claude refuses that mode as root; run the runner as an ordinary user.
+
 ## Build
 
 ```bash

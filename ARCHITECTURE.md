@@ -261,6 +261,13 @@ each frame as it is taken, which is how the adapter knows which result is the
 last. The outcome rules and the rest are
 [0021](docs/decisions/0021-claude-runs-end-at-the-last-result.md).
 
+The permission mode is the owner's `permission_mode`, and `bypassPermissions`
+when unset: a run is unattended and auto-approves
+([0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md)), and
+Claude's own default would deny every tool that needs a prompt. Claude refuses
+`bypassPermissions` as root unless `IS_SANDBOX=1`, so the adapter refuses such a
+run before spawning, with the way out; it never sets `IS_SANDBOX` itself.
+
 **Codex** — `codex app-server --listen stdio://`: `initialize` → `initialized` →
 `thread/start` or `thread/resume` → `turn/start`; `turn/interrupt`, `turn/steer`;
 approvals answered from the owner's configured policy. The thread id is the
@@ -354,7 +361,7 @@ labels   = ["macos", "home"]
 capacity = 4
 
 [harness.claude]
-permission_mode = "bypassPermissions"   # the owner's call — 0015
+permission_mode = "bypassPermissions"   # the owner's call — 0015; the default when unset
 cap             = 3
 accounts        = ["personal", "family"] # failover order
 

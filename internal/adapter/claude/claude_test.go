@@ -829,17 +829,80 @@ func TestStartRefuses(t *testing.T) {
 	}
 }
 
-func TestNoPermissionModeMeansClaudesDefault(t *testing.T) {
-	h := &harness{fixture: fixture("plain")}
-	spec := h.spec(t)
-	spec.Settings = nil
-	spec.Model = ""
-	drive(t, context.Background(), spec, nil)
-	s := h.seen(t)
-	for _, flag := range []string{"--permission-mode", "--model", "--append-system-prompt-file"} {
-		if _, ok := s.flag(flag); ok {
-			t.Errorf("argv has %s with nothing configured: %q", flag, s.argv)
-		}
+// The permission mode is the owner's; unset, it is unattended auto-approve
+// (0015), never Claude's interactive default, which denies every tool that
+// needs a prompt.
+func TestPermissionMode(t *testing.T) {
+	cases := []struct {
+		name     string
+		settings map[string]string
+		want     string
+	}{
+		{"unset means bypass", nil, "bypassPermissions"},
+		{"empty means bypass", map[string]string{"permission_mode": ""}, "bypassPermissions"},
+		{"the owner's value wins", map[string]string{"permission_mode": "acceptEdits"}, "acceptEdits"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := &harness{fixture: fixture("plain")}
+			spec := h.spec(t)
+			spec.Settings = c.settings
+			spec.Model = ""
+			drive(t, context.Background(), spec, nil)
+			s := h.seen(t)
+			if got, _ := s.flag("--permission-mode"); got != c.want {
+				t.Errorf("--permission-mode %q, want %q (argv %q)", got, c.want, s.argv)
+			}
+			for _, flag := range []string{"--model", "--append-system-prompt-file"} {
+				if _, ok := s.flag(flag); ok {
+					t.Errorf("argv has %s with nothing configured: %q", flag, s.argv)
+				}
+			}
+		})
+	}
+}
+
+// Claude exits at once if bypassPermissions is used as root outside a
+// declared sandbox. The adapter refuses first, with the way out, and never
+// declares the sandbox itself.
+func TestBypassAsRoot(t *testing.T) {
+	cases := []struct {
+		name    string
+		euid    int
+		mode    string
+		env     []string // the run's
+		osEnv   string   // the runner's IS_SANDBOX
+		refused bool
+	}{
+		{"root, default mode", 0, "", nil, "", true},
+		{"root, bypass set by the owner", 0, "bypassPermissions", nil, "", true},
+		{"root, sandbox declared by the runner's environment", 0, "", nil, "1", false},
+		{"root, sandbox declared in the run's environment", 0, "", []string{"IS_SANDBOX=1"}, "", false},
+		{"root, the run's environment undeclares it", 0, "", []string{"IS_SANDBOX=0"}, "1", true},
+		{"root, a narrower mode", 0, "acceptEdits", nil, "", false},
+		{"an ordinary user", 501, "", nil, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			old := geteuid
+			geteuid = func() int { return c.euid }
+			t.Cleanup(func() { geteuid = old })
+			t.Setenv("IS_SANDBOX", c.osEnv)
+			spec := adapter.Spec{Workdir: t.TempDir(), Env: c.env, Settings: map[string]string{"permission_mode": c.mode}}
+			args, err := argv(spec, newUUID(), "")
+			if c.refused {
+				if err == nil || !strings.Contains(err.Error(), "IS_SANDBOX=1") || !strings.Contains(err.Error(), "ordinary user") {
+					t.Errorf("err %v, want a refusal naming the ways out", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if slices.ContainsFunc(args, func(a string) bool { return strings.Contains(a, "IS_SANDBOX") }) {
+				t.Errorf("argv declares the sandbox: %q", args)
+			}
+		})
 	}
 }
 

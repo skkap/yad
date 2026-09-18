@@ -52,6 +52,15 @@ var (
 // Settings keys this adapter reads from the owner's configuration.
 const settingPermissionMode = "permission_mode"
 
+// defaultPermissionMode applies when the owner has set none. A run is
+// unattended and auto-approves (decision 0015): Claude's own default mode would
+// deny every tool that needs a prompt, and a stock runner could not edit a
+// file. An owner who wants less sets permission_mode in config.toml.
+const defaultPermissionMode = "bypassPermissions"
+
+// geteuid is swapped by tests; Claude's root check reads the same thing.
+var geteuid = os.Geteuid
+
 var newline = []byte{'\n'}
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -130,12 +139,17 @@ func argv(spec adapter.Spec, session, contextFile string) ([]string, error) {
 		// question had been answered.
 		"--disallowed-tools", "AskUserQuestion",
 	}
-	if mode := spec.Settings[settingPermissionMode]; mode != "" {
-		if strings.HasPrefix(mode, "-") {
-			return nil, fmt.Errorf("permission_mode %q in config.toml is not a mode — see `claude --help` for the choices", mode)
-		}
-		args = append(args, "--permission-mode", mode)
+	mode := permissionMode(spec)
+	if strings.HasPrefix(mode, "-") {
+		return nil, fmt.Errorf("permission_mode %q in config.toml is not a mode — see `claude --help` for the choices", mode)
 	}
+	if mode == "bypassPermissions" && geteuid() == 0 && sandboxEnv(spec.Env) != "1" {
+		// Claude refuses this itself — it prints to stderr and exits before
+		// writing a stream — and a run that fails every time for a reason the
+		// runner already knows is better refused here, with the way out.
+		return nil, errors.New("claude refuses bypassPermissions as root, and the runner is root — run yad as an ordinary user (ARCHITECTURE.md §8); inside a disposable container, set IS_SANDBOX=1 in the runner's environment; or set a narrower permission_mode under [harness.claude] in config.toml")
+	}
+	args = append(args, "--permission-mode", mode)
 	if spec.NativeSessionID != "" {
 		args = append(args, "--resume", session)
 	} else {
@@ -153,6 +167,25 @@ func argv(spec adapter.Spec, session, contextFile string) ([]string, error) {
 		args = append(args, "--append-system-prompt-file", contextFile)
 	}
 	return args, nil
+}
+
+func permissionMode(spec adapter.Spec) string {
+	if mode := spec.Settings[settingPermissionMode]; mode != "" {
+		return mode
+	}
+	return defaultPermissionMode
+}
+
+// sandboxEnv is the IS_SANDBOX Claude will see: the run's own environment wins
+// over the runner's, as it does in supervise.Start.
+func sandboxEnv(env []string) string {
+	v := os.Getenv("IS_SANDBOX")
+	for _, kv := range env {
+		if val, ok := strings.CutPrefix(kv, "IS_SANDBOX="); ok {
+			v = val
+		}
+	}
+	return v
 }
 
 // writeContext puts the brief's context in a file rather than argv: it can be
