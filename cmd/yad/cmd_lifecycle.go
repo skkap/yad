@@ -119,9 +119,14 @@ func tailOf(path string) string {
 
 // Timings of the kill fallback. A daemon that has a SIGTERM gets this long to
 // act on it before --force escalates. Variables, so tests do not wait them out.
+//
+// forceStep is the pause between --force's two SIGTERMs: apart, so the
+// kernel does not merge them into one, and long enough for a harness that
+// answers its interrupt promptly to end its run cancelled.
 var (
 	termGrace = 10 * time.Second
 	killGrace = 5 * time.Second
+	forceStep = time.Second
 )
 
 type stopFlags struct {
@@ -131,7 +136,7 @@ type stopFlags struct {
 
 func (s *stopFlags) register(fs *flag.FlagSet) {
 	fs.DurationVar(&s.timeout, "timeout", time.Minute, "how long to wait for a graceful stop")
-	fs.BoolVar(&s.force, "force", false, "after --timeout, signal the daemon: SIGTERM, then SIGKILL")
+	fs.BoolVar(&s.force, "force", false, "after --timeout, signal the daemon: SIGTERM twice (cancel its runs, then exit now), then SIGKILL")
 }
 
 func daemonStop(ctx context.Context, g global, args []string, w io.Writer) error {
@@ -179,13 +184,24 @@ func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
 	if !s.force {
 		return fmt.Errorf("pid %d is still stopping after %s — `yad status` shows the runs it is waiting on; wait longer with --timeout, or `yad daemon stop --force` signals it", pid, s.timeout)
 	}
-	if err := sendSignal(pid, syscall.SIGTERM); err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "sent pid %d SIGTERM\n", pid)
-	if gone(ctx, g.paths, pid, termGrace) {
-		fmt.Fprintln(w, "stopped")
-		return nil
+	// The runner counts its owner's stop requests (decision 0029), and the
+	// stop above was the first: a SIGTERM is the second, which cancels the
+	// runs held, and another the third, exit now. Exit now is the runner
+	// killing its harnesses' process groups itself — a SIGKILL of the runner
+	// would leave them running — so SIGKILL is only for a runner deaf to both.
+	for i, step := range []string{"cancel the runs it holds", "exit now"} {
+		if err := sendSignal(pid, syscall.SIGTERM); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "sent pid %d SIGTERM (%s)\n", pid, step)
+		wait := forceStep
+		if i == 1 {
+			wait = termGrace
+		}
+		if gone(ctx, g.paths, pid, wait) {
+			fmt.Fprintln(w, "stopped")
+			return nil
+		}
 	}
 	if err := sendSignal(pid, syscall.SIGKILL); err != nil {
 		return err

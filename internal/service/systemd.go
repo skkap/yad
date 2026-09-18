@@ -176,10 +176,10 @@ func (s *Systemd) Install(ctx context.Context, sp Spec) ([]string, error) {
 	// A running runner is stopped under the unit it was started with: the
 	// new unit's stop timeout may be shorter than the drain wait that runner
 	// loaded, and restarting after daemon-reload would kill it mid-drain.
-	if _, err := os.Stat(file); err == nil {
-		if _, err := s.systemctl(ctx, "stop", name); err != nil && !strings.Contains(err.Error(), "not loaded") {
-			return nil, err
-		}
+	// Asked of systemd, not of the file: a unit stays loaded, and running,
+	// after its file is removed. A unit systemd never loaded is not an error.
+	if _, err := s.systemctl(ctx, "stop", name); err != nil && !strings.Contains(err.Error(), "not loaded") {
+		return nil, err
 	}
 	if err := writeFile(file, data); err != nil {
 		return nil, fmt.Errorf("write %s: %w", file, err)

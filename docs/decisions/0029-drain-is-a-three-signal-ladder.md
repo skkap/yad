@@ -60,9 +60,12 @@ first step, `Cancel` for the second, and the end of Serve's context for the
 third. Signals, the hub's control and the control socket's `yad daemon stop`
 (decision 0027's `gracefulStop`) all go through it. The owner's requests are
 counted together (`Drain.Step`): `yad daemon stop` is the first, once however
-often it is asked, so a SIGTERM after it — the one `yad daemon stop --force`
-sends before SIGKILL — cancels the runs held rather than draining again. A
-drain the hub began is not the owner's request and counts as none.
+often it is asked, so a SIGTERM after it cancels the runs held rather than
+draining again. `yad daemon stop --force` sends two, a second apart — cancel,
+then exit now — because exit now is the runner killing its harnesses' process
+groups itself, which a SIGKILL of the runner would not; SIGKILL is left for a
+runner deaf to both. A drain the hub began is not the owner's request and
+counts as none.
 
 A service manager's stop timeout must exceed the drain wait plus the cancel
 ladder (about 15 s), or it kills the runner mid-drain and its runs end `lost`

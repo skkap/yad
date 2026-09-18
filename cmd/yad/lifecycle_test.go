@@ -226,8 +226,8 @@ func TestStopFallsBackToSignals(t *testing.T) {
 			if err := l.p.Ensure(); err != nil {
 				t.Fatal(err)
 			}
-			termGrace, killGrace = 300*time.Millisecond, 5*time.Second
-			t.Cleanup(func() { termGrace, killGrace = 10*time.Second, 5*time.Second })
+			termGrace, killGrace, forceStep = 300*time.Millisecond, 5*time.Second, 100*time.Millisecond
+			t.Cleanup(func() { termGrace, killGrace, forceStep = 10*time.Second, 5*time.Second, time.Second })
 			pid := l.spawnWedged(tc.ignoreTerm)
 
 			code, out, errs := l.yad(append([]string{"daemon", "stop"}, tc.args...)...)

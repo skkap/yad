@@ -580,6 +580,7 @@ func TestSystemdInstall(t *testing.T) {
 			}
 			checkCalls(t, r.calls, []string{
 				"systemctl --user show --property=UnitPath --value",
+				"systemctl --user stop yad-runner-work.service",
 				"systemctl --user daemon-reload",
 				"systemctl --user enable yad-runner-work.service",
 				"systemctl --user restart yad-runner-work.service",
@@ -835,6 +836,16 @@ func TestSystemdReinstallStopsUnderTheOldUnit(t *testing.T) {
 	}}
 	h := host(t, r)
 	s = &Systemd{Host: h}
+	// systemd answers a unit it never loaded as the first install finds it.
+	r.answer = func(call string, _ int) ([]byte, error) {
+		if strings.Contains(call, " stop ") {
+			if _, err := os.Stat(s.File("work")); err != nil {
+				return nil, errors.New("exit status 5: Failed to stop yad-runner-work.service: Unit yad-runner-work.service not loaded.")
+			}
+			atStop, _ = os.ReadFile(s.File("work"))
+		}
+		return nil, nil
+	}
 	old := specIn(t, h)
 	old.StopTimeout = 2 * time.Hour
 	if _, err := s.Install(context.Background(), old); err != nil {
@@ -859,5 +870,19 @@ func TestSystemdReinstallStopsUnderTheOldUnit(t *testing.T) {
 	}
 	if now, _ := os.ReadFile(s.File("work")); !strings.Contains(string(now), "TimeoutStopSec=60s") {
 		t.Errorf("the new unit was not written:\n%s", now)
+	}
+
+	// The file removed under a unit systemd still runs: it is stopped all
+	// the same.
+	if err := os.Remove(s.File("work")); err != nil {
+		t.Fatal(err)
+	}
+	r.answer = func(string, int) ([]byte, error) { return nil, nil }
+	r.calls = nil
+	if _, err := s.Install(context.Background(), shorter); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.calls) < 2 || r.calls[1] != "systemctl --user stop yad-runner-work.service" {
+		t.Errorf("a loaded unit whose file is gone was not stopped first: %q", r.calls)
 	}
 }

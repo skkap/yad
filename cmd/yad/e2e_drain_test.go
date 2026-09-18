@@ -315,3 +315,35 @@ func TestE2EDaemonStopDrains(t *testing.T) {
 		t.Errorf("a run queued during the drain is %+v, %v", after.State, err)
 	}
 }
+
+// yad daemon stop --force on a runner whose drain has not finished: its two
+// SIGTERMs are the owner's second and third requests — cancel, then exit now —
+// so the runner kills its own harnesses' process groups and exits by itself,
+// with no SIGKILL and no harness left running. The run was being cancelled and
+// says so once the next start delivers it.
+func TestE2EDaemonStopForce(t *testing.T) {
+	m := newMachine(t)
+	pidFile := filepath.Join(t.TempDir(), "claude.pid")
+	t.Setenv(fakeClaudePID, pidFile)
+	t.Setenv(fakeClaudeDeaf, "1")
+	m.setDrainWait(time.Hour)
+	m.gated()
+	m.submit("e2e-held")
+	c := m.childDaemon()
+	m.waitAtGate()
+
+	code, out, errs := m.p.yad("", "daemon", "stop", "--timeout", "500ms", "--force")
+	if code != 0 || !strings.Contains(out, "(exit now)") || strings.Contains(out, "killed pid") {
+		t.Fatalf("stop --force exit %d: %s%s\nrunner log:\n%s", code, out, errs, c.logged())
+	}
+	c.exited(t)
+	eventually(t, "the harness process is gone", func() bool { return syscall.Kill(harnessPID(t, pidFile), 0) != nil })
+
+	m.open()
+	d := m.daemon()
+	defer d.halt(t)
+	code, out, errs = m.watch("e2e-held")
+	if code == 0 || !strings.Contains(out, "── cancelled") || !strings.Contains(errs, "runner_stopping") {
+		t.Fatalf("watch exit %d: %s\n%s", code, errs, out)
+	}
+}
