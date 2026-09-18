@@ -69,6 +69,8 @@ func TestErrorsHaveTheProtocolShape(t *testing.T) {
 		{"another protocol version", "POST", "/v1/runners/r/sync", `{}`, map[string]string{v1.HeaderProtocol: "2"}, 426, v1.CodeUnsupportedProtocol},
 		{"malformed body", "POST", "/v1/runs/r/events", `{`, proto, 400, v1.CodeInvalid},
 		{"unknown path under the base", "POST", "/v1/runners/r/nope", `{}`, proto, 404, v1.CodeNotFound},
+		{"an operation only a newer version has", "POST", "/v1/runners/r/future", `{}`, map[string]string{v1.HeaderProtocol: "2"}, 426, v1.CodeUnsupportedProtocol},
+		{"unknown path without the header", "POST", "/v1/runners/r/nope", `{}`, nil, 426, v1.CodeUnsupportedProtocol},
 		{"wrong method on an operation", "GET", "/v1/runners/register", ``, proto, 405, v1.CodeInvalid},
 		{"outside the base", "POST", "/elsewhere", `{}`, proto, 404, v1.CodeNotFound},
 	} {

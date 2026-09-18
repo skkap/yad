@@ -58,6 +58,15 @@ func New() *Hub {
 // shaped for v2 fails v1 validation in ways that say nothing about the cause.
 func protocolRoutes(ops *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The version is checked before the route: a newer runner calling an
+		// operation this version does not have must hear "version mismatch",
+		// not "check your URL".
+		if r.Method == http.MethodPost && r.Header.Get(v1.HeaderProtocol) != v1.Version {
+			writeError(w, Fail(http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol,
+				"this hub speaks protocol "+v1.Version+"; the request said "+strconv.Quote(r.Header.Get(v1.HeaderProtocol)),
+				"upgrade yad or the hub so both speak protocol "+v1.Version))
+			return
+		}
 		fallback, pattern := ops.Handler(r)
 		if pattern == "" {
 			rec := &recorder{header: http.Header{}, status: http.StatusNotFound}
@@ -71,12 +80,6 @@ func protocolRoutes(ops *http.ServeMux) http.Handler {
 			}
 			writeError(w, Fail(http.StatusNotFound, v1.CodeNotFound, "no operation at "+r.URL.Path,
 				"check the connection URL and the path against protocol/v1/openapi.yaml"))
-			return
-		}
-		if r.Method == http.MethodPost && r.Header.Get(v1.HeaderProtocol) != v1.Version {
-			writeError(w, Fail(http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol,
-				"this hub speaks protocol "+v1.Version+"; the request said "+strconv.Quote(r.Header.Get(v1.HeaderProtocol)),
-				"upgrade yad or the hub so both speak protocol "+v1.Version))
 			return
 		}
 		ops.ServeHTTP(w, r)
