@@ -50,7 +50,8 @@ build tag, or for cgo, is caught here and nowhere else. Everything builds with
   recorded fixtures. Nothing in the suite spends a token or needs `claude` or
   `codex` on the box. Tests against real harnesses sit behind the `realharness`
   build tag and `YAD_REAL_HARNESS=1`, and are run by hand when recording new
-  fixtures.
+  fixtures. `make smoke` runs one real Claude run through `yad hub` end to
+  end; it spends tokens, so it is run by hand, never here or in CI.
 - **No hub is contacted.** The runner is tested against `yad hub` in process.
   There is no test against Zumino or yashiki; `yad conformance <url>` (epic E7)
   is how a real hub is checked, by hand.
