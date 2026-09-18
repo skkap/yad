@@ -457,3 +457,27 @@ func (x *Exec) activeIDs() []string {
 	}
 	return out
 }
+
+// `yad daemon stop` is the owner's first stop request, taken once: a signal
+// after it is the second and cancels, and a drain the hub began counts as none.
+func TestStopIsTheFirstStep(t *testing.T) {
+	d := NewDrain()
+	if !d.Stop("socket") || !d.IsDraining() || closed(d.Cancelling()) {
+		t.Fatal("the socket's stop did not drain")
+	}
+	if d.Stop("socket again") {
+		t.Error("a repeated stop took another step")
+	}
+	if n := d.Step("SIGTERM"); n != 2 || !closed(d.Cancelling()) {
+		t.Errorf("a signal after the socket's stop is step %d; want 2, cancelling", n)
+	}
+
+	d = NewDrain()
+	d.Begin("the hub")
+	if !d.Stop("socket") {
+		t.Error("the hub's drain counted as the owner's first step")
+	}
+	if n := d.Step("SIGTERM"); n != 2 {
+		t.Errorf("step %d", n)
+	}
+}

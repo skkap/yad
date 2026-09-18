@@ -221,3 +221,46 @@ func TestRunnerIDRefusesUnreadableFile(t *testing.T) {
 		t.Errorf("identity changed from %q to %q", first, again)
 	}
 }
+
+func TestCheckCredential(t *testing.T) {
+	p := testPaths(t)
+	write := func(body string, mode os.FileMode) {
+		t.Helper()
+		dir := filepath.Join(p.Config, "credentials")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "home"), []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(dir, "home"), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := p.CheckCredential("home"); err == nil || !strings.Contains(err.Error(), "yad connect") {
+		t.Errorf("missing: %v", err)
+	}
+	for _, tc := range []struct {
+		name, body string
+		mode       os.FileMode
+		want       string // "" is accepted
+	}{
+		{"good", "yadrun_abc123\n", 0o600, ""},
+		{"exposed", "yadrun_abc123\n", 0o644, "readable by others"},
+		{"empty", "\n", 0o600, "is empty"},
+		{"two words", "yadrun_abc 123\n", 0o600, "not a single token"},
+		{"two lines", "yadrun_abc\nsecond\n", 0o600, "not a single token"},
+		{"non-ascii", "yadrun_abé\n", 0o600, "not a single token"},
+	} {
+		write(tc.body, tc.mode)
+		err := p.CheckCredential("home")
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("%s: %v", tc.name, err)
+		case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+			t.Errorf("%s: %v, want %q", tc.name, err, tc.want)
+		case err != nil && strings.Contains(err.Error(), "yadrun_ab"):
+			t.Errorf("%s: the error carries the credential: %v", tc.name, err)
+		}
+	}
+}

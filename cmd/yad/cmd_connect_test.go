@@ -22,7 +22,7 @@ type profile struct {
 
 func newProfile(t *testing.T) *profile {
 	t.Setenv("PATH", t.TempDir())
-	p := &profile{t: t, config: t.TempDir(), data: t.TempDir()}
+	p := &profile{t: t, config: t.TempDir(), data: shortDir(t)}
 	return p
 }
 

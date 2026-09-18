@@ -22,8 +22,11 @@ import (
 // `yad daemon stop` all reach the runner through one Drain, so they climb the
 // same ladder and never each other's.
 type Drain struct {
-	mu         sync.Mutex
-	reason     string
+	mu     sync.Mutex
+	reason string
+	// asked counts the owner's stop requests: signals, and the control
+	// socket's stop, which is the first of them.
+	asked      int
 	draining   chan struct{}
 	cancelling chan struct{}
 }
@@ -61,6 +64,36 @@ func (d *Drain) climb(step chan struct{}, reason string) bool {
 	return true
 }
 
+// Step is one stop request from the runner's owner, counted: the first drains,
+// the second cancels, and from the third it returns 3 or more, which is the
+// caller's to act on — exit now. A drain the hub started is not one of them.
+func (d *Drain) Step(reason string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.step(reason)
+}
+
+func (d *Drain) step(reason string) int {
+	d.asked++
+	switch d.asked {
+	case 1:
+		d.climb(d.draining, reason)
+	case 2:
+		d.climb(d.draining, reason)
+		d.climb(d.cancelling, reason)
+	}
+	return d.asked
+}
+
+// Stop is `yad daemon stop`: the owner's first step, taken once however
+// often it is asked, and reports whether this call took it. A signal after it
+// is the second step.
+func (d *Drain) Stop(reason string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.asked == 0 && d.step(reason) == 1
+}
+
 // Draining is closed once the runner stops claiming.
 func (d *Drain) Draining() <-chan struct{} { return d.draining }
 
@@ -88,30 +121,29 @@ func (d *Drain) Reason() string {
 	return d.reason
 }
 
-// OnSignals climbs the ladder by counting stop signals: the first drains, the
-// second cancels, the third calls exit — which should end Serve's context. A
-// service manager sends one SIGTERM and waits; a person at a terminal presses
-// Ctrl-C again when they mean it. Counting rather than stepping from the
-// current state keeps the meaning of a signal fixed: a runner the hub is
-// already draining still drains on the first SIGTERM, and does not cancel
-// someone's run because a service manager asked politely.
+// OnSignals climbs the ladder by counting the owner's stop requests (Step):
+// the first drains, the second cancels, the third calls exit — which should
+// end Serve's context. A service manager sends one SIGTERM and waits; a person
+// at a terminal presses Ctrl-C again when they mean it. `yad daemon stop`
+// counts as the first. Counting rather than stepping from the current state
+// keeps the meaning of a signal fixed: a runner the hub is already draining
+// still drains on the first SIGTERM, and does not cancel someone's run because
+// a service manager asked politely.
 //
-// It returns when ctx ends or after the third signal.
+// It returns when ctx ends or after the third request.
 func OnSignals(ctx context.Context, sigs <-chan os.Signal, d *Drain, exit func(), log *slog.Logger) {
-	for n := 1; ; n++ {
+	for {
 		var sig os.Signal
 		select {
 		case <-ctx.Done():
 			return
 		case sig = <-sigs:
 		}
-		switch n {
+		switch n := d.Step("the runner received " + sig.String()); n {
 		case 1:
 			log.Warn("draining: no new runs; exiting once the runs held have ended — signal again to cancel them", "signal", sig.String())
-			d.Begin("the runner received " + sig.String())
 		case 2:
 			log.Warn("cancelling every run held, then exiting — signal again to exit now", "signal", sig.String())
-			d.Cancel("the runner received a second " + sig.String())
 		default:
 			log.Warn("exiting now; runs cut short are reported lost at the next start", "signal", sig.String())
 			exit()

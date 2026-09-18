@@ -45,6 +45,16 @@ func TestMain(m *testing.M) {
 		fakeClaude()
 		return
 	}
+	// The binary a background start re-executes is this one: it has to be
+	// yad, or a daemon that only holds its lock, for the lifecycle tests.
+	switch os.Getenv(beYad) {
+	case "yad":
+		main()
+		return
+	case "wedged":
+		wedgedDaemon()
+		return
+	}
 	os.Exit(m.Run())
 }
 

@@ -26,10 +26,12 @@ type Options struct {
 	// capacity and claims nothing.
 	Adapters *Registry
 	// Drain is how the process asks the runner to go (decision 0029): a
-	// signal, and later the control socket. Nil is a runner only the hub's
+	// signal, and the control socket's stop. Nil is a runner only the hub's
 	// drain control or the end of ctx can stop.
 	Drain *Drain
 	Log   *slog.Logger
+	// Monitor, when set, is kept current for the control socket.
+	Monitor *Monitor
 }
 
 // Serve syncs every configured connection, all of them drawing on one
@@ -49,6 +51,7 @@ func Serve(ctx context.Context, o Options) error {
 		o.Drain = NewDrain()
 	}
 	if len(o.Config.Connections) == 0 {
+		o.Monitor.markReady()
 		select {
 		case <-ctx.Done():
 		case <-o.Drain.Draining():
@@ -61,8 +64,15 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	defer st.Close()
 	pool := NewPool(o.Capabilities().Capacity)
+	o.Monitor.attach(pool, st)
+	// Runs before the store closes: a status read after it would fail.
+	defer o.Monitor.attach(nil, nil)
 
-	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, log: o.Log, reporters: map[string]*Reporter{}}
+	o.Monitor.attach(pool, st)
+	// Runs before the store closes: a status read after it would fail.
+	defer o.Monitor.attach(nil, nil)
+
+	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, log: o.Log, monitor: o.Monitor, reporters: map[string]*Reporter{}}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -78,6 +88,7 @@ func Serve(ctx context.Context, o Options) error {
 		executor = sv.exec
 	}
 	for _, conn := range o.Config.Connections {
+		o.Monitor.starting(conn.Name)
 		cred, err := o.Paths.Credential(conn.Name)
 		if err != nil {
 			sv.fail(conn.Name, err)
@@ -93,7 +104,7 @@ func Serve(ctx context.Context, o Options) error {
 		sv.loops = append(sv.loops, &Loop{
 			Connection: conn.Name, RunnerID: o.RunnerID, Hub: client, Store: st, Pool: pool,
 			Capabilities: o.Capabilities, Executor: executor, Drain: o.Drain,
-			ClaimAfter: r.Replayed(), Log: o.Log,
+			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor,
 		})
 	}
 	return sv.run(ctx)
@@ -109,6 +120,7 @@ type server struct {
 	loops     []*Loop
 	reporters map[string]*Reporter
 	log       *slog.Logger
+	monitor   *Monitor
 
 	mu   sync.Mutex
 	errs []error
@@ -118,6 +130,7 @@ type server struct {
 // the process running, so the return value may be hours away.
 func (s *server) fail(conn string, err error) {
 	s.log.Error("connection stopped", "connection", conn, "err", err)
+	s.monitor.failed(conn, err, time.Now(), ConnStopped)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.errs = append(s.errs, fmt.Errorf("connection %s: %w", conn, err))
@@ -160,6 +173,11 @@ func (s *server) run(ctx context.Context) error {
 				s.fail(l.Connection, err)
 			}
 		})
+	}
+	// Ready once the store is open and a loop is running: a runner whose
+	// every connection failed to start is never ready.
+	if len(s.loops) > 0 {
+		s.monitor.markReady()
 	}
 	stopped := make(chan struct{})
 	go func() { wg.Wait(); close(stopped) }()

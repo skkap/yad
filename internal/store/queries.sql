@@ -115,3 +115,12 @@ DELETE FROM sessions WHERE sessions.connection = sqlc.arg(connection) AND sessio
 -- The last event a run spooled, acknowledged or not: a result's last_seq.
 -- name: LastEventSeq :one
 SELECT CAST(COALESCE(MAX(seq), 0) AS INTEGER) FROM events WHERE connection = ? AND run_id = ?;
+
+-- What `yad status` lists: every run held, across connections.
+-- name: ListAllHeldRuns :many
+SELECT * FROM runs
+WHERE state IN ('claimed', 'preparing', 'running', 'waiting')
+ORDER BY created_at;
+
+-- name: CountOpenSessions :one
+SELECT count(*) FROM sessions WHERE state = 'open';

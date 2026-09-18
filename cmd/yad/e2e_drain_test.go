@@ -23,6 +23,7 @@ import (
 type child struct {
 	cmd  *exec.Cmd
 	out  *syncBuffer
+	log  string // the daemon's own log: its stdout, a pipe here, carries none of it
 	done chan error
 }
 
@@ -32,7 +33,7 @@ func (m *machine) childDaemon() *child {
 	if err != nil {
 		m.t.Fatal(err)
 	}
-	c := &child{out: &syncBuffer{}, done: make(chan error, 1)}
+	c := &child{out: &syncBuffer{}, done: make(chan error, 1), log: filepath.Join(m.p.data, "logs", "yad.log")}
 	c.cmd = exec.Command(self, "daemon", "start", "--foreground")
 	c.cmd.Env = append(os.Environ(), childYad+"=1", "YAD_CONFIG_DIR="+m.p.config, "YAD_DATA_DIR="+m.p.data)
 	c.cmd.Stdout, c.cmd.Stderr = c.out, c.out
@@ -55,10 +56,16 @@ func (c *child) signal(t *testing.T, sig syscall.Signal) {
 	}
 }
 
+// logged is what the runner has written to its log so far.
+func (c *child) logged() string {
+	b, _ := os.ReadFile(c.log)
+	return string(b)
+}
+
 // said waits until the runner has logged want.
 func (c *child) said(t *testing.T, want string) {
 	t.Helper()
-	eventually(t, "the runner says "+strconv.Quote(want), func() bool { return strings.Contains(c.out.String(), want) })
+	eventually(t, "the runner says "+strconv.Quote(want), func() bool { return strings.Contains(c.logged(), want) })
 }
 
 // exited waits for the runner to exit by itself and fails unless it exited 0.
@@ -68,10 +75,10 @@ func (c *child) exited(t *testing.T) {
 	case err := <-c.done:
 		c.done <- err // for the cleanup
 		if err != nil {
-			t.Fatalf("runner exited with %v:\n%s", err, c.out.String())
+			t.Fatalf("runner exited with %v:\n%s%s", err, c.out.String(), c.logged())
 		}
 	case <-time.After(30 * time.Second):
-		t.Fatalf("runner did not exit:\n%s", c.out.String())
+		t.Fatalf("runner did not exit:\n%s", c.logged())
 	}
 }
 
@@ -180,8 +187,8 @@ func TestE2EStopSignals(t *testing.T) {
 				m.open()
 			}
 			c.exited(t)
-			if want := map[int]string{1: "drained", 2: "drained", 3: "shut down"}[tc.signals]; !strings.Contains(c.out.String(), want) {
-				t.Errorf("runner output lacks %q:\n%s", want, c.out.String())
+			if want := map[int]string{1: `"drained":true`, 2: `"drained":true`, 3: `"drained":false`}[tc.signals]; !strings.Contains(c.logged(), want) {
+				t.Errorf("runner log lacks %q:\n%s", want, c.logged())
 			}
 			eventually(t, "the harness process is gone", func() bool { return syscall.Kill(harnessPID(t, pidFile), 0) != nil })
 
@@ -258,5 +265,53 @@ func TestE2EHubDrain(t *testing.T) {
 	code, out2, errs := m.watch("e2e-after")
 	if code != 0 {
 		t.Fatalf("the next process: watch exit %d: %s\n%s\n%s", code, errs, out2, d2.out.String())
+	}
+}
+
+// yad daemon stop, through the control socket, is the first stop signal: the
+// runner drains — the hub sees it, and offers it nothing — the run it holds
+// finishes and is delivered, and the daemon exits, which is when stop returns.
+func TestE2EDaemonStopDrains(t *testing.T) {
+	m := newMachine(t)
+	m.gated()
+	m.submit("e2e-held")
+	d := m.daemon()
+	m.waitAtGate()
+
+	var out syncBuffer
+	stopped := make(chan int, 1)
+	go func() {
+		stopped <- run(context.Background(), []string{"daemon", "stop", "--timeout", "1m"}, &out, &out)
+	}()
+	eventually(t, "the hub sees the runner draining", m.hubSeesDraining)
+	m.submit("e2e-after")
+	select {
+	case code := <-stopped:
+		t.Fatalf("stop returned %d with the run still going: %s", code, out.String())
+	case <-time.After(300 * time.Millisecond):
+	}
+	m.open()
+	select {
+	case code := <-stopped:
+		if code != 0 || !strings.Contains(out.String(), "stopped") {
+			t.Fatalf("stop exit %d: %s", code, out.String())
+		}
+	case <-time.After(40 * time.Second):
+		t.Fatalf("stop did not return:\n%s\ndaemon:\n%s", out.String(), d.out.String())
+	}
+	select {
+	case code := <-d.done:
+		d.done <- code // for halt
+		if code != 0 || !strings.Contains(d.out.String(), "drained") {
+			t.Fatalf("daemon exit %d:\n%s", code, d.out.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the daemon is still up after stop returned")
+	}
+	if code, out, errs := m.watch("e2e-held"); code != 0 {
+		t.Fatalf("watch exit %d: %s\n%s", code, errs, out)
+	}
+	if after, err := m.client().Run(context.Background(), "e2e-after"); err != nil || after.State != "queued" {
+		t.Errorf("a run queued during the drain is %+v, %v", after.State, err)
 	}
 }

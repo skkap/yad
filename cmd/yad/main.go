@@ -55,7 +55,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	g := global{paths: paths}
 
 	cmd, rest := fs.Arg(0), fs.Args()[1:]
-	if cmd != "daemon" {
+	// A foreground runner counts stop signals itself (decision 0029); a
+	// background start, which installs no handler, ends at the first as
+	// every other command does.
+	if !(cmd == "daemon" && len(rest) > 0 && rest[0] == "start") {
 		var stop context.CancelFunc
 		ctx, stop = signal.NotifyContext(ctx, stopSignals...)
 		defer stop()
@@ -76,7 +79,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cmdErr = cmdService(ctx, g, rest, stdout)
 	case "connect":
 		cmdErr = cmdConnect(ctx, g, rest, stdout)
-	case "disconnect", "status", "sessions", "account", "conformance", "upgrade":
+	case "status":
+		cmdErr = cmdStatus(ctx, g, rest, stdout)
+	case "disconnect", "sessions", "account", "conformance", "upgrade":
 		cmdErr = notYet(cmd, rest)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
@@ -87,12 +92,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		usage(stderr)
 		return 2
 	}
+	var exit exitError
+	if errors.As(cmdErr, &exit) {
+		return exit.code
+	}
 	if cmdErr != nil {
 		fmt.Fprintln(stderr, "yad:", cmdErr)
 		return 1
 	}
 	return 0
 }
+
+// exitError is a command's answer that is an exit code rather than a failure:
+// `yad daemon status` finding no daemon exits 3 having already said so.
+type exitError struct{ code int }
+
+func (e exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
 
 func usage(w io.Writer) {
 	fmt.Fprint(w, `yad — run coding-agent harnesses on this machine, for any number of hubs
@@ -103,9 +118,15 @@ usage: yad [--profile name] <command> [flags]
   harnesses [--json]  the capability document, exactly as a hub receives it
   connect <url> --token T [--name n]
                       register this runner with a hub
-  daemon start        the runner (--foreground; background arrives in E3). A
-                      stop signal drains it, a second cancels its runs, a
-                      third exits at once
+  daemon start        the runner, in the background (--foreground in this terminal)
+  daemon stop|restart|status
+                      stop it gracefully (it drains: no new runs, the ones it
+                      holds finish), restart it, or say whether it is up.
+                      Stop signals drain, then cancel runs, then exit at once
+  daemon logs [-f] [-n N]
+                      its log: the last lines, then (-f) what follows
+  status [--json]     what the runner is doing: connections, capacity, runs,
+                      sessions and recent errors
   hub serve           the standalone hub (headless)
   hub token create    a one-time registration token for yad connect
   hub admin-token create|list|revoke
@@ -124,7 +145,7 @@ usage: yad [--profile name] <command> [flags]
                       systemd user unit, as you, restarted after a crash
   version             version and build
 
-  disconnect · status · sessions · account · conformance
+  disconnect · sessions · account · conformance
                       exist, and each says which epic brings it
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.
