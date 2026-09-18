@@ -181,6 +181,9 @@ func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
 		fmt.Fprintln(w, "stopped")
 		return nil
 	}
+	if err := interrupted(ctx, pid); err != nil {
+		return err
+	}
 	if !s.force {
 		return fmt.Errorf("pid %d is still stopping after %s — `yad status` shows the runs it is waiting on; wait longer with --timeout, or `yad daemon stop --force` signals it", pid, s.timeout)
 	}
@@ -201,6 +204,9 @@ func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
 		if gone(ctx, g.paths, pid, wait) {
 			fmt.Fprintln(w, "stopped")
 			return nil
+		}
+		if err := interrupted(ctx, pid); err != nil {
+			return err
 		}
 	}
 	if err := sendSignal(pid, syscall.SIGKILL); err != nil {
@@ -226,6 +232,17 @@ func sendSignal(pid int, sig syscall.Signal) error {
 }
 
 // gone waits for the daemon with this pid to release the profile's lock.
+// interrupted is the error for a stop the owner cut short. A wait that ended
+// because the command did is not one that elapsed: escalating on it would
+// send the next signal at once, and SIGKILL could land before the runner has
+// killed its harnesses' process groups.
+func interrupted(ctx context.Context, pid int) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	return fmt.Errorf("stop interrupted — pid %d is left as it is; `yad daemon status` shows it: %w", pid, ctx.Err())
+}
+
 func gone(ctx context.Context, p config.Paths, pid int, within time.Duration) bool {
 	deadline := time.Now().Add(within)
 	for {

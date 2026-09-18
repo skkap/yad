@@ -445,3 +445,28 @@ func TestServiceStdoutGetsNothingOnceTheLogIsOpen(t *testing.T) {
 		t.Error("a regular file was treated as a terminal")
 	}
 }
+
+// A stop --force the owner cuts short sends nothing more: a wait that ended
+// because the command did is not one that elapsed, and escalating on it would
+// SIGKILL the runner before it had killed its harnesses.
+func TestStopForceInterruptedEscalatesNothing(t *testing.T) {
+	l := newLifecycle(t)
+	if err := l.p.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	pid := l.spawnWedged(true)
+	t.Cleanup(func() {
+		syscall.Kill(pid, syscall.SIGKILL)
+		eventuallyTrue(func() bool { return !alive(pid) })
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	var out bytes.Buffer
+	err := stopDaemon(ctx, global{paths: l.p}, stopFlags{timeout: time.Minute, force: true}, &out)
+	if err == nil || !strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("err = %v, out %s", err, out.String())
+	}
+	if strings.Contains(out.String(), "(cancel") || strings.Contains(out.String(), "killed") || !alive(pid) {
+		t.Errorf("an interrupted stop escalated: %s (alive %v)", out.String(), alive(pid))
+	}
+}
