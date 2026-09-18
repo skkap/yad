@@ -334,7 +334,13 @@ func TestWayDownWithAConnectionStopped(t *testing.T) {
 			}
 			d.Begin("test")
 			select {
-			case <-done:
+			case err := <-done:
+				// The refused connection was logged when it stopped; a
+				// finished drain is a clean exit, or a service manager
+				// would restart what it was asked to stop.
+				if err != nil {
+					t.Errorf("a finished drain returned %v", err)
+				}
 			case <-time.After(20 * time.Second):
 				t.Fatal("the drain never finished")
 			}

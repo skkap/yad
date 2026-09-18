@@ -154,9 +154,9 @@ func (s *Systemd) systemctl(ctx context.Context, args ...string) ([]byte, error)
 	return out, err
 }
 
-// Install writes the unit, reloads the user manager and restarts the unit:
-// restart starts a stopped unit and replaces a running one, so running
-// install again is how a moved binary or a new PATH takes effect.
+// Install stops a runner already installed, writes the unit, reloads the user
+// manager and restarts the unit, so running install again is how a moved
+// binary, a new PATH or a changed drain wait takes effect.
 func (s *Systemd) Install(ctx context.Context, sp Spec) ([]string, error) {
 	if err := RefuseRoot(s.Host); err != nil {
 		return nil, err
@@ -172,10 +172,18 @@ func (s *Systemd) Install(ctx context.Context, sp Spec) ([]string, error) {
 		return nil, err
 	}
 	file := s.File(sp.Profile)
+	name := s.Name(sp.Profile)
+	// A running runner is stopped under the unit it was started with: the
+	// new unit's stop timeout may be shorter than the drain wait that runner
+	// loaded, and restarting after daemon-reload would kill it mid-drain.
+	if _, err := os.Stat(file); err == nil {
+		if _, err := s.systemctl(ctx, "stop", name); err != nil && !strings.Contains(err.Error(), "not loaded") {
+			return nil, err
+		}
+	}
 	if err := writeFile(file, data); err != nil {
 		return nil, fmt.Errorf("write %s: %w", file, err)
 	}
-	name := s.Name(sp.Profile)
 	for _, args := range [][]string{{"daemon-reload"}, {"enable", name}, {"restart", name}} {
 		if _, err := s.systemctl(ctx, args...); err != nil {
 			return nil, err

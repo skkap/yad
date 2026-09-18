@@ -821,3 +821,43 @@ func TestSystemdBusAdviceOnlyForTheBus(t *testing.T) {
 		}
 	}
 }
+
+// A reinstall stops the running runner under the unit it started with, before
+// the new unit — whose stop timeout may be shorter — is written and loaded.
+func TestSystemdReinstallStopsUnderTheOldUnit(t *testing.T) {
+	var s *Systemd
+	var atStop []byte
+	r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) {
+		if strings.Contains(call, " stop ") {
+			atStop, _ = os.ReadFile(s.File("work"))
+		}
+		return nil, nil
+	}}
+	h := host(t, r)
+	s = &Systemd{Host: h}
+	old := specIn(t, h)
+	old.StopTimeout = 2 * time.Hour
+	if _, err := s.Install(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	r.calls = nil
+	shorter := specIn(t, h)
+	shorter.StopTimeout = time.Minute
+	if _, err := s.Install(context.Background(), shorter); err != nil {
+		t.Fatal(err)
+	}
+	checkCalls(t, r.calls, []string{
+		"systemctl --user show --property=UnitPath --value",
+		"systemctl --user stop yad-runner-work.service",
+		"systemctl --user daemon-reload",
+		"systemctl --user enable yad-runner-work.service",
+		"systemctl --user restart yad-runner-work.service",
+		"loginctl show-user owner --property=Linger --value",
+	}, s.File("work"))
+	if !strings.Contains(string(atStop), "TimeoutStopSec=7200s") {
+		t.Errorf("at the stop the unit said:\n%s\nwant the old unit's 2h timeout", atStop)
+	}
+	if now, _ := os.ReadFile(s.File("work")); !strings.Contains(string(now), "TimeoutStopSec=60s") {
+		t.Errorf("the new unit was not written:\n%s", now)
+	}
+}

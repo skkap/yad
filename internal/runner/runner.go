@@ -177,6 +177,13 @@ func (s *server) run(ctx context.Context) error {
 	stopLoops()
 	<-stopped
 	s.exec.Wait()
+	if ctx.Err() == nil && s.drain.IsDraining() {
+		// A drain that ran its course is a stop someone asked for. A
+		// connection that failed earlier was logged when it did; returning
+		// it here would make a service manager restart the runner it was
+		// asked to stop, and the hub has already cleared its request.
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return errors.Join(s.errs...)
