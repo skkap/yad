@@ -16,7 +16,7 @@ import (
 // If it and the Go types disagree, one of them is lying to a hub; this test
 // makes the disagreement a failed build instead of a production surprise.
 func TestOpenAPIIsCurrent(t *testing.T) {
-	gen, err := New().OpenAPI()
+	gen, err := New(Options{}).OpenAPI()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func call(t *testing.T, h http.Handler, method, path, body string, headers map[s
 // Every error a hub returns — its own or huma's — has the protocol shape and a
 // next action, because a runner has exactly one error decoder.
 func TestErrorsHaveTheProtocolShape(t *testing.T) {
-	h := New()
+	h := New(Options{})
 	proto := map[string]string{v1.HeaderProtocol: v1.Version}
 	for _, tc := range []struct {
 		name, method, path, body string
@@ -64,7 +64,7 @@ func TestErrorsHaveTheProtocolShape(t *testing.T) {
 		status                   int
 		code                     string
 	}{
-		{"not built yet", "POST", "/v1/runners/register", `{"capabilities":{"runner_id":"r","name":"n","yad_version":"dev","os":"linux","arch":"amd64","harnesses":[],"capacity":{"total":1},"observed_at":"2026-09-18T00:00:00Z"}}`, proto, 501, v1.CodeNotImplemented},
+		{"not built yet", "POST", "/v1/runners/r/deregister", `{}`, proto, 501, v1.CodeNotImplemented},
 		{"missing protocol header", "POST", "/v1/runners/r/sync", `{}`, nil, 426, v1.CodeUnsupportedProtocol},
 		{"another protocol version", "POST", "/v1/runners/r/sync", `{}`, map[string]string{v1.HeaderProtocol: "2"}, 426, v1.CodeUnsupportedProtocol},
 		{"malformed body", "POST", "/v1/runs/r/events", `{`, proto, 400, v1.CodeInvalid},
@@ -93,7 +93,7 @@ func TestErrorsHaveTheProtocolShape(t *testing.T) {
 }
 
 func TestProtocolMountsUnderBasePath(t *testing.T) {
-	res, _ := post(t, New(), "/runners/register", `{}`, nil)
+	res, _ := post(t, New(Options{}), "/runners/register", `{}`, nil)
 	if res.StatusCode != http.StatusNotFound {
 		t.Errorf("unprefixed path answered %d", res.StatusCode)
 	}

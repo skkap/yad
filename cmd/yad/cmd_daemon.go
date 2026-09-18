@@ -5,15 +5,20 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
+	"sync"
 	"time"
+
+	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/runner"
 )
 
-// cmdDaemon is the runner process. Today it proves what exists — profile,
-// identity, config, detection, fingerprinting and a clean shutdown — against no
-// hub at all; syncing with a hub is epic E2.
+// cmdDaemon is the runner process: it syncs with every connected hub and keeps
+// its capability document fresh. Running claimed runs arrives with the
+// executor, later in epic E2; until then it claims nothing.
 func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: yad daemon start --foreground")
@@ -54,25 +59,49 @@ func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error 
 	last := capability.Fingerprint(doc)
 	fmt.Fprintf(w, "runner %s (%s) — profile %s, %s/%s, yad %s, capacity %d\n", doc.Name, id, g.paths.Profile, doc.OS, doc.Arch, doc.YadVersion, cfg.Capacity)
 	if len(cfg.Connections) > 0 {
-		fmt.Fprintf(w, "%d connection(s) configured; syncing with hubs arrives in epic E2 — nothing will be claimed\n", len(cfg.Connections))
+		fmt.Fprintf(w, "syncing with %d hub(s); running claimed runs arrives later in epic E2, so no capacity is offered and nothing will be claimed\n", len(cfg.Connections))
 	} else {
-		fmt.Fprintln(w, "no hub connected — nothing will be claimed")
+		fmt.Fprintln(w, "no hub connected — `yad connect <url> --token …` to add one; nothing will be claimed")
 	}
 	fmt.Fprintf(w, "capabilities %s\n", last)
+
+	// Syncs read the document every interval; probing harnesses that often
+	// would spawn every CLI's --version four times a minute, so they read
+	// this copy and the probe keeps its own pace.
+	var mu sync.Mutex
+	current := func() v1.Capabilities {
+		mu.Lock()
+		defer mu.Unlock()
+		return doc
+	}
+	served := make(chan error, 1)
+	go func() {
+		served <- runner.Serve(ctx, runner.Options{
+			Paths: g.paths, Config: cfg, RunnerID: id, Capabilities: current,
+			Log: slog.New(slog.NewTextHandler(w, nil)),
+		})
+	}()
 
 	tick := time.NewTicker(*interval)
 	defer tick.Stop()
 	for {
 		select {
-		case <-ctx.Done():
+		case err := <-served:
+			if ctx.Err() == nil {
+				// Every connection stopped on its own: nothing left to do.
+				return err
+			}
 			fmt.Fprintln(w, "\nshutting down — no runs in flight")
-			return nil
+			return err
 		case t := <-tick.C:
-			fp := capability.Fingerprint(capability.Build(ctx, id, cfg))
-			if fp != last {
+			next := capability.Build(ctx, id, cfg)
+			if fp := capability.Fingerprint(next); fp != last {
 				fmt.Fprintf(w, "%s capabilities changed %s → %s\n", t.Format(time.TimeOnly), last, fp)
 				last = fp
 			}
+			mu.Lock()
+			doc = next
+			mu.Unlock()
 		}
 	}
 }

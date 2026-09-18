@@ -4,7 +4,7 @@
 // a thinking turn from a wedged one (decision 0006, ARCHITECTURE.md §3).
 //
 // How a stream becomes a run — steering, interrupts, which result decides the
-// outcome — is decision 0019.
+// outcome — is decision 0021.
 package claude
 
 import (
@@ -124,7 +124,7 @@ func argv(spec adapter.Spec, session, contextFile string) ([]string, error) {
 		"--verbose",
 		"--include-partial-messages",
 		// Echoes each stdin frame as Claude consumes it: the only way to know a
-		// steer has been taken, and so which result is the last (0019).
+		// steer has been taken, and so which result is the last (0021).
 		"--replay-user-messages",
 		// Headless, it returns an empty answer and the turn carries on as if the
 		// question had been answered.
@@ -244,7 +244,7 @@ func (t *turn) Wait() adapter.Outcome {
 
 // Steer sends more input into the running turn. Claude reads it at the next
 // tool boundary; a turn with none left finishes first and then answers it as a
-// follow-up in the same run (0019).
+// follow-up in the same run (0021).
 func (t *turn) Steer(text string) error {
 	frame, err := userFrame(text)
 	if err != nil {

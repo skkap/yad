@@ -15,7 +15,7 @@ func main() {
 	if len(os.Args) > 1 {
 		out = os.Args[1]
 	}
-	b, err := hub.New().OpenAPI()
+	b, err := hub.New(hub.Options{}).OpenAPI()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "openapigen:", err)
 		os.Exit(1)

@@ -107,6 +107,21 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const deleteEmptySession = `-- name: DeleteEmptySession :exec
+DELETE FROM sessions WHERE sessions.connection = ?1 AND sessions.id = ?2
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id)
+`
+
+type DeleteEmptySessionParams struct {
+	Connection string
+	ID         string
+}
+
+func (q *Queries) DeleteEmptySession(ctx context.Context, arg DeleteEmptySessionParams) error {
+	_, err := q.db.ExecContext(ctx, deleteEmptySession, arg.Connection, arg.ID)
+	return err
+}
+
 const deleteOutbox = `-- name: DeleteOutbox :exec
 DELETE FROM outbox WHERE connection = ? AND run_id = ?
 `
@@ -118,6 +133,24 @@ type DeleteOutboxParams struct {
 
 func (q *Queries) DeleteOutbox(ctx context.Context, arg DeleteOutboxParams) error {
 	_, err := q.db.ExecContext(ctx, deleteOutbox, arg.Connection, arg.RunID)
+	return err
+}
+
+const deleteUnstartedRun = `-- name: DeleteUnstartedRun :exec
+DELETE FROM runs WHERE runs.connection = ?1 AND runs.id = ?2
+  AND NOT EXISTS (SELECT 1 FROM events e WHERE e.connection = runs.connection AND e.run_id = runs.id)
+  AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.connection = runs.connection AND o.run_id = runs.id)
+`
+
+type DeleteUnstartedRunParams struct {
+	Connection string
+	ID         string
+}
+
+// A claim the hub withdrew before it started left nothing worth keeping, and
+// the hub may offer the same run again; the row must not be in the way.
+func (q *Queries) DeleteUnstartedRun(ctx context.Context, arg DeleteUnstartedRunParams) error {
+	_, err := q.db.ExecContext(ctx, deleteUnstartedRun, arg.Connection, arg.ID)
 	return err
 }
 

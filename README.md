@@ -42,12 +42,16 @@ runs for it.
 
 ## Status
 
-**Foundation, and the Claude adapter.** Harness detection, the capability
+**Foundation, and the first half of epic E2.** Harness detection, the capability
 document, the v1 protocol types and their generated OpenAPI document, the local
-store, the process supervisor, config and profiles, a `yad hub` that answers
-every call with "not yet", and the adapter that drives Claude Code — tested
-against recorded streams. Nothing hands it a run yet: the runner that does is
-the rest of epic E2. The build order is `ARCHITECTURE.md §9`;
+store, the process supervisor, config and profiles. `yad hub` keeps its own
+store and serves register and sync: `yad hub token create` issues a one-time
+registration token, `yad connect <url> --token -` registers a runner, and `yad
+daemon start --foreground` syncs with every connected hub. The adapter that
+drives Claude Code is built and tested against recorded streams. Nothing hands
+it a run yet: the executor that does is the rest of E2, so a runner advertises
+no free capacity and claims nothing, and the events, result and deregister
+calls still answer `not_implemented`. The build order is `ARCHITECTURE.md §9`;
 the epics and tasks are in Zumino, project `yad/dev`.
 
 ## Run it safely

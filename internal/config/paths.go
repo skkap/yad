@@ -67,6 +67,11 @@ func (p Paths) ConfigFile() string { return filepath.Join(p.Config, "config.toml
 // StateDB is the SQLite file holding sessions, the event spool and the outbox.
 func (p Paths) StateDB() string { return filepath.Join(p.Data, "state.db") }
 
+// HubDB is `yad hub`'s database, when this profile's machine also serves as a
+// hub. It is a separate file from state.db: the hub and the runner are two
+// parties, even on one machine.
+func (p Paths) HubDB() string { return filepath.Join(p.Data, "hub.db") }
+
 // Socket is the control socket for this profile's CLI.
 func (p Paths) Socket() string { return filepath.Join(p.Data, "yad.sock") }
 

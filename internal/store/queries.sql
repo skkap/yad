@@ -78,3 +78,14 @@ SELECT slot FROM slots WHERE repo = ? ORDER BY slot;
 
 -- name: FreeSlots :exec
 DELETE FROM slots WHERE connection = ? AND session_id = ?;
+
+-- A claim the hub withdrew before it started left nothing worth keeping, and
+-- the hub may offer the same run again; the row must not be in the way.
+-- name: DeleteUnstartedRun :exec
+DELETE FROM runs WHERE runs.connection = sqlc.arg(connection) AND runs.id = sqlc.arg(id)
+  AND NOT EXISTS (SELECT 1 FROM events e WHERE e.connection = runs.connection AND e.run_id = runs.id)
+  AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.connection = runs.connection AND o.run_id = runs.id);
+
+-- name: DeleteEmptySession :exec
+DELETE FROM sessions WHERE sessions.connection = sqlc.arg(connection) AND sessions.id = sqlc.arg(id)
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id);

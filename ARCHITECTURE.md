@@ -143,6 +143,14 @@ plain-text 404 or 405.
   runner lists it in its next sync. An offered run that the next sync does not
   list was never received, and the hub offers it again. The runner takes the
   capacity *before* it syncs, so it can always start what it is offered.
+- **Start on acknowledgement** — [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md).
+  The runner starts a run only after a sync listing it has been answered without
+  a `cancel` for it, and syncs again at once when offers arrive, so a run starts
+  one round trip after it is offered. A listed run the runner does not hold is
+  answered with `cancel`. A run the runner will not take is reported as a
+  `failed` result with error class `refused`.
+- **Sessions stay put.** The first claim in a session binds it to that runner;
+  its later runs are offered to that runner alone, one at a time.
 - **Lease.** Every sync renews the lease on every run it lists. A run whose lease
   lapses (default: four missed intervals) is **lost** on the hub's side.
 - **Timings belong to the hub**: default interval 15 s, bounded 5–60 s; the
@@ -251,7 +259,7 @@ is another `user` frame: Claude reads it at the next tool boundary, or answers
 it as a follow-up turn in the same process; `--replay-user-messages` echoes
 each frame as it is taken, which is how the adapter knows which result is the
 last. The outcome rules and the rest are
-[0019](docs/decisions/0019-claude-runs-end-at-the-last-result.md).
+[0021](docs/decisions/0021-claude-runs-end-at-the-last-result.md).
 
 **Codex** — `codex app-server --listen stdio://`: `initialize` → `initialized` →
 `thread/start` or `thread/resume` → `turn/start`; `turn/interrupt`, `turn/steer`;
@@ -335,7 +343,8 @@ harness process. Recording new ones is a manual step, behind a build tag
 `$YAD_CONFIG_DIR` and `$YAD_DATA_DIR` override both. The config directory holds
 `config.toml`, `runner-id` and `credentials/<connection>` (each `0600`); the
 data directory holds `state.db`, `workdirs/`, `repos/`, `accounts/`,
-`transcripts/`, `logs/` and the control socket `yad.sock`.
+`transcripts/`, `logs/` and the control socket `yad.sock` — and `hub.db` when
+the machine also runs `yad hub`.
 
 ### `config.toml`
 
@@ -373,19 +382,30 @@ state), `slots`. Session and run ids are the hubs', so every one is keyed with
 its connection: two hubs may pick the same id. The schema version is `PRAGMA
 user_version`; migrations are embedded and run on open.
 
+### `hub.db`
+
+`yad hub`'s own store, a separate SQLite file opened the same way, with its
+queries in `internal/hub/store/*.sql`. Tables: `registration_tokens` and
+`runners` (secrets only as SHA-256 hashes), `sessions` (the runner each is bound
+to), `runs`, `events` (unique `(run_id, seq)`) and `results` (one per run). A
+run's hub-side state adds two before the protocol's: `queued` and `offered`.
+
 ## §5 The local surface
 
 ```
 yad doctor                         what is installed, and what YAD can drive
 yad harnesses [--json]             the capability document, as a hub receives it
-yad connect <url> --token T        register with a hub
+yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
 yad disconnect <name>
 yad daemon start|stop|status|logs  the runner process
 yad status                         runs, sessions, accounts, connections — via the socket
 yad sessions [close <id>]
 yad account add|list|use|remove
 yad service install|uninstall      launchd user agent, systemd user unit
-yad hub serve|submit|watch|token   the standalone hub
+yad hub serve|submit|watch        the standalone hub
+yad hub token create [--ttl 1h] [--runner id]
+                                   a one-time registration token; --runner re-registers
+                                   that runner, the only way to replace its credential
 yad conformance <url>              check any hub against v1
 ```
 

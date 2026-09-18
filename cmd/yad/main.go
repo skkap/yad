@@ -19,6 +19,9 @@ import (
 	"github.com/skkap/yad/internal/config"
 )
 
+// stdin is where `--token -` reads from; a variable so tests can supply one.
+var stdin io.Reader = os.Stdin
+
 // global is what every command can see.
 type global struct {
 	paths config.Paths
@@ -61,8 +64,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "daemon":
 		cmdErr = cmdDaemon(ctx, g, rest, stdout)
 	case "hub":
-		cmdErr = cmdHub(ctx, rest, stdout)
-	case "connect", "disconnect", "status", "sessions", "account", "service", "conformance", "upgrade":
+		cmdErr = cmdHub(ctx, g, rest, stdout, stderr)
+	case "connect":
+		cmdErr = cmdConnect(ctx, g, rest, stdout)
+	case "disconnect", "status", "sessions", "account", "service", "conformance", "upgrade":
 		cmdErr = notYet(cmd, rest)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
@@ -87,11 +92,14 @@ usage: yad [--profile name] <command> [flags]
 
   doctor              what is installed here, and what YAD can drive
   harnesses [--json]  the capability document, exactly as a hub receives it
+  connect <url> --token T [--name n]
+                      register this runner with a hub
   daemon start        the runner (--foreground; background arrives in E3)
   hub serve           the standalone hub (headless)
+  hub token create    a one-time registration token for yad connect
   version             version and build
 
-  connect · disconnect · status · sessions · account · service · conformance
+  disconnect · status · sessions · account · service · conformance
                       exist, and each says which epic brings it
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.

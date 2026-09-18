@@ -63,10 +63,10 @@ func TestRegisterUsesTheRegistrationToken(t *testing.T) {
 // Against the real hub stub, the envelope decodes into a code a runner can act
 // on — and the credential appears nowhere in the error text.
 func TestDecodesHubErrors(t *testing.T) {
-	srv := httptest.NewServer(hub.New())
+	srv := httptest.NewServer(hub.New(hub.Options{}))
 	defer srv.Close()
 	c, _ := New(srv.URL+hub.BasePath, "super-secret-credential")
-	_, err := c.Sync(context.Background(), "r1", v1.SyncRequest{RunnerID: "r1"})
+	_, err := c.Events(context.Background(), "r1", v1.EventBatch{Events: []v1.Event{}})
 	var se *StatusError
 	if !errors.As(err, &se) || se.Status != http.StatusNotImplemented || Code(err) != v1.CodeNotImplemented {
 		t.Fatalf("err = %v", err)

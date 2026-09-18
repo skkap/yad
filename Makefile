@@ -10,7 +10,7 @@ export CGO_ENABLED := 0
 
 # Files `make generate` owns. check-generated fails when any of them differ from
 # what the code produces, including when one is new and uncommitted.
-GENERATED := internal/store/db protocol/v1/openapi.yaml
+GENERATED := internal/store/db internal/hub/store/db protocol/v1/openapi.yaml
 
 TARGETS := linux/amd64 linux/arm64 darwin/arm64 darwin/amd64
 
@@ -33,6 +33,7 @@ build:
 
 generate:
 	cd internal/store && sqlc generate
+	cd internal/hub/store && sqlc generate
 	go run ./internal/hub/cmd/openapigen protocol/v1/openapi.yaml
 
 check-generated: generate
