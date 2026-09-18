@@ -862,6 +862,16 @@ func TestPermissionMode(t *testing.T) {
 	}
 }
 
+// A grant named IS_SANDBOX never reaches Claude: it would switch off Claude's
+// own refusal to bypass permissions as root.
+func TestRunCannotDeclareTheSandbox(t *testing.T) {
+	got := runEnv([]string{"A=1", "IS_SANDBOX=1", "IS_SANDBOX_X=2", "B=2", "IS_SANDBOX"})
+	want := []string{"A=1", "IS_SANDBOX_X=2", "B=2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("runEnv = %q, want %q", got, want)
+	}
+}
+
 // Claude exits at once if bypassPermissions is used as root outside a
 // declared sandbox. The adapter refuses first, with the way out, and never
 // declares the sandbox itself.
@@ -877,8 +887,10 @@ func TestBypassAsRoot(t *testing.T) {
 		{"root, default mode", 0, "", nil, "", true},
 		{"root, bypass set by the owner", 0, "bypassPermissions", nil, "", true},
 		{"root, sandbox declared by the runner's environment", 0, "", nil, "1", false},
-		{"root, sandbox declared in the run's environment", 0, "", []string{"IS_SANDBOX=1"}, "", false},
-		{"root, the run's environment undeclares it", 0, "", []string{"IS_SANDBOX=0"}, "1", true},
+		// A run's environment carries the hub's grants: it cannot declare the
+		// sandbox, and cannot take the owner's declaration away either.
+		{"root, sandbox declared only by the run", 0, "", []string{"IS_SANDBOX=1"}, "", true},
+		{"root, the run tries to undeclare it", 0, "", []string{"IS_SANDBOX=0"}, "1", false},
 		{"root, a narrower mode", 0, "acceptEdits", nil, "", false},
 		{"an ordinary user", 501, "", nil, "", false},
 	}

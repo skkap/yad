@@ -90,7 +90,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		removeFile(contextFile)
 		return nil, err
 	}
-	p, err := supervise.Start(ctx, supervise.Spec{Path: spec.Binary, Args: args, Dir: spec.Workdir, Env: spec.Env, Stdin: true})
+	p, err := supervise.Start(ctx, supervise.Spec{Path: spec.Binary, Args: args, Dir: spec.Workdir, Env: runEnv(spec.Env), Stdin: true})
 	if err != nil {
 		removeFile(contextFile)
 		return nil, fmt.Errorf("%w — check the claude binary at %s runs", err, spec.Binary)
@@ -143,11 +143,11 @@ func argv(spec adapter.Spec, session, contextFile string) ([]string, error) {
 	if strings.HasPrefix(mode, "-") {
 		return nil, fmt.Errorf("permission_mode %q in config.toml is not a mode — see `claude --help` for the choices", mode)
 	}
-	if mode == "bypassPermissions" && geteuid() == 0 && sandboxEnv(spec.Env) != "1" {
+	if mode == "bypassPermissions" && geteuid() == 0 && os.Getenv("IS_SANDBOX") != "1" {
 		// Claude refuses this itself — it prints to stderr and exits before
 		// writing a stream — and a run that fails every time for a reason the
 		// runner already knows is better refused here, with the way out.
-		return nil, errors.New("claude refuses bypassPermissions as root, and the runner is root — run yad as an ordinary user (ARCHITECTURE.md §8); inside a disposable container, set IS_SANDBOX=1 in the runner's environment; or set a narrower permission_mode under [harness.claude] in config.toml")
+		return nil, errors.New("claude refuses bypassPermissions as root, and the runner is root — run yad as an ordinary user (ARCHITECTURE.md §8); inside a disposable container, start the runner with IS_SANDBOX=1 in its environment; or set a narrower permission_mode under [harness.claude] in config.toml")
 	}
 	args = append(args, "--permission-mode", mode)
 	if spec.NativeSessionID != "" {
@@ -176,16 +176,18 @@ func permissionMode(spec adapter.Spec) string {
 	return defaultPermissionMode
 }
 
-// sandboxEnv is the IS_SANDBOX Claude will see: the run's own environment wins
-// over the runner's, as it does in supervise.Start.
-func sandboxEnv(env []string) string {
-	v := os.Getenv("IS_SANDBOX")
+// runEnv is the run's environment without IS_SANDBOX. That variable switches
+// off Claude's refusal to bypass permissions as root, so only the owner may set
+// it, in the runner's own environment. A run's environment carries grants from
+// the hub, and a hub must never widen what a harness may do (0015).
+func runEnv(env []string) []string {
+	out := make([]string, 0, len(env))
 	for _, kv := range env {
-		if val, ok := strings.CutPrefix(kv, "IS_SANDBOX="); ok {
-			v = val
+		if name, _, _ := strings.Cut(kv, "="); name != "IS_SANDBOX" {
+			out = append(out, kv)
 		}
 	}
-	return v
+	return out
 }
 
 // writeContext puts the brief's context in a file rather than argv: it can be

@@ -266,7 +266,9 @@ when unset: a run is unattended and auto-approves
 ([0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md)), and
 Claude's own default would deny every tool that needs a prompt. Claude refuses
 `bypassPermissions` as root unless `IS_SANDBOX=1`, so the adapter refuses such a
-run before spawning, with the way out; it never sets `IS_SANDBOX` itself.
+run before spawning, with the way out. Only the owner declares the sandbox, in
+the runner's own environment: YAD never sets `IS_SANDBOX`, and strips it from a
+run's environment, which carries the hub's grants.
 
 **Codex** — `codex app-server --listen stdio://`: `initialize` → `initialized` →
 `thread/start` or `thread/resume` → `turn/start`; `turn/interrupt`, `turn/steer`;
