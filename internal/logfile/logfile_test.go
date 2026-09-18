@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestRotation(t *testing.T) {
@@ -206,5 +207,18 @@ func TestRotationFailureKeepsLogging(t *testing.T) {
 	l.Close()
 	if _, err := l.Write([]byte("after close\n")); err == nil {
 		t.Error("a write after Close succeeded")
+	}
+}
+
+func TestRecentBoundsEachRecord(t *testing.T) {
+	r := NewRecent(1)
+	log := slog.New(r.Handler(slog.DiscardHandler))
+	huge := strings.Repeat("é", 1<<20)
+	log.Error(huge, "err", huge)
+	got := r.Records()[0]
+	for name, s := range map[string]string{"message": got.Message, "attrs": got.Attrs} {
+		if len(s) > maxRecordText+64 || !strings.HasSuffix(s, "(truncated; the log has it all)") || !utf8.ValidString(s) {
+			t.Errorf("%s kept %d bytes, valid UTF-8 %v", name, len(s), utf8.ValidString(s))
+		}
 	}
 }

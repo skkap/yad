@@ -40,6 +40,7 @@ type Options struct {
 // whatever is free when it starts.
 func Serve(ctx context.Context, o Options) error {
 	if len(o.Config.Connections) == 0 {
+		o.Monitor.markReady()
 		<-ctx.Done()
 		return nil
 	}
@@ -114,6 +115,11 @@ func Serve(ctx context.Context, o Options) error {
 				fail(l.Connection, err)
 			}
 		})
+	}
+	// Ready once the store is open and a loop is running: a runner whose
+	// every connection failed to start returns below and is never ready.
+	if len(loops) > 0 {
+		o.Monitor.markReady()
 	}
 	wg.Wait()
 	exec.Wait()

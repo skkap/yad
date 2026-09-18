@@ -18,6 +18,7 @@ type Monitor struct {
 	conns map[string]ConnectionState
 	pool  *Pool
 	store *store.Store
+	ready bool
 }
 
 // Connection states.
@@ -46,6 +47,24 @@ func (m *Monitor) attach(p *Pool, st *store.Store) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pool, m.store = p, st
+}
+
+func (m *Monitor) markReady() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ready = true
+}
+
+// Ready is whether Serve got past its setup: the store is open and at least
+// one connection's loop is running, or there is no connection to run. What a
+// hub answers to the first sync comes later, and shows in Connections.
+func (m *Monitor) Ready() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ready
 }
 
 func (m *Monitor) update(conn string, fn func(*ConnectionState)) {

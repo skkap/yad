@@ -220,6 +220,7 @@ func gracefulStop(log *slog.Logger, cancel context.CancelFunc) func() {
 // the recent log records.
 func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Capabilities, started time.Time, m *runner.Monitor, recent *logfile.Recent) control.Status {
 	st := control.Status{
+		Ready:   m.Ready(),
 		Profile: p.Profile, RunnerID: doc.RunnerID, Name: doc.Name, Version: buildinfo.Version, Started: started,
 		// No pool exists without a connection, and nothing is claimed: all of
 		// it is free.

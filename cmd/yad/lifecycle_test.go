@@ -383,3 +383,24 @@ func TestStatusAndLogsEscapeHubText(t *testing.T) {
 		t.Errorf("logs passed hub text through:\n%q", lb.String())
 	}
 }
+
+// A daemon whose only connection cannot start exits at once. The start must
+// say so, never report it started.
+func TestStartReportsADaemonThatCannotRun(t *testing.T) {
+	l := newLifecycle(t)
+	cfg, err := config.Load(l.p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Connections = []config.Connection{{Name: "home", URL: "http://127.0.0.1:9/v1"}} // no credential
+	if err := config.Save(l.p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := l.yad("daemon", "start")
+	if code != 1 || strings.Contains(out, "started") || !strings.Contains(errs, "exited as it started") || !strings.Contains(errs, "yad connect") {
+		t.Errorf("start with no usable connection: exit %d\n%s%s", code, out, errs)
+	}
+	if !eventuallyTrue(func() bool { _, running, _ := control.Holder(l.p); return !running }) {
+		t.Error("a daemon is still running")
+	}
+}

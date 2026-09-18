@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Record is one warning or error kept for `yad status`.
@@ -73,12 +74,28 @@ func (h *recentHandler) Handle(ctx context.Context, rec slog.Record) error {
 			write(a)
 		}
 		rec.Attrs(write)
-		h.r.add(Record{Time: rec.Time, Level: rec.Level, Message: rec.Message, Attrs: b.String()})
+		h.r.add(Record{Time: rec.Time, Level: rec.Level, Message: truncate(rec.Message), Attrs: truncate(b.String())})
 	}
 	if h.next.Enabled(ctx, rec.Level) {
 		return h.next.Handle(ctx, rec)
 	}
 	return nil
+}
+
+// maxRecordText bounds what one kept record holds. An error can carry a hub's
+// whole response body; the file has it all, and status needs only enough to
+// recognise the error by.
+const maxRecordText = 2 << 10
+
+func truncate(s string) string {
+	if len(s) <= maxRecordText {
+		return s
+	}
+	cut := maxRecordText
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "… (truncated; the log has it all)"
 }
 
 func (h *recentHandler) WithAttrs(as []slog.Attr) slog.Handler {

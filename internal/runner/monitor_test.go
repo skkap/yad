@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -74,6 +75,49 @@ func TestMonitorThroughServe(t *testing.T) {
 	}
 	if s.Capacity != nil {
 		t.Errorf("capacity %+v after Serve returned", s.Capacity)
+	}
+	if m.Ready() {
+		t.Error("a runner none of whose connections started reads as ready")
+	}
+}
+
+// Ready follows setup: at once with no connection, once a loop runs with one.
+func TestMonitorReady(t *testing.T) {
+	e := newEnv(t)
+	doc := drivableDoc("r", 1)
+	for _, tc := range []struct {
+		name  string
+		conns []config.Connection
+		cred  bool
+	}{
+		{"no connection", nil, false},
+		{"a connection with its credential", []config.Connection{{Name: "home", URL: e.url}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cred {
+				if err := e.paths.SaveCredential("home", "yadrun_not_registered"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m := NewMonitor()
+			cfg := config.Default()
+			cfg.Connections = tc.conns
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				done <- Serve(ctx, Options{Paths: e.paths, Config: cfg, RunnerID: "r",
+					Capabilities: func() v1.Capabilities { return doc }, Log: slog.New(slog.DiscardHandler), Monitor: m})
+			}()
+			deadline := time.Now().Add(5 * time.Second)
+			for !m.Ready() && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !m.Ready() {
+				t.Error("never ready")
+			}
+			cancel()
+			<-done
+		})
 	}
 }
 

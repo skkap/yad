@@ -92,7 +92,9 @@ func startBackground(ctx context.Context, g global, s startFlags, w io.Writer) e
 			actx, cancel := context.WithTimeout(ctx, time.Second)
 			res, err := control.Ask(actx, g.paths, "status")
 			cancel()
-			if err == nil && res.PID == pid {
+			// Answering is not enough: the runner has to be past the
+			// setup that can still make it exit.
+			if err == nil && res.PID == pid && res.Status != nil && res.Status.Ready {
 				fmt.Fprintf(w, "started — pid %d, profile %s\n", pid, g.paths.Profile)
 				fmt.Fprintln(w, "`yad status` shows what it is doing, `yad daemon logs -f` follows its log, `yad daemon stop` stops it")
 				return nil

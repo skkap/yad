@@ -35,6 +35,11 @@ type Status struct {
 	// Stopping is set once a stop was asked for and the process has not yet
 	// exited: what a graceful stop is waiting on is in Runs.
 	Stopping bool `json:"stopping"`
+	// Ready is set once the runner is past its setup — store open, a
+	// connection syncing or none configured. A background start reports
+	// success only then, so a daemon that is about to exit on a missing
+	// credential is not reported as started.
+	Ready bool `json:"ready"`
 
 	Capacity    Capacity     `json:"capacity"`
 	Connections []Connection `json:"connections"`
