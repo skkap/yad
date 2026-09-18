@@ -628,7 +628,20 @@ func TestE2EStopMidRun(t *testing.T) {
 			if run.Result == nil || run.Result.State != v1.RunCancelled || run.Result.Metrics.CancelLatencyMS == nil {
 				t.Fatalf("result %+v", run.Result)
 			}
-			contiguous(t, m.hubEvents(runID))
+			evs := m.hubEvents(runID)
+			contiguous(t, evs)
+			// Which path the runner took: cancel climbs the ladder, interrupt
+			// only asks. Each says so in the run's own stream.
+			want := map[string]string{"cancel": "cancelling", "interrupt": "interrupting"}[verb]
+			var said []string
+			for _, ev := range evs {
+				if ev.Kind == v1.EventStatus && (ev.Status == "cancelling" || ev.Status == "interrupting") {
+					said = append(said, ev.Status)
+				}
+			}
+			if len(said) != 1 || said[0] != want {
+				t.Errorf("stop statuses %v, want [%s]", said, want)
+			}
 
 			b, err := os.ReadFile(pidFile)
 			if err != nil {
