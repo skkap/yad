@@ -7,8 +7,9 @@
 // — the operations below are declared over the protocol/v1 types, and the
 // document is generated from them (decision 0017).
 //
-// The operations are declared and documented; their behaviour arrives in epic E2
-// (Zumino yad/dev). Until then each answers not_implemented.
+// Register and sync are served; events, result and deregister are declared and
+// documented, and answer not_implemented until the rest of epic E2 (Zumino
+// yad/dev) lands.
 package hub
 
 import (
@@ -16,28 +17,69 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/hub/store"
 )
 
 // BasePath is where `yad hub` mounts the protocol. Other hubs choose their own
 // base; every path in the protocol is relative to it.
 const BasePath = "/v1"
 
+// Timings. The hub owns them (ARCHITECTURE.md §2): a runner syncs at the
+// interval the hub names, within these bounds, and a lease lapses after four
+// missed intervals, so one dropped request never loses a run. It is never
+// shorter than minLease, which outlasts the runner's backoff (1 s doubling to
+// 30 s) through five failures in a row — a hub blip of about a minute.
+const (
+	DefaultSyncInterval = 15 * time.Second
+	MinSyncInterval     = 5 * time.Second
+	MaxSyncInterval     = 60 * time.Second
+	missedIntervals     = 4
+	minLease            = 60 * time.Second
+)
+
+// Options configure a hub. Store is required to serve; generating the OpenAPI
+// document needs none.
+type Options struct {
+	Store *store.Store
+	// SyncInterval is what runners are told; zero means DefaultSyncInterval.
+	SyncInterval time.Duration
+	// Now is the clock, replaced in tests so a lease can lapse without a sleep.
+	Now func() time.Time
+}
+
 // Hub is the protocol server.
 type Hub struct {
-	api huma.API
-	mux *http.ServeMux
+	api      huma.API
+	mux      *http.ServeMux
+	store    *store.Store
+	now      func() time.Time
+	interval time.Duration
+	lease    time.Duration
 }
 
 // New builds a hub with every v1 operation registered.
-func New() *Hub {
+func New(opts Options) *Hub {
+	h := &Hub{store: opts.Store, now: opts.Now, interval: opts.SyncInterval}
+	if h.now == nil {
+		h.now = time.Now
+	}
+	if h.interval == 0 {
+		h.interval = DefaultSyncInterval
+	}
+	h.interval = min(max(h.interval, MinSyncInterval), MaxSyncInterval)
+	h.lease = max(missedIntervals*h.interval, minLease)
+
 	inner := http.NewServeMux()
 	api := humago.New(inner, Config())
-	register(api)
+	h.register(api)
 
 	outer := http.NewServeMux()
 	outer.Handle(BasePath+"/", http.StripPrefix(BasePath, protocolRoutes(inner)))
@@ -47,7 +89,8 @@ func New() *Hub {
 		writeError(w, Fail(http.StatusNotFound, v1.CodeNotFound, "no protocol at "+r.URL.Path,
 			"the connection URL must end in the hub's base, e.g. https://host"+BasePath))
 	})
-	return &Hub{api: api, mux: outer}
+	h.api, h.mux = api, outer
+	return h
 }
 
 // protocolRoutes makes every response under the base the protocol's own.
@@ -67,6 +110,11 @@ func protocolRoutes(ops *http.ServeMux) http.Handler {
 				"upgrade yad or the hub so both speak protocol "+v1.Version))
 			return
 		}
+		// huma hands operations the request's context and nothing else of the
+		// request, so the bearer travels there. Reading it this way rather than
+		// as a declared header parameter keeps it out of the operations'
+		// parameters: openapi.yaml already declares it as the security scheme.
+		r = r.WithContext(context.WithValue(r.Context(), bearerKey{}, bearerFrom(r)))
 		fallback, pattern := ops.Handler(r)
 		if pattern == "" {
 			rec := &recorder{header: http.Header{}, status: http.StatusNotFound}
@@ -169,25 +217,24 @@ type (
 
 var security = []map[string][]string{{"runner": {}}}
 
-func register(api huma.API) {
+func (h *Hub) register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "register", Method: http.MethodPost, Path: "/runners/register",
-		Summary:     "Exchange a registration token for a runner credential",
-		Description: "Called once by `yad connect`, with the one-time registration token as the bearer. The token is dead afterwards.",
-		Security:    security, Errors: []int{400, 401, 409, 426},
-	}, func(ctx context.Context, in *registerInput) (*registerOutput, error) {
-		return nil, notYet("register")
-	})
+		Summary: "Exchange a registration token for a runner credential",
+		Description: "Called once by `yad connect`, with the one-time registration token as the bearer. The token is dead afterwards. " +
+			"Registering a runner id the hub already knows needs a token issued for that runner, and replaces its credential; " +
+			"the old one stops working. With a token for a new runner it is refused with 409.",
+		Security: security, Errors: []int{400, 401, 409, 426},
+	}, h.registerRunner)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "sync", Method: http.MethodPost, Path: "/runners/{runner}/sync",
 		Summary: "Heartbeat, lease renewal, health and the ask for work, in one call",
 		Description: "Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed " +
-			"here was never received and will be offered again.",
+			"here was never received and will be offered again. A listed run this runner does not hold — never offered to it, " +
+			"offered to another, or already finished or lost — is answered with a cancel control for that run.",
 		Security: security, Errors: []int{400, 401, 403, 426},
-	}, func(ctx context.Context, in *syncInput) (*syncOutput, error) {
-		return nil, notYet("sync")
-	})
+	}, h.sync)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "appendEvents", Method: http.MethodPost, Path: "/runs/{run}/events",
@@ -221,6 +268,22 @@ func notYet(op string) error {
 	return Fail(http.StatusNotImplemented, v1.CodeNotImplemented,
 		"yad hub does not implement "+op+" yet",
 		"the hub's behaviour arrives in epic E2 (Zumino yad/dev) — see ARCHITECTURE.md §9")
+}
+
+// bearerFrom returns the request's bearer secret, or "" when it has none.
+func bearerFrom(r *http.Request) string {
+	scheme, secret, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(secret)
+}
+
+type bearerKey struct{}
+
+func bearer(ctx context.Context) string {
+	s, _ := ctx.Value(bearerKey{}).(string)
+	return s
 }
 
 func writeError(w http.ResponseWriter, e *ErrorResponse) {

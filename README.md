@@ -40,10 +40,14 @@ advertises them as recognised and refuses runs for them.
 
 ## Status
 
-**Foundation.** Harness detection, the capability document, the v1 protocol
-types and their generated OpenAPI document, the local store, the process
-supervisor, config and profiles, and a `yad hub` that answers every call with
-"not yet". Nothing runs a harness yet. The build order is `ARCHITECTURE.md §9`;
+**Foundation, and the first half of epic E2.** Harness detection, the
+capability document, the v1 protocol types and their generated OpenAPI
+document, the local store, the process supervisor, config and profiles. `yad
+hub` keeps its own store and serves register and sync: `yad hub token create`
+issues a one-time registration token, `yad connect <url> --token -` registers a
+runner, and `yad daemon start --foreground` syncs with every connected hub. The
+events, result and deregister calls still answer `not_implemented`, and nothing
+runs a harness yet, so a runner claims no runs. The build order is `ARCHITECTURE.md §9`;
 the epics and tasks are in Zumino, project `yad/dev`.
 
 ## Run it safely

@@ -49,7 +49,7 @@ _See_: `internal/config`
 `yad connect` can register a runner. Exchanged once for a **runner credential**,
 which is per runner, revocable and rotatable, and is the only secret kept.
 _Rules_: A registration token is dead after its exchange; the runner never stores it.
-_See_: [0010](docs/decisions/0010-registration-token-exchanged-for-runner-credential.md)
+_See_: [0010](docs/decisions/0010-registration-token-exchanged-for-runner-credential.md), [0020](docs/decisions/0020-the-registration-token-may-be-typed.md)
 
 **Capability document** — what a runner advertises to each hub: its id, name,
 OS, arch, labels, `yad` version, the harness list with versions and accounts,
@@ -242,7 +242,9 @@ per run.
   CLI that hangs — each is reported in the capability document and none prevents
   the runner from registering.
 - A token is never logged, never printed, and never written anywhere but a `0600`
-  file. Secrets never travel in argv.
+  file. Secrets never travel in argv — the one exception is a registration token
+  typed into `yad connect`, single-use and short-lived
+  ([0020](docs/decisions/0020-the-registration-token-may-be-typed.md)).
 - Permission mode is the runner owner's configuration. No hub can set or widen it.
 - Exit 0 is not success. A run's terminal state comes from the harness's own
   result event.
