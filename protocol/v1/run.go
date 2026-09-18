@@ -148,13 +148,16 @@ func (r Run) Validate() error {
 			errs = append(errs, fmt.Errorf("sources[%d]: %w", i, err))
 		}
 	}
+	seen := map[string]bool{}
 	for i, g := range r.Grants {
-		if g.Name == "" {
-			errs = append(errs, fmt.Errorf("grants[%d].name is required", i))
+		if err := g.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("grants[%d]: %w", i, err))
 		}
-		if g.As != GrantEnv && g.As != GrantFile {
-			errs = append(errs, fmt.Errorf("grants[%d].as %q is not env or file", i, g.As))
+		// Two grants by one name: one would silently replace the other.
+		if seen[g.Name] {
+			errs = append(errs, fmt.Errorf("grants[%d]: grant name %s is given twice", i, g.Name))
 		}
+		seen[g.Name] = true
 	}
 	return errors.Join(errs...)
 }

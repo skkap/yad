@@ -54,6 +54,10 @@ type Turn interface {
 	Steer(text string) error
 	// Interrupt ends the turn and keeps the session resumable.
 	Interrupt() error
+	// NativeSessionID is the harness's own session id, or "" until the harness
+	// has one. The runner stores it as soon as it appears rather than from the
+	// Outcome, so a crash mid-run does not lose the resume pointer.
+	NativeSessionID() string
 	// Wait blocks until the turn is over and the process is gone.
 	Wait() Outcome
 }
@@ -78,6 +82,28 @@ type Limit struct {
 	Window  string // "five_hour", "weekly", "primary", "secondary" — the harness's name
 	ResetAt time.Time
 }
+
+// Error classes an adapter puts in RunError.Class. A hub acts on the class and
+// shows the message; a new class is an addition, never a rename.
+const (
+	// ClassPromptTooLong — the conversation no longer fits the model's context.
+	// Retrying the same run cannot succeed.
+	ClassPromptTooLong = "prompt_too_long"
+	// ClassUsageLimit — the account hit a usage limit; Outcome.Limit says until when.
+	ClassUsageLimit = "usage_limit"
+	// ClassSessionNotFound — a resume named a session the harness does not have.
+	ClassSessionNotFound = "session_not_found"
+	// ClassSessionMismatch — the harness ran under a different session id than
+	// the one it was given: the resume silently failed and the context is gone.
+	ClassSessionMismatch = "session_mismatch"
+	// ClassHarness — the harness reported the turn failed, for any other reason.
+	ClassHarness = "harness_error"
+	// ClassHarnessExited — the process ended without reporting a result.
+	ClassHarnessExited = "harness_exited"
+	// ClassStream — a line of the harness's output could not be read; the turn
+	// carried on without it.
+	ClassStream = "stream"
+)
 
 // ErrNotFirstClass is returned when a run targets a harness with no adapter.
 var ErrNotFirstClass = errors.New("no adapter for this harness — it is recognised, not first-class")

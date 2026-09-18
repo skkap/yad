@@ -75,6 +75,9 @@ func (h *Hub) appendEvents(ctx context.Context, in *eventsInput) (*eventsOutput,
 	if err != nil {
 		return nil, err
 	}
+	// Whoever is watching the run hears of the new events now, not at their
+	// next poll.
+	h.Changed()
 	return &eventsOutput{Body: v1.EventAck{AckedThrough: through}}, nil
 }
 
@@ -167,6 +170,7 @@ func (h *Hub) submitResult(ctx context.Context, in *resultInput) (*ackOutput, er
 	if err != nil {
 		return nil, err
 	}
+	h.Changed()
 	return &ackOutput{Body: v1.Ack{OK: true}}, nil
 }
 

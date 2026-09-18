@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -45,11 +44,12 @@ const (
 	ClassAdapter = "adapter_error"
 )
 
-// maxTextBytes caps an event's text and a result's final text. The protocol
-// caps only tool payloads, but a hub or a proxy before it limits a body, and a
-// report that can never fit would be retried forever — an event batch halves
-// down to one event, so one event, and one result, must always fit. A MiB of
-// prose is past anything a person reads from a stream.
+// maxTextBytes caps an event's text and error message and a result's final
+// text and error message, each. The protocol caps only tool payloads, but a
+// hub or a proxy before it limits a body, and a report too large to fit is
+// retried for ever. At a MiB a field, one event or one result stays well under
+// yad hub's 16 MiB limit; a proxy with a limit near 1 MiB can still refuse an
+// outlier. A MiB of prose is past anything a person reads from a stream.
 const maxTextBytes = 1 << 20
 
 // eventBatch is the most events one upload carries, and how many a run may
@@ -176,6 +176,12 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	}
 
 	e.setState(bg, c, v1.RunPreparing)
+	// The claim checked the run already; checked again here because this is
+	// where a grant's name becomes a variable and a file (decision 0024).
+	if err := run.Validate(); err != nil {
+		fail(ClassRefused, "the run is invalid: "+err.Error())
+		return
+	}
 	ad, ok := e.Adapters.Lookup(run.Harness)
 	if !ok {
 		fail(ClassRefused, fmt.Sprintf("this runner has no adapter for harness %q — it should not have advertised it; report this as a yad bug", run.Harness))
@@ -292,7 +298,10 @@ func (e *Exec) stream(ctx context.Context, c Claim, turn adapter.Turn, kill cont
 					unreported = 0
 				}
 			}
-			if id := nativeID(turn); id != "" && id != w.native {
+			// Stored the moment the harness reveals it (the Claude adapter
+			// does from its first line), so a crash does not lose the resume
+			// pointer.
+			if id := turn.NativeSessionID(); id != "" && id != w.native {
 				w.native = id
 				e.setNative(ctx, c, id)
 			}
@@ -306,16 +315,6 @@ func (e *Exec) stream(ctx context.Context, c Claim, turn adapter.Turn, kill cont
 			kill()
 		}
 	}
-}
-
-// nativeID reads the harness's session id mid-turn from an adapter that
-// reveals it (the Claude adapter does from its first line), so a crash does
-// not lose the resume pointer.
-func nativeID(t adapter.Turn) string {
-	if n, ok := t.(interface{ NativeSessionID() string }); ok {
-		return n.NativeSessionID()
-	}
-	return ""
 }
 
 // spool numbers an event and writes it to the spool. The number is taken only
@@ -498,40 +497,13 @@ func pathName(id string) string {
 	return "_" + hex.EncodeToString(sum[:12])
 }
 
-var grantName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|CREDENTIALS)$`)
-
-// grantPrefixes are namespaces a grant may not use even with a secret-shaped
-// name: the loader's, the runner's, and the harnesses' own, where a key moves
-// billing or configuration (ANTHROPIC_API_KEY, OPENAI_API_KEY).
-var grantPrefixes = []string{"LD_", "DYLD_", "YAD_", "CLAUDE", "ANTHROPIC_", "CODEX_", "OPENAI_", "GIT_", "NODE_", "NPM_CONFIG_", "BUN_"}
-
-// grantAllowed is whether a hub may set this variable. A grant is a secret
-// for the run to use, never a way to steer what runs or how (decision 0015),
-// and the variables that steer — PATH, proxies, CA bundles, shell options,
-// loader and runtime hooks — are too many to list. So the rule is an
-// allowlist of shape: upper case, named as the secret it is.
-func grantAllowed(name string) bool {
-	if !grantName.MatchString(name) {
-		return false
-	}
-	for _, p := range grantPrefixes {
-		if strings.HasPrefix(name, p) {
-			return false
-		}
-	}
-	return true
-}
-
-// grants delivers the run's grants: an env grant as NAME=value, a file grant
-// as a 0600 file whose path is NAME. Never argv. cleanup deletes the files and
-// is always safe to call.
+// grants delivers the run's grants, which v1.Grant.Validate has passed: an env
+// grant as NAME=value, a file grant as a 0600 file whose path is NAME. Never
+// argv. cleanup deletes the files and is always safe to call.
 func (e *Exec) grants(c Claim) (env []string, cleanup func(), err error) {
 	cleanup = func() {}
 	var dir string
 	for _, g := range c.Run.Grants {
-		if !grantAllowed(g.Name) {
-			return nil, cleanup, fmt.Errorf("grant %q is not a name a grant may use — a grant is named as the secret it is, in upper case and ending in _TOKEN, _KEY, _SECRET, _PASSWORD or _CREDENTIAL(S), such as ZUMINO_TOKEN; harness, runtime and loader namespaces are refused", g.Name)
-		}
 		switch g.As {
 		case v1.GrantEnv:
 			env = append(env, g.Name+"="+g.Value)
@@ -552,8 +524,6 @@ func (e *Exec) grants(c Claim) (env []string, cleanup func(), err error) {
 				return nil, cleanup, fmt.Errorf("grant %s: %w", g.Name, err)
 			}
 			env = append(env, g.Name+"="+path)
-		default:
-			return nil, cleanup, fmt.Errorf("grant %q is delivered as %q, which is neither env nor file", g.Name, g.As)
 		}
 	}
 	return env, cleanup, nil

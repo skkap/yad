@@ -27,26 +27,49 @@ func (p Paths) SaveCredential(connection, credential string) error {
 	return writePrivate(p.credentialPath(connection), []byte(credential+"\n"))
 }
 
-// Credential reads a connection's runner credential. A file readable by anyone
-// but the owner is refused rather than used, because a token that has been
-// world-readable must be assumed leaked.
+// Credential reads a connection's runner credential.
 func (p Paths) Credential(connection string) (string, error) {
-	path := p.credentialPath(connection)
-	fi, err := os.Stat(path)
+	c, err := ReadSecret(p.credentialPath(connection))
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("no credential for connection %q — run `yad connect` again", connection)
 	}
+	if errors.Is(err, errExposed) {
+		return "", fmt.Errorf("credential for %q %w — revoke it at the hub, then `yad connect` again", connection, err)
+	}
+	return c, err
+}
+
+// HubAdminToken is where `yad hub submit` and `watch` find the admin token
+// `yad hub admin-token create` saved for this profile.
+func (p Paths) HubAdminToken() string { return filepath.Join(p.Config, "hub-admin-token") }
+
+var errExposed = errors.New("is readable by others")
+
+// ReadSecret reads a one-line secret from a file. A file readable by anyone
+// but the owner is refused rather than used, because a token that has been
+// world-readable must be assumed leaked. A missing file is fs.ErrNotExist.
+func ReadSecret(path string) (string, error) {
+	fi, err := os.Stat(path)
 	if err != nil {
 		return "", err
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("credential for %q is readable by others (%v) — revoke it at the hub, then `yad connect` again", connection, fi.Mode().Perm())
+		return "", fmt.Errorf("%w (%v)", errExposed, fi.Mode().Perm())
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+// WriteSecret writes a one-line secret at 0600, creating its directory
+// private to the owner.
+func WriteSecret(path, secret string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return writePrivate(path, []byte(secret+"\n"))
 }
 
 // DeleteCredential forgets a connection's credential. Missing is not an error.

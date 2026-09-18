@@ -247,6 +247,7 @@ type deafTurn struct {
 
 func (t *deafTurn) Events() <-chan v1.Event { return t.events }
 func (t *deafTurn) Steer(string) error      { return nil }
+func (t *deafTurn) NativeSessionID() string { return "" }
 func (t *deafTurn) Interrupt() error        { return errors.New("not listening") }
 func (t *deafTurn) Wait() adapter.Outcome {
 	<-t.done
@@ -269,14 +270,6 @@ func TestExecutorFailuresAreResults(t *testing.T) {
 			return x
 		}, nil, ClassStart},
 		{"adapter refuses to start", func(e *env) *Exec { return e.executor(&fake.Adapter{ID: "claude"}) }, nil, ClassStart},
-		{"a grant that would set PATH", func(e *env) *Exec { return e.executor(fakeHarness(fake.Script{})) },
-			[]v1.Grant{{Name: "PATH", Value: "/evil", As: v1.GrantEnv}}, ClassPrepare},
-		{"a grant for the dynamic loader", func(e *env) *Exec { return e.executor(fakeHarness(fake.Script{})) },
-			[]v1.Grant{{Name: "LD_PRELOAD", Value: "/evil.so", As: v1.GrantFile}}, ClassPrepare},
-		{"a grant name that is a path", func(e *env) *Exec { return e.executor(fakeHarness(fake.Script{})) },
-			[]v1.Grant{{Name: "../../x_TOKEN", Value: "v", As: v1.GrantFile}}, ClassPrepare},
-		{"a grant for a proxy", func(e *env) *Exec { return e.executor(fakeHarness(fake.Script{})) },
-			[]v1.Grant{{Name: "HTTPS_PROXY", Value: "https://attacker", As: v1.GrantEnv}}, ClassPrepare},
 		{"an outcome that is not terminal", func(e *env) *Exec {
 			return e.executor(fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunWaiting}}))
 		}, nil, ClassAdapter},
@@ -414,29 +407,6 @@ func contains(xs []string, s string) bool {
 	return false
 }
 
-// A grant is named as the secret it is. Everything that steers a harness —
-// the loader, proxies, CA bundles, shell options, runtime hooks, the harness's
-// own billing keys — is refused, whether or not anybody thought to list it.
-func TestGrantNames(t *testing.T) {
-	for name, ok := range map[string]bool{
-		"ZUMINO_TOKEN": true, "GH_TOKEN": true, "DEPLOY_KEY": true, "DB_PASSWORD": true,
-		"AWS_SECRET": true, "GCP_CREDENTIALS": true, "SERVICE_CREDENTIAL": true,
-		"PATH": false, "HOME": false, "LD_PRELOAD": false, "DYLD_INSERT_LIBRARIES": false,
-		"HTTPS_PROXY": false, "HTTP_PROXY": false, "ALL_PROXY": false, "NO_PROXY": false,
-		"NODE_EXTRA_CA_CERTS": false, "NODE_TLS_REJECT_UNAUTHORIZED": false, "SSL_CERT_FILE": false,
-		"REQUESTS_CA_BUNDLE": false, "CURL_CA_BUNDLE": false, "SHELLOPTS": false, "PS4": false,
-		"BASH_ENV": false, "GCONV_PATH": false, "JAVA_TOOL_OPTIONS": false, "_JAVA_OPTIONS": false,
-		"NODE_OPTIONS": false, "NODE_AUTH_TOKEN": false, "ANTHROPIC_API_KEY": false, "OPENAI_API_KEY": false,
-		"CLAUDE_CODE_OAUTH_TOKEN": false, "CODEX_API_KEY": false, "YAD_TOKEN": false, "GIT_TOKEN": false,
-		"LD_TOKEN": false, "zumino_token": false, "_TOKEN": false, "TOKEN": false, "A_TOKEN_X": false,
-		"NPM_CONFIG__AUTH_TOKEN": false, "BUN_AUTH_TOKEN": false,
-	} {
-		if got := grantAllowed(name); got != ok {
-			t.Errorf("grantAllowed(%q) = %v, want %v", name, got, ok)
-		}
-	}
-}
-
 // Text is capped so that one event, and one result, always fits a hub's body
 // limit: a report that can never be accepted would be retried forever.
 func TestTextIsCapped(t *testing.T) {
@@ -467,5 +437,32 @@ func TestTextIsCapped(t *testing.T) {
 		if len(s) > maxTextBytes || len(s) < maxTextBytes-1 || !utf8.ValidString(s) {
 			t.Errorf("%s is %d bytes, valid UTF-8 %v", name, len(s), utf8.ValidString(s))
 		}
+	}
+}
+
+// A reserved grant that reaches the executor anyway — a claim path that forgot
+// to check — is refused there, before anything is delivered or started.
+func TestExecutorRefusesReservedGrants(t *testing.T) {
+	e := newEnv(t)
+	ad := fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}})
+	x := e.executor(ad)
+	ctx := context.Background()
+	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: "s1", Harness: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.CreateRun(ctx, db.CreateRunParams{Connection: "hub", ID: "a", SessionID: "s1", Harness: "claude", Spec: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	run := testRun("a", "s1")
+	run.Grants = []v1.Grant{{Name: "LD_PRELOAD", Value: "/evil.so", As: v1.GrantEnv}}
+	released := false
+	x.Start(ctx, Claim{Connection: "hub", Run: run, Release: func() { released = true }})
+	x.Wait()
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunFailed || res.Error.Class != ClassRefused || !strings.Contains(res.Error.Message, "LD_") {
+		t.Fatalf("result %+v %+v, %v", res, res.Error, ok)
+	}
+	if len(ad.Starts) != 0 || !released {
+		t.Errorf("starts %d, released %v", len(ad.Starts), released)
 	}
 }

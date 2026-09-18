@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -77,19 +78,43 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 		t.Errorf("empty machine: exit %d:\n%s", code, out)
 	}
 	dir := t.TempDir()
+	codex := dir + "/codex"
+	if err := os.WriteFile(codex, []byte("#!/bin/sh\necho 'codex-cli 0.147.0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAD_CODEX_PATH", codex)
+	var o, e bytes.Buffer
+	run(context.Background(), []string{"doctor"}, &o, &e)
+	if !strings.Contains(o.String(), "no adapter in this yad yet") || !strings.Contains(o.String(), "install Claude Code") {
+		t.Errorf("codex installed, no adapter:\n%s", o.String())
+	}
+
 	bin := dir + "/claude"
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '2.1.276 (Claude Code)'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("YAD_CLAUDE_PATH", bin)
-	var o, e bytes.Buffer
+	o.Reset()
 	run(context.Background(), []string{"doctor"}, &o, &e)
-	if !strings.Contains(o.String(), "no adapter in this yad yet") {
-		t.Errorf("claude installed, no adapter:\n%s", o.String())
+	if !strings.Contains(o.String(), "1 harness(es) this runner can be given work for") {
+		t.Errorf("claude installed, with its adapter:\n%s", o.String())
 	}
+	if !regexp.MustCompile(`Claude Code +ready`).MatchString(o.String()) {
+		t.Errorf("claude not reported ready:\n%s", o.String())
+	}
+
+	// A broken Claude beside a working Codex: the fix is the probe error, not
+	// an install.
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	o.Reset()
+	run(context.Background(), []string{"doctor"}, &o, &e)
+	if !strings.Contains(o.String(), "failed its version probe") || strings.Contains(o.String(), "install Claude Code") {
+		t.Errorf("claude broken, codex present:\n%s", o.String())
+	}
+
+	os.Remove(codex)
 	o.Reset()
 	run(context.Background(), []string{"doctor"}, &o, &e)
 	if !strings.Contains(o.String(), "failed its version probe") {

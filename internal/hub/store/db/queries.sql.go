@@ -71,6 +71,24 @@ func (q *Queries) BurnRegistrationToken(ctx context.Context, arg BurnRegistratio
 	return result.RowsAffected()
 }
 
+const createAdminToken = `-- name: CreateAdminToken :exec
+
+INSERT INTO admin_tokens (hash, name, created_at) VALUES (?, ?, ?)
+`
+
+type CreateAdminTokenParams struct {
+	Hash      string
+	Name      string
+	CreatedAt int64
+}
+
+// Admin tokens and the service API (DEV-7). Kept in one block so the runner's
+// events and result queries can land beside it without a merge fight.
+func (q *Queries) CreateAdminToken(ctx context.Context, arg CreateAdminTokenParams) error {
+	_, err := q.db.ExecContext(ctx, createAdminToken, arg.Hash, arg.Name, arg.CreatedAt)
+	return err
+}
+
 const createRegistrationToken = `-- name: CreateRegistrationToken :exec
 INSERT INTO registration_tokens (hash, created_at, expires_at, for_runner) VALUES (?, ?, ?, ?)
 `
@@ -233,6 +251,17 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) error {
 	return err
 }
 
+const getAdminToken = `-- name: GetAdminToken :one
+SELECT hash, name, created_at FROM admin_tokens WHERE hash = ?
+`
+
+func (q *Queries) GetAdminToken(ctx context.Context, hash string) (AdminToken, error) {
+	row := q.db.QueryRowContext(ctx, getAdminToken, hash)
+	var i AdminToken
+	err := row.Scan(&i.Hash, &i.Name, &i.CreatedAt)
+	return i, err
+}
+
 const getRegistrationToken = `-- name: GetRegistrationToken :one
 SELECT hash, created_at, expires_at, for_runner, used_at, runner_id FROM registration_tokens WHERE hash = ?
 `
@@ -348,6 +377,38 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listAdminTokens = `-- name: ListAdminTokens :many
+SELECT name, created_at FROM admin_tokens ORDER BY name
+`
+
+type ListAdminTokensRow struct {
+	Name      string
+	CreatedAt int64
+}
+
+func (q *Queries) ListAdminTokens(ctx context.Context) ([]ListAdminTokensRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAdminTokens)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAdminTokensRow{}
+	for rows.Next() {
+		var i ListAdminTokensRow
+		if err := rows.Scan(&i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const loseLapsedRuns = `-- name: LoseLapsedRuns :execrows
@@ -559,6 +620,18 @@ WHERE state = 'offered' AND lease_expires_at <= ?1
 
 func (q *Queries) RequeueWithdrawnOffers(ctx context.Context, now int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, requeueWithdrawnOffers, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const revokeAdminToken = `-- name: RevokeAdminToken :execrows
+DELETE FROM admin_tokens WHERE name = ?
+`
+
+func (q *Queries) RevokeAdminToken(ctx context.Context, name string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeAdminToken, name)
 	if err != nil {
 		return 0, err
 	}

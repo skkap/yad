@@ -170,7 +170,8 @@ func (r *Reporter) upload(ctx context.Context, runID string) {
 		case errors.As(err, &se) && se.Status == http.StatusRequestEntityTooLarge && limit > 1:
 			// A size limit — the hub's or a proxy's before it — is not a
 			// verdict on the events: the same ones go again in halves, down
-			// to one at a time, which always fits (the executor caps text).
+			// to one at a time, which fits yad hub's limit (the executor caps
+			// text).
 			r.batch[runID] = limit / 2
 			log.Warn("event batch too large for the hub or a proxy before it; halving", "batch", limit/2)
 			continue

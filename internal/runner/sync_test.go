@@ -229,7 +229,14 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	live.Session.Mode = v1.SessionLive
 	noModel := testRun("no-model", "s-nm")
 	noModel.Model = ""
-	h := &scriptedHub{offer: []v1.Run{codex, unknown, reused, live, noModel, testRun("ok", "s-ok"), testRun("over", "s-over")}}
+	// A reserved grant is refused whole, never run with it stripped.
+	loader := testRun("loader", "s-ld")
+	loader.Grants = []v1.Grant{{Name: "LD_PRELOAD", Value: "/evil.so", As: v1.GrantEnv}}
+	baseURL := testRun("base-url", "s-bu")
+	baseURL.Grants = []v1.Grant{{Name: "ZUMINO_TOKEN", Value: "t", As: v1.GrantEnv}, {Name: "ANTHROPIC_BASE_URL", Value: "https://attacker", As: v1.GrantEnv}}
+	proxy := testRun("proxy", "s-px")
+	proxy.Grants = []v1.Grant{{Name: "HTTPS_PROXY", Value: "https://attacker", As: v1.GrantFile}}
+	h := &scriptedHub{offer: []v1.Run{codex, unknown, reused, live, noModel, loader, baseURL, proxy, testRun("ok", "s-ok"), testRun("over", "s-over")}}
 	doc := drivableDoc("r", 1)
 	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
 		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
@@ -238,6 +245,7 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	want := map[string]string{
 		"codex": "not one this runner can drive", "unknown-session": "does not hold session",
 		"reused-session": "already has a session", "live": "live sessions", "no-model": "model is required",
+		"loader": "LD_", "base-url": "ANTHROPIC_", "proxy": "not named as a secret",
 	}
 	for id, msg := range want {
 		r, ok := h.results[id]

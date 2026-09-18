@@ -66,11 +66,13 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	// with both CLIs installed to install them is worse than saying nothing.
 	switch {
 	case ready > 0:
-	case noAdapter > 0:
-		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — Claude Code arrives in epic E2, Codex in E5.")
-		return nil
 	case broken > 0:
-		fmt.Fprintln(w, "No drivable harness: every installed one failed its version probe — fix the errors above and run this again.")
+		// Checked before noAdapter: a broken Claude beside a working Codex needs
+		// fixing, not installing.
+		fmt.Fprintln(w, "No drivable harness: an installed one failed its version probe — fix the errors above and run this again.")
+		return nil
+	case noAdapter > 0:
+		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — install Claude Code, which has one; Codex arrives in epic E5.")
 		return nil
 	default:
 		fmt.Fprintln(w, "No drivable harness found. Install Claude Code or Codex and run this again.")

@@ -60,6 +60,8 @@ a run, runs a harness, streams what happened, and says whether it is alive.
 cmd/yad/                 the CLI — one file per command group, no logic
 protocol/v1/             the wire types; public, so Go hubs can import them;
                          openapi.yaml generated from them and committed
+protocol/hubapi/         yad hub's service API types, and its own generated
+                         openapi.yaml — not part of the protocol (0022)
 internal/config          profiles, config.toml, credentials on disk
 internal/store           SQLite: schema, migrations, sqlc-generated queries
 internal/harness         the catalog, detection, versions
@@ -74,6 +76,7 @@ internal/supervise       spawn, process groups, watchdogs, cancel ladder
 internal/workdir         sources, bare caches, worktrees, setup hook, slots, GC
 internal/runner          connections, sync loop, capacity, executor, spool, outbox
 internal/hubclient       the runner side of the protocol
+internal/hubapiclient    the caller side of yad hub's service API
 internal/hub             `yad hub`: huma server, store, submit/watch API
 internal/control         the Unix control socket, server and client
 internal/conformance     the protocol conformance suite, run against any hub
@@ -198,7 +201,9 @@ a hub outage — [0023](docs/decisions/0023-lost-stands-against-a-late-result.md
 `acked_through` — the highest `seq` up to which it holds every event — is
 authoritative, and the runner resends after it. Tool output is capped at 8 KiB
 per event; the runner caps text, error messages and a result's final text at
-1 MiB, so that one event, and one result, always fits a hub's body limit. Only the runner a run was claimed by may append to it, before or
+1 MiB each, so one event or one result stays well under `yad hub`'s 16 MiB body
+limit. A proxy with a limit near 1 MiB can still refuse an outlier; the runner
+halves a refused batch down to one event and then keeps retrying it. Only the runner a run was claimed by may append to it, before or
 after it ends; anyone else gets `403 not_holder`.
 
 ### Result
@@ -231,6 +236,20 @@ strings — the runner in its capability document, the hub in its register
 response — and nothing is used that the other side did not advertise. A hub may
 refuse a runner below `min_version` with `version_too_old` and a next action.
 
+### yad hub's service API
+
+Not part of the protocol, and never implemented by a hub that embeds it:
+`yad hub`'s own way for a service or a person to make runs —
+[0022](docs/decisions/0022-hub-service-api-beside-the-protocol.md). Mounted at
+`/api/v1` beside the protocol, described by `protocol/hubapi/openapi.yaml`
+(generated, committed, drift-checked), authenticated by an **admin token**.
+
+| | |
+|---|---|
+| `POST /runs` | queue a run: harness, model, brief, optional sources, grants and session; idempotent by `run_id` |
+| `GET /runs/{run}` | the run's hub-side state (`queued`, `offered`, then the protocol's) and its result; never its grants |
+| `GET /runs/{run}/events?after=N&wait_ms=…` | long poll: events after `N`, the run, and `done` once the stream is complete |
+
 ## §3 Running a harness
 
 A run is: take capacity → prepare (workdir, setup hook, account) → spawn →
@@ -248,6 +267,7 @@ type Turn interface {
 	Events() <-chan protocol.Event
 	Steer(text string) error
 	Interrupt() error
+	NativeSessionID() string // as soon as the harness has one, for pinning
 	Wait() Outcome // terminal state, final text, usage, native session id, limit
 }
 ```
@@ -256,16 +276,32 @@ type Turn interface {
 
 ```
 claude -p --input-format stream-json --output-format stream-json --verbose
-       --include-partial-messages --permission-mode <owner config>
+       --include-partial-messages --replay-user-messages
+       --disallowed-tools AskUserQuestion --permission-mode <owner config>
        (--session-id <uuid> | --resume <uuid>) [--model m]
-       --append-system-prompt-file <context file>
+       [--append-system-prompt-file <context file>]
 ```
 
 The instruction is one stream-json `user` frame on stdin, written from its own
-goroutine; stdin stays open for `control_request` (interrupt) until `result`.
-YAD chooses the session id, so nothing has to be scraped; an echoed id that
-differs means the resume silently failed. `AskUserQuestion` is disallowed —
-headless, it returns an empty answer.
+goroutine; stdin stays open for `control_request` (interrupt) and steers until
+the last `result`, and closing it is what lets Claude exit. YAD chooses the
+session id, so nothing has to be scraped; an echoed id that differs means the
+resume silently failed, and the run fails with `session_mismatch`.
+`AskUserQuestion` is disallowed — headless, it returns an empty answer. A steer
+is another `user` frame: Claude reads it at the next tool boundary, or answers
+it as a follow-up turn in the same process; `--replay-user-messages` echoes
+each frame as it is taken, which is how the adapter knows which result is the
+last. The outcome rules and the rest are
+[0021](docs/decisions/0021-claude-runs-end-at-the-last-result.md).
+
+The permission mode is the owner's `permission_mode`, and `bypassPermissions`
+when unset: a run is unattended and auto-approves
+([0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md)), and
+Claude's own default would deny every tool that needs a prompt. Claude refuses
+`bypassPermissions` as root unless `IS_SANDBOX=1`, so the adapter refuses such a
+run before spawning, with the way out. Only the owner declares the sandbox, in
+the runner's own environment: YAD never sets `IS_SANDBOX`, and strips it from a
+run's environment, which carries the hub's grants.
 
 **Codex** — `codex app-server --listen stdio://`: `initialize` → `initialized` →
 `thread/start` or `thread/resume` → `turn/start`; `turn/interrupt`, `turn/steer`;
@@ -275,8 +311,10 @@ thread id — Codex multiplexes subagent threads on one pipe. Validated against
 the schema `generate-json-schema` emits for the installed version.
 
 **Fixtures.** Every adapter test replays recorded JSONL named by harness version
-(`testdata/claude-2.1.276/*.jsonl`). Recording new ones is a manual step, behind a
-build tag; the suite never runs a real harness.
+(`internal/adapter/claude/testdata/claude-2.1.276/*.jsonl`) through a fake
+harness process. Recording new ones is a manual step, behind a build tag
+(`YAD_REAL_HARNESS=1 go test -tags realharness -run TestRecord
+./internal/adapter/claude/`); the suite never runs a real harness.
 
 ### Supervisor
 
@@ -284,8 +322,9 @@ build tag; the suite never runs a real harness.
   starts through `supervise.Start`: its own process group, a scrubbed environment
   (`CLAUDECODE`, every `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY` unless configured,
   anything `YAD_*`), and a stderr tail kept at 2 KiB. `Start` hands back the raw
-  stdout pipe; the 32 MiB line cap belongs to each adapter's line reader, which
-  arrives with the adapter (E2).
+  stdout pipe; the 32 MiB line cap belongs to the adapters' line reader
+  (`adapter.LineReader`), which skips an oversized line and reports it rather
+  than ending the run.
 - **Cancel ladder**: the adapter's interrupt → 10 s → `SIGTERM` to the group →
   5 s → `SIGKILL` to the group. Descendants are killed even after the leader
   exits cleanly — they hold pipes and git locks.
@@ -353,7 +392,8 @@ build tag; the suite never runs a real harness.
 `config.toml`, `runner-id` and `credentials/<connection>` (each `0600`); the
 data directory holds `state.db`, `workdirs/`, `repos/`, `accounts/`,
 `transcripts/`, `logs/` and the control socket `yad.sock` — and `hub.db` when
-the machine also runs `yad hub`.
+the machine also runs `yad hub`. A machine that submits to a hub keeps its
+admin token in the config directory's `hub-admin-token` (`0600`).
 
 ### `config.toml`
 
@@ -363,7 +403,7 @@ labels   = ["macos", "home"]
 capacity = 4
 
 [harness.claude]
-permission_mode = "bypassPermissions"   # the owner's call — 0015
+permission_mode = "bypassPermissions"   # the owner's call — 0015; the default when unset
 cap             = 3
 accounts        = ["personal", "family"] # failover order
 
@@ -394,8 +434,8 @@ user_version`; migrations are embedded and run on open.
 ### `hub.db`
 
 `yad hub`'s own store, a separate SQLite file opened the same way, with its
-queries in `internal/hub/store/*.sql`. Tables: `registration_tokens` and
-`runners` (secrets only as SHA-256 hashes), `sessions` (the runner each is bound
+queries in `internal/hub/store/*.sql`. Tables: `registration_tokens`,
+`runners` and `admin_tokens` (secrets only as SHA-256 hashes), `sessions` (the runner each is bound
 to), `runs`, `events` (unique `(run_id, seq)`) and `results` (one per run). A
 run's hub-side state adds two before the protocol's: `queued` and `offered`.
 
@@ -411,7 +451,14 @@ yad status                         runs, sessions, accounts, connections — via
 yad sessions [close <id>]
 yad account add|list|use|remove
 yad service install|uninstall      launchd user agent, systemd user unit
-yad hub serve|submit|watch        the standalone hub
+yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1
+yad hub submit --harness h --model m [--session id | --new-session id] <instruction | ->
+                                   queue a run; prints its id (--watch follows it)
+yad hub watch <run>                a run's events as they arrive, then its result;
+                                   exits non-zero unless it succeeded
+yad hub admin-token create|list|revoke
+                                   the service API's tokens; create saves to a 0600
+                                   file and prints nothing secret (--out - prints once)
 yad hub token create [--ttl 1h] [--runner id]
                                    a one-time registration token; --runner re-registers
                                    that runner, the only way to replace its credential
@@ -442,8 +489,9 @@ line here is a reviewed change.
 - **Two fakes.** `internal/adapter/fake` plays a scripted run in memory, for
   runner and hub logic. Child-process behaviour — hangs, ignored `SIGTERM`,
   oversized lines, orphaned grandchildren — is tested by re-executing the test
-  binary as the child (`SUPERVISE_TEST_CHILD=<mode>`). A fake harness that is a
-  real process speaking stream-json arrives with the Claude adapter in E2.
+  binary as the child (`SUPERVISE_TEST_CHILD=<mode>`). The Claude adapter's
+  tests re-execute it as a fake `claude` that plays a recorded stream and reads
+  stdin as Claude does (`CLAUDE_TEST_FIXTURE=<file>`).
   Re-executed children set `GORACE=atexit_sleep_ms=0`, or each costs a second.
 - **The runner is tested against `yad hub`**, in process, on a random port. The
   conformance suite is the same tests pointed at a URL.
@@ -458,11 +506,15 @@ line here is a reviewed change.
   event. Grants are deleted when their run ends. An `env` grant is `NAME=value`
   in the harness's environment; a `file` grant is a `0600` file whose path is
   in `NAME`. A grant is named as the secret it is — upper case, ending in
-  `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD` or `_CREDENTIAL(S)` — and never in a
-  loader, runtime or harness namespace (`LD_*`, `NODE_*`, `ANTHROPIC_*` …). An
-  allowlist of shape, because the variables that steer a harness — `PATH`,
-  proxies, CA bundles, shell options, runtime hooks — are too many to deny one
-  by one, and a secret for the run must not become a way to steer it.
+  `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD` or `_CREDENTIAL(S)` — and never a
+  reserved name or in a loader, runtime or harness namespace (`LD_*`,
+  `NODE_*`, `ANTHROPIC_*`, `IS_SANDBOX` …). `protocol/v1` checks it; a run
+  carrying one that fails is refused by the hub and by the runner, never run
+  with it stripped — [0024](docs/decisions/0024-grants-are-named-as-secrets.md).
+  The service API never returns a grant.
+- Three secret kinds, never interchangeable: registration token, runner
+  credential, admin token. The protocol accepts only the first two, the service
+  API only the third.
 - Permission mode and sandbox are runner configuration per harness; no protocol
   field can set them — [0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md).
 - A hub is untrusted input; harness output is data. Neither is ever executed or
