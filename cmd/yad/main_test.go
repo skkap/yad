@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -54,5 +55,44 @@ func TestDoctorRunsOnAnEmptyMachine(t *testing.T) {
 	code, out, _ := yad(t, "doctor")
 	if code != 0 || !strings.Contains(out, "No drivable harness") {
 		t.Errorf("exit %d:\n%s", code, out)
+	}
+}
+
+// time.NewTicker panics on a non-positive duration; the flag must be refused
+// with a next action instead of a stack trace.
+func TestDaemonRefusesNonPositiveInterval(t *testing.T) {
+	for _, v := range []string{"0", "-1s"} {
+		code, _, errs := yad(t, "daemon", "start", "--foreground", "--interval", v)
+		if code == 0 || !strings.Contains(errs, "--interval must be positive") {
+			t.Errorf("--interval %s: exit %d, %q", v, code, errs)
+		}
+	}
+}
+
+// Installed but without an adapter is a different fact from not installed, and
+// needs a different next action.
+func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
+	code, out, _ := yad(t, "doctor") // yad() empties PATH
+	if code != 0 || !strings.Contains(out, "Install Claude Code or Codex") {
+		t.Errorf("empty machine: exit %d:\n%s", code, out)
+	}
+	dir := t.TempDir()
+	bin := dir + "/claude"
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '2.1.276 (Claude Code)'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAD_CLAUDE_PATH", bin)
+	var o, e bytes.Buffer
+	run(context.Background(), []string{"doctor"}, &o, &e)
+	if !strings.Contains(o.String(), "no adapter in this yad yet") {
+		t.Errorf("claude installed, no adapter:\n%s", o.String())
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	o.Reset()
+	run(context.Background(), []string{"doctor"}, &o, &e)
+	if !strings.Contains(o.String(), "failed its version probe") {
+		t.Errorf("claude broken:\n%s", o.String())
 	}
 }

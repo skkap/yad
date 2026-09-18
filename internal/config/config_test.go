@@ -192,3 +192,28 @@ func assertPrivate(t *testing.T, path string) {
 		t.Errorf("%s is %v, want 0600", path, fi.Mode().Perm())
 	}
 }
+
+// An id file that exists but cannot be read is not a missing one: replacing it
+// would orphan every session the runner held.
+func TestRunnerIDRefusesUnreadableFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 0000 file")
+	}
+	p := testPaths(t)
+	first, err := p.RunnerID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(p.Config, "runner-id")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o600) })
+	if id, err := p.RunnerID(); err == nil {
+		t.Fatalf("got a new id %q instead of an error", id)
+	}
+	os.Chmod(path, 0o600)
+	if again, _ := p.RunnerID(); again != first {
+		t.Errorf("identity changed from %q to %q", first, again)
+	}
+}

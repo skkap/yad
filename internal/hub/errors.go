@@ -30,8 +30,9 @@ func Fail(status int, code, message, next string) *ErrorResponse {
 	return &ErrorResponse{status: status, Err: v1.Error{Code: code, Message: message, NextAction: next}}
 }
 
-// huma produces its own errors — validation, unknown routes, bad JSON — through
-// NewError. Replacing it is huma's documented extension point; it is
+// huma produces its own errors — validation and bad JSON — through NewError.
+// Requests that match no operation never reach huma; protocolRoutes answers
+// those. Replacing it is huma's documented extension point; it is
 // process-wide, which is fine in a binary that only ever serves this protocol.
 func init() {
 	// An absent list is an empty list on the wire; "array or null" would make

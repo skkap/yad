@@ -56,3 +56,39 @@ func TestInterruptEndsHangingTurn(t *testing.T) {
 		t.Fatal("interrupt did not end the turn")
 	}
 }
+
+// A runner that cancels stops reading events. The turn must still end, or its
+// Wait hangs and the executor leaks a goroutine per cancelled run.
+func TestInterruptWhileNobodyReads(t *testing.T) {
+	a := &Adapter{Next: func(adapter.Spec) Script {
+		return Script{Events: []v1.Event{{Kind: v1.EventText}, {Kind: v1.EventText}, {Kind: v1.EventText}}}
+	}}
+	tr, _ := a.Start(context.Background(), adapter.Spec{})
+	time.Sleep(20 * time.Millisecond) // let play reach its first send
+	tr.Interrupt()
+	done := make(chan adapter.Outcome)
+	go func() { done <- tr.Wait() }()
+	select {
+	case out := <-done:
+		if out.State != v1.RunCancelled {
+			t.Errorf("state = %s", out.State)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait hung on an event nobody was reading")
+	}
+}
+
+func TestContextCancelWhileNobodyReads(t *testing.T) {
+	a := &Adapter{Next: func(adapter.Spec) Script { return Script{Events: []v1.Event{{Kind: v1.EventText}}} }}
+	ctx, cancel := context.WithCancel(context.Background())
+	tr, _ := a.Start(ctx, adapter.Spec{})
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	done := make(chan struct{})
+	go func() { tr.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait hung after the context was cancelled")
+	}
+}

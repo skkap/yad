@@ -98,3 +98,14 @@ func TestRejectsBadURLs(t *testing.T) {
 		}
 	}
 }
+
+// Every call carries a bearer secret, so the client refuses a cleartext hop to
+// another host at construction, before any secret is attached to anything.
+func TestNewRefusesCleartextToAnotherHost(t *testing.T) {
+	if _, err := New("http://hub.example/v1", "cred"); err == nil {
+		t.Error("accepted plain http to a remote host")
+	}
+	if _, err := New("http://127.0.0.1:9/v1", "cred"); err != nil {
+		t.Errorf("refused loopback http, which yad hub serve prints: %v", err)
+	}
+}

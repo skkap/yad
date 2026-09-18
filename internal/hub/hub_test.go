@@ -32,7 +32,12 @@ func TestOpenAPIIsCurrent(t *testing.T) {
 
 func post(t *testing.T, h http.Handler, path, body string, headers map[string]string) (*http.Response, v1.ErrorEnvelope) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	return call(t, h, http.MethodPost, path, body, headers)
+}
+
+func call(t *testing.T, h http.Handler, method, path, body string, headers map[string]string) (*http.Response, v1.ErrorEnvelope) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -54,17 +59,21 @@ func TestErrorsHaveTheProtocolShape(t *testing.T) {
 	h := New()
 	proto := map[string]string{v1.HeaderProtocol: v1.Version}
 	for _, tc := range []struct {
-		name, path, body string
-		headers          map[string]string
-		status           int
-		code             string
+		name, method, path, body string
+		headers                  map[string]string
+		status                   int
+		code                     string
 	}{
-		{"not built yet", "/v1/runners/register", `{"capabilities":{"runner_id":"r","name":"n","yad_version":"dev","os":"linux","arch":"amd64","harnesses":[],"capacity":{"total":1},"observed_at":"2026-09-18T00:00:00Z"}}`, proto, 501, v1.CodeNotImplemented},
-		{"missing protocol header", "/v1/runners/r/sync", `{}`, nil, 422, v1.CodeInvalid},
-		{"malformed body", "/v1/runs/r/events", `{`, proto, 400, v1.CodeInvalid},
+		{"not built yet", "POST", "/v1/runners/register", `{"capabilities":{"runner_id":"r","name":"n","yad_version":"dev","os":"linux","arch":"amd64","harnesses":[],"capacity":{"total":1},"observed_at":"2026-09-18T00:00:00Z"}}`, proto, 501, v1.CodeNotImplemented},
+		{"missing protocol header", "POST", "/v1/runners/r/sync", `{}`, nil, 426, v1.CodeUnsupportedProtocol},
+		{"another protocol version", "POST", "/v1/runners/r/sync", `{}`, map[string]string{v1.HeaderProtocol: "2"}, 426, v1.CodeUnsupportedProtocol},
+		{"malformed body", "POST", "/v1/runs/r/events", `{`, proto, 400, v1.CodeInvalid},
+		{"unknown path under the base", "POST", "/v1/runners/r/nope", `{}`, proto, 404, v1.CodeNotFound},
+		{"wrong method on an operation", "GET", "/v1/runners/register", ``, proto, 405, v1.CodeInvalid},
+		{"outside the base", "POST", "/elsewhere", `{}`, proto, 404, v1.CodeNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res, env := post(t, h, tc.path, tc.body, tc.headers)
+			res, env := call(t, h, tc.method, tc.path, tc.body, tc.headers)
 			if res.StatusCode != tc.status {
 				t.Errorf("status = %d, want %d", res.StatusCode, tc.status)
 			}
@@ -73,6 +82,9 @@ func TestErrorsHaveTheProtocolShape(t *testing.T) {
 			}
 			if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 				t.Errorf("content type %q", ct)
+			}
+			if tc.status == http.StatusMethodNotAllowed && res.Header.Get("Allow") == "" {
+				t.Error("405 without an Allow header")
 			}
 		})
 	}

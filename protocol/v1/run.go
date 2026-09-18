@@ -1,6 +1,10 @@
 package v1
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 // Run is one turn to execute against one session. It names its session,
 // harness and model explicitly; none is inferred from runner configuration.
@@ -11,10 +15,13 @@ type Run struct {
 	RunID   string     `json:"run_id"`
 	Session SessionRef `json:"session"`
 	Harness string     `json:"harness"`
-	Model   string     `json:"model,omitempty"`
-	Brief   Brief      `json:"brief"`
-	Sources []Source   `json:"sources,omitempty"`
-	Grants  []Grant    `json:"grants,omitempty"`
+	// Model is required: a run names its model, and a harness left to its own
+	// default runs something different, and differently priced, from what the
+	// hub asked for.
+	Model   string   `json:"model"`
+	Brief   Brief    `json:"brief"`
+	Sources []Source `json:"sources,omitempty"`
+	Grants  []Grant  `json:"grants,omitempty"`
 	// StartAt is a one-shot moment the run must not start before, like an email
 	// API's send_at. There is no recurrence anywhere in the protocol.
 	StartAt      *time.Time `json:"start_at,omitempty"`
@@ -117,4 +124,51 @@ func (s RunState) Valid() bool {
 		}
 	}
 	return false
+}
+
+// Validate checks what the schema cannot express, and what both sides must
+// check anyway: a hub before offering a run, a runner before claiming one.
+func (r Run) Validate() error {
+	var errs []error
+	for _, f := range []struct{ name, v string }{
+		{"run_id", r.RunID}, {"session.id", r.Session.ID}, {"harness", r.Harness},
+		{"model", r.Model}, {"brief.instruction", r.Brief.Instruction},
+	} {
+		if f.v == "" {
+			errs = append(errs, fmt.Errorf("%s is required", f.name))
+		}
+	}
+	switch r.Session.Mode {
+	case "", SessionPerRun, SessionLive:
+	default:
+		errs = append(errs, fmt.Errorf("session.mode %q is not per_run or live", r.Session.Mode))
+	}
+	for i, src := range r.Sources {
+		if err := src.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("sources[%d]: %w", i, err))
+		}
+	}
+	for i, g := range r.Grants {
+		if g.Name == "" {
+			errs = append(errs, fmt.Errorf("grants[%d].name is required", i))
+		}
+		if g.As != GrantEnv && g.As != GrantFile {
+			errs = append(errs, fmt.Errorf("grants[%d].as %q is not env or file", i, g.As))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// Validate enforces exactly one of git or path. The generated schema cannot
+// say "exactly one", so this is where the rule lives.
+func (s Source) Validate() error {
+	switch {
+	case s.Git != nil && s.Path != "":
+		return errors.New("set git or path, not both")
+	case s.Git != nil && s.Git.URL == "":
+		return errors.New("git.url is required")
+	case s.Git == nil && s.Path == "":
+		return errors.New("set git or path")
+	}
+	return nil
 }

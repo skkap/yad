@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
@@ -39,7 +40,7 @@ func New() *Hub {
 	register(api)
 
 	outer := http.NewServeMux()
-	outer.Handle(BasePath+"/", http.StripPrefix(BasePath, inner))
+	outer.Handle(BasePath+"/", http.StripPrefix(BasePath, protocolRoutes(inner)))
 	// Anything outside the base is a wrong connection URL. Say so in the
 	// protocol's own shape, not the mux's plain-text 404.
 	outer.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +49,50 @@ func New() *Hub {
 	})
 	return &Hub{api: api, mux: outer}
 }
+
+// protocolRoutes makes every response under the base the protocol's own.
+// huma sees only requests that match an operation, so a path or method that
+// matches none would otherwise get the mux's plain-text 404 or 405, which a
+// runner can only report as "is this even a hub?". And a request speaking
+// another protocol version is refused before its body is decoded — a body
+// shaped for v2 fails v1 validation in ways that say nothing about the cause.
+func protocolRoutes(ops *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallback, pattern := ops.Handler(r)
+		if pattern == "" {
+			rec := &recorder{header: http.Header{}, status: http.StatusNotFound}
+			fallback.ServeHTTP(rec, r)
+			if rec.status == http.StatusMethodNotAllowed {
+				w.Header().Set("Allow", rec.header.Get("Allow"))
+				writeError(w, Fail(http.StatusMethodNotAllowed, v1.CodeInvalid,
+					r.Method+" "+r.URL.Path+" is not an operation",
+					"every protocol call is a POST — see protocol/v1/openapi.yaml"))
+				return
+			}
+			writeError(w, Fail(http.StatusNotFound, v1.CodeNotFound, "no operation at "+r.URL.Path,
+				"check the connection URL and the path against protocol/v1/openapi.yaml"))
+			return
+		}
+		if r.Method == http.MethodPost && r.Header.Get(v1.HeaderProtocol) != v1.Version {
+			writeError(w, Fail(http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol,
+				"this hub speaks protocol "+v1.Version+"; the request said "+strconv.Quote(r.Header.Get(v1.HeaderProtocol)),
+				"upgrade yad or the hub so both speak protocol "+v1.Version))
+			return
+		}
+		ops.ServeHTTP(w, r)
+	})
+}
+
+// recorder captures what the mux's own fallback would have written, so its
+// status and Allow header can be carried into a protocol error.
+type recorder struct {
+	header http.Header
+	status int
+}
+
+func (r *recorder) Header() http.Header         { return r.header }
+func (r *recorder) Write(b []byte) (int, error) { return len(b), nil }
+func (r *recorder) WriteHeader(status int)      { r.status = status }
 
 // ServeHTTP serves the protocol under BasePath.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
@@ -79,7 +124,8 @@ func Config() huma.Config {
 }
 
 // protocolHeader is on every request so a hub can refuse a version it does not
-// host before decoding the body.
+// host before decoding the body. protocolRoutes enforces it with a 426; the
+// declaration here is what puts it in openapi.yaml.
 type protocolHeader struct {
 	Protocol string `header:"Yad-Protocol" required:"true" enum:"1" doc:"The protocol major version."`
 }
@@ -144,7 +190,7 @@ func register(api huma.API) {
 		OperationID: "appendEvents", Method: http.MethodPost, Path: "/runs/{run}/events",
 		Summary:     "Append a batch of run events",
 		Description: "Idempotent by (run, seq). The response's acked_through is authoritative; the runner resends everything after it.",
-		Security:    security, Errors: []int{400, 401, 404},
+		Security:    security, Errors: []int{400, 401, 404, 426},
 	}, func(ctx context.Context, in *eventsInput) (*eventsOutput, error) {
 		return nil, notYet("appendEvents")
 	})
@@ -153,7 +199,7 @@ func register(api huma.API) {
 		OperationID: "submitResult", Method: http.MethodPost, Path: "/runs/{run}/result",
 		Summary:     "Report a run's terminal state",
 		Description: "Retried from the runner's outbox until acknowledged. 409 means the hub already holds a different terminal state, which wins.",
-		Security:    security, Errors: []int{400, 401, 404, 409},
+		Security:    security, Errors: []int{400, 401, 404, 409, 426},
 	}, func(ctx context.Context, in *resultInput) (*ackOutput, error) {
 		return nil, notYet("submitResult")
 	})
@@ -162,7 +208,7 @@ func register(api huma.API) {
 		OperationID: "deregister", Method: http.MethodPost, Path: "/runners/{runner}/deregister",
 		Summary:     "Retire this runner's credential",
 		Description: "Runs the runner still holds become lost on the hub's side.",
-		Security:    security, Errors: []int{401},
+		Security:    security, Errors: []int{401, 426},
 	}, func(ctx context.Context, in *deregisterInput) (*ackOutput, error) {
 		return nil, notYet("deregister")
 	})

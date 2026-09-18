@@ -2,9 +2,14 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestParseVersion(t *testing.T) {
@@ -80,7 +85,7 @@ func TestDetectReadsVersionAndHonoursEnvPath(t *testing.T) {
 		if d.ID != "codex" {
 			continue
 		}
-		if !d.Ready() || d.Version != "codex-cli 0.147.0" || d.Path != bin {
+		if !d.Present || d.Error != "" || d.Version != "codex-cli 0.147.0" || d.Path != bin {
 			t.Errorf("codex = %+v", d)
 		}
 		return
@@ -89,10 +94,103 @@ func TestDetectReadsVersionAndHonoursEnvPath(t *testing.T) {
 }
 
 func TestLookup(t *testing.T) {
-	if h, ok := Lookup("claude"); !ok || h.Kind != FirstClass {
+	// Recognised until DEV-5 lands the adapter; nothing becomes first-class
+	// without one (CLAUDE.md).
+	if h, ok := Lookup("claude"); !ok || h.Kind != Recognised {
 		t.Errorf("Lookup(claude) = %+v, %v", h, ok)
 	}
 	if _, ok := Lookup("nope"); ok {
 		t.Error("Lookup(nope) found something")
+	}
+}
+
+// A probe that hangs is reported, not waited on, and it takes its descendants
+// with it: a launcher that forks and hangs would otherwise leave one orphan per
+// daemon tick.
+func TestHangingProbeIsBoundedAndLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	pidfile := filepath.Join(dir, "grandchild.pid")
+	script := filepath.Join(dir, "codex")
+	body := "#!/bin/sh\nsleep 60 &\necho $! > " + pidfile + "\nsleep 60\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAD_CODEX_PATH", script)
+	old := versionTimeout
+	versionTimeout = 1500 * time.Millisecond
+	t.Cleanup(func() { versionTimeout = old })
+
+	h, _ := Lookup("codex")
+	start := time.Now()
+	d := detectOne(context.Background(), h)
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("probe took %s; the timeout is not bounding it", took)
+	}
+	if !strings.Contains(d.Error, "no answer") {
+		t.Errorf("Error = %q, want a timeout report", d.Error)
+	}
+	raw, err := os.ReadFile(pidfile)
+	if err != nil {
+		t.Fatalf("grandchild never started: %v", err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		if time.Now().After(deadline) {
+			syscall.Kill(pid, syscall.SIGKILL)
+			t.Fatalf("grandchild %d survived the probe", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Ready is the gate on accepting a run, so every way to fail it is a case.
+func TestReady(t *testing.T) {
+	first := Harness{Kind: FirstClass}
+	rec := Harness{Kind: Recognised}
+	for _, tc := range []struct {
+		name string
+		d    Detected
+		want bool
+	}{
+		{"first-class, present, answering", Detected{Harness: first, Present: true}, true},
+		{"recognised, present, answering", Detected{Harness: rec, Present: true}, false},
+		{"first-class, present, broken", Detected{Harness: first, Present: true, Error: "exit 1"}, false},
+		{"first-class, absent", Detected{Harness: first}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.d.Ready(); got != tc.want {
+				t.Errorf("Ready() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// DOMAIN.md's **First-class harness** entry names the closed set of kinds; the
+// capability document publishes these strings, so the two must not drift.
+func TestKindsMatchDomain(t *testing.T) {
+	raw, err := os.ReadFile("../../DOMAIN.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, after, ok := strings.Cut(string(raw), "**First-class harness**")
+	if !ok {
+		t.Fatal("DOMAIN.md has no **First-class harness** entry")
+	}
+	_, kinds, ok := strings.Cut(after, "_Kinds_:")
+	if !ok {
+		t.Fatal("**First-class harness** has no _Kinds_ line")
+	}
+	line, _, _ := strings.Cut(kinds, "\n")
+	var got []string
+	for _, v := range strings.Split(line, "|") {
+		got = append(got, strings.TrimSpace(v))
+	}
+	want := []string{string(FirstClass), string(Recognised)}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("DOMAIN.md kinds %v, catalog kinds %v", got, want)
 	}
 }

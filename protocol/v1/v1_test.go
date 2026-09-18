@@ -93,6 +93,7 @@ func TestKindsMatchDomain(t *testing.T) {
 	}
 	check("Event", events)
 	check("Run state", states)
+	check("Session", []string{string(SessionPerRun), string(SessionLive)})
 }
 
 // domainKinds maps each entry headword to the values on its _Kinds_ line.
@@ -163,6 +164,42 @@ func TestEnumTagsMatchSets(t *testing.T) {
 		}
 		if got := strings.Split(f.Tag.Get("enum"), ","); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%T.%s enum tag = %v, want %v", tc.v, tc.field, got, tc.want)
+		}
+	}
+}
+
+func TestRunValidate(t *testing.T) {
+	good := Run{RunID: "r", Session: SessionRef{ID: "s", New: true}, Harness: "claude", Model: "opus", Brief: Brief{Instruction: "hi"}}
+	if err := good.Validate(); err != nil {
+		t.Fatalf("valid run refused: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*Run)
+	}{
+		{"no run id", func(r *Run) { r.RunID = "" }},
+		{"no session", func(r *Run) { r.Session.ID = "" }},
+		{"no harness", func(r *Run) { r.Harness = "" }},
+		{"no model", func(r *Run) { r.Model = "" }},
+		{"no instruction", func(r *Run) { r.Brief.Instruction = "" }},
+		{"unknown session mode", func(r *Run) { r.Session.Mode = "warm" }},
+		{"empty source", func(r *Run) { r.Sources = []Source{{}} }},
+		{"source with both", func(r *Run) { r.Sources = []Source{{Git: &GitSource{URL: "u"}, Path: "/p"}} }},
+		{"git source without url", func(r *Run) { r.Sources = []Source{{Git: &GitSource{}}} }},
+		{"grant without name", func(r *Run) { r.Grants = []Grant{{As: GrantEnv}} }},
+		{"grant delivered by argv", func(r *Run) { r.Grants = []Grant{{Name: "T", As: "argv"}} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := good
+			tc.edit(&r)
+			if r.Validate() == nil {
+				t.Error("accepted")
+			}
+		})
+	}
+	for _, src := range []Source{{Git: &GitSource{URL: "u"}}, {Path: "/p"}} {
+		if err := src.Validate(); err != nil {
+			t.Errorf("valid source %+v refused: %v", src, err)
 		}
 	}
 }

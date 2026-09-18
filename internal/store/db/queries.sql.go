@@ -11,43 +11,50 @@ import (
 )
 
 const ackEvents = `-- name: AckEvents :exec
-UPDATE events SET acked = 1 WHERE run_id = ? AND seq <= ?
+UPDATE events SET acked = 1 WHERE connection = ? AND run_id = ? AND seq <= ?
 `
 
 type AckEventsParams struct {
-	RunID string
-	Seq   int64
+	Connection string
+	RunID      string
+	Seq        int64
 }
 
 func (q *Queries) AckEvents(ctx context.Context, arg AckEventsParams) error {
-	_, err := q.db.ExecContext(ctx, ackEvents, arg.RunID, arg.Seq)
+	_, err := q.db.ExecContext(ctx, ackEvents, arg.Connection, arg.RunID, arg.Seq)
 	return err
 }
 
 const appendEvent = `-- name: AppendEvent :exec
-INSERT INTO events (run_id, seq, body) VALUES (?, ?, ?)
+INSERT INTO events (connection, run_id, seq, body) VALUES (?, ?, ?, ?)
 `
 
 type AppendEventParams struct {
-	RunID string
-	Seq   int64
-	Body  string
+	Connection string
+	RunID      string
+	Seq        int64
+	Body       string
 }
 
 func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) error {
-	_, err := q.db.ExecContext(ctx, appendEvent, arg.RunID, arg.Seq, arg.Body)
+	_, err := q.db.ExecContext(ctx, appendEvent,
+		arg.Connection,
+		arg.RunID,
+		arg.Seq,
+		arg.Body,
+	)
 	return err
 }
 
 const createRun = `-- name: CreateRun :exec
-INSERT INTO runs (id, session_id, connection, harness, model, state, spec, created_at, updated_at)
+INSERT INTO runs (connection, id, session_id, harness, model, state, spec, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?)
 `
 
 type CreateRunParams struct {
+	Connection string
 	ID         string
 	SessionID  string
-	Connection string
 	Harness    string
 	Model      string
 	Spec       string
@@ -57,9 +64,9 @@ type CreateRunParams struct {
 
 func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) error {
 	_, err := q.db.ExecContext(ctx, createRun,
+		arg.Connection,
 		arg.ID,
 		arg.SessionID,
-		arg.Connection,
 		arg.Harness,
 		arg.Model,
 		arg.Spec,
@@ -70,13 +77,14 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) error {
 }
 
 const createSession = `-- name: CreateSession :exec
-INSERT INTO sessions (id, connection, harness, account, workdir, created_at, last_used_at)
+
+INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateSessionParams struct {
-	ID         string
 	Connection string
+	ID         string
 	Harness    string
 	Account    sql.NullString
 	Workdir    string
@@ -84,10 +92,12 @@ type CreateSessionParams struct {
 	LastUsedAt int64
 }
 
+// Every hub-issued id (session, run) is addressed together with its
+// connection; see the note at the top of migrations/0001_init.sql.
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
 	_, err := q.db.ExecContext(ctx, createSession,
-		arg.ID,
 		arg.Connection,
+		arg.ID,
 		arg.Harness,
 		arg.Account,
 		arg.Workdir,
@@ -98,16 +108,21 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 }
 
 const deleteOutbox = `-- name: DeleteOutbox :exec
-DELETE FROM outbox WHERE run_id = ?
+DELETE FROM outbox WHERE connection = ? AND run_id = ?
 `
 
-func (q *Queries) DeleteOutbox(ctx context.Context, runID string) error {
-	_, err := q.db.ExecContext(ctx, deleteOutbox, runID)
+type DeleteOutboxParams struct {
+	Connection string
+	RunID      string
+}
+
+func (q *Queries) DeleteOutbox(ctx context.Context, arg DeleteOutboxParams) error {
+	_, err := q.db.ExecContext(ctx, deleteOutbox, arg.Connection, arg.RunID)
 	return err
 }
 
 const dueOutbox = `-- name: DueOutbox :many
-SELECT run_id, connection, body, attempts, next_attempt_at, last_error FROM outbox WHERE connection = ? AND next_attempt_at <= ? ORDER BY next_attempt_at
+SELECT connection, run_id, body, attempts, next_attempt_at, last_error FROM outbox WHERE connection = ? AND next_attempt_at <= ? ORDER BY next_attempt_at
 `
 
 type DueOutboxParams struct {
@@ -125,8 +140,8 @@ func (q *Queries) DueOutbox(ctx context.Context, arg DueOutboxParams) ([]Outbox,
 	for rows.Next() {
 		var i Outbox
 		if err := rows.Scan(
-			&i.RunID,
 			&i.Connection,
+			&i.RunID,
 			&i.Body,
 			&i.Attempts,
 			&i.NextAttemptAt,
@@ -146,25 +161,35 @@ func (q *Queries) DueOutbox(ctx context.Context, arg DueOutboxParams) ([]Outbox,
 }
 
 const freeSlots = `-- name: FreeSlots :exec
-DELETE FROM slots WHERE session_id = ?
+DELETE FROM slots WHERE connection = ? AND session_id = ?
 `
 
-func (q *Queries) FreeSlots(ctx context.Context, sessionID string) error {
-	_, err := q.db.ExecContext(ctx, freeSlots, sessionID)
+type FreeSlotsParams struct {
+	Connection string
+	SessionID  string
+}
+
+func (q *Queries) FreeSlots(ctx context.Context, arg FreeSlotsParams) error {
+	_, err := q.db.ExecContext(ctx, freeSlots, arg.Connection, arg.SessionID)
 	return err
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, session_id, connection, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at FROM runs WHERE id = ?
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at FROM runs WHERE connection = ? AND id = ?
 `
 
-func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
-	row := q.db.QueryRowContext(ctx, getRun, id)
+type GetRunParams struct {
+	Connection string
+	ID         string
+}
+
+func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
+	row := q.db.QueryRowContext(ctx, getRun, arg.Connection, arg.ID)
 	var i Run
 	err := row.Scan(
+		&i.Connection,
 		&i.ID,
 		&i.SessionID,
-		&i.Connection,
 		&i.Harness,
 		&i.Model,
 		&i.State,
@@ -179,15 +204,20 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, connection, harness, native_id, account, workdir, state, created_at, last_used_at FROM sessions WHERE id = ?
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at FROM sessions WHERE connection = ? AND id = ?
 `
 
-func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
-	row := q.db.QueryRowContext(ctx, getSession, id)
+type GetSessionParams struct {
+	Connection string
+	ID         string
+}
+
+func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session, error) {
+	row := q.db.QueryRowContext(ctx, getSession, arg.Connection, arg.ID)
 	var i Session
 	err := row.Scan(
-		&i.ID,
 		&i.Connection,
+		&i.ID,
 		&i.Harness,
 		&i.NativeID,
 		&i.Account,
@@ -227,7 +257,7 @@ func (q *Queries) ListAccounts(ctx context.Context, harness string) ([]Account, 
 }
 
 const listHeldRuns = `-- name: ListHeldRuns :many
-SELECT id, session_id, connection, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at FROM runs
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at FROM runs
 WHERE connection = ? AND state IN ('claimed', 'preparing', 'running', 'waiting')
 ORDER BY created_at
 `
@@ -242,9 +272,9 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 	for rows.Next() {
 		var i Run
 		if err := rows.Scan(
+			&i.Connection,
 			&i.ID,
 			&i.SessionID,
-			&i.Connection,
 			&i.Harness,
 			&i.Model,
 			&i.State,
@@ -269,7 +299,7 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 }
 
 const listIdleSessions = `-- name: ListIdleSessions :many
-SELECT id, connection, harness, native_id, account, workdir, state, created_at, last_used_at FROM sessions WHERE state = 'open' AND last_used_at < ? ORDER BY last_used_at
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at FROM sessions WHERE state = 'open' AND last_used_at < ? ORDER BY last_used_at
 `
 
 func (q *Queries) ListIdleSessions(ctx context.Context, lastUsedAt int64) ([]Session, error) {
@@ -282,8 +312,8 @@ func (q *Queries) ListIdleSessions(ctx context.Context, lastUsedAt int64) ([]Ses
 	for rows.Next() {
 		var i Session
 		if err := rows.Scan(
-			&i.ID,
 			&i.Connection,
+			&i.ID,
 			&i.Harness,
 			&i.NativeID,
 			&i.Account,
@@ -317,21 +347,21 @@ func (q *Queries) OutboxDepth(ctx context.Context) (int64, error) {
 }
 
 const putOutbox = `-- name: PutOutbox :exec
-INSERT INTO outbox (run_id, connection, body, next_attempt_at) VALUES (?, ?, ?, ?)
-ON CONFLICT (run_id) DO NOTHING
+INSERT INTO outbox (connection, run_id, body, next_attempt_at) VALUES (?, ?, ?, ?)
+ON CONFLICT (connection, run_id) DO NOTHING
 `
 
 type PutOutboxParams struct {
-	RunID         string
 	Connection    string
+	RunID         string
 	Body          string
 	NextAttemptAt int64
 }
 
 func (q *Queries) PutOutbox(ctx context.Context, arg PutOutboxParams) error {
 	_, err := q.db.ExecContext(ctx, putOutbox,
-		arg.RunID,
 		arg.Connection,
+		arg.RunID,
 		arg.Body,
 		arg.NextAttemptAt,
 	)
@@ -339,17 +369,23 @@ func (q *Queries) PutOutbox(ctx context.Context, arg PutOutboxParams) error {
 }
 
 const retryOutbox = `-- name: RetryOutbox :exec
-UPDATE outbox SET attempts = attempts + 1, next_attempt_at = ?, last_error = ? WHERE run_id = ?
+UPDATE outbox SET attempts = attempts + 1, next_attempt_at = ?, last_error = ? WHERE connection = ? AND run_id = ?
 `
 
 type RetryOutboxParams struct {
 	NextAttemptAt int64
 	LastError     sql.NullString
+	Connection    string
 	RunID         string
 }
 
 func (q *Queries) RetryOutbox(ctx context.Context, arg RetryOutboxParams) error {
-	_, err := q.db.ExecContext(ctx, retryOutbox, arg.NextAttemptAt, arg.LastError, arg.RunID)
+	_, err := q.db.ExecContext(ctx, retryOutbox,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.Connection,
+		arg.RunID,
+	)
 	return err
 }
 
@@ -370,30 +406,37 @@ func (q *Queries) SetAccountLimit(ctx context.Context, arg SetAccountLimitParams
 }
 
 const setRunAccount = `-- name: SetRunAccount :exec
-UPDATE runs SET account = ?, updated_at = ? WHERE id = ?
+UPDATE runs SET account = ?, updated_at = ? WHERE connection = ? AND id = ?
 `
 
 type SetRunAccountParams struct {
-	Account   sql.NullString
-	UpdatedAt int64
-	ID        string
+	Account    sql.NullString
+	UpdatedAt  int64
+	Connection string
+	ID         string
 }
 
 func (q *Queries) SetRunAccount(ctx context.Context, arg SetRunAccountParams) error {
-	_, err := q.db.ExecContext(ctx, setRunAccount, arg.Account, arg.UpdatedAt, arg.ID)
+	_, err := q.db.ExecContext(ctx, setRunAccount,
+		arg.Account,
+		arg.UpdatedAt,
+		arg.Connection,
+		arg.ID,
+	)
 	return err
 }
 
 const setRunState = `-- name: SetRunState :exec
-UPDATE runs SET state = ?, resumes_at = ?, reason = ?, updated_at = ? WHERE id = ?
+UPDATE runs SET state = ?, resumes_at = ?, reason = ?, updated_at = ? WHERE connection = ? AND id = ?
 `
 
 type SetRunStateParams struct {
-	State     string
-	ResumesAt sql.NullInt64
-	Reason    sql.NullString
-	UpdatedAt int64
-	ID        string
+	State      string
+	ResumesAt  sql.NullInt64
+	Reason     sql.NullString
+	UpdatedAt  int64
+	Connection string
+	ID         string
 }
 
 func (q *Queries) SetRunState(ctx context.Context, arg SetRunStateParams) error {
@@ -402,38 +445,51 @@ func (q *Queries) SetRunState(ctx context.Context, arg SetRunStateParams) error 
 		arg.ResumesAt,
 		arg.Reason,
 		arg.UpdatedAt,
+		arg.Connection,
 		arg.ID,
 	)
 	return err
 }
 
 const setSessionNativeID = `-- name: SetSessionNativeID :exec
-UPDATE sessions SET native_id = ?, last_used_at = ? WHERE id = ?
+UPDATE sessions SET native_id = ?, last_used_at = ? WHERE connection = ? AND id = ?
 `
 
 type SetSessionNativeIDParams struct {
 	NativeID   sql.NullString
 	LastUsedAt int64
+	Connection string
 	ID         string
 }
 
 func (q *Queries) SetSessionNativeID(ctx context.Context, arg SetSessionNativeIDParams) error {
-	_, err := q.db.ExecContext(ctx, setSessionNativeID, arg.NativeID, arg.LastUsedAt, arg.ID)
+	_, err := q.db.ExecContext(ctx, setSessionNativeID,
+		arg.NativeID,
+		arg.LastUsedAt,
+		arg.Connection,
+		arg.ID,
+	)
 	return err
 }
 
 const setSessionState = `-- name: SetSessionState :exec
-UPDATE sessions SET state = ?, last_used_at = ? WHERE id = ?
+UPDATE sessions SET state = ?, last_used_at = ? WHERE connection = ? AND id = ?
 `
 
 type SetSessionStateParams struct {
 	State      string
 	LastUsedAt int64
+	Connection string
 	ID         string
 }
 
 func (q *Queries) SetSessionState(ctx context.Context, arg SetSessionStateParams) error {
-	_, err := q.db.ExecContext(ctx, setSessionState, arg.State, arg.LastUsedAt, arg.ID)
+	_, err := q.db.ExecContext(ctx, setSessionState,
+		arg.State,
+		arg.LastUsedAt,
+		arg.Connection,
+		arg.ID,
+	)
 	return err
 }
 
@@ -476,27 +532,34 @@ func (q *Queries) SpoolDepth(ctx context.Context) (int64, error) {
 }
 
 const takeSlot = `-- name: TakeSlot :exec
-INSERT INTO slots (repo, slot, session_id) VALUES (?, ?, ?)
+INSERT INTO slots (repo, slot, connection, session_id) VALUES (?, ?, ?, ?)
 `
 
 type TakeSlotParams struct {
-	Repo      string
-	Slot      int64
-	SessionID string
+	Repo       string
+	Slot       int64
+	Connection string
+	SessionID  string
 }
 
 func (q *Queries) TakeSlot(ctx context.Context, arg TakeSlotParams) error {
-	_, err := q.db.ExecContext(ctx, takeSlot, arg.Repo, arg.Slot, arg.SessionID)
+	_, err := q.db.ExecContext(ctx, takeSlot,
+		arg.Repo,
+		arg.Slot,
+		arg.Connection,
+		arg.SessionID,
+	)
 	return err
 }
 
 const unackedEvents = `-- name: UnackedEvents :many
-SELECT seq, body FROM events WHERE run_id = ? AND acked = 0 ORDER BY seq LIMIT ?
+SELECT seq, body FROM events WHERE connection = ? AND run_id = ? AND acked = 0 ORDER BY seq LIMIT ?
 `
 
 type UnackedEventsParams struct {
-	RunID string
-	Limit int64
+	Connection string
+	RunID      string
+	Limit      int64
 }
 
 type UnackedEventsRow struct {
@@ -505,7 +568,7 @@ type UnackedEventsRow struct {
 }
 
 func (q *Queries) UnackedEvents(ctx context.Context, arg UnackedEventsParams) ([]UnackedEventsRow, error) {
-	rows, err := q.db.QueryContext(ctx, unackedEvents, arg.RunID, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, unackedEvents, arg.Connection, arg.RunID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

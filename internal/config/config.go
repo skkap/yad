@@ -159,6 +159,8 @@ func (c Config) Validate() error {
 		}
 		if conn.URL == "" {
 			errs = append(errs, fmt.Errorf("connection %q has no url", conn.Name))
+		} else if err := CheckHubURL(conn.URL); err != nil {
+			errs = append(errs, fmt.Errorf("connection %q: %w", conn.Name, err))
 		}
 		if conn.Cap < 0 {
 			errs = append(errs, fmt.Errorf("connection %q: cap must not be negative", conn.Name))

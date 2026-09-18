@@ -121,14 +121,14 @@ id and, underneath it, the harness's own native session id (Claude's
 `--session-id`, Codex's thread id). The mapping is the entire reason sessions are
 a first-class thing here: a hub must be able to say "continue the conversation
 you were having about ZUM-19" without knowing what a rollout file is.
-_Kinds_: per-run (a fresh harness process per run — the default) | live (one
+_Kinds_: per_run (a fresh harness process per run — the default) | live (one
 process kept across runs — reserved, not built)
 _Rules_: A session lives on one runner and is resumable only there. At most one
 run is live in a session at a time. A session may move between accounts of its
 harness.
 _Avoid_: thread, conversation, chat — as names for this; Codex's "thread" is the
 native id underneath
-_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), `internal/session`
+_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), `internal/store`
 
 **Run** — one turn executed against one session, by one harness, on one model:
 one prompt in, one terminal state out. The unit of work claimed, streamed and
@@ -137,7 +137,7 @@ to exactly one session.
 _Avoid_: task, job, thread, turn — task and job are the hubs' words (Zumino's
 task, yashiki's job) for the thing that *produces* runs; turn is the harness's
 word for what a run executes
-_See_: `internal/run`, `protocol/v1`
+_See_: `internal/runner`, `protocol/v1`
 
 **Start time** — an optional moment a run must not start before. One-shot, like
 an email API's `send_at`; the hub may hand the run over early so it starts on

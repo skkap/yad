@@ -27,13 +27,16 @@ vocabulary is in [`DOMAIN.md`](DOMAIN.md), the shape and the protocol in
 ```
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
-Claude Code         ready       2.1.276 (Claude Code)  /Users/me/.local/bin/claude
-Codex               ready       codex-cli 0.147.0      /Users/me/.local/bin/codex
+Claude Code         no adapter  2.1.276 (Claude Code)  /Users/me/.local/bin/claude
+Codex               no adapter  codex-cli 0.147.0      /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 Cursor Agent        no adapter  2025.09.12-4852336     /Users/me/.local/bin/cursor-agent
 
-2 harness(es) this runner can be given work for.
+No drivable harness: what is installed has no adapter in this yad yet — Claude Code arrives in epic E2, Codex in E5.
 ```
+
+Claude Code and Codex become `ready` as their adapters land; until then a runner
+advertises them as recognised and refuses runs for them.
 
 ## Status
 

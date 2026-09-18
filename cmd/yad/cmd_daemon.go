@@ -43,6 +43,9 @@ func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error 
 	if err := g.paths.Ensure(); err != nil {
 		return err
 	}
+	if *interval <= 0 {
+		return fmt.Errorf("--interval must be positive, got %s — the default is 15s", *interval)
+	}
 	id, err := g.paths.RunnerID()
 	if err != nil {
 		return err

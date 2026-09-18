@@ -66,17 +66,17 @@ func TestDuplicateEventRejected(t *testing.T) {
 	s, _ := open(t)
 	seed(t, s)
 	ctx := context.Background()
-	if err := s.AppendEvent(ctx, db.AppendEventParams{RunID: "r1", Seq: 1, Body: "{}"}); err != nil {
+	if err := s.AppendEvent(ctx, db.AppendEventParams{Connection: "hub", RunID: "r1", Seq: 1, Body: "{}"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendEvent(ctx, db.AppendEventParams{RunID: "r1", Seq: 1, Body: "{}"}); err == nil {
+	if err := s.AppendEvent(ctx, db.AppendEventParams{Connection: "hub", RunID: "r1", Seq: 1, Body: "{}"}); err == nil {
 		t.Error("duplicate (run, seq) accepted")
 	}
-	s.AppendEvent(ctx, db.AppendEventParams{RunID: "r1", Seq: 2, Body: "{}"})
-	if err := s.AckEvents(ctx, db.AckEventsParams{RunID: "r1", Seq: 1}); err != nil {
+	s.AppendEvent(ctx, db.AppendEventParams{Connection: "hub", RunID: "r1", Seq: 2, Body: "{}"})
+	if err := s.AckEvents(ctx, db.AckEventsParams{Connection: "hub", RunID: "r1", Seq: 1}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.UnackedEvents(ctx, db.UnackedEventsParams{RunID: "r1", Limit: 10})
+	rows, err := s.UnackedEvents(ctx, db.UnackedEventsParams{Connection: "hub", RunID: "r1", Limit: 10})
 	if err != nil || len(rows) != 1 || rows[0].Seq != 2 {
 		t.Errorf("unacked after ack(1) = %+v, %v", rows, err)
 	}
@@ -91,7 +91,7 @@ func TestOneLiveRunPerSession(t *testing.T) {
 	if err := s.CreateRun(ctx, second); err == nil {
 		t.Fatal("a second live run in one session was accepted")
 	}
-	if err := s.SetRunState(ctx, db.SetRunStateParams{State: "succeeded", UpdatedAt: 3, ID: "r1"}); err != nil {
+	if err := s.SetRunState(ctx, db.SetRunStateParams{State: "succeeded", UpdatedAt: 3, Connection: "hub", ID: "r1"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CreateRun(ctx, second); err != nil {
@@ -108,5 +108,37 @@ func TestOutboxKeepsFirstResult(t *testing.T) {
 	due, err := s.DueOutbox(ctx, db.DueOutboxParams{Connection: "hub", NextAttemptAt: 1})
 	if err != nil || len(due) != 1 || due[0].Body != "first" {
 		t.Errorf("outbox = %+v, %v", due, err)
+	}
+}
+
+// Hubs choose session and run ids without coordinating, so two connections may
+// use the same ids. Each keeps its own rows, and neither can reach the other's.
+func TestConnectionsDoNotShareIDs(t *testing.T) {
+	s, _ := open(t)
+	seed(t, s) // hub: s1, r1
+	ctx := context.Background()
+	if err := s.CreateSession(ctx, db.CreateSessionParams{ID: "s1", Connection: "other", Harness: "codex", Workdir: "/o", CreatedAt: 1, LastUsedAt: 1}); err != nil {
+		t.Fatalf("same session id on another connection refused: %v", err)
+	}
+	if err := s.CreateRun(ctx, db.CreateRunParams{ID: "r1", SessionID: "s1", Connection: "other", Harness: "codex", Spec: "{}", CreatedAt: 1, UpdatedAt: 1}); err != nil {
+		t.Fatalf("same run id on another connection refused, or its session's live run blocked it: %v", err)
+	}
+	if err := s.AppendEvent(ctx, db.AppendEventParams{Connection: "hub", RunID: "r1", Seq: 1, Body: "hub"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendEvent(ctx, db.AppendEventParams{Connection: "other", RunID: "r1", Seq: 1, Body: "other"}); err != nil {
+		t.Fatalf("same (run, seq) on another connection refused: %v", err)
+	}
+	got, err := s.GetSession(ctx, db.GetSessionParams{Connection: "other", ID: "s1"})
+	if err != nil || got.Harness != "codex" {
+		t.Errorf("other's session = %+v, %v", got, err)
+	}
+	rows, _ := s.UnackedEvents(ctx, db.UnackedEventsParams{Connection: "hub", RunID: "r1", Limit: 10})
+	if len(rows) != 1 || rows[0].Body != "hub" {
+		t.Errorf("hub's spool = %+v, want only its own event", rows)
+	}
+	// A run naming a session that exists only on another connection is refused.
+	if err := s.CreateRun(ctx, db.CreateRunParams{ID: "r9", SessionID: "s1", Connection: "third", Harness: "claude", Spec: "{}", CreatedAt: 1, UpdatedAt: 1}); err == nil {
+		t.Error("a run on one connection attached to another connection's session")
 	}
 }

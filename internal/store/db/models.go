@@ -15,15 +15,16 @@ type Account struct {
 }
 
 type Event struct {
-	RunID string
-	Seq   int64
-	Body  string
-	Acked int64
+	Connection string
+	RunID      string
+	Seq        int64
+	Body       string
+	Acked      int64
 }
 
 type Outbox struct {
-	RunID         string
 	Connection    string
+	RunID         string
 	Body          string
 	Attempts      int64
 	NextAttemptAt int64
@@ -31,9 +32,9 @@ type Outbox struct {
 }
 
 type Run struct {
+	Connection string
 	ID         string
 	SessionID  string
-	Connection string
 	Harness    string
 	Model      string
 	State      string
@@ -46,8 +47,8 @@ type Run struct {
 }
 
 type Session struct {
-	ID         string
 	Connection string
+	ID         string
 	Harness    string
 	NativeID   sql.NullString
 	Account    sql.NullString
@@ -58,7 +59,8 @@ type Session struct {
 }
 
 type Slot struct {
-	Repo      string
-	Slot      int64
-	SessionID string
+	Repo       string
+	Slot       int64
+	Connection string
+	SessionID  string
 }

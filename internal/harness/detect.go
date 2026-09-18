@@ -2,11 +2,16 @@ package harness
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // Detected is one catalog entry as it actually exists on this machine.
@@ -27,8 +32,12 @@ func (d Detected) Ready() bool {
 // versionTimeout caps one `<harness> --version`. A CLI that hangs on its own
 // version flag is broken — it happened to Claude through a bun regression and
 // stalled every registration in Multica — so the probe is bounded and the
-// failure is reported as text.
-const versionTimeout = 5 * time.Second
+// failure is reported as text. A variable so tests can shorten it.
+var versionTimeout = 5 * time.Second
+
+// versionOutputCap bounds what a probe may print. A version is one line; a CLI
+// that prints megabytes is broken, and must not grow the runner's memory.
+const versionOutputCap = 64 << 10
 
 // Detect probes every catalog entry concurrently and returns them in catalog
 // order. It never returns an error: a missing or broken harness is a fact about
@@ -61,20 +70,29 @@ func detectOne(ctx context.Context, h Harness) Detected {
 	}
 	d.Path, d.Present = path, true
 
+	// Through supervise like every other child: the probe runs every sync, and a
+	// wrapper script or node/bun launcher that forks and hangs must take its
+	// whole process group with it, not leave one orphan per tick.
 	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, h.VersionArgs...)
-	// A CLI that decides to prompt must not block on an inherited stdin, and a
-	// child that forks and keeps our pipe open must not hold Output() past the
-	// deadline — WaitDelay bounds that.
-	cmd.Stdin = nil
-	cmd.WaitDelay = time.Second
-	raw, err := cmd.Output()
+	p, err := supervise.Start(ctx, supervise.Spec{Path: path, Args: h.VersionArgs})
 	if err != nil {
-		d.Error = strings.TrimSpace(err.Error())
+		d.Error = err.Error()
 		return d
 	}
-	d.Version = ParseVersion(string(raw))
+	raw, _ := io.ReadAll(io.LimitReader(p.Stdout(), versionOutputCap))
+	// Past the cap the child may still be writing; closing our end makes it
+	// fail with EPIPE rather than block, and the deadline covers the rest.
+	p.Stdout().Close()
+	werr := p.Wait()
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		d.Error = fmt.Sprintf("no answer to %s within %s", strings.Join(h.VersionArgs, " "), versionTimeout)
+	case werr != nil:
+		d.Error = strings.TrimSpace(werr.Error() + " " + p.Stderr())
+	default:
+		d.Version = ParseVersion(string(raw))
+	}
 	return d
 }
 

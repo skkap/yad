@@ -466,6 +466,7 @@ components:
         - run_id
         - session
         - harness
+        - model
         - brief
       type: object
     RunError:
@@ -698,6 +699,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Unprocessable Entity
+        "426":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Upgrade Required
         "500":
           content:
             application/json:
@@ -820,6 +827,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Unprocessable Entity
+        "426":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Upgrade Required
         "500":
           content:
             application/json:
@@ -884,6 +897,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Unprocessable Entity
+        "426":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Upgrade Required
         "500":
           content:
             application/json:

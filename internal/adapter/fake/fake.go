@@ -79,7 +79,17 @@ func (t *turn) play(ctx context.Context, s Script) {
 			t.outcome = adapter.Outcome{State: v1.RunCancelled}
 			return
 		}
-		t.events <- e
+		// The consumer may stop reading once it has cancelled; a bare send would
+		// then block forever and Wait would never return.
+		select {
+		case t.events <- e:
+		case <-t.interrupt:
+			t.outcome = adapter.Outcome{State: v1.RunCancelled, NativeSessionID: s.Outcome.NativeSessionID}
+			return
+		case <-ctx.Done():
+			t.outcome = adapter.Outcome{State: v1.RunCancelled}
+			return
+		}
 	}
 	if s.Hang {
 		select {

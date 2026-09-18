@@ -18,8 +18,8 @@ UI, an orchestrator or a sandbox.
   proposing something that sounds like a better idea — it may already have been
   weighed and rejected.
 - **[`CHECKS.md`](CHECKS.md) is the bar** before pushing. `make check`.
-- **The plan is in Zumino**, project `yad/dev`: epics E1–E7 in build order, and
-  a backlog. `zumino queue --project dev --workspace yad`.
+- **The plan is in Zumino**, project `yad/dev`: epics E1–E8 in build order
+  (`ARCHITECTURE.md §9`), and E9, the backlog. `zumino queue --project dev --workspace yad`.
 
 ## Stack
 
@@ -40,7 +40,7 @@ rebuilds them and `make check` fails when they drift.
 - **Absence is data.** A missing harness, a `--version` that hangs, a broken PATH
   entry — each belongs in the capability document. None of them is an error that
   stops a runner registering.
-- **Errors carry the next action.** `"yad connect arrives in epic E1"`, not
+- **Errors carry the next action.** `"yad connect arrives in epic E2"`, not
   `"not implemented"`. Protocol errors carry a `next_action` field for the same
   reason.
 - **Tests never spend a token and never touch the network.** Adapters replay

@@ -3,7 +3,9 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,10 +21,16 @@ import (
 // profile a new runner, which is the supported way to retire one.
 func (p Paths) RunnerID() (string, error) {
 	path := filepath.Join(p.Config, "runner-id")
-	if b, err := os.ReadFile(path); err == nil {
+	b, err := os.ReadFile(path)
+	switch {
+	case err == nil:
 		if id := strings.TrimSpace(string(b)); id != "" {
 			return id, nil
 		}
+	case !errors.Is(err, fs.ErrNotExist):
+		// Unreadable is not absent: replacing it would give this profile a new
+		// identity and orphan every session the old one held.
+		return "", fmt.Errorf("read %s: %w — fix its ownership or permissions; deleting it retires this runner", path, err)
 	}
 	buf := make([]byte, 8)
 	if _, err := rand.Read(buf); err != nil {
@@ -32,9 +40,8 @@ func (p Paths) RunnerID() (string, error) {
 	if err := os.MkdirAll(p.Config, 0o700); err != nil {
 		return "", fmt.Errorf("create %s: %w", p.Config, err)
 	}
-	// Unlike the old behaviour of carrying on unsaved: a runner that forgets
-	// its id on restart registers as a new runner and orphans every session it
-	// held, which is worse than refusing to start.
+	// Refuse to start rather than run unsaved: a runner that forgets its id on
+	// restart registers as a new runner and orphans every session it held.
 	if err := writePrivate(path, []byte(id+"\n")); err != nil {
 		return "", err
 	}

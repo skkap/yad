@@ -52,9 +52,10 @@ type Process struct {
 	err    error
 }
 
-// Start runs spec in a new process group. The caller must drain Stdout to EOF;
-// the group is killed as soon as the leader exits, which is what ends EOF when a
-// grandchild inherited the pipe.
+// Start runs spec in a new process group. The caller owns Stdout: read it to
+// EOF, then Close it. EOF is guaranteed, because the group is killed as soon as
+// the leader exits, so a grandchild that inherited the pipe cannot hold it open.
+// Stdin, when requested, is closed by the Process once the leader exits.
 func Start(ctx context.Context, spec Spec) (*Process, error) {
 	cmd := exec.Command(spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
@@ -98,6 +99,11 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 		// The leader is gone; anything left in its group is a descendant holding
 		// pipes or git locks. It dies now, even after a clean exit.
 		p.signalGroup(syscall.SIGKILL)
+		// Nobody is left to read stdin, so its write end is ours to close. Stdout
+		// is not: the caller may still be draining it.
+		if p.stdin != nil {
+			p.stdin.Close()
+		}
 		close(p.done)
 	}()
 	go func() {
@@ -113,10 +119,13 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 // Pid is the leader's pid, which is also the process group id.
 func (p *Process) Pid() int { return p.cmd.Process.Pid }
 
-// Stdout is the child's standard output. Read it to EOF.
+// Stdout is the child's standard output. The caller reads it to EOF and closes
+// it; nothing else will.
 func (p *Process) Stdout() io.ReadCloser { return p.stdout }
 
-// Stdin is the child's standard input, or nil if Spec.Stdin was false.
+// Stdin is the child's standard input, or nil if Spec.Stdin was false. The
+// caller may close it to signal end of input; the Process closes it anyway once
+// the leader has exited.
 func (p *Process) Stdin() io.WriteCloser {
 	if p.stdin == nil {
 		return nil

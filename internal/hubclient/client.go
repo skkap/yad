@@ -18,6 +18,7 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/buildinfo"
+	"github.com/skkap/yad/internal/config"
 )
 
 // Client talks to one hub. The zero value is not usable; use New.
@@ -34,9 +35,8 @@ const requestTimeout = 30 * time.Second
 // New returns a client for the hub at baseURL, authenticating with the runner
 // credential (empty before registration).
 func New(baseURL, credential string) (*Client, error) {
-	u, err := url.Parse(baseURL)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return nil, fmt.Errorf("hub URL %q must be an absolute http(s) URL, like https://hub.example/yad/v1", baseURL)
+	if err := config.CheckHubURL(baseURL); err != nil {
+		return nil, err
 	}
 	return &Client{
 		base:       strings.TrimRight(baseURL, "/"),

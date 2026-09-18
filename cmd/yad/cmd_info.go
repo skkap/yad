@@ -38,17 +38,19 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "HARNESS\tSTATUS\tVERSION\tPATH")
-	ready := 0
+	ready, broken, noAdapter := 0, 0, 0
 	for _, d := range found {
 		status := "—"
 		switch {
 		case d.Present && d.Error != "":
 			status = "broken"
+			broken++
 		case d.Ready():
 			status = "ready"
 			ready++
 		case d.Present:
 			status = "no adapter"
+			noAdapter++
 		}
 		detail := d.Version
 		if d.Error != "" {
@@ -60,7 +62,17 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		return err
 	}
 	fmt.Fprintf(w, "\nprofile %s — config %s\n", g.paths.Profile, g.paths.Config)
-	if ready == 0 {
+	// Each way to reach zero has a different next action, and telling someone
+	// with both CLIs installed to install them is worse than saying nothing.
+	switch {
+	case ready > 0:
+	case noAdapter > 0:
+		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — Claude Code arrives in epic E2, Codex in E5.")
+		return nil
+	case broken > 0:
+		fmt.Fprintln(w, "No drivable harness: every installed one failed its version probe — fix the errors above and run this again.")
+		return nil
+	default:
 		fmt.Fprintln(w, "No drivable harness found. Install Claude Code or Codex and run this again.")
 		return nil
 	}
