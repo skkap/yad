@@ -61,7 +61,7 @@ cmd/yad/                 the CLI — one file per command group, no logic
 protocol/v1/             the wire types; public, so Go hubs can import them;
                          openapi.yaml generated from them and committed
 protocol/hubapi/         yad hub's service API types, and its own generated
-                         openapi.yaml — not part of the protocol (0021)
+                         openapi.yaml — not part of the protocol (0022)
 internal/config          profiles, config.toml, credentials on disk
 internal/store           SQLite: schema, migrations, sqlc-generated queries
 internal/harness         the catalog, detection, versions
@@ -224,7 +224,7 @@ refuse a runner below `min_version` with `version_too_old` and a next action.
 
 Not part of the protocol, and never implemented by a hub that embeds it:
 `yad hub`'s own way for a service or a person to make runs —
-[0021](docs/decisions/0021-hub-service-api-beside-the-protocol.md). Mounted at
+[0022](docs/decisions/0022-hub-service-api-beside-the-protocol.md). Mounted at
 `/api/v1` beside the protocol, described by `protocol/hubapi/openapi.yaml`
 (generated, committed, drift-checked), authenticated by an **admin token**.
 

@@ -113,10 +113,19 @@ func (c *Client) Follow(ctx context.Context, runID string, after int64, fn func(
 }
 
 // permanent is an answer that asking again will not change: the request
-// itself is wrong. A 5xx or no answer at all may be gone on the next try.
+// itself is wrong. A 5xx or no answer at all may be gone on the next try, and
+// so may a 408 or 429 — the hub sends neither, but a proxy or rate limiter in
+// front of it does, and that is a blip, not a refusal.
 func permanent(err error) bool {
 	var se *hubclient.StatusError
-	return errors.As(err, &se) && se.Status >= 400 && se.Status < 500
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Status {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return false
+	}
+	return se.Status >= 400 && se.Status < 500
 }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {

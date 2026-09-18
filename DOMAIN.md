@@ -58,7 +58,7 @@ registration token and the runner credential, and never accepted where either
 of them is: a runner cannot submit work, and a service cannot pose as a runner.
 Only `yad hub` has one — a hub that embeds the protocol makes runs its own way.
 _Avoid_: API key, PAT — Zumino's word for a person's token
-_See_: [0021](docs/decisions/0021-hub-service-api-beside-the-protocol.md), `internal/hub/admin.go`
+_See_: [0022](docs/decisions/0022-hub-service-api-beside-the-protocol.md), `internal/hub/admin.go`
 
 **Capability document** — what a runner advertises to each hub: its id, name,
 OS, arch, labels, `yad` version, the harness list with versions and accounts,

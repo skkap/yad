@@ -13,7 +13,7 @@
 //
 // Beside the protocol, under hubapi.BasePath, is the service API — submit a
 // run, read it, long-poll its events — which only this hub has, behind its own
-// admin tokens (decision 0021).
+// admin tokens (decision 0022).
 package hub
 
 import (
@@ -149,6 +149,7 @@ func (h *Hub) serviceRoutes(ops *http.ServeMux) http.Handler {
 			writeError(w, e)
 			return
 		}
+		r = r.WithContext(context.WithValue(r.Context(), serviceKey{}, true))
 		if unmatched(ops, w, r, "see protocol/hubapi/openapi.yaml for each path's method",
 			"check the hub URL and the path against protocol/hubapi/openapi.yaml") {
 			return

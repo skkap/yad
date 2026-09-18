@@ -167,7 +167,9 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 
 // sameRun reports whether a resubmitted run is the one the hub already holds.
 // A caller that let the hub pick the session cannot send its id again, so
-// then the session is not compared.
+// then the session id is not compared — but the stored run must have started
+// its session too: a retry asking for a new session is not the run that
+// continued an old one.
 func (h *Hub) sameRun(ctx context.Context, run v1.Run, anySession bool) (bool, error) {
 	stored, err := h.store.GetRun(ctx, run.RunID)
 	if err != nil {
@@ -177,6 +179,9 @@ func (h *Hub) sameRun(ctx context.Context, run v1.Run, anySession bool) (bool, e
 		var was v1.Run
 		if err := json.Unmarshal([]byte(stored.Spec), &was); err != nil {
 			return false, fmt.Errorf("stored run %s: %w", stored.ID, err)
+		}
+		if !was.Session.New {
+			return false, nil
 		}
 		run.Session = was.Session
 	}

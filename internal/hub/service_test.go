@@ -51,7 +51,10 @@ func (f *fixture) admin(t *testing.T, name string) string {
 func (f *fixture) api(t *testing.T, method, path, token string, body any, out any) (int, v1.Error) {
 	t.Helper()
 	var rd io.Reader
-	if body != nil {
+	if raw, ok := body.(string); ok {
+		// A string is sent as is, so a test can send what JSON cannot encode.
+		rd = strings.NewReader(raw)
+	} else if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			t.Fatal(err)
@@ -122,24 +125,39 @@ func TestServiceNeedsAnAdminToken(t *testing.T) {
 	}
 }
 
+// Every error the service API returns — its own or huma's — has the envelope,
+// and a next action that points at the service API's document, never the
+// runner protocol's: a service caller has no reason to read that one.
 func TestServiceErrorsHaveTheEnvelope(t *testing.T) {
 	f := newFixture(t)
 	tok := f.admin(t, "cli")
 	for _, tc := range []struct {
 		name, method, path string
+		body               any
 		want               int
 	}{
-		{"unknown path", "GET", "/nowhere", 404},
-		{"wrong method", "DELETE", "/runs", 405},
-		{"unknown run", "GET", "/runs/nope", 404},
-		{"unknown run's events", "GET", "/runs/nope/events?wait_ms=0", 404},
-		{"negative cursor", "GET", "/runs/nope/events?after=-1", 422},
+		{"unknown path", "GET", "/nowhere", nil, 404},
+		{"wrong method", "DELETE", "/runs", nil, 405},
+		{"unknown run", "GET", "/runs/nope", nil, 404},
+		{"unknown run's events", "GET", "/runs/nope/events?wait_ms=0", nil, 404},
+		{"negative cursor", "GET", "/runs/nope/events?after=-1", nil, 422},
+		{"empty harness", "POST", "/runs", hubapi.SubmitRequest{Model: "opus", Brief: v1.Brief{Instruction: "x"}}, 422},
+		{"malformed body", "POST", "/runs", `{`, 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if code, _ := f.api(t, tc.method, tc.path, tok, nil, nil); code != tc.want {
+			code, e := f.api(t, tc.method, tc.path, tok, tc.body, nil)
+			if code != tc.want {
 				t.Errorf("status %d, want %d", code, tc.want)
 			}
+			if strings.Contains(e.NextAction, "protocol/v1") || strings.Contains(e.NextAction, "registration token") {
+				t.Errorf("next action sends a service caller to the runner protocol: %q", e.NextAction)
+			}
 		})
+	}
+	// The protocol's own errors keep pointing at the protocol.
+	_, env := post(t, f.hub, "/v1/runs/r/events", `{`, headers(""))
+	if !strings.Contains(env.Error.NextAction, "protocol/v1/openapi.yaml") {
+		t.Errorf("protocol error next action %q", env.Error.NextAction)
 	}
 }
 
@@ -180,6 +198,15 @@ func TestSubmit(t *testing.T) {
 		{"retry into a named new session", []step{
 			{with(func(r *hubapi.SubmitRequest) { r.RunID = "r1"; newIn("s1")(r) }), 201},
 			{with(func(r *hubapi.SubmitRequest) { r.RunID = "r1"; newIn("s1")(r) }), 201},
+		}},
+		{"retry without the session it continued", []step{
+			{with(newIn("s1")), 201},
+			{with(func(r *hubapi.SubmitRequest) { r.RunID = "r1"; r.Session = &hubapi.SessionChoice{ID: "s1"} }), 201},
+			{with(func(r *hubapi.SubmitRequest) { r.RunID = "r1" }), 409},
+		}},
+		{"retry without the session it started", []step{
+			{with(func(r *hubapi.SubmitRequest) { r.RunID = "r1"; newIn("s1")(r) }), 201},
+			{with(func(r *hubapi.SubmitRequest) { r.RunID = "r1" }), 201},
 		}},
 		{"reuse a run id for other content", []step{
 			{with(func(r *hubapi.SubmitRequest) { r.RunID = "r1" }), 201},

@@ -2,7 +2,7 @@
 // run into a standalone hub and follows it. It is not the runner protocol — a
 // hub that embeds protocol/v1 (Zumino, yashiki) has its own way to make runs
 // and never implements this — so it has its own base path, its own token and
-// its own generated openapi.yaml beside this file (decision 0021).
+// its own generated openapi.yaml beside this file (decision 0022).
 //
 // It reuses the protocol's types for everything a run already says — brief,
 // sources, grants, events, result — so a service that knows one knows both.
@@ -92,8 +92,12 @@ type Run struct {
 // the cursor that the hub has, up to a page, and the run as it is now.
 //
 // A caller follows a run by asking again with After set to NextAfter until
-// Done. Done is true once the run is terminal and every event the hub holds
-// has been returned — the last page of a finished run.
+// Done. Done is true once the run is terminal and its stream is complete:
+// every event up to the result's last_seq has been returned. A result can
+// arrive before the runner's final batch of events, so a terminal run whose
+// held events are all returned is not yet done until those arrive. A run lost
+// by its runner has no result, and is done once the events the hub holds are
+// returned.
 type EventPage struct {
 	Events    []v1.Event `json:"events,omitempty"`
 	NextAfter int64      `json:"next_after"`

@@ -22,6 +22,8 @@ func TestFollowRetriesOnlyWhatMayPass(t *testing.T) {
 		calls   int32
 	}{
 		{"hub briefly down", http.StatusServiceUnavailable, false, 2},
+		{"proxy timed out", http.StatusRequestTimeout, false, 2},
+		{"rate limited", http.StatusTooManyRequests, false, 2},
 		{"token revoked", http.StatusUnauthorized, true, 1},
 		{"no such run", http.StatusNotFound, true, 1},
 	} {
