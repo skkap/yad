@@ -237,6 +237,11 @@ func TestStopFallsBackToSignals(t *testing.T) {
 				t.Errorf("pid %d is alive", pid)
 			}
 			if tc.code != 0 {
+				// Without --force nothing past SIGTERM is sent: a daemon
+				// that ignores it is still there.
+				if !alive(pid) {
+					t.Errorf("pid %d was killed without --force", pid)
+				}
 				syscall.Kill(pid, syscall.SIGKILL)
 				eventuallyTrue(func() bool { return !alive(pid) })
 			}
@@ -351,5 +356,30 @@ func TestRenderLogLine(t *testing.T) {
 		if got := renderLogLine(tc.in); got != tc.want {
 			t.Errorf("renderLogLine(%s)\n got %q\nwant %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// Run fields, errors and log text can come from a hub: none of them may
+// reach the terminal as a control sequence or as a row of its own.
+func TestStatusAndLogsEscapeHubText(t *testing.T) {
+	evil := "run\x1b[2J\nFAKE ROW\tx"
+	now := time.Now()
+	s := control.Status{
+		Connections: []control.Connection{{Name: "home", URL: "https://hub", State: "retrying", LastError: evil, LastErrorAt: &now}},
+		Runs:        []control.Run{{Connection: "home", ID: evil, Session: evil, Harness: "claude", Model: evil, State: "running", Reason: evil, Since: now}},
+		Errors:      []control.LogRecord{{Time: now, Level: "ERROR", Message: evil, Attrs: "err=" + evil}},
+	}
+	var b bytes.Buffer
+	printStatus(&b, s, now)
+	got := b.String()
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\nFAKE ROW") {
+		t.Errorf("status passed hub text through:\n%q", got)
+	}
+
+	var lb bytes.Buffer
+	line, _ := json.Marshal(map[string]string{"time": now.Format(time.RFC3339Nano), "level": "WARN", "msg": "sync failed", "err": evil})
+	(&logPrinter{w: &lb}).Write(append(line, '\n'))
+	if strings.Contains(lb.String(), "\x1b") || strings.Count(lb.String(), "\n") != 1 {
+		t.Errorf("logs passed hub text through:\n%q", lb.String())
 	}
 }

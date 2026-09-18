@@ -15,12 +15,14 @@ So the daemon takes `flock(2)` on `yad.lock` in the data directory for its whole
 life, and writes its pid there. The kernel drops the lock however the process
 ends, so a held lock means a live daemon and a free one means none. The socket
 file is then only for talking: a start that holds the lock removes whatever
-socket file it finds, because no live daemon can own it. The CLI checks the
-lock (shared, released at once) only when the socket does not answer. That
-tells "no daemon" apart from "a daemon too wedged to answer", and gives the
-wedged one's pid to `yad daemon stop` without the pid-reuse risk of a pid file,
-because the pid is only read while its writer holds the lock. A daemon starting
-at the moment a CLI probes retries the lock for half a second before it
+socket file it finds, because no live daemon can own it. The CLI probes the
+lock with a shared lock, released at once. `status` probes it when the socket
+does not answer, to tell "no daemon" from "a daemon too wedged to answer".
+`start` and `restart` probe it before they begin. `stop` polls it every 100ms
+while it waits for the daemon to go. It gives a wedged daemon's pid to `yad
+daemon stop` without the pid-reuse risk of a pid file, because the pid is only
+read while its writer holds the lock. Because of the polling, a daemon starting
+while a probe holds the shared lock retries for half a second before it
 concludes another daemon is running.
 
 The socket is `0600`, and the data directory must be `0700` and owned by the

@@ -82,9 +82,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	var exit exitError
 	if errors.As(cmdErr, &exit) {
-		if exit.msg != "" {
-			fmt.Fprintln(stderr, "yad:", exit.msg)
-		}
 		return exit.code
 	}
 	if cmdErr != nil {
@@ -96,17 +93,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 // exitError is a command's answer that is an exit code rather than a failure:
 // `yad daemon status` finding no daemon exits 3 having already said so.
-type exitError struct {
-	code int
-	msg  string
-}
+type exitError struct{ code int }
 
-func (e exitError) Error() string {
-	if e.msg != "" {
-		return e.msg
-	}
-	return fmt.Sprintf("exit %d", e.code)
-}
+func (e exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
 
 func usage(w io.Writer) {
 	fmt.Fprint(w, `yad — run coding-agent harnesses on this machine, for any number of hubs

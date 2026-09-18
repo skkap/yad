@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -34,6 +35,13 @@ func cmdStatus(ctx context.Context, g global, args []string, w io.Writer) error 
 	return nil
 }
 
+// cleanLine is clean for one cell of a table: run ids, models, errors and log
+// attributes can come from a hub, and a newline or tab in one would draw rows
+// of its own.
+func cleanLine(s string) string {
+	return strings.NewReplacer("\n", " ", "\t", " ").Replace(clean(s))
+}
+
 func printStatus(w io.Writer, s control.Status, now time.Time) {
 	ago := func(t time.Time) string { return now.Sub(t).Round(time.Second).String() + " ago" }
 	state := ""
@@ -56,9 +64,9 @@ func printStatus(w io.Writer, s control.Status, now time.Time) {
 			if c.LastSync != nil {
 				last = "synced " + ago(*c.LastSync)
 			}
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", c.Name, c.State, last, c.URL)
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", cleanLine(c.Name), c.State, last, cleanLine(c.URL))
 			if c.LastError != "" && c.LastErrorAt != nil {
-				fmt.Fprintf(tw, "  \t\tlast error %s: %s\t\n", ago(*c.LastErrorAt), c.LastError)
+				fmt.Fprintf(tw, "  \t\tlast error %s: %s\t\n", ago(*c.LastErrorAt), cleanLine(c.LastError))
 			}
 		}
 		tw.Flush()
@@ -76,9 +84,9 @@ func printStatus(w io.Writer, s control.Status, now time.Time) {
 				detail = "resumes at " + r.ResumesAt.Local().Format(time.DateTime)
 			}
 			if r.Reason != "" {
-				detail += " — " + r.Reason
+				detail += " — " + cleanLine(r.Reason)
 			}
-			fmt.Fprintf(tw, "  %s/%s\t%s\t%s/%s\tsession %s\t%s\n", r.Connection, r.ID, r.State, r.Harness, r.Model, r.Session, detail)
+			fmt.Fprintf(tw, "  %s/%s\t%s\t%s/%s\tsession %s\t%s\n", cleanLine(r.Connection), cleanLine(r.ID), cleanLine(r.State), cleanLine(r.Harness), cleanLine(r.Model), cleanLine(r.Session), detail)
 		}
 		tw.Flush()
 	}
@@ -87,9 +95,9 @@ func printStatus(w io.Writer, s control.Status, now time.Time) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "recent warnings and errors (`yad daemon logs` has everything)")
 		for _, e := range s.Errors {
-			line := fmt.Sprintf("  %s %-5s %s", e.Time.Local().Format(time.DateTime), e.Level, e.Message)
+			line := fmt.Sprintf("  %s %-5s %s", e.Time.Local().Format(time.DateTime), e.Level, cleanLine(e.Message))
 			if e.Attrs != "" {
-				line += "  " + e.Attrs
+				line += "  " + cleanLine(e.Attrs)
 			}
 			fmt.Fprintln(w, line)
 		}

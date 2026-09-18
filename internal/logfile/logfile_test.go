@@ -148,3 +148,63 @@ func TestRecentKeepsWarningsAndErrors(t *testing.T) {
 		t.Errorf("the wrapped handler did not see every record:\n%s", buf.String())
 	}
 }
+
+// A rotation that fails must not end the log. Renames refused: the lines go on
+// into the one file. The file gone and its directory refusing a new one: the
+// line is lost with an error, and the next write, once the directory is back,
+// lands.
+func TestRotationFailureKeepsLogging(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores the directory modes this test relies on")
+	}
+	dir := filepath.Join(t.TempDir(), "logs")
+	path := filepath.Join(dir, "yad.log")
+	l, err := Open(path, 20, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	defer os.Chmod(dir, 0o700)
+	l.Write([]byte("0123456789abcdef\n")) // 17 bytes
+
+	// Renames refused: the directory is read-only.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		if _, err := fmt.Fprintf(l, "over the limit %d\n", i); err != nil {
+			t.Fatalf("write %d with rotation refused: %v", i, err)
+		}
+	}
+	if b, _ := os.ReadFile(path); strings.Count(string(b), "\n") != 4 {
+		t.Errorf("with rotation refused, the live file holds:\n%s", b)
+	}
+
+	// The live file gone and no new one allowed: the reopen fails.
+	os.Chmod(dir, 0o700)
+	os.Remove(path)
+	os.Chmod(dir, 0o500)
+	l.mu.Lock()
+	l.retryAt = 0
+	l.mu.Unlock()
+	if _, err := l.Write([]byte("lost, and said so\n")); err == nil {
+		t.Error("a write with no file to go to reported success")
+	}
+	l.mu.Lock()
+	if l.f != nil {
+		t.Error("the file points at something after a failed reopen")
+	}
+	l.mu.Unlock()
+
+	os.Chmod(dir, 0o700)
+	if _, err := l.Write([]byte("back\n")); err != nil {
+		t.Fatalf("the log did not recover once the directory was writable: %v", err)
+	}
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "back\n") {
+		t.Errorf("after recovery the live file holds %q", b)
+	}
+	l.Close()
+	if _, err := l.Write([]byte("after close\n")); err == nil {
+		t.Error("a write after Close succeeded")
+	}
+}

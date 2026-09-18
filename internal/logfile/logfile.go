@@ -28,9 +28,14 @@ type File struct {
 	maxBytes int64
 	backups  int
 
-	mu   sync.Mutex
-	f    *os.File
-	size int64
+	mu     sync.Mutex
+	f      *os.File // nil after a reopen failed; the next Write tries again
+	size   int64
+	closed bool
+	// retryAt is the size at which a rotation that failed is tried again,
+	// so a directory that refuses renames costs one attempt per MaxBytes
+	// written rather than one per line.
+	retryAt int64
 }
 
 // Open opens path for appending, creating it and its directory private to the
@@ -59,22 +64,29 @@ func (l *File) open() error {
 		f.Close()
 		return err
 	}
-	l.f, l.size = f, fi.Size()
+	l.f, l.size, l.retryAt = f, fi.Size(), 0
 	return nil
 }
 
-// Write appends p, rotating first when p would not fit.
+// Write appends p, rotating first when p would not fit. A log that cannot
+// rotate keeps logging into the one file, and one whose file could not be
+// reopened tries again on every write: losing lines is worse than an
+// oversized file, and a daemon that goes silent for good is worse than both.
 func (l *File) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.f == nil {
+	if l.closed {
 		return 0, fs.ErrClosed
 	}
-	if l.size > 0 && l.size+int64(len(p)) > l.maxBytes {
+	if l.f != nil && l.size > 0 && l.size+int64(len(p)) > l.maxBytes && l.size >= l.retryAt {
 		if err := l.rotate(); err != nil {
-			// A log that cannot rotate keeps logging into the one file:
-			// losing lines is worse than an oversized file.
 			fmt.Fprintf(os.Stderr, "yad: rotate %s: %v\n", l.path, err)
+			l.retryAt = l.size + l.maxBytes
+		}
+	}
+	if l.f == nil {
+		if err := l.open(); err != nil {
+			return 0, err
 		}
 	}
 	n, err := l.f.Write(p)
@@ -82,12 +94,12 @@ func (l *File) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// rotate shifts the files along and reopens the live one. Whatever fails, the
+// old descriptor is let go and a reopen is attempted, so the file is never left
+// pointing at something closed.
 func (l *File) rotate() error {
-	if err := l.f.Close(); err != nil {
-		return err
-	}
+	errs := []error{l.f.Close()}
 	l.f = nil
-	var errs []error
 	for i := l.backups; i >= 1; i-- {
 		from := Backup(l.path, i-1)
 		if err := os.Rename(from, Backup(l.path, i)); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -104,6 +116,7 @@ func (l *File) rotate() error {
 func (l *File) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.closed = true
 	if l.f == nil {
 		return nil
 	}

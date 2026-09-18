@@ -76,7 +76,15 @@ func startBackground(ctx context.Context, g global, s startFlags, w io.Writer) e
 		case err := <-exited:
 			return fmt.Errorf("the daemon exited as it started (%v)%s — `yad daemon logs` has the rest", err, tailOf(stderrPath))
 		case <-deadline:
+			// Stopped and waited for, so the lock it may hold is free
+			// before the owner tries again.
 			cmd.Process.Signal(syscall.SIGTERM)
+			select {
+			case <-exited:
+			case <-time.After(termGrace):
+				cmd.Process.Kill()
+				<-exited
+			}
 			return fmt.Errorf("the daemon (pid %d) did not answer on its control socket within %s, and was stopped%s — `yad daemon logs` says why, or start with a longer --wait", pid, s.wait, tailOf(stderrPath))
 		case <-ctx.Done():
 			return fmt.Errorf("interrupted while the daemon (pid %d) was starting — `yad daemon status` says whether it came up", pid)

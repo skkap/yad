@@ -45,7 +45,9 @@ func daemonLogs(ctx context.Context, g global, args []string, w io.Writer) error
 }
 
 // logPrinter renders JSON log lines for reading: time, level, message, then
-// the attributes. A line that is not JSON is printed as it is.
+// the attributes. A line that is not JSON is printed as it is. Either way
+// control characters are replaced: decoding JSON turns an escaped one a hub
+// sent back into the real thing, and --json prints it still escaped.
 type logPrinter struct {
 	w   io.Writer
 	raw bool
@@ -57,7 +59,7 @@ func (p *logPrinter) Write(b []byte) (int, error) {
 			io.WriteString(p.w, line)
 			continue
 		}
-		io.WriteString(p.w, renderLogLine(strings.TrimRight(line, "\n"))+"\n")
+		io.WriteString(p.w, cleanLine(renderLogLine(strings.TrimRight(line, "\n")))+"\n")
 	}
 	return len(b), nil
 }
