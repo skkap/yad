@@ -495,8 +495,16 @@ line here is a reviewed change.
   Re-executed children set `GORACE=atexit_sleep_ms=0`, or each costs a second.
 - **The runner is tested against `yad hub`**, in process, on a random port. The
   conformance suite is the same tests pointed at a URL.
+- **End to end** (`cmd/yad/e2e_test.go`): the commands an operator types —
+  token, connect, daemon, submit, watch — against `yad hub` in process, with
+  the Claude adapter driving the test binary as a fake `claude`. A run
+  succeeds; the network drops mid-run and every event and the result still
+  land; the runner restarts mid-run and the run ends lost, with its events
+  delivered.
 - **Real harnesses** only behind `//go:build realharness` and
-  `YAD_REAL_HARNESS=1`, run by hand.
+  `YAD_REAL_HARNESS=1`, run by hand — and `make smoke`, the same path as the
+  end-to-end tests with the real `claude`, the built binary and `yad hub
+  serve` (`scripts/smoke.sh`; a few cents of haiku).
 - Table-driven, `t.Setenv`, `t.TempDir`, no assertion library; `-race` always.
 
 ## §8 Security

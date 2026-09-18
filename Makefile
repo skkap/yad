@@ -14,7 +14,7 @@ GENERATED := internal/store/db internal/hub/store/db protocol/v1/openapi.yaml pr
 
 TARGETS := linux/amd64 linux/arm64 darwin/arm64 darwin/amd64
 
-.PHONY: fmt lint test build generate check-generated cross check install dist clean
+.PHONY: fmt lint test build generate check-generated cross check install dist clean smoke
 
 fmt:
 	gofmt -w .
@@ -50,6 +50,11 @@ cross:
 	done
 
 check: lint test build check-generated cross
+
+# One real Claude run through yad hub (scripts/smoke.sh). It spends a few cents
+# of the logged-in account, so it is run by hand and never by CI or make check.
+smoke: build
+	./scripts/smoke.sh
 
 install: build
 	install -m 0755 bin/yad $(HOME)/.local/bin/yad
