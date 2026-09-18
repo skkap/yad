@@ -47,6 +47,8 @@ func TestOutcomeRule(t *testing.T) {
 		{name: "final prompt too long", lines: []string{results["prompt too long"]}, e: ended{final: true}, state: v1.RunFailed, class: adapter.ClassPromptTooLong},
 		{name: "final usage limit", lines: []string{results["usage limit"]}, e: ended{final: true}, state: v1.RunFailed, class: adapter.ClassUsageLimit},
 		{name: "final after interrupt", lines: []string{results["interrupted"]}, e: ended{final: true, interrupted: true}, state: v1.RunCancelled},
+		{name: "after interrupt, steer dropped", lines: []string{results["interrupted"]}, e: ended{interrupted: true}, state: v1.RunCancelled},
+		{name: "success, interrupt dropped a steer", lines: []string{results["success"]}, e: ended{interrupted: true}, state: v1.RunCancelled},
 		{name: "final error, cancelled after", lines: []string{results["error"]}, e: ended{final: true, cancelled: true}, state: v1.RunFailed, class: adapter.ClassHarness},
 
 		// An error before Claude read any input is not final by the count,
@@ -56,7 +58,7 @@ func TestOutcomeRule(t *testing.T) {
 		// A result that was not final decides nothing by what it says.
 		{name: "success, steer taken after, died", lines: []string{results["success"], replay}, e: ended{}, state: v1.RunFailed, class: adapter.ClassHarnessExited},
 		{name: "success, steer queued, died", lines: []string{queued}, e: ended{}, state: v1.RunFailed, class: adapter.ClassHarnessExited},
-		{name: "success, steer never read, died", lines: []string{results["success"]}, e: ended{}, state: v1.RunFailed, class: adapter.ClassHarnessExited},
+		{name: "success, steer never read, died", lines: []string{replay, results["success"]}, e: ended{}, state: v1.RunFailed, class: adapter.ClassHarnessExited},
 		{name: "success, steer taken after, interrupted", lines: []string{results["success"], replay}, e: ended{interrupted: true}, state: v1.RunCancelled},
 		{name: "success, steer taken after, cancelled", lines: []string{results["success"], replay}, e: ended{cancelled: true}, state: v1.RunCancelled},
 		{name: "error, steer taken after, died", lines: []string{results["error"], replay}, e: ended{}, state: v1.RunFailed, class: adapter.ClassHarnessExited},
@@ -64,6 +66,10 @@ func TestOutcomeRule(t *testing.T) {
 		{name: "usage limit, steer taken after, cancelled", lines: []string{results["usage limit"], replay}, e: ended{cancelled: true}, state: v1.RunCancelled},
 		{name: "error, steer taken after, interrupted", lines: []string{results["error"], replay}, e: ended{interrupted: true}, state: v1.RunCancelled},
 		{name: "error, not final, cancelled", lines: []string{results["error"]}, e: ended{cancelled: true}, state: v1.RunCancelled},
+		{name: "error, steer never read, died", lines: []string{replay, results["error"]}, e: ended{}, state: v1.RunFailed, class: adapter.ClassHarnessExited},
+		{name: "prompt too long, steer never read, died", lines: []string{replay, results["prompt too long"]}, e: ended{}, state: v1.RunFailed, class: adapter.ClassHarnessExited},
+		{name: "usage limit, steer never read, died", lines: []string{replay, results["usage limit"]}, e: ended{}, state: v1.RunFailed, class: adapter.ClassHarnessExited},
+		{name: "not found, steer never read, died", lines: []string{replay, results["not found"]}, e: ended{}, state: v1.RunFailed, class: adapter.ClassHarnessExited},
 
 		// A steer taken and answered: the later result is final and decides.
 		{name: "steer answered", lines: []string{results["success"], replay, results["error"]}, e: ended{final: true}, state: v1.RunFailed, class: adapter.ClassHarness},
@@ -89,6 +95,35 @@ func TestOutcomeRule(t *testing.T) {
 			}
 			if (out.Limit != nil) != (c.class == adapter.ClassUsageLimit) {
 				t.Errorf("limit %+v with class %s", out.Limit, c.class)
+			}
+		})
+	}
+}
+
+// settle decides finality from what Claude has taken, whatever else is going
+// on: an interrupt closes input, but does not make a result that left a steer
+// unread into the run's answer.
+func TestSettle(t *testing.T) {
+	cases := []struct {
+		name                string
+		written, replayed   int
+		queued              int
+		interrupted         bool
+		wantClosed, wantFin bool
+	}{
+		{"all taken", 1, 1, 0, false, true, true},
+		{"a steer not yet taken", 2, 1, 0, false, false, false},
+		{"a steer queued", 2, 2, 1, false, false, false},
+		{"all taken, interrupted", 1, 1, 0, true, true, true},
+		{"a steer not yet taken, interrupted", 2, 1, 0, true, true, false},
+		{"a steer queued, interrupted", 2, 2, 1, true, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tr := &turn{frames: make(chan []byte, 1), final: make(chan struct{}), written: c.written, replayed: c.replayed, interrupted: c.interrupted}
+			tr.settle(c.queued)
+			if tr.closing != c.wantClosed || tr.settled != c.wantFin {
+				t.Errorf("closed %v final %v, want %v %v", tr.closing, tr.settled, c.wantClosed, c.wantFin)
 			}
 		})
 	}

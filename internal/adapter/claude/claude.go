@@ -213,7 +213,7 @@ type turn struct {
 	replayed    int  // user frames Claude has taken
 	interrupted bool
 	requests    int
-	settled     bool // the result in hand is the last: input is closed on it
+	settled     bool // the result in hand answered every frame we sent
 
 	// Events are queued without bound between the reader and the consumer. The
 	// reader must never block on a consumer that has stopped reading, or Claude
@@ -312,21 +312,24 @@ func (t *turn) deny(requestID string) {
 	}
 }
 
-// settle closes stdin once the result in hand is the last one: every frame we
-// sent has been taken and nothing is queued behind it. Closing stdin is how
-// Claude learns there is no more input and exits.
+// settle closes stdin once the result in hand is the last one Claude will
+// send: every frame we sent has been taken and nothing is queued behind it, or
+// an interrupt has made Claude drop whatever was. Closing stdin is how Claude
+// learns there is no more input and exits. The result is final only in the
+// first case — after an interrupt, a steer still waiting was dropped, not
+// answered.
 func (t *turn) settle(queued int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closing {
 		return
 	}
-	// After an interrupt Claude drops queued input, so no further result comes.
-	if !t.interrupted && (t.replayed < t.written || queued > 0) {
+	complete := t.replayed >= t.written && queued == 0
+	if !complete && !t.interrupted {
 		return
 	}
 	t.closing = true
-	t.settled = true
+	t.settled = complete
 	close(t.frames)
 	close(t.final)
 }

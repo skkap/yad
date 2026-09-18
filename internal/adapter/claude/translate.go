@@ -424,7 +424,7 @@ type ended struct {
 	exitErr     error  // the process's exit status
 	stderr      string // its last words
 	// final: the result in hand was the run's last — every frame we sent had
-	// been taken and answered, or an interrupt ended the turn.
+	// been taken, and nothing was queued behind it.
 	final bool
 }
 
@@ -479,14 +479,14 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		return cancelled()
 	case !e.final && e.cancelled:
 		return cancelled()
+	case !e.final && r.IsError && t.replays == 0:
+		// The one result that is not final and still the answer: an error
+		// Claude gave before it read any input (a resume with no transcript).
+		// Nothing else will follow it.
 	case !e.final && (t.takenAfter || r.QueuedTurnCount > 0):
 		return fail(adapter.ClassHarnessExited, "claude exited after taking a steer and before answering it"+exitDetail(e)+" — send the steer again as a new run in the same session")
-	case !e.final && success:
-		// Claude answered and left without reading a steer written to it.
+	case !e.final:
 		return fail(adapter.ClassHarnessExited, "claude exited before reading a steer"+exitDetail(e)+" — send the steer again as a new run in the same session")
-	case success:
-		o.State = v1.RunSucceeded
-		return o
 	}
 	// An error result that was final, or one Claude gave before it read any
 	// input at all (a resume with no transcript): what it says is the outcome.
