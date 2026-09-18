@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -99,15 +100,19 @@ func (r *Reporter) Run(ctx context.Context) {
 	r.init()
 	t := time.NewTicker(reportEvery)
 	defer t.Stop()
+	// The replay offers every result owed, even one a previous process had
+	// backed off minutes into the future: claims wait on it, and a hub
+	// should not show a finished run as running for want of a retry timer.
+	r.flush(ctx, true)
+	r.replayedOnce.Do(func() { close(r.replayed) })
 	for {
-		r.Flush(ctx)
-		r.replayedOnce.Do(func() { close(r.replayed) })
 		select {
 		case <-ctx.Done():
 			return
 		case <-r.wake:
 		case <-t.C:
 		}
+		r.Flush(ctx)
 	}
 }
 
@@ -115,7 +120,10 @@ func (r *Reporter) Run(ctx context.Context) {
 // that is due. A run's result waits until its events are in: a hub that shows
 // a run finished should already hold what led there. Flush runs on one
 // goroutine at a time.
-func (r *Reporter) Flush(ctx context.Context) {
+func (r *Reporter) Flush(ctx context.Context) { r.flush(ctx, false) }
+
+// flush is Flush; all sends every result owed, due or not.
+func (r *Reporter) flush(ctx context.Context, all bool) {
 	r.init()
 	runs, err := r.Store.RunsWithUnackedEvents(ctx, r.Connection)
 	if err != nil {
@@ -128,7 +136,11 @@ func (r *Reporter) Flush(ctx context.Context) {
 		}
 		r.upload(ctx, run)
 	}
-	due, err := r.Store.DueOutbox(ctx, db.DueOutboxParams{Connection: r.Connection, NextAttemptAt: r.Now().UnixMilli()})
+	dueBy := r.Now().UnixMilli()
+	if all {
+		dueBy = math.MaxInt64
+	}
+	due, err := r.Store.DueOutbox(ctx, db.DueOutboxParams{Connection: r.Connection, NextAttemptAt: dueBy})
 	if err != nil {
 		r.Log.Error("outbox not read", "connection", r.Connection, "err", err)
 		return

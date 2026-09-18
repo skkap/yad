@@ -33,7 +33,7 @@ func (h *Hub) registerDrain(api huma.API) {
 		Summary: "Drain a runner",
 		Description: "The runner hears it at its next sync: it stops taking runs, lets the ones it holds finish — up to its " +
 			"owner's drain wait, after which it cancels them — and exits. It keeps syncing until then, so leases renew and " +
-			"results land, and this hub offers it nothing. The request stands until a sync says the runner is draining. " +
+			"results land, and this hub offers it nothing. The request stands until a sync made after it says the runner is draining. " +
 			"A runner that does not advertise the drain feature is 409: it would ignore the control.",
 		Security: adminSecurity, Errors: []int{401, 404, 409},
 	}, func(ctx context.Context, in *runnerInput) (*runnerOutput, error) {
@@ -47,10 +47,9 @@ func (h *Hub) registerDrain(api huma.API) {
 			if err != nil {
 				return err
 			}
-			view, err = runnerView(r)
-			if err != nil || view.Draining {
-				return err
-			}
+			// Recorded even for a runner whose last sync said draining: that
+			// may be a process which has since exited, and only a sync after
+			// this request can answer it.
 			var doc v1.Capabilities
 			if err := json.Unmarshal([]byte(r.Capabilities), &doc); err != nil {
 				return fmt.Errorf("stored capability document for %s: %w", r.ID, err)
@@ -78,7 +77,8 @@ func (h *Hub) registerDrain(api huma.API) {
 }
 
 // runnerView is a runner as the service API shows it. Draining comes from the
-// runner's own last word, its health, not from the request.
+// runner's own last word, its health, not from the request — and a runner that
+// drained and exited keeps saying it until its next process syncs.
 func runnerView(r db.Runner) (hubapi.Runner, error) {
 	view := hubapi.Runner{RunnerID: r.ID, Name: r.Name}
 	if r.LastSyncAt.Valid {

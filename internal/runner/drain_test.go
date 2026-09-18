@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -119,18 +120,33 @@ func TestHubDrainControl(t *testing.T) {
 	if err != nil || r.DrainRequestedAt.Valid {
 		t.Errorf("the request stands after the runner answered it: %+v %v", r.DrainRequestedAt, err)
 	}
-	if view, err := api.Drain(ctx, l.RunnerID); err != nil || !view.Draining || view.DrainRequestedAt != nil {
-		t.Errorf("drain again: %+v %v — a draining runner is answered as it is", view, err)
-	}
 	if got := e.hubState(t, "a"); got != "queued" {
 		t.Errorf("hub state %s", got)
 	}
 
 	// The runner's next process syncs as any other, and is offered work.
-	l2 := &Loop{Connection: l.Connection, RunnerID: l.RunnerID, Hub: l.Hub, Store: e.store, Pool: NewPool(v1.Capacity{Total: 1}),
-		Capabilities: l.Capabilities, Executor: e.exec, Clock: e.clock, Rand: l.Rand, Drain: NewDrain()}
+	next := func() *Loop {
+		return &Loop{Connection: l.Connection, RunnerID: l.RunnerID, Hub: l.Hub, Store: e.store, Pool: NewPool(v1.Capacity{Total: 1}),
+			Capabilities: l.Capabilities, Executor: e.exec, Clock: e.clock, Rand: l.Rand, Drain: NewDrain()}
+	}
+	l2 := next()
 	if res := mustSync(t, l2); hasControl(res, v1.ControlDrain) || len(res.Runs) != 1 {
 		t.Errorf("the next process: %+v", res)
+	}
+
+	// Asked again after a process drained and exited, while the hub still
+	// holds its draining health: the request stands for the next process,
+	// rather than being answered by a sync from before it.
+	l3 := next()
+	l3.Drain.Begin("test")
+	mustSync(t, l3)
+	view, err = api.Drain(ctx, l.RunnerID)
+	if err != nil || !view.Draining || view.DrainRequestedAt == nil {
+		t.Fatalf("drain after the process exited: %+v %v", view, err)
+	}
+	l4 := next()
+	if res := mustSync(t, l4); !hasControl(res, v1.ControlDrain) || !l4.Drain.IsDraining() {
+		t.Errorf("the process after that was not drained: %+v", res)
 	}
 }
 
@@ -256,24 +272,74 @@ func TestWayDownBeforeTheHarnessStarts(t *testing.T) {
 	}
 }
 
-// Every connection stopped on its own — its credential refused — and a drain
-// begun after that has nothing to wait for.
-func TestWayDownWithNoConnectionLeft(t *testing.T) {
-	e := newEnv(t)
-	l := e.loop(t, 1)
-	l.Clock = realClock{}
-	sv := e.server(l, e.executor(), NewDrain(), time.Hour)
-	l.Hub = refusingHub{}
-	done := make(chan error, 1)
-	go func() { done <- sv.run(context.Background()) }()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Error("a refused credential was not reported")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("Serve outlived its only connection")
+// A connection that stopped on its own — its credential refused — must not
+// hold a drain up: the loops still syncing quiesce, the run in hand finishes,
+// and the runner exits. When every connection has stopped, the run in hand is
+// not killed with them: it runs to its end and its result waits in the outbox.
+func TestWayDownWithAConnectionStopped(t *testing.T) {
+	finishes := fake.Script{Events: manyEvents(5), Delay: 40 * time.Millisecond, Outcome: adapter.Outcome{State: v1.RunSucceeded}}
+	for _, tc := range []struct {
+		name string
+		// alsoStops refuses the healthy connection too, once its run is in
+		// hand: every connection has stopped.
+		alsoStops bool
+	}{
+		{"one of two", false},
+		{"every one", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			l := e.loop(t, 2)
+			l.Clock = realClock{}
+			x := e.executor(fakeHarness(finishes))
+			d := NewDrain()
+			sv := e.server(l, x, d, time.Hour)
+			refuse := &switchHub{Hub: l.Hub}
+			l.Hub = refuse
+			dead := &Loop{Connection: "dead", RunnerID: "r", Hub: refusingHub{}, Store: e.store,
+				Pool: NewPool(v1.Capacity{Total: 1}), Capabilities: l.Capabilities, Executor: x, Drain: d, Clock: realClock{}}
+			deadRep := NewReporter("dead", refusingHub{}, e.store, slog.New(slog.DiscardHandler))
+			dead.ClaimAfter = deadRep.Replayed()
+			sv.loops = append(sv.loops, dead)
+			sv.reporters["dead"] = deadRep
+			e.enqueue(t, testRun("a", "s1"))
+
+			done := make(chan error, 1)
+			go func() { done <- sv.run(context.Background()) }()
+			eventually(t, "the run is running", func() bool {
+				r, err := e.store.GetRun(context.Background(), dbRun("hub", "a"))
+				return err == nil && r.State == string(v1.RunRunning)
+			})
+			if tc.alsoStops {
+				refuse.refuse.Store(true)
+			}
+			d.Begin("test")
+			select {
+			case <-done:
+			case <-time.After(20 * time.Second):
+				t.Fatal("the drain never finished")
+			}
+			if got := localRun(t, e, "a").State; got != string(v1.RunSucceeded) {
+				t.Errorf("the run in hand ended %s; it must run to its end", got)
+			}
+			if !tc.alsoStops && e.hubState(t, "a") != string(v1.RunSucceeded) {
+				t.Errorf("hub state %s: the healthy connection delivers before the exit", e.hubState(t, "a"))
+			}
+		})
 	}
+}
+
+// switchHub is a hub that starts refusing the runner's credential on demand.
+type switchHub struct {
+	Hub
+	refuse atomic.Bool
+}
+
+func (h *switchHub) Sync(ctx context.Context, id string, req v1.SyncRequest) (v1.SyncResponse, error) {
+	if h.refuse.Load() {
+		return v1.SyncResponse{}, errUnauthorized
+	}
+	return h.Hub.Sync(ctx, id, req)
 }
 
 type refusingHub struct{}
@@ -283,6 +349,10 @@ func (refusingHub) Sync(context.Context, string, v1.SyncRequest) (v1.SyncRespons
 }
 
 func (refusingHub) Result(context.Context, string, v1.Result) error { return errUnauthorized }
+
+func (refusingHub) Events(context.Context, string, v1.EventBatch) (v1.EventAck, error) {
+	return v1.EventAck{}, errUnauthorized
+}
 
 // Signals are counted: the first drains, the second cancels, the third exits.
 func TestOnSignals(t *testing.T) {

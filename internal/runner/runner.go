@@ -139,7 +139,15 @@ func (s *server) run(ctx context.Context) error {
 	}
 	s.loops = loops
 	var wg sync.WaitGroup
-	for _, l := range s.loops {
+	ended := make([]chan struct{}, len(s.loops))
+	for i, l := range s.loops {
+		// Runs live on ctx, not on their loop's: a connection that stops —
+		// or every one of them — leaves the runs in hand to finish, and
+		// only exit now kills them.
+		if l.Executor != nil {
+			l.Executor = runsOn{Executor: l.Executor, ctx: ctx}
+		}
+		ended[i] = make(chan struct{})
 		// A reporter lives as long as its connection's loop: a connection
 		// the owner has to fix delivers nothing, and what it owes stays in
 		// the store for the next start.
@@ -147,6 +155,7 @@ func (s *server) run(ctx context.Context) error {
 		wg.Go(func() { s.reporters[l.Connection].Run(rctx) })
 		wg.Go(func() {
 			defer stop()
+			defer close(ended[i])
 			if err := l.Run(lctx); err != nil {
 				s.fail(l.Connection, err)
 			}
@@ -160,7 +169,7 @@ func (s *server) run(ctx context.Context) error {
 		// Every connection stopped on its own: nothing left to sync with.
 	case <-ctx.Done():
 	case <-s.drain.Draining():
-		s.wayDown(ctx, stopped)
+		s.wayDown(ctx, ended, stopped)
 	}
 	stopLoops()
 	<-stopped
@@ -170,21 +179,30 @@ func (s *server) run(ctx context.Context) error {
 	return errors.Join(s.errs...)
 }
 
+// runsOn starts runs on the server's context rather than the calling loop's.
+type runsOn struct {
+	Executor
+	ctx context.Context
+}
+
+func (r runsOn) Start(_ context.Context, c Claim) { r.Executor.Start(r.ctx, c) }
+
 // wayDown is the drain (decision 0029): wait for every loop to stop starting
-// runs and for the runs held to end — cancelling them once the drain wait is
-// up, or at once when asked — then give the reporters a bounded last chance
-// to deliver what is owed. It returns early when ctx ends or every connection
-// has stopped.
-func (s *server) wayDown(ctx context.Context, stopped <-chan struct{}) {
+// runs — by syncing while draining, or by stopping — and for the runs held to
+// end, cancelling them once the drain wait is up or at once when asked; then
+// give the reporters a bounded last chance to deliver what is owed. It returns
+// early only when ctx ends: a connection that stopped, or every one of them,
+// leaves the runs in hand to the same wait and the same cancel.
+func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-chan struct{}) {
 	s.log.Warn("draining", "reason", s.drain.Reason(), "drain_wait", s.wait)
 	timer := time.NewTimer(s.wait)
 	defer timer.Stop()
 	quiet := make(chan struct{})
 	go func() {
-		for _, l := range s.loops {
+		for i, l := range s.loops {
 			select {
 			case <-l.Quiesced():
-			case <-stopped:
+			case <-ended[i]:
 			}
 		}
 		close(quiet)
@@ -214,8 +232,6 @@ func (s *server) wayDown(ctx context.Context, stopped <-chan struct{}) {
 					s.exec.CancelAll(s.drain.Reason())
 				}(quiet)
 			}
-		case <-stopped:
-			return
 		case <-ctx.Done():
 			return
 		}

@@ -229,9 +229,10 @@ func TestE2EHubDrain(t *testing.T) {
 		t.Errorf("drain printed %q", out)
 	}
 	eventually(t, "the hub sees the runner draining", m.hubSeesDraining)
-	if out := m.ok("hub", "drain", "--hub", m.service, m.runnerID()); !strings.Contains(out, "is draining") {
-		t.Errorf("drain again printed %q", out)
-	}
+	eventually(t, "the runner's sync answers the request", func() bool {
+		r, err := m.hubDB.GetRunner(context.Background(), m.runnerID())
+		return err == nil && !r.DrainRequestedAt.Valid
+	})
 	m.submit("e2e-after")
 	m.open()
 	select {

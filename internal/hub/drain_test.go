@@ -82,13 +82,19 @@ func TestDrainRunner(t *testing.T) {
 	if got := f.state(t, "held"); got != "running" {
 		t.Errorf("held run is %s", got)
 	}
+	// The runner drains, exits, and its health still says draining. A drain
+	// asked for now is recorded all the same: only a sync after it answers.
 	var again hubapi.Runner
-	if code, _ := f.api(t, "POST", "/runners/r1/drain", tok, nil, &again); code != http.StatusOK || !again.Draining || again.DrainRequestedAt != nil {
-		t.Errorf("drain again: %d %+v — a draining runner is answered as it is", code, again)
+	if code, _ := f.api(t, "POST", "/runners/r1/drain", tok, nil, &again); code != http.StatusOK || !again.Draining || again.DrainRequestedAt == nil {
+		t.Errorf("drain again: %d %+v — want the request recorded beside the stale health", code, again)
 	}
-	// Its next process is not draining, and is offered work again.
+	if res := sync(req("r1", 1, running("held")...)); !hasDrain(res) || len(res.Runs) != 0 {
+		t.Errorf("the next process, asked to drain after the last one exited: %+v", res)
+	}
+	sync(draining)
+	// Answered; the process after that is offered work again.
 	if res := sync(req("r1", 1, running("held")...)); hasDrain(res) || len(res.Runs) != 1 {
-		t.Errorf("the next process: %+v", res)
+		t.Errorf("the process after the answer: %+v", res)
 	}
 }
 

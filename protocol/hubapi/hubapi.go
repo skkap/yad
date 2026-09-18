@@ -116,10 +116,11 @@ type Runner struct {
 	// LastSyncAt is absent for a runner that registered and never synced.
 	LastSyncAt *time.Time `json:"last_sync_at,omitempty"`
 	// Draining is what the runner said at its last sync: it takes no new
-	// runs, and exits once the ones it holds have ended.
+	// runs, and exits once the ones it holds have ended. A runner that
+	// drained and exited says it until its next process syncs.
 	Draining bool `json:"draining"`
-	// DrainRequestedAt is when a drain was asked for and the runner has not
-	// yet said it is draining; the runner hears it at its next sync.
+	// DrainRequestedAt is when a drain was asked for and no sync since has
+	// said the runner is draining; the runner hears it at its next sync.
 	DrainRequestedAt *time.Time `json:"drain_requested_at,omitempty"`
 }
 

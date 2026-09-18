@@ -239,11 +239,10 @@ func cmdHubDrain(ctx context.Context, g global, args []string, stdout io.Writer)
 	if err != nil {
 		return err
 	}
-	if r.Draining {
-		fmt.Fprintf(stdout, "runner %s (%s) is draining: it takes no new runs, and exits once the runs it holds have ended\n", r.RunnerID, r.Name)
-		return nil
-	}
 	fmt.Fprintf(stdout, "runner %s (%s) drains at its next sync: it takes no new runs, finishes those it holds — cancelling them after its drain wait — and exits\n", r.RunnerID, r.Name)
+	if r.Draining {
+		fmt.Fprintln(stdout, "its last sync already said it was draining")
+	}
 	return nil
 }
 

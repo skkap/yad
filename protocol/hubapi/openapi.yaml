@@ -398,7 +398,7 @@ openapi: 3.1.0
 paths:
   /runners/{runner}/drain:
     post:
-      description: "The runner hears it at its next sync: it stops taking runs, lets the ones it holds finish — up to its owner's drain wait, after which it cancels them — and exits. It keeps syncing until then, so leases renew and results land, and this hub offers it nothing. The request stands until a sync says the runner is draining. A runner that does not advertise the drain feature is 409: it would ignore the control."
+      description: "The runner hears it at its next sync: it stops taking runs, lets the ones it holds finish — up to its owner's drain wait, after which it cancels them — and exits. It keeps syncing until then, so leases renew and results land, and this hub offers it nothing. The request stands until a sync made after it says the runner is draining. A runner that does not advertise the drain feature is 409: it would ignore the control."
       operationId: drainRunner
       parameters:
         - description: The runner id, as its daemon prints it at start.
