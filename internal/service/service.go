@@ -142,9 +142,16 @@ func NewSpec(p config.Paths, executable, path string, h Host) (Spec, error) {
 	}
 	env := map[string]string{"PATH": path}
 	for _, k := range envCarried {
-		if v := h.Getenv(k); v != "" {
-			env[k] = v
+		v := h.Getenv(k)
+		if v == "" {
+			continue
 		}
+		// The service starts in the owner's home, not where install ran, so a
+		// relative override would name another, empty profile there.
+		if !filepath.IsAbs(v) {
+			return Spec{}, fmt.Errorf("%s=%s is relative — set it to an absolute path and run this again", k, v)
+		}
+		env[k] = v
 	}
 	return Spec{
 		Profile:    p.Profile,

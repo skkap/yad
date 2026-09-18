@@ -15,19 +15,41 @@ import (
 // user manager, as the owner, and is restarted when it crashes.
 type Systemd struct {
 	Host Host
+	// configHome is the user manager's own XDG config directory, once asked.
+	configHome string
 }
 
 // Name is the unit's name; one unit per profile, so profiles coexist.
 func (s *Systemd) Name(profile string) string { return "yad-runner-" + profile + ".service" }
 
-// File is under $XDG_CONFIG_HOME/systemd/user, the user manager's own
-// directory, so installing needs no privilege.
+// File is under the user manager's systemd/user directory, so installing
+// needs no privilege. Install, Uninstall and Status ask the manager where that
+// is first; before they have, it is the default under the owner's home.
 func (s *Systemd) File(profile string) string {
-	base := s.Host.Getenv("XDG_CONFIG_HOME")
+	base := s.configHome
 	if base == "" {
 		base = filepath.Join(s.Host.Home, ".config")
 	}
 	return filepath.Join(base, "systemd", "user", s.Name(profile))
+}
+
+// resolve asks the user manager for its XDG_CONFIG_HOME. The manager builds its
+// unit search path from its own environment — PAM, environment.d — not from
+// the shell running install, so a value exported in a shell rc would put the
+// unit where the manager never looks, and uninstall would look somewhere else
+// again.
+func (s *Systemd) resolve(ctx context.Context) error {
+	out, err := s.systemctl(ctx, "show-environment")
+	if err != nil {
+		return err
+	}
+	s.configHome = ""
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(line, "XDG_CONFIG_HOME="); ok && filepath.IsAbs(v) {
+			s.configHome = v
+		}
+	}
+	return nil
 }
 
 var unitTmpl = template.Must(template.New("unit").Funcs(template.FuncMap{"exec": quoteExec, "env": quoteEnv, "path": escapeSpecifiers}).Parse(`# Written by yad service install. Run it again to rewrite this file; yad service uninstall removes it.
@@ -123,7 +145,7 @@ func (s *Systemd) Render(sp Spec) ([]byte, error) {
 
 func (s *Systemd) systemctl(ctx context.Context, args ...string) ([]byte, error) {
 	out, err := s.Host.Run.Run(ctx, "systemctl", append([]string{"--user"}, args...)...)
-	if err != nil && strings.Contains(err.Error(), "bus") {
+	if err != nil && strings.Contains(err.Error(), "Failed to connect to") && strings.Contains(err.Error(), "bus") {
 		return out, fmt.Errorf("%w — systemctl --user needs the owner's user manager: run this in a login session of that user (not su or sudo), or export XDG_RUNTIME_DIR=/run/user/%d", err, s.Host.UID)
 	}
 	return out, err
@@ -138,6 +160,9 @@ func (s *Systemd) Install(ctx context.Context, sp Spec) ([]string, error) {
 	}
 	data, err := s.Render(sp)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.resolve(ctx); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(sp.LogFile), 0o700); err != nil {
@@ -194,6 +219,9 @@ func (s *Systemd) Uninstall(ctx context.Context, profile string) error {
 	if err := RefuseRoot(s.Host); err != nil {
 		return err
 	}
+	if err := s.resolve(ctx); err != nil {
+		return err
+	}
 	name, file := s.Name(profile), s.File(profile)
 	props, err := s.show(ctx, name)
 	if err != nil {
@@ -226,6 +254,9 @@ func (s *Systemd) Uninstall(ctx context.Context, profile string) error {
 
 func (s *Systemd) Status(ctx context.Context, profile string) (Status, error) {
 	if err := RefuseRoot(s.Host); err != nil {
+		return Status{}, err
+	}
+	if err := s.resolve(ctx); err != nil {
 		return Status{}, err
 	}
 	st := Status{Name: s.Name(profile), File: s.File(profile)}

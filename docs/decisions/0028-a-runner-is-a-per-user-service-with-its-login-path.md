@@ -7,7 +7,7 @@ date: 2026-09-19
 `yad service install` makes one profile's runner a service of the machine's own
 manager: a launchd agent in the owner's GUI domain on macOS, a systemd
 `--user` unit on Linux. Either one runs `yad --profile P daemon start --foreground`
-as the invoking user. Five things about that were not settled by
+as the invoking user. Six things about that were not settled by
 ARCHITECTURE.md §5.
 
 **Never root, and never a system service.** A runner runs its harnesses as the
@@ -33,7 +33,10 @@ carried: in particular no token.
 **Names carry no person and no domain.** The launchd label is
 `yad.runner.<profile>` and the systemd unit is `yad-runner-<profile>.service`.
 The default profile is `default`. There is one unit per profile, so profiles
-coexist.
+coexist. The systemd unit goes in the user manager's own
+`$XDG_CONFIG_HOME/systemd/user`, which install asks for with
+`systemctl --user show-environment`. The installing shell's value can differ
+from the manager's, and the manager only searches its own.
 
 **Install is idempotent: it replaces.** It unloads a loaded job, writes the new
 file atomically and loads it again. On launchd that is bootout, enable and

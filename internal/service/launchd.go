@@ -113,9 +113,16 @@ func (l *Launchd) Render(s Spec) ([]byte, error) {
 	return b.Bytes(), err
 }
 
-func (l *Launchd) loaded(ctx context.Context, profile string) (bool, []byte) {
+// loaded reports whether launchd holds the job. A failed print is read as "not
+// loaded" — launchctl has no distinct exit status for that — except when the
+// command was cancelled: an owner's Ctrl-C must not look like an absent job, or
+// uninstall would remove the plist from under a job still running.
+func (l *Launchd) loaded(ctx context.Context, profile string) (bool, []byte, error) {
 	out, err := l.Host.Run.Run(ctx, "launchctl", "print", l.target(profile))
-	return err == nil, out
+	if err != nil && ctx.Err() != nil {
+		return false, nil, ctx.Err()
+	}
+	return err == nil, out, nil
 }
 
 // Install replaces any loaded job with the new plist. launchd reads a plist
@@ -134,7 +141,11 @@ func (l *Launchd) Install(ctx context.Context, s Spec) ([]string, error) {
 	if err := os.MkdirAll(filepath.Dir(s.LogFile), 0o700); err != nil {
 		return nil, err
 	}
-	if ok, _ := l.loaded(ctx, s.Profile); ok {
+	ok, _, err := l.loaded(ctx, s.Profile)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		if err := l.bootout(ctx, s.Profile); err != nil {
 			return nil, err
 		}
@@ -159,7 +170,11 @@ func (l *Launchd) Install(ctx context.Context, s Spec) ([]string, error) {
 func (l *Launchd) bootout(ctx context.Context, profile string) error {
 	if _, err := l.Host.Run.Run(ctx, "launchctl", "bootout", l.target(profile)); err != nil {
 		// The job may have gone between the check and the bootout.
-		if ok, _ := l.loaded(ctx, profile); ok {
+		ok, _, lerr := l.loaded(ctx, profile)
+		if lerr != nil {
+			return lerr
+		}
+		if ok {
 			return err
 		}
 		return nil
@@ -170,7 +185,11 @@ func (l *Launchd) bootout(ctx context.Context, profile string) error {
 	}
 	deadline := time.Now().Add(settle)
 	for {
-		if ok, _ := l.loaded(ctx, profile); !ok {
+		ok, _, err := l.loaded(ctx, profile)
+		if err != nil {
+			return err
+		}
+		if !ok {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -188,7 +207,11 @@ func (l *Launchd) Uninstall(ctx context.Context, profile string) error {
 	if err := RefuseRoot(l.Host); err != nil {
 		return err
 	}
-	if ok, _ := l.loaded(ctx, profile); ok {
+	ok, _, err := l.loaded(ctx, profile)
+	if err != nil {
+		return err
+	}
+	if ok {
 		if err := l.bootout(ctx, profile); err != nil {
 			return err
 		}
@@ -217,9 +240,9 @@ func (l *Launchd) Status(ctx context.Context, profile string) (Status, error) {
 	if st.Installed, err = exists(st.File); err != nil {
 		return st, err
 	}
-	ok, out := l.loaded(ctx, profile)
-	if !ok {
-		return st, nil
+	ok, out, err := l.loaded(ctx, profile)
+	if err != nil || !ok {
+		return st, err
 	}
 	st.Loaded = true
 	st.Detail = "unknown"

@@ -309,6 +309,18 @@ func TestNewSpec(t *testing.T) {
 		t.Errorf("spec = %+v", sp)
 	}
 
+	for _, k := range envCarried {
+		rel := Host{Home: "/home/o", Getenv: func(key string) string {
+			if key == k {
+				return "state/yad"
+			}
+			return ""
+		}}
+		if _, err := NewSpec(p, "/usr/local/bin/yad", "/usr/bin", rel); err == nil || !strings.Contains(err.Error(), k) {
+			t.Errorf("relative %s: %v", k, err)
+		}
+	}
+
 	for _, exe := range []string{"yad", filepath.Join(os.TempDir(), "go-build123", "b001", "exe", "yad")} {
 		if _, err := NewSpec(p, exe, "/usr/bin", h); err == nil {
 			t.Errorf("accepted %s", exe)
@@ -503,6 +515,7 @@ func TestSystemdInstall(t *testing.T) {
 				t.Fatal(err)
 			}
 			checkCalls(t, r.calls, []string{
+				"systemctl --user show-environment",
 				"systemctl --user daemon-reload",
 				"systemctl --user enable yad-runner-work.service",
 				"systemctl --user restart yad-runner-work.service",
@@ -541,23 +554,28 @@ func TestSystemdUninstall(t *testing.T) {
 		calls int
 	}{
 		{"nothing there", "not-found", false, []string{
+			"systemctl --user show-environment",
 			"systemctl --user show yad-runner-work.service --property=LoadState,ActiveState,SubState,MainPID,Result",
-		}, 1},
+		}, 2},
 		{"loaded and on disk", "loaded", true, []string{
+			"systemctl --user show-environment",
 			"systemctl --user show yad-runner-work.service --property=LoadState,ActiveState,SubState,MainPID,Result",
 			"systemctl --user disable --now yad-runner-work.service",
 			"systemctl --user daemon-reload",
 			"systemctl --user reset-failed yad-runner-work.service",
-		}, 4},
+		}, 5},
 		{"file never loaded", "not-found", true, []string{
+			"systemctl --user show-environment",
 			"systemctl --user show yad-runner-work.service --property=LoadState,ActiveState,SubState,MainPID,Result",
 			"systemctl --user daemon-reload",
 			"systemctl --user reset-failed yad-runner-work.service",
-		}, 3},
+		}, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &fakeRunner{answer: func(call string, n int) ([]byte, error) {
 				switch {
+				case strings.HasSuffix(call, "show-environment"):
+					return []byte("HOME=/home/owner\nLANG=C.UTF-8\n"), nil
 				case strings.Contains(call, " show ") && n == 0:
 					return []byte("LoadState=" + tc.load + "\nActiveState=active\n"), nil
 				case strings.Contains(call, " show "):
@@ -579,8 +597,8 @@ func TestSystemdUninstall(t *testing.T) {
 				}
 			}
 			checkCalls(t, r.calls[:tc.calls], tc.want, s.File("work"))
-			if got := len(r.calls) - tc.calls; got != 1 {
-				t.Errorf("second uninstall ran %q, want only the show", r.calls[tc.calls:])
+			if got := len(r.calls) - tc.calls; got != 2 {
+				t.Errorf("second uninstall ran %q, want only the two shows", r.calls[tc.calls:])
 			}
 			if _, err := os.Stat(s.File("work")); !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("unit left behind: %v", err)
@@ -601,7 +619,12 @@ func TestSystemdStatus(t *testing.T) {
 		{"not there", "LoadState=not-found\nActiveState=inactive\n", Status{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &fakeRunner{answer: func(string, int) ([]byte, error) { return []byte(tc.out), nil }}
+			r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) {
+				if strings.HasSuffix(call, "show-environment") {
+					return nil, nil
+				}
+				return []byte(tc.out), nil
+			}}
 			s := &Systemd{Host: host(t, r)}
 			st, err := s.Status(context.Background(), "work")
 			if err != nil {
@@ -623,6 +646,111 @@ func checkCalls(t *testing.T, got, want []string, file string) {
 	for i := range want {
 		if w := strings.ReplaceAll(want[i], "{file}", file); got[i] != w {
 			t.Errorf("call %d = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+// The user manager searches its own XDG_CONFIG_HOME, not the one exported in
+// the shell running install; the unit, and uninstall's removal, follow the
+// manager's.
+func TestSystemdUnitGoesWhereTheManagerLooks(t *testing.T) {
+	for _, tc := range []struct {
+		name, managerEnv, shellXDG string
+		inManagerDir               bool
+	}{
+		{"manager sets it, shell does not", "XDG_CONFIG_HOME={dir}\n", "", true},
+		{"shell sets it, manager does not", "HOME=/home/owner\n", "{other}", false},
+		{"both, differently", "XDG_CONFIG_HOME={dir}\n", "{other}", true},
+		{"manager's is relative, ignored", "XDG_CONFIG_HOME=cfg\n", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, other := t.TempDir(), t.TempDir()
+			sub := func(s string) string {
+				return strings.NewReplacer("{dir}", dir, "{other}", other).Replace(s)
+			}
+			r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) {
+				switch {
+				case strings.HasSuffix(call, "show-environment"):
+					return []byte(sub(tc.managerEnv)), nil
+				case strings.Contains(call, " show "):
+					return []byte("LoadState=loaded\n"), nil
+				}
+				return nil, nil
+			}}
+			h := host(t, r)
+			h.Getenv = func(k string) string {
+				if k == "XDG_CONFIG_HOME" {
+					return sub(tc.shellXDG)
+				}
+				return ""
+			}
+			s := &Systemd{Host: h}
+			if _, err := s.Install(context.Background(), specIn(t, h)); err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(h.Home, ".config", "systemd", "user", "yad-runner-work.service")
+			if tc.inManagerDir {
+				want = filepath.Join(dir, "systemd", "user", "yad-runner-work.service")
+			}
+			if _, err := os.Stat(want); err != nil {
+				t.Fatalf("unit not at %s: %v", want, err)
+			}
+			if _, err := os.Stat(filepath.Join(other, "systemd")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("unit written under the shell's XDG_CONFIG_HOME")
+			}
+			// A fresh manager value, as a new process would see it: uninstall
+			// asks again rather than trusting what install found.
+			if err := (&Systemd{Host: h}).Uninstall(context.Background(), "work"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(want); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("uninstall left %s: %v", want, err)
+			}
+		})
+	}
+}
+
+// A Ctrl-C during uninstall cancels launchctl print; that must stop uninstall,
+// not read as "no job" and remove the plist from under a running one.
+func TestLaunchdCancelledPrintIsNotAnAbsentJob(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) {
+		if strings.HasPrefix(call, "launchctl print") {
+			cancel()
+			return nil, errors.New("signal: interrupt")
+		}
+		return nil, nil
+	}}
+	l := &Launchd{Host: host(t, r)}
+	if err := writeFile(l.File("work"), []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Uninstall(ctx, "work"); !errors.Is(err, context.Canceled) {
+		t.Errorf("uninstall = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(l.File("work")); err != nil {
+		t.Errorf("plist removed after a cancelled check: %v", err)
+	}
+	if _, err := l.Status(ctx, "work"); !errors.Is(err, context.Canceled) {
+		t.Errorf("status = %v, want context.Canceled", err)
+	}
+}
+
+// Only a failure to reach the user bus earns the lingering/session advice; any
+// other systemctl error is shown as it is.
+func TestSystemdBusAdviceOnlyForTheBus(t *testing.T) {
+	for _, tc := range []struct {
+		msg    string
+		advice bool
+	}{
+		{"exit status 1: Failed to connect to bus: No medium found", true},
+		{"exit status 1: Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS not set", true},
+		{"exit status 5: Unit yad-runner-busy.service not found.", false},
+	} {
+		r := &fakeRunner{answer: func(string, int) ([]byte, error) { return nil, errors.New(tc.msg) }}
+		_, err := (&Systemd{Host: host(t, r)}).Status(context.Background(), "busy")
+		if got := err != nil && strings.Contains(err.Error(), "XDG_RUNTIME_DIR"); got != tc.advice {
+			t.Errorf("%q: advice %v, err %v", tc.msg, got, err)
 		}
 	}
 }

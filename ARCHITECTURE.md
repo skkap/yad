@@ -68,6 +68,7 @@ internal/harness         the catalog, detection, versions
 internal/capability      the capability document and its fingerprint
 internal/hostool         probing host tools (gh, git, docker, zumino)
 internal/account         accounts per harness, homes, limit state, failover
+internal/service         yad service: launchd agent and systemd user unit, login PATH (0028)
 internal/adapter         the Adapter interface and event normalisation
 internal/adapter/claude  stream-json both ways
 internal/adapter/codex   app-server JSON-RPC
