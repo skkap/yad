@@ -353,7 +353,9 @@ type shortClock struct{}
 
 func (shortClock) Now() time.Time { return time.Now() }
 
-func (shortClock) After(d time.Duration) <-chan time.Time { return time.After(min(d, 20*time.Millisecond)) }
+func (shortClock) After(d time.Duration) <-chan time.Time {
+	return time.After(min(d, 20*time.Millisecond))
+}
 
 // switchHub is a hub that starts refusing the runner's credential on demand.
 type switchHub struct {
