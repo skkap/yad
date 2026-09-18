@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -402,5 +403,45 @@ func TestStartReportsADaemonThatCannotRun(t *testing.T) {
 	}
 	if !eventuallyTrue(func() bool { _, running, _ := control.Holder(l.p); return !running }) {
 		t.Error("a daemon is still running")
+	}
+}
+
+// A foreground daemon whose stdout is a file — service.log under launchd or
+// systemd — writes its log only to the rotated file, never to that one.
+func TestServiceStdoutGetsNothingOnceTheLogIsOpen(t *testing.T) {
+	l := newLifecycle(t)
+	out, err := os.OpenFile(filepath.Join(shortDir(t), "service.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() { done <- run(ctx, []string{"daemon", "start", "--foreground"}, out, out) }()
+	if !eventuallyTrue(func() bool {
+		res, err := control.Ask(context.Background(), l.p, "status")
+		return err == nil && res.Status.Ready
+	}) {
+		t.Fatal("the foreground daemon never became ready")
+	}
+	cancel()
+	if code := <-done; code != 0 {
+		t.Errorf("exit %d", code)
+	}
+	if b, _ := os.ReadFile(out.Name()); len(b) != 0 {
+		t.Errorf("service.log got:\n%s", b)
+	}
+	if _, logged, _ := l.yad("daemon", "logs"); !strings.Contains(logged, "daemon started") || !strings.Contains(logged, "daemon stopped") {
+		t.Errorf("the rotated log lacks the start and stop:\n%s", logged)
+	}
+	// A terminal still gets it live: only a char device counts as one.
+	if tty, err := os.Open("/dev/null"); err == nil {
+		defer tty.Close()
+		if shownOnlyToAPerson(tty) != io.Writer(tty) {
+			t.Error("/dev/null, a character device, was treated as captured")
+		}
+	}
+	if shownOnlyToAPerson(out) != io.Discard {
+		t.Error("a regular file was treated as a terminal")
 	}
 }

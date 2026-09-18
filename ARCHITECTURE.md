@@ -495,7 +495,9 @@ yad conformance <url>              check any hub against v1
 `yad daemon start` backgrounds itself — it re-executes `yad daemon start
 --foreground` in a session of its own and returns once that process answers on
 its socket; `--foreground` is what service units run. Logs are JSON through
-`log/slog`, rotated by size. The control socket is `0600` in a data directory
+`log/slog`, rotated by size; a foreground daemon whose stdout is a file or pipe
+(a service unit's `service.log`) writes nothing more there once that log is
+open. The control socket is `0600` in a data directory
 that must itself be private, one JSON request and answer per connection; its
 protocol is internal and unversioned. The daemon holds `yad.lock` with
 `flock(2)` for its life, which is the single-instance lock per profile: a

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -106,6 +107,11 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 		return fmt.Errorf("open the daemon log: %w", err)
 	}
 	defer logf.Close()
+	// Under a service manager, or started in the background, stdout is a
+	// file nothing rotates (service.log, stderr.log): the rotated log is
+	// the record, and stdout keeps only what escapes before it — a
+	// failure to start, a panic. A person at a terminal still sees it live.
+	w = shownOnlyToAPerson(w)
 	recent := logfile.NewRecent(recentErrors)
 	log := slog.New(recent.Handler(slog.NewMultiHandler(
 		slog.NewJSONHandler(logf, nil),
@@ -197,6 +203,20 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			mu.Unlock()
 		}
 	}
+}
+
+// shownOnlyToAPerson is w when a person can be reading it, and io.Discard
+// when it is a file or pipe a supervisor captures. A writer that is not an
+// *os.File is the caller's own, kept as it is.
+func shownOnlyToAPerson(w io.Writer) io.Writer {
+	f, ok := w.(*os.File)
+	if !ok {
+		return w
+	}
+	if fi, err := f.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+		return w
+	}
+	return io.Discard
 }
 
 // recentErrors is how many warnings and errors `yad status` shows: enough to
