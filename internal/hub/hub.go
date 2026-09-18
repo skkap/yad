@@ -7,9 +7,8 @@
 // — the operations below are declared over the protocol/v1 types, and the
 // document is generated from them (decision 0017).
 //
-// Register and sync are served; events, result and deregister are declared and
-// documented, and answer not_implemented until the rest of epic E2 (Zumino
-// yad/dev) lands.
+// Register, sync, events and result are served; deregister is declared and
+// documented, and answers not_implemented until it lands.
 //
 // Beside the protocol, under hubapi.BasePath, is the service API — submit a
 // run, read it, long-poll its events — which only this hub has, behind its own
@@ -284,21 +283,23 @@ func (h *Hub) register(api huma.API) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "appendEvents", Method: http.MethodPost, Path: "/runs/{run}/events",
-		Summary:     "Append a batch of run events",
-		Description: "Idempotent by (run, seq). The response's acked_through is authoritative; the runner resends everything after it.",
-		Security:    security, Errors: []int{400, 401, 404, 426},
-	}, func(ctx context.Context, in *eventsInput) (*eventsOutput, error) {
-		return nil, notYet("appendEvents")
-	})
+		Summary: "Append a batch of run events",
+		Description: "Idempotent by (run, seq): a resent event is ignored and the first copy stands. The response's acked_through " +
+			"is the highest seq up to which the hub holds every event, and is authoritative; the runner resends everything after it. " +
+			"Only the runner the run was claimed by may append, before or after it ends; any other gets 403 not_holder.",
+		Security: security, Errors: []int{400, 401, 403, 404, 426},
+		MaxBodyBytes: reportBodyLimit,
+	}, h.appendEvents)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "submitResult", Method: http.MethodPost, Path: "/runs/{run}/result",
-		Summary:     "Report a run's terminal state",
-		Description: "Retried from the runner's outbox until acknowledged. 409 means the hub already holds a different terminal state, which wins.",
-		Security:    security, Errors: []int{400, 401, 404, 409, 426},
-	}, func(ctx context.Context, in *resultInput) (*ackOutput, error) {
-		return nil, notYet("submitResult")
-	})
+		Summary: "Report a run's terminal state",
+		Description: "Retried from the runner's outbox until acknowledged, and applied at most once: the same state again is acknowledged. " +
+			"409 means the hub already holds a different terminal state — lost, when the lease lapsed first — which stands; the runner stops reporting. " +
+			"Only the runner the run was offered to or claimed by may report; any other gets 403 not_holder.",
+		Security: security, Errors: []int{400, 401, 403, 404, 409, 426},
+		MaxBodyBytes: reportBodyLimit,
+	}, h.submitResult)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "deregister", Method: http.MethodPost, Path: "/runners/{runner}/deregister",

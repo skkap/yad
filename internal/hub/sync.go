@@ -224,16 +224,7 @@ func sweep(ctx context.Context, q *db.Queries, now time.Time) error {
 // authenticate finds the runner the bearer credential belongs to, and checks
 // it is the runner the path names.
 func (h *Hub) authenticate(ctx context.Context, pathRunner string) (db.Runner, error) {
-	cred := bearer(ctx)
-	if cred == "" {
-		return db.Runner{}, Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "no runner credential", "run `yad connect` to register this runner")
-	}
-	r, err := h.store.GetRunnerByCredential(ctx, hashSecret(cred))
-	if errors.Is(err, sql.ErrNoRows) {
-		return db.Runner{}, Fail(http.StatusUnauthorized, v1.CodeUnauthorized,
-			"the hub does not know this runner credential — a newer registration replaced it, or the hub's database was reset",
-			newTokenAction)
-	}
+	r, err := h.caller(ctx)
 	if err != nil {
 		return db.Runner{}, err
 	}

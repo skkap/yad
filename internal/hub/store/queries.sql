@@ -131,3 +131,25 @@ SELECT name, created_at FROM admin_tokens ORDER BY name;
 
 -- name: RevokeAdminToken :execrows
 DELETE FROM admin_tokens WHERE name = ?;
+
+-- Events and results (DEV-6): the protocol's two reporting calls.
+
+-- name: EventSeqsFrom :many
+SELECT seq FROM events WHERE run_id = sqlc.arg(run_id) AND seq > sqlc.arg(after) ORDER BY seq LIMIT sqlc.arg(max);
+
+-- name: SetEventsThrough :exec
+UPDATE runs SET events_through = ? WHERE id = ?;
+
+-- The result settles the run: its state, the reason a failure gave, and no
+-- lease any more, so a finished run cannot lapse into lost.
+-- name: FinishRun :exec
+UPDATE runs SET state = ?, reason = ?, lease_expires_at = NULL, resumes_at = NULL, updated_at = ?
+WHERE id = ?;
+
+-- A watcher reads only as far as the stream is contiguous: an event stored
+-- past a gap waits until the gap is filled, or a cursor would move past the
+-- missing seq and never see it.
+-- name: EventsContiguous :many
+SELECT e.seq, e.body FROM events e JOIN runs r ON r.id = e.run_id
+WHERE e.run_id = sqlc.arg(run_id) AND e.seq > sqlc.arg(after) AND e.seq <= r.events_through
+ORDER BY e.seq LIMIT sqlc.arg(max);

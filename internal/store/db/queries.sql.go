@@ -11,17 +11,20 @@ import (
 )
 
 const ackEvents = `-- name: AckEvents :exec
-UPDATE events SET acked = 1 WHERE connection = ? AND run_id = ? AND seq <= ?
+UPDATE events SET acked = (seq <= ?1)
+WHERE connection = ?2 AND run_id = ?3
 `
 
 type AckEventsParams struct {
-	Connection string
-	RunID      string
-	Seq        int64
+	AckedThrough int64
+	Connection   string
+	RunID        string
 }
 
+// The hub's acked_through is authoritative both ways: everything after it is
+// unacknowledged again, so a hub that lost events gets them resent.
 func (q *Queries) AckEvents(ctx context.Context, arg AckEventsParams) error {
-	_, err := q.db.ExecContext(ctx, ackEvents, arg.Connection, arg.RunID, arg.Seq)
+	_, err := q.db.ExecContext(ctx, ackEvents, arg.AckedThrough, arg.Connection, arg.RunID)
 	return err
 }
 
@@ -154,6 +157,20 @@ func (q *Queries) DeleteUnstartedRun(ctx context.Context, arg DeleteUnstartedRun
 	return err
 }
 
+const dropEvents = `-- name: DropEvents :exec
+UPDATE events SET acked = 1 WHERE connection = ? AND run_id = ?
+`
+
+type DropEventsParams struct {
+	Connection string
+	RunID      string
+}
+
+func (q *Queries) DropEvents(ctx context.Context, arg DropEventsParams) error {
+	_, err := q.db.ExecContext(ctx, dropEvents, arg.Connection, arg.RunID)
+	return err
+}
+
 const dueOutbox = `-- name: DueOutbox :many
 SELECT connection, run_id, body, attempts, next_attempt_at, last_error FROM outbox WHERE connection = ? AND next_attempt_at <= ? ORDER BY next_attempt_at
 `
@@ -262,6 +279,22 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session
 	return i, err
 }
 
+const hasUnackedEvents = `-- name: HasUnackedEvents :one
+SELECT EXISTS (SELECT 1 FROM events WHERE connection = ? AND run_id = ? AND acked = 0)
+`
+
+type HasUnackedEventsParams struct {
+	Connection string
+	RunID      string
+}
+
+func (q *Queries) HasUnackedEvents(ctx context.Context, arg HasUnackedEventsParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, hasUnackedEvents, arg.Connection, arg.RunID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listAccounts = `-- name: ListAccounts :many
 SELECT harness, label, limited_until FROM accounts WHERE harness = ? ORDER BY label
 `
@@ -368,6 +401,50 @@ func (q *Queries) ListIdleSessions(ctx context.Context, lastUsedAt int64) ([]Ses
 	return items, nil
 }
 
+const listReportingRuns = `-- name: ListReportingRuns :many
+SELECT r.connection, r.id, r.session_id, r.harness, r.model, r.state, r.spec, r.account, r.resumes_at, r.reason, r.created_at, r.updated_at FROM runs r JOIN outbox o ON o.connection = r.connection AND o.run_id = r.id
+WHERE r.connection = ? ORDER BY r.created_at
+`
+
+// A finished run whose result the hub has not acknowledged is still this
+// runner's: listing it keeps its lease alive, so a hub outage longer than a
+// lease does not turn a finished run into a lost one.
+func (q *Queries) ListReportingRuns(ctx context.Context, connection string) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listReportingRuns, connection)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.Connection,
+			&i.ID,
+			&i.SessionID,
+			&i.Harness,
+			&i.Model,
+			&i.State,
+			&i.Spec,
+			&i.Account,
+			&i.ResumesAt,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const outboxDepth = `-- name: OutboxDepth :one
 SELECT count(*) FROM outbox
 `
@@ -420,6 +497,33 @@ func (q *Queries) RetryOutbox(ctx context.Context, arg RetryOutboxParams) error 
 		arg.RunID,
 	)
 	return err
+}
+
+const runsWithUnackedEvents = `-- name: RunsWithUnackedEvents :many
+SELECT DISTINCT run_id FROM events WHERE connection = ? AND acked = 0 ORDER BY run_id
+`
+
+func (q *Queries) RunsWithUnackedEvents(ctx context.Context, connection string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, runsWithUnackedEvents, connection)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var run_id string
+		if err := rows.Scan(&run_id); err != nil {
+			return nil, err
+		}
+		items = append(items, run_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setAccountLimit = `-- name: SetAccountLimit :exec
@@ -519,6 +623,27 @@ type SetSessionStateParams struct {
 func (q *Queries) SetSessionState(ctx context.Context, arg SetSessionStateParams) error {
 	_, err := q.db.ExecContext(ctx, setSessionState,
 		arg.State,
+		arg.LastUsedAt,
+		arg.Connection,
+		arg.ID,
+	)
+	return err
+}
+
+const setSessionWorkdir = `-- name: SetSessionWorkdir :exec
+UPDATE sessions SET workdir = ?, last_used_at = ? WHERE connection = ? AND id = ?
+`
+
+type SetSessionWorkdirParams struct {
+	Workdir    string
+	LastUsedAt int64
+	Connection string
+	ID         string
+}
+
+func (q *Queries) SetSessionWorkdir(ctx context.Context, arg SetSessionWorkdirParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionWorkdir,
+		arg.Workdir,
 		arg.LastUsedAt,
 		arg.Connection,
 		arg.ID,

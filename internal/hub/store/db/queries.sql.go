@@ -154,6 +154,41 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const eventSeqsFrom = `-- name: EventSeqsFrom :many
+
+SELECT seq FROM events WHERE run_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3
+`
+
+type EventSeqsFromParams struct {
+	RunID string
+	After int64
+	Max   int64
+}
+
+// Events and results (DEV-6): the protocol's two reporting calls.
+func (q *Queries) EventSeqsFrom(ctx context.Context, arg EventSeqsFromParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, eventSeqsFrom, arg.RunID, arg.After, arg.Max)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var seq int64
+		if err := rows.Scan(&seq); err != nil {
+			return nil, err
+		}
+		items = append(items, seq)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventsAfter = `-- name: EventsAfter :many
 SELECT seq, body FROM events WHERE run_id = ? AND seq > ? ORDER BY seq LIMIT ?
 `
@@ -190,6 +225,73 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 		return nil, err
 	}
 	return items, nil
+}
+
+const eventsContiguous = `-- name: EventsContiguous :many
+SELECT e.seq, e.body FROM events e JOIN runs r ON r.id = e.run_id
+WHERE e.run_id = ?1 AND e.seq > ?2 AND e.seq <= r.events_through
+ORDER BY e.seq LIMIT ?3
+`
+
+type EventsContiguousParams struct {
+	RunID string
+	After int64
+	Max   int64
+}
+
+type EventsContiguousRow struct {
+	Seq  int64
+	Body string
+}
+
+// A watcher reads only as far as the stream is contiguous: an event stored
+// past a gap waits until the gap is filled, or a cursor would move past the
+// missing seq and never see it.
+func (q *Queries) EventsContiguous(ctx context.Context, arg EventsContiguousParams) ([]EventsContiguousRow, error) {
+	rows, err := q.db.QueryContext(ctx, eventsContiguous, arg.RunID, arg.After, arg.Max)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventsContiguousRow{}
+	for rows.Next() {
+		var i EventsContiguousRow
+		if err := rows.Scan(&i.Seq, &i.Body); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const finishRun = `-- name: FinishRun :exec
+UPDATE runs SET state = ?, reason = ?, lease_expires_at = NULL, resumes_at = NULL, updated_at = ?
+WHERE id = ?
+`
+
+type FinishRunParams struct {
+	State     string
+	Reason    sql.NullString
+	UpdatedAt int64
+	ID        string
+}
+
+// The result settles the run: its state, the reason a failure gave, and no
+// lease any more, so a finished run cannot lapse into lost.
+func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) error {
+	_, err := q.db.ExecContext(ctx, finishRun,
+		arg.State,
+		arg.Reason,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
 }
 
 const getAdminToken = `-- name: GetAdminToken :one
@@ -238,7 +340,7 @@ func (q *Queries) GetResult(ctx context.Context, runID string) (Result, error) {
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, session_id, harness, model, spec, state, runner_id, lease_expires_at, resumes_at, reason, created_at, updated_at FROM runs WHERE id = ?
+SELECT id, session_id, harness, model, spec, state, runner_id, lease_expires_at, resumes_at, reason, created_at, updated_at, events_through FROM runs WHERE id = ?
 `
 
 func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
@@ -257,6 +359,7 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.Reason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EventsThrough,
 	)
 	return i, err
 }
@@ -365,7 +468,7 @@ func (q *Queries) LoseLapsedRuns(ctx context.Context, now int64) (int64, error) 
 }
 
 const offerCandidates = `-- name: OfferCandidates :many
-SELECT r.id, r.session_id, r.harness, r.model, r.spec, r.state, r.runner_id, r.lease_expires_at, r.resumes_at, r.reason, r.created_at, r.updated_at FROM runs r JOIN sessions s ON s.id = r.session_id
+SELECT r.id, r.session_id, r.harness, r.model, r.spec, r.state, r.runner_id, r.lease_expires_at, r.resumes_at, r.reason, r.created_at, r.updated_at, r.events_through FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
   AND r.harness IN (SELECT value FROM json_each(?1))
   AND (r.created_at > ?2 OR (r.created_at = ?2 AND r.id > ?3))
@@ -424,6 +527,7 @@ func (q *Queries) OfferCandidates(ctx context.Context, arg OfferCandidatesParams
 			&i.Reason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.EventsThrough,
 		); err != nil {
 			return nil, err
 		}
@@ -578,7 +682,7 @@ func (q *Queries) RevokeAdminToken(ctx context.Context, name string) (int64, err
 }
 
 const runsOfferedTo = `-- name: RunsOfferedTo :many
-SELECT id, session_id, harness, model, spec, state, runner_id, lease_expires_at, resumes_at, reason, created_at, updated_at FROM runs WHERE runner_id = ? AND state = 'offered'
+SELECT id, session_id, harness, model, spec, state, runner_id, lease_expires_at, resumes_at, reason, created_at, updated_at, events_through FROM runs WHERE runner_id = ? AND state = 'offered'
 `
 
 func (q *Queries) RunsOfferedTo(ctx context.Context, runnerID sql.NullString) ([]Run, error) {
@@ -603,6 +707,7 @@ func (q *Queries) RunsOfferedTo(ctx context.Context, runnerID sql.NullString) ([
 			&i.Reason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.EventsThrough,
 		); err != nil {
 			return nil, err
 		}
@@ -629,6 +734,20 @@ type SetCapabilitiesParams struct {
 
 func (q *Queries) SetCapabilities(ctx context.Context, arg SetCapabilitiesParams) error {
 	_, err := q.db.ExecContext(ctx, setCapabilities, arg.Capabilities, arg.Fingerprint, arg.ID)
+	return err
+}
+
+const setEventsThrough = `-- name: SetEventsThrough :exec
+UPDATE runs SET events_through = ? WHERE id = ?
+`
+
+type SetEventsThroughParams struct {
+	EventsThrough int64
+	ID            string
+}
+
+func (q *Queries) SetEventsThrough(ctx context.Context, arg SetEventsThroughParams) error {
+	_, err := q.db.ExecContext(ctx, setEventsThrough, arg.EventsThrough, arg.ID)
 	return err
 }
 

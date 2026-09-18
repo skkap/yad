@@ -184,7 +184,9 @@ claimed ─► preparing ─► running ─► succeeded | failed | cancelled | 
 
 `preparing` covers the workdir, the setup hook and the account; a run reports
 `running` only once its workdir exists (Multica #3999). Non-terminal states
-travel in syncs; the terminal one travels in the result.
+travel in syncs; the terminal one travels in the result. A finished run whose
+result is not yet acknowledged stays listed, as `running`, so its lease outlasts
+a hub outage — [0023](docs/decisions/0023-lost-stands-against-a-late-result.md).
 
 ### Events
 
@@ -196,8 +198,13 @@ travel in syncs; the terminal one travels in the result.
 
 `kind` is the closed set in `DOMAIN.md`. Batches go out every second or every
 100 events, from the SQLite spool, so a network loss drops nothing; the hub's
-`acked_through` is authoritative and the runner resends after it. Tool output is
-capped at 8 KiB per event.
+`acked_through` — the highest `seq` up to which it holds every event — is
+authoritative, and the runner resends after it. Tool output is capped at 8 KiB
+per event; the runner caps text, error messages and a result's final text at
+1 MiB each, so one event or one result stays well under `yad hub`'s 16 MiB body
+limit. A proxy with a limit near 1 MiB can still refuse an outlier; the runner
+halves a refused batch down to one event and then keeps retrying it. Only the runner a run was claimed by may append to it, before or
+after it ends; anyone else gets `403 not_holder`.
 
 ### Result
 
@@ -209,9 +216,18 @@ capped at 8 KiB per event.
   last_seq }
 ```
 
-Written to the outbox before the first attempt, deleted on a 2xx, retried with
-backoff to five minutes and replayed at every start. A `409` means the hub
-already has a different terminal state; the runner keeps the hub's.
+Written to the outbox, in the same transaction as the run's terminal state,
+before the first attempt; sent once the run's events are all acknowledged;
+deleted on a 2xx, retried with backoff to five minutes and replayed at every
+start. A `409 conflict` means the hub already has a different terminal state —
+`lost`, when the lease lapsed first — and the runner keeps the hub's
+([0023](docs/decisions/0023-lost-stands-against-a-late-result.md)). `403
+not_holder` and an `invalid` refusal are final too. Anything else — a `404`
+that may be a wrong URL, a `401`, a `5xx`, a proxy's bare 4xx — is retried; an
+events batch refused as too large — by the hub or a proxy — goes again in
+halves. The hub applies
+a result from the runner the run was offered to or claimed by, once; the same
+state again is acknowledged.
 
 ### Versioning
 
@@ -314,7 +330,11 @@ harness process. Recording new ones is a manual step, behind a build tag
   exits cleanly — they hold pipes and git locks.
 - **Watchdogs**: inactivity on the event stream (owner default 30 min; a run may
   lower it) and an optional wall-clock cap. "Force-stopping a healthy run throws
-  away the work" — the inactivity default errs long.
+  away the work" — the inactivity default errs long. A watchdog that fires
+  interrupts the turn, which keeps the session resumable; a harness still going
+  after the interrupt grace has its process group killed. The run is
+  `timed_out`, with the error class `inactivity_timeout` or
+  `wall_clock_timeout`, whatever the stopped harness said last.
 - **Exit 0 is not success.** Only the harness's result event decides the state;
   `prompt_too_long` arrives with `subtype: success`.
 
@@ -324,7 +344,9 @@ harness process. Recording new ones is a manual step, behind a build tag
   last used, state)`. The native id is written the moment it is known, not at the
   end — a crash must not lose the resume pointer.
 - **One live run per session**, enforced by the store.
-- **Workdir** per session under `<data>/workdirs/<session>/`. Git sources come from
+- **Workdir** per session under `<data>/workdirs/<connection>/<session>/` — the
+  session id is the hub's, so it is kept only when it is a plain name and hashed
+  otherwise; no hub-chosen id becomes a path. Git sources come from
   a bare cache per repository (`<data>/repos/<hash>.git`, fetched before every
   checkout) as a worktree on the run's branch; a `path` source is used in place
   under a per-path lock. No sources → an empty directory.
@@ -481,8 +503,15 @@ line here is a reviewed change.
 
 - The runner runs as an ordinary user, never root; the service units say so.
 - Tokens: `0600` files, never logged, never printed, never in argv, never in an
-  event. Grants are deleted when their run ends, and the service API never
-  returns one.
+  event. Grants are deleted when their run ends. An `env` grant is `NAME=value`
+  in the harness's environment; a `file` grant is a `0600` file whose path is
+  in `NAME`. A grant is named as the secret it is — upper case, ending in
+  `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD` or `_CREDENTIAL(S)` — and never a
+  reserved name or in a loader, runtime or harness namespace (`LD_*`,
+  `NODE_*`, `ANTHROPIC_*`, `IS_SANDBOX` …). `protocol/v1` checks it; a run
+  carrying one that fails is refused by the hub and by the runner, never run
+  with it stripped — [0024](docs/decisions/0024-grants-are-named-as-secrets.md).
+  The service API never returns a grant.
 - Three secret kinds, never interchangeable: registration token, runner
   credential, admin token. The protocol accepts only the first two, the service
   API only the third.

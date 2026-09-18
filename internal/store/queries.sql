@@ -11,6 +11,9 @@ SELECT * FROM sessions WHERE connection = ? AND id = ?;
 -- name: SetSessionNativeID :exec
 UPDATE sessions SET native_id = ?, last_used_at = ? WHERE connection = ? AND id = ?;
 
+-- name: SetSessionWorkdir :exec
+UPDATE sessions SET workdir = ?, last_used_at = ? WHERE connection = ? AND id = ?;
+
 -- name: SetSessionState :exec
 UPDATE sessions SET state = ?, last_used_at = ? WHERE connection = ? AND id = ?;
 
@@ -41,8 +44,20 @@ INSERT INTO events (connection, run_id, seq, body) VALUES (?, ?, ?, ?);
 -- name: UnackedEvents :many
 SELECT seq, body FROM events WHERE connection = ? AND run_id = ? AND acked = 0 ORDER BY seq LIMIT ?;
 
+-- The hub's acked_through is authoritative both ways: everything after it is
+-- unacknowledged again, so a hub that lost events gets them resent.
 -- name: AckEvents :exec
-UPDATE events SET acked = 1 WHERE connection = ? AND run_id = ? AND seq <= ?;
+UPDATE events SET acked = (seq <= sqlc.arg(acked_through))
+WHERE connection = sqlc.arg(connection) AND run_id = sqlc.arg(run_id);
+
+-- name: DropEvents :exec
+UPDATE events SET acked = 1 WHERE connection = ? AND run_id = ?;
+
+-- name: RunsWithUnackedEvents :many
+SELECT DISTINCT run_id FROM events WHERE connection = ? AND acked = 0 ORDER BY run_id;
+
+-- name: HasUnackedEvents :one
+SELECT EXISTS (SELECT 1 FROM events WHERE connection = ? AND run_id = ? AND acked = 0);
 
 -- name: SpoolDepth :one
 SELECT count(*) FROM events WHERE acked = 0;
@@ -59,6 +74,13 @@ UPDATE outbox SET attempts = attempts + 1, next_attempt_at = ?, last_error = ? W
 
 -- name: DeleteOutbox :exec
 DELETE FROM outbox WHERE connection = ? AND run_id = ?;
+
+-- A finished run whose result the hub has not acknowledged is still this
+-- runner's: listing it keeps its lease alive, so a hub outage longer than a
+-- lease does not turn a finished run into a lost one.
+-- name: ListReportingRuns :many
+SELECT r.* FROM runs r JOIN outbox o ON o.connection = r.connection AND o.run_id = r.id
+WHERE r.connection = ? ORDER BY r.created_at;
 
 -- name: OutboxDepth :one
 SELECT count(*) FROM outbox;

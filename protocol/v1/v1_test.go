@@ -187,7 +187,11 @@ func TestRunValidate(t *testing.T) {
 		{"source with both", func(r *Run) { r.Sources = []Source{{Git: &GitSource{URL: "u"}, Path: "/p"}} }},
 		{"git source without url", func(r *Run) { r.Sources = []Source{{Git: &GitSource{}}} }},
 		{"grant without name", func(r *Run) { r.Grants = []Grant{{As: GrantEnv}} }},
-		{"grant delivered by argv", func(r *Run) { r.Grants = []Grant{{Name: "T", As: "argv"}} }},
+		{"grant delivered by argv", func(r *Run) { r.Grants = []Grant{{Name: "ZUMINO_TOKEN", As: "argv"}} }},
+		{"grant that sets the loader", func(r *Run) { r.Grants = []Grant{{Name: "LD_PRELOAD", As: GrantEnv}} }},
+		{"grant given twice", func(r *Run) {
+			r.Grants = []Grant{{Name: "ZUMINO_TOKEN", As: GrantEnv}, {Name: "ZUMINO_TOKEN", As: GrantFile}}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := good
@@ -200,6 +204,57 @@ func TestRunValidate(t *testing.T) {
 	for _, src := range []Source{{Git: &GitSource{URL: "u"}}, {Path: "/p"}} {
 		if err := src.Validate(); err != nil {
 			t.Errorf("valid source %+v refused: %v", src, err)
+		}
+	}
+}
+
+// Every class a grant name can fall in, each refused for its own reason.
+func TestGrantNames(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want string // "" when allowed, else a word the refusal must contain
+	}{
+		{"ZUMINO_TOKEN", ""}, {"GH_TOKEN", ""}, {"DEPLOY_KEY", ""}, {"DB_PASSWORD", ""},
+		{"STRIPE_SECRET", ""}, {"SERVICE_CREDENTIALS", ""}, {"SERVICE_CREDENTIAL", ""}, {"_X_TOKEN", ""},
+
+		// Not an environment variable name, or not a plain file name.
+		{"", "environment variable name"}, {"zumino_token", "environment variable name"},
+		{"Zumino_TOKEN", "environment variable name"}, {"1_TOKEN", "environment variable name"},
+		{"../X_TOKEN", "environment variable name"}, {"a/b_TOKEN", "environment variable name"},
+		{"X_TOKEN.json", "environment variable name"}, {"X-TOKEN", "environment variable name"},
+
+		// Reserved names.
+		{"PATH", "reserved"}, {"HOME", "reserved"}, {"SHELL", "reserved"}, {"TMPDIR", "reserved"},
+		{"BASH_ENV", "reserved"}, {"ENV", "reserved"}, {"NODE_OPTIONS", "reserved"}, {"IS_SANDBOX", "reserved"},
+
+		// Reserved namespaces, secret-shaped or not.
+		{"LD_PRELOAD", "LD_"}, {"LD_TOKEN", "LD_"}, {"DYLD_INSERT_LIBRARIES", "DYLD_"},
+		{"YAD_TOKEN", "YAD_"}, {"CLAUDE_CONFIG_DIR", "CLAUDE"}, {"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE"},
+		{"ANTHROPIC_BASE_URL", "ANTHROPIC_"}, {"ANTHROPIC_API_KEY", "ANTHROPIC_"},
+		{"CODEX_HOME", "CODEX_"}, {"CODEX_API_KEY", "CODEX_"},
+		{"OPENAI_BASE_URL", "OPENAI_"}, {"OPENAI_API_KEY", "OPENAI_"},
+		{"GIT_SSH_COMMAND", "GIT_"}, {"GIT_TOKEN", "GIT_"}, {"NODE_AUTH_TOKEN", "NODE_"},
+		{"NPM_CONFIG__AUTH_TOKEN", "NPM_CONFIG_"}, {"BUN_AUTH_TOKEN", "BUN_"},
+		{"AWS_BEARER_TOKEN_BEDROCK", "AWS_"}, {"AWS_SECRET_ACCESS_KEY", "AWS_"}, {"AWS_SESSION_TOKEN", "AWS_"},
+		{"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_"}, {"AZURE_OPENAI_API_KEY", "AZURE_"},
+
+		// Steering variables nobody listed: refused for not being secrets.
+		{"HTTPS_PROXY", "not named as a secret"}, {"HTTP_PROXY", "not named as a secret"},
+		{"ALL_PROXY", "not named as a secret"}, {"NO_PROXY", "not named as a secret"},
+		{"SSL_CERT_FILE", "not named as a secret"}, {"REQUESTS_CA_BUNDLE", "not named as a secret"},
+		{"CURL_CA_BUNDLE", "not named as a secret"}, {"SHELLOPTS", "not named as a secret"},
+		{"PS4", "not named as a secret"}, {"GCONV_PATH", "not named as a secret"},
+		{"JAVA_TOOL_OPTIONS", "not named as a secret"}, {"_JAVA_OPTIONS", "not named as a secret"},
+		{"TOKEN", "not named as a secret"}, {"_TOKEN", "not named as a secret"}, {"A_TOKEN_X", "not named as a secret"},
+	} {
+		for _, as := range []GrantDelivery{GrantEnv, GrantFile} {
+			err := Grant{Name: tc.name, Value: "v", As: as}.Validate()
+			switch {
+			case tc.want == "" && err != nil:
+				t.Errorf("%s as %s refused: %v", tc.name, as, err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Errorf("%s as %s: err %v, want one mentioning %q", tc.name, as, err, tc.want)
+			}
 		}
 	}
 }

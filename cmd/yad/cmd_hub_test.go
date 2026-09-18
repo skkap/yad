@@ -175,6 +175,11 @@ func (r *hubRig) event(t *testing.T, runID string, ev v1.Event) {
 	if _, err := r.s.AppendEvent(context.Background(), db.AppendEventParams{RunID: runID, Seq: ev.Seq, Body: string(b), ReceivedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	// The events call advances acked_through, and a watcher reads only that
+	// far; these tests append in order, so it is the event just written.
+	if err := r.s.SetEventsThrough(context.Background(), db.SetEventsThroughParams{EventsThrough: ev.Seq, ID: runID}); err != nil {
+		t.Fatal(err)
+	}
 	r.hub.Changed()
 }
 

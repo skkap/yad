@@ -66,12 +66,12 @@ func TestDecodesHubErrors(t *testing.T) {
 	srv := httptest.NewServer(hub.New(hub.Options{}))
 	defer srv.Close()
 	c, _ := New(srv.URL+hub.BasePath, "super-secret-credential")
-	_, err := c.Events(context.Background(), "r1", v1.EventBatch{Events: []v1.Event{}})
+	err := c.Deregister(context.Background(), "r1", "retiring")
 	var se *StatusError
 	if !errors.As(err, &se) || se.Status != http.StatusNotImplemented || Code(err) != v1.CodeNotImplemented {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "E2") {
+	if !strings.Contains(err.Error(), "ARCHITECTURE.md") {
 		t.Errorf("the next action is lost: %v", err)
 	}
 	if strings.Contains(err.Error(), "super-secret-credential") {

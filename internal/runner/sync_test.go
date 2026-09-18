@@ -229,7 +229,14 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	live.Session.Mode = v1.SessionLive
 	noModel := testRun("no-model", "s-nm")
 	noModel.Model = ""
-	h := &scriptedHub{offer: []v1.Run{codex, unknown, reused, live, noModel, testRun("ok", "s-ok"), testRun("over", "s-over")}}
+	// A reserved grant is refused whole, never run with it stripped.
+	loader := testRun("loader", "s-ld")
+	loader.Grants = []v1.Grant{{Name: "LD_PRELOAD", Value: "/evil.so", As: v1.GrantEnv}}
+	baseURL := testRun("base-url", "s-bu")
+	baseURL.Grants = []v1.Grant{{Name: "ZUMINO_TOKEN", Value: "t", As: v1.GrantEnv}, {Name: "ANTHROPIC_BASE_URL", Value: "https://attacker", As: v1.GrantEnv}}
+	proxy := testRun("proxy", "s-px")
+	proxy.Grants = []v1.Grant{{Name: "HTTPS_PROXY", Value: "https://attacker", As: v1.GrantFile}}
+	h := &scriptedHub{offer: []v1.Run{codex, unknown, reused, live, noModel, loader, baseURL, proxy, testRun("ok", "s-ok"), testRun("over", "s-over")}}
 	doc := drivableDoc("r", 1)
 	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
 		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
@@ -238,6 +245,7 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	want := map[string]string{
 		"codex": "not one this runner can drive", "unknown-session": "does not hold session",
 		"reused-session": "already has a session", "live": "live sessions", "no-model": "model is required",
+		"loader": "LD_", "base-url": "ANTHROPIC_", "proxy": "not named as a secret",
 	}
 	for id, msg := range want {
 		r, ok := h.results[id]
@@ -409,13 +417,29 @@ func TestRefusalsRetryOnlyTransientFailures(t *testing.T) {
 			return
 		}
 		calls[r.URL.Path]++
-		w.Header().Set("Content-Type", "application/json")
-		status := http.StatusNotImplemented
-		if strings.Contains(r.URL.Path, "gone") {
-			status = http.StatusNotFound
+		answer := map[string]struct {
+			status int
+			code   string
+		}{
+			"/runs/later/result":    {http.StatusNotImplemented, "x"},
+			"/runs/gone/result":     {http.StatusForbidden, v1.CodeNotHolder},
+			"/runs/settled/result":  {http.StatusConflict, v1.CodeConflict},
+			"/runs/proxied/result":  {http.StatusRequestEntityTooLarge, ""},
+			"/runs/nowhere/result":  {http.StatusNotFound, v1.CodeNotFound},
+			"/runs/accepted/result": {http.StatusOK, ""},
+		}[r.URL.Path]
+		if answer.status == http.StatusOK {
+			json.NewEncoder(w).Encode(v1.Ack{OK: true})
+			return
 		}
-		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(v1.ErrorEnvelope{Error: v1.Error{Code: "x", Message: "x", NextAction: "x"}})
+		if answer.code == "" {
+			// A proxy in front of the hub: no protocol envelope.
+			http.Error(w, "<html>too large</html>", answer.status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(answer.status)
+		json.NewEncoder(w).Encode(v1.ErrorEnvelope{Error: v1.Error{Code: answer.code, Message: "x", NextAction: "x"}})
 	}))
 	defer srv.Close()
 	c, _ := hubclient.New(srv.URL, "cred")
@@ -424,12 +448,19 @@ func TestRefusalsRetryOnlyTransientFailures(t *testing.T) {
 	l := &Loop{Connection: "hub", RunnerID: "r", Hub: c, Store: e.store, Pool: NewPool(doc.Capacity),
 		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
 	l.init()
-	l.refuse("later", "x")
-	l.refuse("gone", "x")
+	for _, id := range []string{"later", "gone", "settled", "proxied", "nowhere", "accepted"} {
+		l.refuse(id, "x")
+	}
 	mustSync(t, l)
 	mustSync(t, l)
-	if calls["/runs/later/result"] != 2 || calls["/runs/gone/result"] != 1 {
-		t.Errorf("result calls %v", calls)
+	want := map[string]int{
+		"/runs/later/result": 2, "/runs/proxied/result": 2, "/runs/nowhere/result": 2,
+		"/runs/gone/result": 1, "/runs/settled/result": 1, "/runs/accepted/result": 1,
+	}
+	for path, n := range want {
+		if calls[path] != n {
+			t.Errorf("%s called %d times, want %d", path, calls[path], n)
+		}
 	}
 }
 

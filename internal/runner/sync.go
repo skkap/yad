@@ -38,8 +38,8 @@ const (
 	refusalBudget   = 10 * time.Second
 )
 
-// Executor runs claimed runs. It is how the next layer (the executor, epic E2)
-// plugs into the sync loop, and all of it:
+// Executor runs claimed runs; Exec is the real one. The contract with the sync
+// loop is all of this:
 //
 //   - Start is called once per run, after the hub has acknowledged the claim,
 //     from the sync loop itself: it must hand the run off and return at once.
@@ -183,6 +183,10 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	if err != nil {
 		return v1.SyncResponse{}, err
 	}
+	reporting, err := l.Store.ListReportingRuns(ctx, l.Connection)
+	if err != nil {
+		return v1.SyncResponse{}, err
+	}
 	doc := l.Capabilities()
 	fp := capability.Fingerprint(doc)
 	res := emptyReservation()
@@ -206,6 +210,15 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 			h.ResumesAt = &t
 		}
 		req.Runs = append(req.Runs, h)
+	}
+	// A finished run whose result is still in the outbox stays listed, as
+	// running: its lease must outlast a hub outage, or the result that
+	// arrives after it would find the run already lost.
+	for _, r := range reporting {
+		if !listed[r.ID] {
+			listed[r.ID] = true
+			req.Runs = append(req.Runs, v1.HeldRun{RunID: r.ID, State: v1.RunRunning, Reason: "reporting its result"})
+		}
 	}
 
 	out, err := l.Hub.Sync(ctx, l.RunnerID, req)
@@ -370,12 +383,13 @@ func (l *Loop) refuse(runID, reason string) {
 			break
 		}
 	}
-	l.refused[runID] = v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: "refused", Message: reason}}
+	l.refused[runID] = v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: ClassRefused, Message: reason}}
 }
 
 // sendRefusals reports each refused run as failed, so the hub stops offering
-// it. A refusal the hub answered — accepted, or refused with a 4xx — is done;
-// one lost to the network or a 5xx is sent again after the next sync.
+// it. A refusal the hub settled — accepted, answered with a terminal state it
+// already holds, or refused in the protocol's own terms — is done; anything
+// else, a proxy's bare 4xx included, is sent again after the next sync.
 func (l *Loop) sendRefusals(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, refusalBudget)
 	defer cancel()
@@ -386,8 +400,7 @@ func (l *Loop) sendRefusals(ctx context.Context) {
 		}
 		sent++
 		err := l.Hub.Result(ctx, id, res)
-		var se *hubclient.StatusError
-		if err == nil || errors.As(err, &se) && se.Status < 500 {
+		if err == nil || final(err) || hubclient.Code(err) == v1.CodeConflict {
 			delete(l.refused, id)
 		}
 	}
