@@ -52,8 +52,9 @@ type frame struct {
 	RateLimitInfo *rateLimitInfo `json:"rate_limit_info"`
 
 	// control_request from Claude; control_response to ours
-	RequestID string          `json:"request_id"`
-	Request   *controlRequest `json:"request"`
+	RequestID string           `json:"request_id"`
+	Request   *controlRequest  `json:"request"`
+	Response  *controlResponse `json:"response"`
 }
 
 type streamEvent struct {
@@ -106,6 +107,10 @@ type controlRequest struct {
 	ToolName string `json:"tool_name"`
 }
 
+type controlResponse struct {
+	RequestID string `json:"request_id"`
+}
+
 // textFlush bounds how long streamed text waits before it becomes an event.
 // Claude sends a delta per few tokens; one event each would be thousands per
 // answer, and one per finished block would leave a long answer invisible — and
@@ -140,6 +145,11 @@ type translator struct {
 	limit      *adapter.Limit
 	apiRetries int
 	mismatch   string
+	// interruptTaken: Claude has acknowledged one of our interrupts. A result
+	// that came before that, and was not itself an abort, was Claude's answer
+	// already on its way when the interrupt landed (decision 0025).
+	interruptTaken bool
+	resultFirst    bool
 }
 
 func newTranslator(session string, emit func(v1.Event)) *translator {
@@ -198,6 +208,10 @@ func (t *translator) line(raw []byte) reaction {
 			}
 			t.status("usage limit reached")
 		}
+	case "control_response":
+		if f.Response != nil && strings.HasPrefix(f.Response.RequestID, requestPrefix) {
+			t.interruptTaken = true
+		}
 	case "control_request":
 		// Only a permission prompt reaches here: nobody is there to answer it,
 		// and the owner's permission mode already decided what may run (0015).
@@ -208,6 +222,10 @@ func (t *translator) line(raw []byte) reaction {
 		t.flush()
 		t.result = &f
 		t.takenAfter = false
+		// Claude acknowledges an interrupt before it aborts; an aborted
+		// result is the interrupt's own even from a Claude that sends no
+		// acknowledgement.
+		t.resultFirst = !t.interruptTaken && !strings.HasPrefix(f.TerminalReason, "aborted")
 		if !f.IsError {
 			// A limit Claude got past (overage, a retry) is not this result's.
 			t.limit = nil
@@ -475,7 +493,11 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		// succeeded, and reporting it cancelled would throw its answer away.
 		o.State = v1.RunSucceeded
 		return o
-	case e.interrupted:
+	case e.interrupted && !(t.resultFirst && (e.final || r.IsError && t.replays == 0)):
+		// An error that was the answer and landed before the interrupt
+		// stands, as a success does: a usage limit or a missing session
+		// reported as cancelled would hide what the hub needs to act on
+		// (decision 0025).
 		return cancelled()
 	case !e.final && e.cancelled:
 		return cancelled()

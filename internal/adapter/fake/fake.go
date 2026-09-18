@@ -22,6 +22,21 @@ type Script struct {
 	Delay time.Duration
 	// Hang never ends the turn on its own — for watchdog and cancel tests.
 	Hang bool
+	// IgnoreInterrupt and IgnoreTerm make the turn deaf to the cancel
+	// ladder's first and second rungs, as a wedged harness is; only the
+	// context — SIGKILL — ends it then.
+	IgnoreInterrupt bool
+	IgnoreTerm      bool
+	// Stopped is the outcome an interrupt or SIGTERM ends the turn with; nil
+	// is cancelled. A harness whose answer was already on its way reports
+	// that answer instead.
+	Stopped *adapter.Outcome
+	// SteerError, when set, is what Steer answers — a harness that no longer
+	// takes input.
+	SteerError string
+	// InterruptFails makes Interrupt answer an error without reaching the
+	// harness, as many times as it says.
+	InterruptFails int
 }
 
 // Adapter plays Scripts. Next picks the script for each Start, so a test can
@@ -32,6 +47,14 @@ type Adapter struct {
 
 	mu     sync.Mutex
 	Starts []adapter.Spec
+	turns  []adapter.Turn
+}
+
+// Turns returns the turns started so far, for assertions on what reached them.
+func (a *Adapter) Turns() []adapter.Turn {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]adapter.Turn(nil), a.turns...)
 }
 
 func (a *Adapter) Harness() string {
@@ -49,58 +72,93 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, e
 	a.Starts = append(a.Starts, spec)
 	a.mu.Unlock()
 
-	t := &turn{events: make(chan v1.Event), done: make(chan struct{}), interrupt: make(chan struct{})}
 	s := a.Next(spec)
+	t := &turn{events: make(chan v1.Event), done: make(chan struct{}), stop: make(chan struct{}), script: s}
 	t.native = s.Outcome.NativeSessionID
-	go t.play(ctx, s)
+	a.mu.Lock()
+	a.turns = append(a.turns, t)
+	a.mu.Unlock()
+	go t.play(ctx)
 	return t, nil
 }
 
 type turn struct {
-	events    chan v1.Event
-	done      chan struct{}
-	interrupt chan struct{}
-	once      sync.Once
-	mu        sync.Mutex
-	steered   []string
-	outcome   adapter.Outcome
-	native    string
+	events chan v1.Event
+	done   chan struct{}
+	stop   chan struct{} // closed by the rung that ends the turn
+	script Script
+
+	mu          sync.Mutex
+	steered     []string
+	interrupts  int
+	terminated  bool
+	outcome     adapter.Outcome
+	stopOutcome adapter.Outcome
+	native      string
 }
 
-func (t *turn) play(ctx context.Context, s Script) {
+func (t *turn) play(ctx context.Context) {
 	defer close(t.done)
 	defer close(t.events)
+	s := t.script
 	t.outcome = s.Outcome
+	end := func() bool {
+		select {
+		case <-t.stop:
+			t.mu.Lock()
+			t.outcome = t.stopOutcome
+			t.mu.Unlock()
+			return true
+		case <-ctx.Done():
+			t.outcome = adapter.Outcome{State: v1.RunCancelled}
+			return true
+		default:
+			return false
+		}
+	}
 	for _, e := range s.Events {
 		select {
 		case <-time.After(s.Delay):
-		case <-t.interrupt:
-			t.outcome = adapter.Outcome{State: v1.RunCancelled, NativeSessionID: s.Outcome.NativeSessionID}
-			return
+		case <-t.stop:
 		case <-ctx.Done():
-			t.outcome = adapter.Outcome{State: v1.RunCancelled}
+		}
+		if end() {
 			return
 		}
 		// The consumer may stop reading once it has cancelled; a bare send would
 		// then block forever and Wait would never return.
 		select {
 		case t.events <- e:
-		case <-t.interrupt:
-			t.outcome = adapter.Outcome{State: v1.RunCancelled, NativeSessionID: s.Outcome.NativeSessionID}
-			return
+		case <-t.stop:
 		case <-ctx.Done():
-			t.outcome = adapter.Outcome{State: v1.RunCancelled}
+		}
+		if end() {
 			return
 		}
 	}
 	if s.Hang {
 		select {
-		case <-t.interrupt:
-			t.outcome = adapter.Outcome{State: v1.RunCancelled}
+		case <-t.stop:
 		case <-ctx.Done():
-			t.outcome = adapter.Outcome{State: v1.RunCancelled}
 		}
+		end()
 	}
+}
+
+// halt ends the turn with the script's stopped outcome, once.
+func (t *turn) halt() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	select {
+	case <-t.stop:
+		return
+	default:
+	}
+	t.stopOutcome = adapter.Outcome{State: v1.RunCancelled, NativeSessionID: t.script.Outcome.NativeSessionID}
+	if t.script.Stopped != nil {
+		t.stopOutcome = *t.script.Stopped
+	}
+	close(t.stop)
 }
 
 func (t *turn) Events() <-chan v1.Event { return t.events }
@@ -108,6 +166,9 @@ func (t *turn) Events() <-chan v1.Event { return t.events }
 func (t *turn) NativeSessionID() string { return t.native }
 
 func (t *turn) Steer(text string) error {
+	if t.script.SteerError != "" {
+		return errors.New(t.script.SteerError)
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.steered = append(t.steered, text)
@@ -123,8 +184,36 @@ func Steered(tr adapter.Turn) []string {
 }
 
 func (t *turn) Interrupt() error {
-	t.once.Do(func() { close(t.interrupt) })
+	t.mu.Lock()
+	t.interrupts++
+	failed := t.interrupts <= t.script.InterruptFails
+	t.mu.Unlock()
+	if failed {
+		return errors.New("the harness is not reading its input")
+	}
+	if !t.script.IgnoreInterrupt {
+		t.halt()
+	}
 	return nil
+}
+
+func (t *turn) Terminate() error {
+	t.mu.Lock()
+	t.terminated = true
+	t.mu.Unlock()
+	if !t.script.IgnoreTerm {
+		t.halt()
+	}
+	return nil
+}
+
+// Rungs returns how many interrupts the turn was sent and whether it was
+// sent SIGTERM, for assertions on the cancel ladder.
+func Rungs(tr adapter.Turn) (interrupts int, terminated bool) {
+	t := tr.(*turn)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.interrupts, t.terminated
 }
 
 func (t *turn) Wait() adapter.Outcome {

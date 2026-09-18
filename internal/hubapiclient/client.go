@@ -70,6 +70,28 @@ func (c *Client) Run(ctx context.Context, runID string) (hubapi.Run, error) {
 	return out, err
 }
 
+// Cancel cancels a run: at once when no runner has started it, otherwise at
+// its runner's next sync.
+func (c *Client) Cancel(ctx context.Context, runID string) (hubapi.Run, error) {
+	var out hubapi.Run
+	err := c.do(ctx, http.MethodPost, "/runs/"+url.PathEscape(runID)+"/cancel", struct{}{}, &out)
+	return out, err
+}
+
+// Interrupt ends a running run's turn and keeps its session.
+func (c *Client) Interrupt(ctx context.Context, runID string) (hubapi.Run, error) {
+	var out hubapi.Run
+	err := c.do(ctx, http.MethodPost, "/runs/"+url.PathEscape(runID)+"/interrupt", struct{}{}, &out)
+	return out, err
+}
+
+// Steer adds input to a running run's turn.
+func (c *Client) Steer(ctx context.Context, runID, text string) (hubapi.Run, error) {
+	var out hubapi.Run
+	err := c.do(ctx, http.MethodPost, "/runs/"+url.PathEscape(runID)+"/steer", hubapi.SteerRequest{Text: text}, &out)
+	return out, err
+}
+
 // Events long-polls once for the events after the cursor, waiting up to wait
 // when there are none.
 func (c *Client) Events(ctx context.Context, runID string, after int64, wait time.Duration) (hubapi.EventPage, error) {

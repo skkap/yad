@@ -34,7 +34,7 @@ func (e *env) executor(adapters ...adapter.Adapter) *Exec {
 	return &Exec{
 		Store: e.store, Adapters: NewRegistry(adapters...), Config: config.Default(), Data: e.paths.Data,
 		Binary: func(h string) (string, bool) { return "/nonexistent/" + h, true },
-		Grace:  20 * time.Millisecond,
+		Grace:  20 * time.Millisecond, TermGrace: 20 * time.Millisecond,
 	}
 }
 
@@ -249,6 +249,7 @@ func (t *deafTurn) Events() <-chan v1.Event { return t.events }
 func (t *deafTurn) Steer(string) error      { return nil }
 func (t *deafTurn) NativeSessionID() string { return "" }
 func (t *deafTurn) Interrupt() error        { return errors.New("not listening") }
+func (t *deafTurn) Terminate() error        { return nil }
 func (t *deafTurn) Wait() adapter.Outcome {
 	<-t.done
 	return adapter.Outcome{State: v1.RunCancelled}

@@ -153,3 +153,23 @@ WHERE id = ?;
 SELECT e.seq, e.body FROM events e JOIN runs r ON r.id = e.run_id
 WHERE e.run_id = sqlc.arg(run_id) AND e.seq > sqlc.arg(after) AND e.seq <= r.events_through
 ORDER BY e.seq LIMIT sqlc.arg(max);
+
+-- Cancel, interrupt and steer (DEV-8).
+
+-- name: AddControl :exec
+INSERT INTO run_controls (run_id, kind, text, created_at) VALUES (?, ?, ?, ?);
+
+-- name: FirstControl :one
+SELECT * FROM run_controls WHERE run_id = ? AND kind = ? ORDER BY id LIMIT 1;
+
+-- name: ControlsFor :many
+SELECT * FROM run_controls WHERE run_id = ? ORDER BY id;
+
+-- name: DeleteSteersThrough :exec
+DELETE FROM run_controls WHERE run_id = ? AND kind = 'steer' AND id <= ?;
+
+-- A run no runner has started ends on the hub alone. An offered run keeps its
+-- runner: that runner lists it once more, hears cancel, and withdraws it.
+-- name: CancelUnstartedRun :execrows
+UPDATE runs SET state = 'cancelled', reason = ?, lease_expires_at = NULL, updated_at = ?
+WHERE id = ? AND state IN ('queued', 'offered');

@@ -157,6 +157,68 @@ func cmdHubWatch(ctx context.Context, g global, args []string, stdout, _ io.Writ
 	return follow(ctx, c, run, stdout)
 }
 
+// cmdHubControl is `yad hub cancel`, `interrupt` and `steer`. Each prints the
+// run's state after the hub took the request; a run a runner holds stops or
+// takes the steer at that runner's next sync, which `yad hub watch` shows.
+func cmdHubControl(ctx context.Context, g global, verb string, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("hub "+verb, flag.ContinueOnError)
+	hf := addHubFlags(fs, g)
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return err
+	}
+	want := 1
+	usage := "usage: yad hub " + verb + " [--hub url] [--token-file f] <run>"
+	if verb == "steer" {
+		want = 2
+		usage = "usage: yad hub steer [--hub url] [--token-file f] <run> <text | ->"
+	}
+	if len(pos) != want {
+		return errors.New(usage)
+	}
+	var text string
+	if verb == "steer" {
+		text = pos[1]
+		if text == "-" {
+			b, err := io.ReadAll(stdin)
+			if err != nil {
+				return fmt.Errorf("read the steer from stdin: %w", err)
+			}
+			text = string(b)
+		}
+		if strings.TrimSpace(text) == "" {
+			return errors.New("the steer is empty — say what the harness should take into account")
+		}
+	}
+	c, err := hf.client()
+	if err != nil {
+		return err
+	}
+	var run hubapi.Run
+	switch verb {
+	case "cancel":
+		run, err = c.Cancel(ctx, pos[0])
+	case "interrupt":
+		run, err = c.Interrupt(ctx, pos[0])
+	case "steer":
+		run, err = c.Steer(ctx, pos[0], text)
+	}
+	if err != nil {
+		return err
+	}
+	switch {
+	case run.State.Terminal():
+		fmt.Fprintf(stdout, "run %s is %s\n", run.RunID, run.State)
+	case verb == "cancel":
+		fmt.Fprintf(stdout, "run %s is %s; its runner cancels it at its next sync — `yad hub watch %s` shows the end\n", run.RunID, run.State, run.RunID)
+	case verb == "interrupt":
+		fmt.Fprintf(stdout, "run %s is %s; its runner interrupts the turn at its next sync\n", run.RunID, run.State)
+	default:
+		fmt.Fprintf(stdout, "run %s is %s; its runner hands the steer to the harness at its next sync\n", run.RunID, run.State)
+	}
+	return nil
+}
+
 func follow(ctx context.Context, c *hubapiclient.Client, run hubapi.Run, w io.Writer) error {
 	p := &printer{w: w}
 	p.state(run)
@@ -177,13 +239,15 @@ func follow(ctx context.Context, c *hubapiclient.Client, run hubapi.Run, w io.Wr
 // harness output, which is data: control characters are replaced, so a
 // harness cannot drive the terminal it is watched on.
 type printer struct {
-	w        io.Writer
-	shown    hubapi.RunState
-	lastText string
+	w           io.Writer
+	shown       hubapi.RunState
+	cancelShown bool
+	lastText    string
 }
 
 func (p *printer) state(r hubapi.Run) {
 	if r.State == p.shown {
+		p.cancelling(r)
 		return
 	}
 	p.shown = r.State
@@ -198,6 +262,16 @@ func (p *printer) state(r hubapi.Run) {
 		line += ", resumes " + r.ResumesAt.Local().Format(time.DateTime)
 	}
 	fmt.Fprintln(p.w, line)
+	p.cancelling(r)
+}
+
+// cancelling says once that a cancel is on its way to the runner, since the
+// run's state does not move until the runner acts on it.
+func (p *printer) cancelling(r hubapi.Run) {
+	if r.CancelRequestedAt != nil && !r.State.Terminal() && !p.cancelShown {
+		p.cancelShown = true
+		fmt.Fprintln(p.w, "── cancel requested; the runner stops the run at its next sync")
+	}
 }
 
 // toolPreview bounds what a tool call shows: the whole input is in the
@@ -238,6 +312,9 @@ func (p *printer) result(r hubapi.Run) error {
 	if res == nil {
 		if r.State == hubapi.RunState(v1.RunSucceeded) {
 			return nil
+		}
+		if r.Reason != "" {
+			return fmt.Errorf("run %s ended %s: %s", r.RunID, r.State, clean(r.Reason))
 		}
 		return fmt.Errorf("run %s ended %s with no result from its runner", r.RunID, r.State)
 	}

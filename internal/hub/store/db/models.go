@@ -53,6 +53,14 @@ type Run struct {
 	EventsThrough  int64
 }
 
+type RunControl struct {
+	ID        int64
+	RunID     string
+	Kind      string
+	Text      string
+	CreatedAt int64
+}
+
 type Runner struct {
 	ID                string
 	Name              string

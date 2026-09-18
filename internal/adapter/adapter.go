@@ -54,6 +54,11 @@ type Turn interface {
 	Steer(text string) error
 	// Interrupt ends the turn and keeps the session resumable.
 	Interrupt() error
+	// Terminate sends SIGTERM to the turn's process group: the cancel
+	// ladder's second rung, for a harness that did not end its turn when
+	// interrupted. The last rung, SIGKILL, is cancelling Start's context. A
+	// turn whose process is gone is not an error.
+	Terminate() error
 	// NativeSessionID is the harness's own session id, or "" until the harness
 	// has one. The runner stores it as soon as it appears rather than from the
 	// Outcome, so a crash mid-run does not lose the resume pointer.

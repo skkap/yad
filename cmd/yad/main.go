@@ -102,6 +102,10 @@ usage: yad [--profile name] <command> [flags]
   hub submit --harness h --model m <instruction>
                       queue a run on a hub; prints its id
   hub watch <run>     a run's events as they arrive, then its result
+  hub cancel <run>    stop a run: at once if unstarted, else down the cancel ladder
+  hub interrupt <run> end a run's turn and keep its session
+  hub steer <run> <text | ->
+                      add input to a running turn
   version             version and build
 
   disconnect · status · sessions · account · service · conformance

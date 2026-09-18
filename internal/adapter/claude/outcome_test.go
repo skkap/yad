@@ -24,6 +24,8 @@ func TestOutcomeRule(t *testing.T) {
 		"not found":       `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["No conversation found with session ID: x"],"session_id":"` + session + `"}`,
 	}
 	const replay = `{"type":"user","isReplay":true,"message":{"role":"user","content":"steer"}}`
+	const ack = `{"type":"control_response","response":{"subtype":"success","request_id":"yad-1","response":{"still_queued":[]}}}`
+	const noAbort = `{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"` + session + `"}`
 	const queued = `{"type":"result","subtype":"success","is_error":false,"result":"done","queued_turn_count":1,"session_id":"` + session + `"}`
 
 	cases := []struct {
@@ -50,6 +52,18 @@ func TestOutcomeRule(t *testing.T) {
 		{name: "after interrupt, steer dropped", lines: []string{results["interrupted"]}, e: ended{interrupted: true}, state: v1.RunCancelled},
 		{name: "success, interrupt dropped a steer", lines: []string{results["success"]}, e: ended{interrupted: true}, state: v1.RunCancelled},
 		{name: "final error, cancelled after", lines: []string{results["error"]}, e: ended{final: true, cancelled: true}, state: v1.RunFailed, class: adapter.ClassHarness},
+
+		// Decision 0025: an error that was the answer and landed before the
+		// interrupt took stands, as a success does; one after Claude took the
+		// interrupt, or one that is an abort, is the interrupt's.
+		{name: "final error, interrupt too late", lines: []string{results["error"]}, e: ended{final: true, interrupted: true}, state: v1.RunFailed, class: adapter.ClassHarness},
+		{name: "final usage limit, interrupt too late", lines: []string{results["usage limit"]}, e: ended{final: true, interrupted: true}, state: v1.RunFailed, class: adapter.ClassUsageLimit},
+		{name: "final prompt too long, interrupt too late", lines: []string{results["prompt too long"]}, e: ended{final: true, interrupted: true}, state: v1.RunFailed, class: adapter.ClassPromptTooLong},
+		{name: "not found, interrupt too late", lines: []string{results["not found"]}, e: ended{interrupted: true}, state: v1.RunFailed, class: adapter.ClassSessionNotFound},
+		{name: "error after the interrupt was taken", lines: []string{ack, noAbort}, e: ended{final: true, interrupted: true}, state: v1.RunCancelled},
+		{name: "usage limit after the interrupt was taken", lines: []string{ack, results["usage limit"]}, e: ended{final: true, interrupted: true}, state: v1.RunCancelled},
+		{name: "abort without an acknowledgement", lines: []string{results["interrupted"]}, e: ended{final: true, interrupted: true}, state: v1.RunCancelled},
+		{name: "final error, not final by steer, interrupted", lines: []string{replay, results["error"]}, e: ended{interrupted: true}, state: v1.RunCancelled},
 
 		// An error before Claude read any input is not final by the count,
 		// and is still the answer: nothing else will come.

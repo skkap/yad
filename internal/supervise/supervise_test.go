@@ -60,6 +60,30 @@ func child(mode string) {
 		fmt.Println(gc.Process.Pid)
 	case "sleep":
 		time.Sleep(time.Hour)
+	case "deaf-grandchild":
+		// A leader that dies on SIGTERM, leaving behind a descendant in its
+		// group that ignores it and holds our stdout — a harness whose tool
+		// process traps the signal.
+		gc := exec.Command(os.Args[0])
+		gc.Env = append(os.Environ(), "SUPERVISE_TEST_CHILD=deaf")
+		ready, err := gc.StdoutPipe()
+		if err != nil {
+			os.Exit(9)
+		}
+		gc.Stderr = os.Stdout
+		if err := gc.Start(); err != nil {
+			os.Exit(9)
+		}
+		// The descendant is deaf only once it says so.
+		if _, err := bufio.NewReader(ready).ReadString('\n'); err != nil {
+			os.Exit(9)
+		}
+		fmt.Println(gc.Process.Pid)
+		time.Sleep(time.Hour)
+	case "deaf":
+		signal.Ignore(syscall.SIGTERM, syscall.SIGINT)
+		fmt.Println("deaf")
+		time.Sleep(time.Hour)
 	}
 }
 
@@ -214,6 +238,62 @@ func TestDescendantsDieWithLeader(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// The cancel ladder's SIGTERM ends the leader, and a descendant that ignores
+// it dies with the leader anyway: whether Stop climbs the ladder or a caller
+// sends the SIGTERM itself, as the executor does around a stream it keeps
+// reading.
+func TestDeafDescendantDiesWhenTheLeaderIsTerminated(t *testing.T) {
+	for _, how := range []string{"Stop", "Terminate"} {
+		t.Run(how, func(t *testing.T) {
+			p := spawn(t, "deaf-grandchild")
+			r := bufio.NewReader(p.Stdout())
+			line, err := r.ReadString('\n')
+			if err != nil {
+				t.Fatal(err)
+			}
+			gc, err := strconv.Atoi(strings.TrimSpace(line))
+			if err != nil {
+				t.Fatalf("grandchild pid %q", line)
+			}
+			if how == "Stop" {
+				if got := p.Stop(Ladder{InterruptGrace: 10 * time.Millisecond, TermGrace: 5 * time.Second}); got != StepTerminated {
+					t.Errorf("Stop = %s, want %s", got, StepTerminated)
+				}
+			} else {
+				p.Terminate()
+				select {
+				case <-p.Done():
+				case <-time.After(5 * time.Second):
+					t.Fatal("SIGTERM did not end the leader")
+				}
+			}
+			done := make(chan struct{})
+			go func() { io.Copy(io.Discard, r); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("stdout never reached EOF — the deaf descendant survived")
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for syscall.Kill(gc, 0) == nil {
+				if time.Now().After(deadline) {
+					t.Fatalf("descendant %d still alive", gc)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		})
+	}
+}
+
+// Terminate after the leader has exited sends nothing: the group is gone, and
+// its id may belong to someone else by now.
+func TestTerminateAfterExit(t *testing.T) {
+	p := spawn(t, "echo")
+	io.ReadAll(p.Stdout())
+	p.Wait()
+	p.Terminate()
 }
 
 func TestContextCancelKillsGroup(t *testing.T) {

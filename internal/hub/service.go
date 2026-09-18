@@ -93,11 +93,14 @@ func (h *Hub) registerService(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "runEvents", Method: http.MethodGet, Path: "/runs/{run}/events",
 		Summary: "Long-poll a run's events",
-		Description: "Answers at once with every event after `after` (up to a page), or when the run's state moves, or when it " +
+		Description: "Answers at once with every event after `after` (up to a page), or when the run's state moves or a cancel is " +
+			"asked for it, or when it " +
 			"finishes; otherwise holds the request up to wait_ms and answers with no events. Ask again with after = next_after " +
 			"until done, which is true once the run is terminal and every event it will have has been returned.",
 		Security: adminSecurity, Errors: []int{400, 401, 404},
 	}, h.runEvents)
+
+	h.registerControls(api)
 }
 
 func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error) {
@@ -199,7 +202,10 @@ func (h *Hub) runEvents(ctx context.Context, in *eventsPageInput) (*eventsPageOu
 	poll := time.NewTicker(fallbackPoll)
 	defer poll.Stop()
 
-	var started hubapi.RunState
+	var (
+		started    hubapi.RunState
+		cancelling bool
+	)
 	for first := true; ; first = false {
 		// Taken before the read, so a write landing between the read and
 		// the wait still wakes this request.
@@ -209,9 +215,12 @@ func (h *Hub) runEvents(ctx context.Context, in *eventsPageInput) (*eventsPageOu
 			return nil, err
 		}
 		if first {
-			started = page.Run.State
+			started, cancelling = page.Run.State, page.Run.CancelRequestedAt != nil
 		}
-		if len(page.Events) > 0 || page.Done || page.Run.State != started || wait == 0 {
+		// A cancel asked for is news to a watcher even before the runner
+		// acts on it and the state moves.
+		moved := page.Run.State != started || (page.Run.CancelRequestedAt != nil) != cancelling
+		if len(page.Events) > 0 || page.Done || moved || wait == 0 {
 			return &eventsPageOutput{Body: page}, nil
 		}
 		select {
@@ -279,6 +288,16 @@ func runView(ctx context.Context, q *db.Queries, runID string) (hubapi.Run, erro
 	if r.ResumesAt.Valid {
 		t := time.UnixMilli(r.ResumesAt.Int64).UTC()
 		view.ResumesAt = &t
+	}
+	if !view.State.Terminal() {
+		c, err := q.FirstControl(ctx, db.FirstControlParams{RunID: runID, Kind: string(v1.ControlCancel)})
+		switch {
+		case err == nil:
+			t := time.UnixMilli(c.CreatedAt).UTC()
+			view.CancelRequestedAt = &t
+		case !errors.Is(err, sql.ErrNoRows):
+			return hubapi.Run{}, err
+		}
 	}
 	res, err := q.GetResult(ctx, runID)
 	switch {
