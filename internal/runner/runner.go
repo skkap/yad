@@ -21,14 +21,17 @@ type Options struct {
 	RunnerID string
 	// Capabilities returns the current document; the caller keeps it fresh.
 	Capabilities func() v1.Capabilities
-	Executor     Executor
-	Log          *slog.Logger
+	// Adapters drive the runs. A runner whose registry is nil advertises no
+	// capacity and claims nothing.
+	Adapters *Registry
+	Log      *slog.Logger
 }
 
 // Serve syncs every configured connection until ctx ends, all of them drawing
-// on one capacity pool. A connection whose loop stops — its credential was
+// on one capacity pool and one executor, each with its reporter delivering
+// events and results. A connection whose loop stops — its credential was
 // refused, say — stops alone; the others carry on, and Serve reports it when
-// it returns.
+// it returns. Serve returns once every run in hand has finished or stopped.
 //
 // Sharing capacity fairly between hubs is epic E7; here each sync takes
 // whatever is free when it starts.
@@ -57,6 +60,23 @@ func Serve(ctx context.Context, o Options) error {
 		defer mu.Unlock()
 		errs = append(errs, fmt.Errorf("connection %s: %w", conn, err))
 	}
+
+	// Every connection is set up before any goroutine starts, so the
+	// executor's reporter lookup reads a map nothing writes any more.
+	reporters := map[string]*Reporter{}
+	var loops []*Loop
+	var executor Executor
+	exec := &Exec{
+		Store: st, Adapters: o.Adapters, Config: o.Config, Data: o.Paths.Data, Log: o.Log,
+		Report: func(conn string) {
+			if r := reporters[conn]; r != nil {
+				r.Wake()
+			}
+		},
+	}
+	if o.Adapters != nil {
+		executor = exec
+	}
 	for _, conn := range o.Config.Connections {
 		cred, err := o.Paths.Credential(conn.Name)
 		if err != nil {
@@ -68,16 +88,26 @@ func Serve(ctx context.Context, o Options) error {
 			fail(conn.Name, err)
 			continue
 		}
-		l := &Loop{
+		reporters[conn.Name] = NewReporter(conn.Name, client, st, o.Log)
+		loops = append(loops, &Loop{
 			Connection: conn.Name, RunnerID: o.RunnerID, Hub: client, Store: st, Pool: pool,
-			Capabilities: o.Capabilities, Executor: o.Executor, Log: o.Log,
-		}
+			Capabilities: o.Capabilities, Executor: executor, Log: o.Log,
+		})
+	}
+	for _, l := range loops {
+		// A reporter lives as long as its connection's loop: a connection
+		// the owner has to fix delivers nothing, and what it owes stays in
+		// the store for the next start.
+		rctx, stop := context.WithCancel(ctx)
+		wg.Go(func() { reporters[l.Connection].Run(rctx) })
 		wg.Go(func() {
+			defer stop()
 			if err := l.Run(ctx); err != nil {
-				fail(conn.Name, err)
+				fail(l.Connection, err)
 			}
 		})
 	}
 	wg.Wait()
+	exec.Wait()
 	return errors.Join(errs...)
 }

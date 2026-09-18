@@ -73,7 +73,7 @@ func TestDuplicateEventRejected(t *testing.T) {
 		t.Error("duplicate (run, seq) accepted")
 	}
 	s.AppendEvent(ctx, db.AppendEventParams{Connection: "hub", RunID: "r1", Seq: 2, Body: "{}"})
-	if err := s.AckEvents(ctx, db.AckEventsParams{Connection: "hub", RunID: "r1", Seq: 1}); err != nil {
+	if err := s.AckEvents(ctx, db.AckEventsParams{Connection: "hub", RunID: "r1", AckedThrough: 1}); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := s.UnackedEvents(ctx, db.UnackedEventsParams{Connection: "hub", RunID: "r1", Limit: 10})

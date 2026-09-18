@@ -11,14 +11,14 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/adapter/claude"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/runner"
 )
 
-// cmdDaemon is the runner process: it syncs with every connected hub and keeps
-// its capability document fresh. Running claimed runs arrives with the
-// executor, later in epic E2; until then it claims nothing.
+// cmdDaemon is the runner process: it syncs with every connected hub, runs
+// what it claims, and keeps its capability document fresh.
 func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: yad daemon start --foreground")
@@ -59,7 +59,7 @@ func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error 
 	last := capability.Fingerprint(doc)
 	fmt.Fprintf(w, "runner %s (%s) — profile %s, %s/%s, yad %s, capacity %d\n", doc.Name, id, g.paths.Profile, doc.OS, doc.Arch, doc.YadVersion, cfg.Capacity)
 	if len(cfg.Connections) > 0 {
-		fmt.Fprintf(w, "syncing with %d hub(s); running claimed runs arrives later in epic E2, so no capacity is offered and nothing will be claimed\n", len(cfg.Connections))
+		fmt.Fprintf(w, "syncing with %d hub(s); runs are claimed for the harnesses `yad doctor` shows as first-class\n", len(cfg.Connections))
 	} else {
 		fmt.Fprintln(w, "no hub connected — `yad connect <url> --token …` to add one; nothing will be claimed")
 	}
@@ -78,7 +78,10 @@ func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error 
 	go func() {
 		served <- runner.Serve(ctx, runner.Options{
 			Paths: g.paths, Config: cfg, RunnerID: id, Capabilities: current,
-			Log: slog.New(slog.NewTextHandler(w, nil)),
+			// The catalog decides what is advertised; an adapter here with a
+			// harness still recognised there is never offered a run.
+			Adapters: runner.NewRegistry(claude.Adapter{}),
+			Log:      slog.New(slog.NewTextHandler(w, nil)),
 		})
 	}()
 
@@ -91,7 +94,7 @@ func cmdDaemon(ctx context.Context, g global, args []string, w io.Writer) error 
 				// Every connection stopped on its own: nothing left to do.
 				return err
 			}
-			fmt.Fprintln(w, "\nshutting down — no runs in flight")
+			fmt.Fprintln(w, "\nshut down — runs in flight stay held and are settled at the next start")
 			return err
 		case t := <-tick.C:
 			next := capability.Build(ctx, id, cfg)

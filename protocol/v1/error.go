@@ -33,4 +33,8 @@ const (
 	CodeNotFound            = "not_found"
 	CodeInvalid             = "invalid"
 	CodeUnsupportedProtocol = "unsupported_protocol"
+	// CodeNotHolder answers events or a result for a run the calling runner
+	// does not hold — it lost the race for it, or never had it. Nothing it
+	// sends for that run is applied, and no retry changes that.
+	CodeNotHolder = "not_holder"
 )

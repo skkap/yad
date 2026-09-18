@@ -780,7 +780,7 @@ paths:
       summary: Heartbeat, lease renewal, health and the ask for work, in one call
   /runs/{run}/events:
     post:
-      description: Idempotent by (run, seq). The response's acked_through is authoritative; the runner resends everything after it.
+      description: "Idempotent by (run, seq): a resent event is ignored and the first copy stands. The response's acked_through is the highest seq up to which the hub holds every event, and is authoritative; the runner resends everything after it. Only the runner the run was claimed by may append, before or after it ends; any other gets 403 not_holder."
       operationId: appendEvents
       parameters:
         - description: The run id.
@@ -815,6 +815,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
         "404":
           content:
             application/json:
@@ -844,7 +850,7 @@ paths:
       summary: Append a batch of run events
   /runs/{run}/result:
     post:
-      description: Retried from the runner's outbox until acknowledged. 409 means the hub already holds a different terminal state, which wins.
+      description: "Retried from the runner's outbox until acknowledged, and applied at most once: the same state again is acknowledged. 409 means the hub already holds a different terminal state — lost, when the lease lapsed first — which stands; the runner stops reporting. Only the runner the run was offered to or claimed by may report; any other gets 403 not_holder."
       operationId: submitResult
       parameters:
         - description: The run id.
@@ -879,6 +885,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
         "404":
           content:
             application/json:

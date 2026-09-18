@@ -116,3 +116,17 @@ ON CONFLICT (run_id) DO NOTHING;
 
 -- name: GetResult :one
 SELECT * FROM results WHERE run_id = ?;
+
+-- Events and results (DEV-6): the protocol's two reporting calls.
+
+-- name: EventSeqsFrom :many
+SELECT seq FROM events WHERE run_id = sqlc.arg(run_id) AND seq > sqlc.arg(after) ORDER BY seq LIMIT sqlc.arg(max);
+
+-- name: SetEventsThrough :exec
+UPDATE runs SET events_through = ? WHERE id = ?;
+
+-- The result settles the run: its state, the reason a failure gave, and no
+-- lease any more, so a finished run cannot lapse into lost.
+-- name: FinishRun :exec
+UPDATE runs SET state = ?, reason = ?, lease_expires_at = NULL, resumes_at = NULL, updated_at = ?
+WHERE id = ?;

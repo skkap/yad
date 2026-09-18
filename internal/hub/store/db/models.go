@@ -44,6 +44,7 @@ type Run struct {
 	Reason         sql.NullString
 	CreatedAt      int64
 	UpdatedAt      int64
+	EventsThrough  int64
 }
 
 type Runner struct {

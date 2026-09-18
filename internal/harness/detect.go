@@ -62,16 +62,30 @@ func Detect(ctx context.Context) []Detected {
 	return out
 }
 
+// Locate finds the binary for a harness the way detection does, so a run
+// starts exactly the executable its capability document advertised.
+func Locate(id string) (string, bool) {
+	h, ok := Lookup(id)
+	if !ok {
+		return "", false
+	}
+	return locate(h)
+}
+
+func locate(h Harness) (string, bool) {
+	if path := os.Getenv(h.EnvPath); path != "" {
+		return path, true
+	}
+	path, err := exec.LookPath(h.Binary)
+	return path, err == nil
+}
+
 func detectOne(ctx context.Context, h Harness) Detected {
 	d := Detected{Harness: h}
 
-	path := os.Getenv(h.EnvPath)
-	if path == "" {
-		p, err := exec.LookPath(h.Binary)
-		if err != nil {
-			return d // absent, and that is not an error
-		}
-		path = p
+	path, ok := locate(h)
+	if !ok {
+		return d // absent, and that is not an error
 	}
 	d.Path, d.Present = path, true
 

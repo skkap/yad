@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -100,6 +101,9 @@ type env struct {
 	store    *store.Store
 	exec     *executor
 	clock    *fakeClock
+	// skew moves the hub's clock ahead of the real one, so a lease can lapse
+	// without a sleep.
+	skew atomic.Int64
 }
 
 // newEnv starts yad hub in process on loopback and gives a runner profile in
@@ -112,7 +116,8 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { hs.Close() })
-	h := hub.New(hub.Options{Store: hs})
+	e := &env{hubStore: hs}
+	h := hub.New(hub.Options{Store: hs, Now: func() time.Time { return time.Now().Add(time.Duration(e.skew.Load())) }})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
@@ -122,7 +127,9 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { rs.Close() })
-	return &env{hub: h, hubStore: hs, url: srv.URL + hub.BasePath, paths: p, store: rs, exec: &executor{}, clock: &fakeClock{now: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)}}
+	e.hub, e.url, e.paths, e.store, e.exec = h, srv.URL+hub.BasePath, p, rs, &executor{}
+	e.clock = &fakeClock{now: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)}
+	return e
 }
 
 // token issues a registration token: for a new runner, or with forRunner to
