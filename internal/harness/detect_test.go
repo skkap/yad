@@ -194,3 +194,38 @@ func TestKindsMatchDomain(t *testing.T) {
 		t.Errorf("DOMAIN.md kinds %v, catalog kinds %v", got, want)
 	}
 }
+
+// A descendant that leaves the process group survives the group kill and keeps
+// stdout open. The probe must still return, or every daemon tick stalls on it.
+func TestProbeReturnsWhenADetachedDescendantHoldsStdout(t *testing.T) {
+	dir := t.TempDir()
+	pidfile := filepath.Join(dir, "detached.pid")
+	script := filepath.Join(dir, "codex")
+	body := "#!/bin/sh\nperl -MPOSIX -e 'POSIX::setsid(); sleep 60' &\necho $! > " + pidfile + "\nsleep 60\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAD_CODEX_PATH", script)
+	old := versionTimeout
+	versionTimeout = 1500 * time.Millisecond
+	t.Cleanup(func() { versionTimeout = old })
+	t.Cleanup(func() {
+		if raw, err := os.ReadFile(pidfile); err == nil {
+			if pid, _ := strconv.Atoi(strings.TrimSpace(string(raw))); pid > 0 {
+				syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+
+	h, _ := Lookup("codex")
+	done := make(chan Detected, 1)
+	go func() { done <- detectOne(context.Background(), h) }()
+	select {
+	case d := <-done:
+		if !strings.Contains(d.Error, "no answer") {
+			t.Errorf("Error = %q, want a timeout report", d.Error)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("the probe never returned: a detached descendant is holding its stdout")
+	}
+}

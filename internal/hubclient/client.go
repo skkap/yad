@@ -41,7 +41,16 @@ func New(baseURL, credential string) (*Client, error) {
 	return &Client{
 		base:       strings.TrimRight(baseURL, "/"),
 		credential: credential,
-		http:       &http.Client{Timeout: requestTimeout},
+		http: &http.Client{
+			Timeout: requestTimeout,
+			// A redirect is refused, not followed. Go keeps the Authorization
+			// header across a same-host redirect whatever the scheme, so an
+			// https hub answering 307 to http:// would get the credential in
+			// cleartext after CheckHubURL passed. No protocol call redirects.
+			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+				return fmt.Errorf("the hub redirected to %s — a hub must not redirect; set the connection URL to the hub's final address", req.URL.Redacted())
+			},
+		},
 	}, nil
 }
 

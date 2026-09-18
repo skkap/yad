@@ -35,6 +35,11 @@ func (d Detected) Ready() bool {
 // failure is reported as text. A variable so tests can shorten it.
 var versionTimeout = 5 * time.Second
 
+// probeCloseGrace is how long output already written may still drain after the
+// deadline, before the pipe is closed under a reader that would otherwise wait
+// on a detached descendant. The WaitDelay the probe had before supervise.
+const probeCloseGrace = time.Second
+
 // versionOutputCap bounds what a probe may print. A version is one line; a CLI
 // that prints megabytes is broken, and must not grow the runner's memory.
 const versionOutputCap = 64 << 10
@@ -80,9 +85,27 @@ func detectOne(ctx context.Context, h Harness) Detected {
 		d.Error = err.Error()
 		return d
 	}
-	raw, _ := io.ReadAll(io.LimitReader(p.Stdout(), versionOutputCap))
-	// Past the cap the child may still be writing; closing our end makes it
-	// fail with EPIPE rather than block, and the deadline covers the rest.
+	// The read needs its own deadline. Killing the group at the timeout ends
+	// every process in it, but a descendant that called setsid — a node
+	// launcher spawning a detached updater with inherited stdio — is not in the
+	// group, keeps the pipe open, and would hold a bare ReadAll forever, and
+	// with it every daemon tick. Closing our end is what finally unblocks it.
+	read := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(io.LimitReader(p.Stdout(), versionOutputCap))
+		read <- b
+	}()
+	var raw []byte
+	select {
+	case raw = <-read:
+	case <-ctx.Done():
+		grace := time.NewTimer(probeCloseGrace)
+		select {
+		case raw = <-read:
+		case <-grace.C:
+		}
+		grace.Stop()
+	}
 	p.Stdout().Close()
 	werr := p.Wait()
 	switch {

@@ -109,3 +109,31 @@ func TestNewRefusesCleartextToAnotherHost(t *testing.T) {
 		t.Errorf("refused loopback http, which yad hub serve prints: %v", err)
 	}
 }
+
+// A hub that redirects must not receive the credential at the new address: Go
+// keeps Authorization on a same-host redirect even from https to http.
+func TestRedirectIsRefusedAndCarriesNoCredential(t *testing.T) {
+	leaked := make(chan string, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/moved/", func(w http.ResponseWriter, r *http.Request) {
+		leaked <- r.Header.Get("Authorization")
+	})
+	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/moved"+r.URL.Path, http.StatusTemporaryRedirect)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c, err := New(srv.URL+"/v1", "super-secret-credential")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Sync(context.Background(), "r", v1.SyncRequest{RunnerID: "r"})
+	if err == nil || !strings.Contains(err.Error(), "must not redirect") {
+		t.Errorf("err = %v, want a refused redirect", err)
+	}
+	select {
+	case auth := <-leaked:
+		t.Errorf("the redirect target received Authorization %q", auth)
+	default:
+	}
+}

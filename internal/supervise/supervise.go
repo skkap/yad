@@ -52,10 +52,12 @@ type Process struct {
 	err    error
 }
 
-// Start runs spec in a new process group. The caller owns Stdout: read it to
-// EOF, then Close it. EOF is guaranteed, because the group is killed as soon as
-// the leader exits, so a grandchild that inherited the pipe cannot hold it open.
-// Stdin, when requested, is closed by the Process once the leader exits.
+// Start runs spec in a new process group. The caller owns Stdout: read it, then
+// Close it. The group is killed as soon as the leader exits, so a descendant
+// that stayed in the group cannot hold the pipe open — but one that left it
+// with setsid can, and then EOF never comes. A caller that must finish bounds
+// its read with a deadline and closes Stdout to end it. Stdin, when requested,
+// is closed by the Process once the leader exits.
 func Start(ctx context.Context, spec Spec) (*Process, error) {
 	cmd := exec.Command(spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
@@ -119,8 +121,8 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 // Pid is the leader's pid, which is also the process group id.
 func (p *Process) Pid() int { return p.cmd.Process.Pid }
 
-// Stdout is the child's standard output. The caller reads it to EOF and closes
-// it; nothing else will.
+// Stdout is the child's standard output. The caller reads it and closes it;
+// nothing else will. Closing it unblocks a pending read.
 func (p *Process) Stdout() io.ReadCloser { return p.stdout }
 
 // Stdin is the child's standard input, or nil if Spec.Stdin was false. The
