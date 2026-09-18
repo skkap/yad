@@ -4,28 +4,59 @@ LDFLAGS := -s -w \
   -X github.com/skkap/yad/internal/buildinfo.Version=$(VERSION) \
   -X github.com/skkap/yad/internal/buildinfo.Commit=$(COMMIT)
 
-.PHONY: build test lint check install dist clean
+# Pure Go everywhere: modernc SQLite needs no cgo, so one laptop builds every
+# target without a cross toolchain.
+export CGO_ENABLED := 0
+
+# Files `make generate` owns. check-generated fails when any of them differ from
+# what the code produces, including when one is new and uncommitted.
+GENERATED := internal/store/db protocol/v1/openapi.yaml
+
+TARGETS := linux/amd64 linux/arm64 darwin/arm64 darwin/amd64
+
+.PHONY: fmt lint test build generate check-generated cross check install dist clean
+
+fmt:
+	gofmt -w .
+
+lint:
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+	go vet ./...
+	go tool staticcheck ./...
+
+# -race needs cgo, so the tests are the one place it is switched back on.
+test:
+	CGO_ENABLED=1 go test -race ./...
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o bin/yad ./cmd/yad
 
-test:
-	go test ./...
+generate:
+	cd internal/store && sqlc generate
+	go run ./internal/hub/cmd/openapigen protocol/v1/openapi.yaml
 
-lint:
-	gofmt -l . | tee /dev/stderr | (! read)
-	go vet ./...
+check-generated: generate
+	@git diff --exit-code -- $(GENERATED) || { echo "generated files are stale — run 'make generate' and commit"; exit 1; }
+	@untracked=$$(git ls-files --others --exclude-standard -- $(GENERATED)); \
+	  if [ -n "$$untracked" ]; then echo "generated files not committed:"; echo "$$untracked"; exit 1; fi
 
-check: lint test build
+# Compiles every release target without writing binaries: a build that only
+# works on the laptop is a broken build.
+cross:
+	@for t in $(TARGETS); do \
+	  echo "go build $$t"; \
+	  GOOS=$${t%/*} GOARCH=$${t#*/} go build -o /dev/null ./... || exit 1; \
+	done
+
+check: lint test build check-generated cross
 
 install: build
 	install -m 0755 bin/yad $(HOME)/.local/bin/yad
 
-# The fleet is Linux; the laptop is macOS. Both are built from the laptop.
 dist:
-	GOOS=linux  GOARCH=amd64 go build -ldflags '$(LDFLAGS)' -o dist/yad-linux-amd64  ./cmd/yad
-	GOOS=linux  GOARCH=arm64 go build -ldflags '$(LDFLAGS)' -o dist/yad-linux-arm64  ./cmd/yad
-	GOOS=darwin GOARCH=arm64 go build -ldflags '$(LDFLAGS)' -o dist/yad-darwin-arm64 ./cmd/yad
+	@for t in $(TARGETS); do \
+	  GOOS=$${t%/*} GOARCH=$${t#*/} go build -ldflags '$(LDFLAGS)' -o dist/yad-$${t%/*}-$${t#*/} ./cmd/yad || exit 1; \
+	done
 
 clean:
 	rm -rf bin dist

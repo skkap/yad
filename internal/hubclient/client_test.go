@@ -1,0 +1,100 @@
+package hubclient
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/hub"
+)
+
+func TestSendsProtocolHeadersAndDecodes(t *testing.T) {
+	var seen *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r
+		var req v1.SyncRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		json.NewEncoder(w).Encode(v1.SyncResponse{NextSyncMS: 15000, Controls: []v1.Control{{Kind: v1.ControlDrain}}})
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL+"/v1/", "cred")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Sync(context.Background(), "runner/1", v1.SyncRequest{RunnerID: "runner/1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NextSyncMS != 15000 || got.Controls[0].Kind != v1.ControlDrain {
+		t.Errorf("decoded %+v", got)
+	}
+	if seen.URL.EscapedPath() != "/v1/runners/runner%2F1/sync" {
+		t.Errorf("path = %s", seen.URL.EscapedPath())
+	}
+	for h, want := range map[string]string{"Authorization": "Bearer cred", v1.HeaderProtocol: "1", "Content-Type": "application/json"} {
+		if seen.Header.Get(h) != want {
+			t.Errorf("%s = %q, want %q", h, seen.Header.Get(h), want)
+		}
+	}
+}
+
+// The registration token authenticates exactly one request.
+func TestRegisterUsesTheRegistrationToken(t *testing.T) {
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(v1.RegisterResponse{RunnerCredential: "new-cred"})
+	}))
+	defer srv.Close()
+	c, _ := New(srv.URL, "")
+	res, err := c.Register(context.Background(), "reg-token", v1.RegisterRequest{})
+	if err != nil || res.RunnerCredential != "new-cred" || auth != "Bearer reg-token" {
+		t.Errorf("res %+v err %v auth %q", res, err, auth)
+	}
+}
+
+// Against the real hub stub, the envelope decodes into a code a runner can act
+// on — and the credential appears nowhere in the error text.
+func TestDecodesHubErrors(t *testing.T) {
+	srv := httptest.NewServer(hub.New())
+	defer srv.Close()
+	c, _ := New(srv.URL+hub.BasePath, "super-secret-credential")
+	_, err := c.Sync(context.Background(), "r1", v1.SyncRequest{RunnerID: "r1"})
+	var se *StatusError
+	if !errors.As(err, &se) || se.Status != http.StatusNotImplemented || Code(err) != v1.CodeNotImplemented {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "E2") {
+		t.Errorf("the next action is lost: %v", err)
+	}
+	if strings.Contains(err.Error(), "super-secret-credential") {
+		t.Error("the error text contains the credential")
+	}
+}
+
+func TestNonProtocolErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "<html>bad gateway</html>", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	c, _ := New(srv.URL, "x")
+	err := c.Result(context.Background(), "r", v1.Result{State: v1.RunSucceeded})
+	if Code(err) != "" || !strings.Contains(err.Error(), "502") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRejectsBadURLs(t *testing.T) {
+	for _, u := range []string{"", "hub.example/v1", "ftp://x/v1", "/v1"} {
+		if _, err := New(u, ""); err == nil {
+			t.Errorf("New(%q) accepted", u)
+		}
+	}
+}
