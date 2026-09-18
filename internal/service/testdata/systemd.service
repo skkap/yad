@@ -1,0 +1,24 @@
+# Written by yad service install. Run it again to rewrite this file; yad service uninstall removes it.
+[Unit]
+Description=yad runner (profile work)
+Documentation=https://github.com/skkap/yad
+# Never give up restarting: RestartSec already spaces the attempts out.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart="/Users/owner/My Tools/yad" "--profile" "work" "daemon" "start" "--foreground"
+WorkingDirectory=/Users/owner
+Environment="PATH=/Users/owner/.local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+Environment="YAD_DATA_DIR=/Volumes/R&D 100%%/yad $data \"x\""
+Restart=on-failure
+RestartSec=10s
+RestartSteps=5
+RestartMaxDelaySec=5min
+KillMode=mixed
+TimeoutStopSec=30s
+StandardOutput=append:/Users/owner/.local/share/yad/profiles/work/logs/service.log
+StandardError=append:/Users/owner/.local/share/yad/profiles/work/logs/service.log
+
+[Install]
+WantedBy=default.target

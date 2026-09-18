@@ -9,7 +9,6 @@ var arrivesIn = map[string]string{
 	"disconnect":  "E7",
 	"sessions":    "E4",
 	"account":     "E6",
-	"service":     "E3",
 	"conformance": "E7",
 	"upgrade":     "E9 (backlog — decision 0018)",
 }

@@ -65,6 +65,21 @@ Claude Code runs with `--permission-mode bypassPermissions` unless
 `permission_mode` under `[harness.claude]` in `config.toml` says otherwise.
 Claude refuses that mode as root; run the runner as an ordinary user.
 
+## Run it as a service
+
+```bash
+yad service install [--profile name]     # launchd agent on macOS, systemd user unit on Linux
+yad service status  [--profile name]
+yad service uninstall [--profile name]   # stops it and removes the unit; safe to repeat
+```
+
+The service runs `yad daemon start --foreground` as you, never as root, and
+restarts it after a crash. It uses the PATH your login shell had when you ran
+`install`, so run `install` again after changing PATH, upgrading or moving the
+binary; a re-install replaces the unit. On Linux a user unit stops when you log
+out unless lingering is on — `install` tells you, and `loginctl enable-linger`
+is yours to run. Why it is shaped this way: [0028](docs/decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md).
+
 ## Build
 
 ```bash

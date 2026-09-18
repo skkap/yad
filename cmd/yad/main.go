@@ -65,11 +65,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cmdErr = cmdDaemon(ctx, g, rest, stdout)
 	case "hub":
 		cmdErr = cmdHub(ctx, g, rest, stdout, stderr)
+	case "service":
+		cmdErr = cmdService(ctx, g, rest, stdout)
 	case "connect":
 		cmdErr = cmdConnect(ctx, g, rest, stdout)
 	case "status":
 		cmdErr = cmdStatus(ctx, g, rest, stdout)
-	case "disconnect", "sessions", "account", "service", "conformance", "upgrade":
+	case "disconnect", "sessions", "account", "conformance", "upgrade":
 		cmdErr = notYet(cmd, rest)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
@@ -124,9 +126,12 @@ usage: yad [--profile name] <command> [flags]
   hub interrupt <run> end a run's turn and keep its session
   hub steer <run> <text | ->
                       add input to a running turn
+  service install|uninstall|status [--profile name]
+                      run this profile's runner as a launchd agent or a
+                      systemd user unit, as you, restarted after a crash
   version             version and build
 
-  disconnect · sessions · account · service · conformance
+  disconnect · sessions · account · conformance
                       exist, and each says which epic brings it
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.
