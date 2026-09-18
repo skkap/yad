@@ -132,8 +132,11 @@ type translator struct {
 	streamed map[string]bool
 	current  string // the top-level message now streaming
 
-	result     *frame
-	replays    int
+	result  *frame
+	replays int
+	// takenAfter: Claude took one of our frames after the last result, so that
+	// result answered a turn Claude had more input for.
+	takenAfter bool
 	limit      *adapter.Limit
 	apiRetries int
 	mismatch   string
@@ -178,12 +181,16 @@ func (t *translator) line(raw []byte) reaction {
 		if f.IsReplay {
 			r.replayed = true
 			t.replays++
+			t.takenAfter = t.result != nil
 			return r
 		}
 		t.toolResults(&f)
 	case "system":
 		t.system(&f)
 	case "rate_limit_event":
+		if i := f.RateLimitInfo; i != nil && i.Status == "allowed" {
+			t.limit = nil
+		}
 		if i := f.RateLimitInfo; i != nil && i.Status == "rejected" {
 			t.limit = &adapter.Limit{Window: i.RateLimitType}
 			if i.ResetsAt > 0 {
@@ -200,6 +207,11 @@ func (t *translator) line(raw []byte) reaction {
 	case "result":
 		t.flush()
 		t.result = &f
+		t.takenAfter = false
+		if !f.IsError {
+			// A limit Claude got past (overage, a retry) is not this result's.
+			t.limit = nil
+		}
 		r.result = true
 	}
 	return r
@@ -412,9 +424,7 @@ type ended struct {
 	exitErr     error  // the process's exit status
 	stderr      string // its last words
 	// final: the result in hand was the run's last — every frame we sent had
-	// been taken and answered, or an interrupt ended the turn. A result that
-	// is not final answered a turn Claude had more input for, whatever
-	// happened next.
+	// been taken and answered, or an interrupt ended the turn.
 	final bool
 }
 
@@ -439,36 +449,47 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		t.emitErr(class, msg)
 		return o
 	}
-	switch {
-	case t.mismatch != "":
-		// Checked first: an interrupted or even successful turn in the wrong
-		// session did its work without the conversation it was meant to continue.
-		o.State = v1.RunFailed
-		o.Error = &v1.RunError{Class: adapter.ClassSessionMismatch, Message: t.mismatchMessage()}
-		return o
-	case r != nil && !r.IsError && r.Subtype == "success":
-		switch {
-		case e.final:
-			// Even after an interrupt: a turn that finished first really
-			// succeeded, and reporting it cancelled would throw its answer away.
-			o.State = v1.RunSucceeded
-			return o
-		case e.interrupted || e.cancelled:
-			o.State = v1.RunCancelled
-			o.FinalText = ""
-			return o
-		}
-		// The result answered the turn before a steer Claude had taken;
-		// reporting it as the run's would claim an answer to input Claude never
-		// got to.
-		return fail(adapter.ClassHarnessExited, "claude exited after taking a steer and before answering it"+exitDetail(e)+" — send the steer again as a new run in the same session")
-	case e.interrupted || (e.cancelled && r == nil):
+	cancelled := func() adapter.Outcome {
 		o.State = v1.RunCancelled
 		o.FinalText = ""
 		return o
+	}
+	success := r != nil && !r.IsError && r.Subtype == "success"
+	// The order is the rule. Only a final result decides the run by what it
+	// says; a result that was not final — Claude had taken more input, or was
+	// still to — decides nothing, whether it says success or error.
+	switch {
+	case t.mismatch != "":
+		// First: an interrupted or even successful turn in the wrong session
+		// did its work without the conversation it was meant to continue.
+		o.State = v1.RunFailed
+		o.FinalText = ""
+		o.Error = &v1.RunError{Class: adapter.ClassSessionMismatch, Message: t.mismatchMessage()}
+		return o
+	case r == nil && (e.interrupted || e.cancelled):
+		return cancelled()
 	case r == nil:
 		return fail(adapter.ClassHarnessExited, exitedMessage(e))
+	case e.final && success:
+		// Even after an interrupt: a turn that finished first really
+		// succeeded, and reporting it cancelled would throw its answer away.
+		o.State = v1.RunSucceeded
+		return o
+	case e.interrupted:
+		return cancelled()
+	case !e.final && e.cancelled:
+		return cancelled()
+	case !e.final && (t.takenAfter || r.QueuedTurnCount > 0):
+		return fail(adapter.ClassHarnessExited, "claude exited after taking a steer and before answering it"+exitDetail(e)+" — send the steer again as a new run in the same session")
+	case !e.final && success:
+		// Claude answered and left without reading a steer written to it.
+		return fail(adapter.ClassHarnessExited, "claude exited before reading a steer"+exitDetail(e)+" — send the steer again as a new run in the same session")
+	case success:
+		o.State = v1.RunSucceeded
+		return o
 	}
+	// An error result that was final, or one Claude gave before it read any
+	// input at all (a resume with no transcript): what it says is the outcome.
 	msg := resultMessage(r)
 	switch {
 	case r.TerminalReason == "prompt_too_long" || strings.HasPrefix(r.Result, "Prompt is too long"):

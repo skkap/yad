@@ -15,7 +15,14 @@ adapter was built, and what the adapter does about it:
   echoes each frame when Claude takes it, and closes stdin only once every frame
   it wrote has been echoed and a result has followed. `queued_turn_count` alone
   is not enough: a frame written just before a result is not yet counted in it.
-- **The run's outcome comes from the last result**, never the exit status: an
+- **Only a final result decides the run.** A result is final when input was
+  closed on it: every frame written had been taken and answered, or an
+  interrupt ended the turn. A result followed by a steer Claude took, or one it
+  never read, decides nothing by what it says — the run is cancelled if it was
+  interrupted or cancelled, and `harness_exited` if Claude simply died. The one
+  exception is an error Claude gives before reading any input (a resume with no
+  transcript), which nothing else will follow.
+- **The final result is read by what it says**, never the exit status: an
   error arrives as `subtype: success` with `is_error: true` (a bad model,
   `prompt_too_long`), and Claude exits 1 after an interrupt or an error. The
   classes are `prompt_too_long` (from `terminal_reason`), `usage_limit`
