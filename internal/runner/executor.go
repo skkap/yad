@@ -498,15 +498,20 @@ func (e *Exec) control(ctx context.Context, c Claim, w *watch, turn adapter.Turn
 		if w.interrupted {
 			return
 		}
+		// Marked only once it reached the harness: one that did not is
+		// tried again when the hub repeats it, and a run that later dies on
+		// its own is not reported as cancelled by it.
+		if err := turn.Interrupt(); err != nil {
+			log.Warn("interrupt not delivered", "err", err)
+			e.note(ctx, c, w, v1.Event{Kind: v1.EventError, Error: &v1.RunError{Class: ClassInterrupt, Message: "the interrupt did not reach the harness: " + err.Error() + " — the hub repeats it at the next sync; cancel the run to stop it for certain"}})
+			return
+		}
 		w.interrupted = true
 		if w.stopAt.IsZero() {
 			w.stopAt = ctl.at
 		}
 		log.Info("interrupting run")
 		e.note(ctx, c, w, v1.Event{Kind: v1.EventStatus, Status: "interrupting"})
-		if err := turn.Interrupt(); err != nil {
-			e.note(ctx, c, w, v1.Event{Kind: v1.EventError, Error: &v1.RunError{Class: ClassInterrupt, Message: "the interrupt did not reach the harness: " + err.Error() + " — cancel the run to stop it for certain"}})
-		}
 	case v1.ControlSteer:
 		if err := turn.Steer(ctl.Text); err != nil {
 			log.Warn("steer not delivered", "err", err)
@@ -586,7 +591,9 @@ func (e *Exec) result(out adapter.Outcome, w watch, started time.Time) v1.Result
 			CancelLatencyMS: w.latency,
 		},
 	}
-	stoppedByHub := w.cancelled || w.interrupted
+	// A watchdog that stopped the turn has the last word even when the hub
+	// asked for an interrupt too: the case below says timed_out.
+	stoppedByHub := (w.cancelled || w.interrupted) && w.stopped == ""
 	if stoppedByHub && (!out.State.IsTerminal() || out.State == v1.RunLost ||
 		out.State == v1.RunFailed && out.Error != nil && out.Error.Class == adapter.ClassHarnessExited) {
 		// A harness killed on the way down exits without a result of its

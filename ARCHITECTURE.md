@@ -276,6 +276,7 @@ type Turn interface {
 	Events() <-chan protocol.Event
 	Steer(text string) error
 	Interrupt() error
+	Terminate() error        // SIGTERM to the process group: the ladder's second rung
 	NativeSessionID() string // as soon as the harness has one, for pinning
 	Wait() Outcome // terminal state, final text, usage, native session id, limit
 }

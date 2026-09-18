@@ -316,3 +316,69 @@ func TestTheHubsCancelStopsAHeldRun(t *testing.T) {
 		t.Errorf("result %+v", res)
 	}
 }
+
+// A watchdog's timed_out stands even when the hub interrupted the run too: a
+// harness killed on the way down reports no result of its own, and that is
+// the watchdog's doing, not the hub's.
+func TestWatchdogWinsOverAnInterrupt(t *testing.T) {
+	e := newEnv(t)
+	l := e.loop(t, 1)
+	run := testRun("a", "s1")
+	run.InactivityMS = 200
+	e.enqueue(t, run)
+	exited := adapter.Outcome{State: v1.RunFailed, Error: &v1.RunError{Class: adapter.ClassHarnessExited, Message: "killed"}}
+	x := e.executor(fakeHarness(fake.Script{Hang: true, IgnoreInterrupt: true, Stopped: &exited}))
+	started(t, l, x)
+	if _, err := e.api(t).Interrupt(context.Background(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	mustSync(t, l)
+	ended(t, x)
+	res, _ := outboxResult(t, e, "a")
+	if res.State != v1.RunTimedOut || res.Error == nil || res.Error.Class != ClassInactivity {
+		t.Fatalf("result %+v (error %+v)", res, res.Error)
+	}
+}
+
+// An interrupt that did not reach the harness is not counted: the hub's
+// repeat at the next sync is tried again, and it is the one that lands.
+func TestAFailedInterruptIsRetried(t *testing.T) {
+	e := newEnv(t)
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	ad := fakeHarness(fake.Script{Hang: true, InterruptFails: 1})
+	x := e.executor(ad)
+	started(t, l, x)
+	if _, err := e.api(t).Interrupt(context.Background(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	mustSync(t, l)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if n, _ := fake.Rungs(ad.Turns()[0]); n >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the first interrupt never reached the turn")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mustSync(t, l) // the hub repeats it
+	ended(t, x)
+	res, _ := outboxResult(t, e, "a")
+	if res.State != v1.RunCancelled {
+		t.Fatalf("result %+v", res)
+	}
+	if n, _ := fake.Rungs(ad.Turns()[0]); n != 2 {
+		t.Errorf("%d interrupts, want 2", n)
+	}
+	var classes []string
+	for _, ev := range runEvents(t, e, "a") {
+		if ev.Kind == v1.EventError {
+			classes = append(classes, ev.Error.Class)
+		}
+	}
+	if !slices.Equal(classes, []string{ClassInterrupt}) {
+		t.Errorf("error events %v", classes)
+	}
+}

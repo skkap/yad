@@ -34,6 +34,9 @@ type Script struct {
 	// SteerError, when set, is what Steer answers — a harness that no longer
 	// takes input.
 	SteerError string
+	// InterruptFails makes Interrupt answer an error without reaching the
+	// harness, as many times as it says.
+	InterruptFails int
 }
 
 // Adapter plays Scripts. Next picks the script for each Start, so a test can
@@ -183,7 +186,11 @@ func Steered(tr adapter.Turn) []string {
 func (t *turn) Interrupt() error {
 	t.mu.Lock()
 	t.interrupts++
+	failed := t.interrupts <= t.script.InterruptFails
 	t.mu.Unlock()
+	if failed {
+		return errors.New("the harness is not reading its input")
+	}
 	if !t.script.IgnoreInterrupt {
 		t.halt()
 	}
