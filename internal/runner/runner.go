@@ -54,6 +54,9 @@ func Serve(ctx context.Context, o Options) error {
 	if o.Drain == nil {
 		o.Drain = NewDrain()
 	}
+	if o.Log == nil {
+		o.Log = slog.New(slog.DiscardHandler)
+	}
 	sweepGrants(o.Paths.Data, o.Log)
 	if len(o.Config.Connections) == 0 {
 		o.Monitor.markReady()
