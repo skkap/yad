@@ -4,7 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -35,15 +35,20 @@ func TestTheShippedSyncFloorIsFiveSeconds(t *testing.T) {
 // running yad that pays. So the check is the source itself.
 func TestOnlyTestsReachTheSyncFloor(t *testing.T) {
 	// The protocol has two ends and each holds its own floor, so the seam is
-	// declared under this name twice; both declarations are shipped code, and
-	// every other mention of it outside a test is the thing being caught.
-	assertSeamIsTestOnly(t, "SyncFloorForTests", "internal/hub/hub.go", "internal/runner/sync.go")
+	// declared under this name in both packages; this walks the whole module,
+	// so either package's would be caught here.
+	assertSeamIsNeverAssignedOutsideTests(t, "SyncFloorForTests")
 }
 
-// assertSeamIsTestOnly fails unless name appears in no shipped file of the
-// module but the ones that declare it.
-func assertSeamIsTestOnly(t *testing.T, name string, declaredIn ...string) {
+// assertSeamIsNeverAssignedOutsideTests fails when any shipped file of the
+// module assigns name or takes its address. Reading it is what the clamp does;
+// writing it is what only a test may do, and the file that declares it is not
+// exempt — an init or a setter beside the declaration is exactly where someone
+// would write one. Matching the identifier is a backstop, not a proof: a value
+// reached some other way is beyond what reading the source can see.
+func assertSeamIsNeverAssignedOutsideTests(t *testing.T, name string) {
 	t.Helper()
+	written := regexp.MustCompile(`&\s*` + name + `\b|\b` + name + `\s*(?:[-+*/%|&^]|<<|>>)?=[^=]`)
 	const root = "../.."
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		switch {
@@ -53,15 +58,14 @@ func assertSeamIsTestOnly(t *testing.T, name string, declaredIn ...string) {
 			return fs.SkipDir
 		case d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go"):
 			return nil
-		case slices.Contains(declaredIn, filepath.ToSlash(strings.TrimPrefix(path, root+string(filepath.Separator)))):
-			return nil
 		}
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(raw), name) {
-			t.Errorf("%s names %s; only a test may lower the floor", path, name)
+		if loc := written.FindIndex(raw); loc != nil {
+			line := 1 + strings.Count(string(raw[:loc[0]]), "\n")
+			t.Errorf("%s:%d assigns %s; only a test may lower the floor", path, line, name)
 		}
 		return nil
 	})

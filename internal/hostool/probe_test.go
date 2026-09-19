@@ -512,12 +512,18 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 
 			start := time.Now()
 			d := hanging(t, tc.id, tc.body)
-			// The children sleep a minute, so a probe bounded by one of them
-			// rather than by its own timeout is unmistakable at this distance.
-			// Not a budget for a busy machine: a duration that would hold on a
-			// quiet one is the assertion this family keeps failing on.
-			if took := time.Since(start); took > 15*time.Second {
-				t.Errorf("took %s; the timeout is not bounding the probe", took)
+			// Three seconds over the timeout in force: enough slack for the
+			// spawns around it on a loaded machine (a shell took 1.4s under the
+			// full suite), and still under the five-second constant, so a probe
+			// that ignored its configured timeout and used the shipped one is
+			// caught here rather than passing a bound wide enough for anything.
+			if took := time.Since(start); took > tc.timeout+3*time.Second {
+				t.Errorf("took %s; the %s timeout is not bounding the probe", took, tc.timeout)
+			}
+			// The report names the timeout it waited, and the only reason to
+			// trust the bound above is that the two are the same value.
+			if !strings.Contains(d.Error, tc.timeout.String()) {
+				t.Errorf("Error = %q, want it to name the %s it waited", d.Error, tc.timeout)
 			}
 			if !d.Present {
 				t.Errorf("a tool that hangs is still installed: %+v", d)

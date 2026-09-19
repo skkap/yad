@@ -673,8 +673,9 @@ func fatal(err error) bool {
 // at the shipped floor those tests spend their time asleep (DEV-63). The floor
 // itself stays: it is what keeps a hostile or broken hub from spinning this
 // machine, so it is reachable from no configuration file, flag or protocol
-// field — only from a test in this module, and the only thing enforcing that is
-// TestOnlyTestsReachTheSyncFloor, which reads the source.
+// field — only from a test in this module. TestOnlyTestsReachTheSyncFloor fails
+// on any shipped file that assigns it, this one included; a backstop against the
+// assignment someone would actually write, not a proof.
 var SyncFloorForTests time.Duration
 
 // interval is the hub's chosen interval, held within bounds.

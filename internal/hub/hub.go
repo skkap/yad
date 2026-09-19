@@ -56,8 +56,10 @@ const (
 // end-to-end tests spend their time asleep, 201 s of a 315 s suite (DEV-63).
 // It is deliberately not an Options field and not reachable from the protocol:
 // timings are the hub's (ARCHITECTURE.md §2), and a runner must never be able
-// to lower them. Nothing outside a test may set it, and the only thing
-// enforcing that is TestOnlyTestsReachTheSyncFloor, which reads the source.
+// to lower them. Nothing outside a test may set it: TestOnlyTestsReachTheSyncFloor
+// fails on any shipped file of the module that assigns it, this one included.
+// That is a backstop against the assignment someone would actually write, not a
+// proof — reading the source cannot see a value reached some other way.
 var SyncFloorForTests time.Duration
 
 // Options configure a hub. Store is required to serve; generating the OpenAPI
