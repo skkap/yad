@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"time"
@@ -25,6 +26,7 @@ type Config struct {
 	Sessions    SessionsConfig           `toml:"sessions"`
 	Supervise   SuperviseConfig          `toml:"supervise"`
 	Drain       DrainConfig              `toml:"drain"`
+	Workdirs    WorkdirsConfig           `toml:"workdirs"`
 }
 
 // HarnessConfig is the owner's settings for one harness.
@@ -64,6 +66,20 @@ type DrainConfig struct {
 	Wait Duration `toml:"wait"`
 }
 
+// WorkdirsConfig governs how a run's sources become its workdir (decisions
+// 0033 and 0034).
+type WorkdirsConfig struct {
+	// Roots are the directories a hub's run may reach on this machine: a path
+	// source, or a git source whose URL is a local path or file://, is taken
+	// only when it resolves inside one of them. None means none is taken.
+	Roots []string `toml:"roots,omitempty"`
+	// GitTimeout bounds each git command a workdir needs — a first clone of a
+	// large repository is the longest.
+	GitTimeout Duration `toml:"git_timeout"`
+	// SetupTimeout bounds a repository's .worktree/setup.
+	SetupTimeout Duration `toml:"setup_timeout"`
+}
+
 // Duration is a time.Duration written as "336h" in TOML.
 type Duration struct{ time.Duration }
 
@@ -89,6 +105,13 @@ const (
 	DefaultIdleTTL    = 14 * 24 * time.Hour
 	DefaultInactivity = 30 * time.Minute
 	DefaultDrainWait  = 30 * time.Minute
+	// A whole git command, start to finish, not a silence: a first clone of a
+	// large repository over a slow link takes minutes, and one still going
+	// after ten is more likely wedged than busy.
+	DefaultGitTimeout = 10 * time.Minute
+	// A setup hook installs dependencies and builds; gpiwt measured the
+	// slowest repositories at a few minutes.
+	DefaultSetupTimeout = 15 * time.Minute
 )
 
 // Default is the config a new profile starts with.
@@ -98,6 +121,7 @@ func Default() Config {
 		Sessions:  SessionsConfig{IdleTTL: Duration{DefaultIdleTTL}},
 		Supervise: SuperviseConfig{Inactivity: Duration{DefaultInactivity}},
 		Drain:     DrainConfig{Wait: Duration{DefaultDrainWait}},
+		Workdirs:  WorkdirsConfig{GitTimeout: Duration{DefaultGitTimeout}, SetupTimeout: Duration{DefaultSetupTimeout}},
 	}
 }
 
@@ -158,6 +182,21 @@ func (c Config) Validate() error {
 	}
 	if c.Drain.Wait.Duration < 0 {
 		errs = append(errs, fmt.Errorf("drain.wait must not be negative, got %s — it is how long a drain lets runs finish, like \"30m\"", c.Drain.Wait.Duration))
+	}
+	for _, r := range c.Workdirs.Roots {
+		if !filepath.IsAbs(r) {
+			errs = append(errs, fmt.Errorf("workdirs.roots: %q is not an absolute path — write it in full, like \"/home/me/src\"", r))
+		} else if filepath.Clean(r) == "/" {
+			errs = append(errs, errors.New("workdirs.roots: \"/\" would let a hub reach every directory on this machine — name the directories runs may use"))
+		}
+	}
+	for _, d := range []struct {
+		name string
+		v    Duration
+	}{{"workdirs.git_timeout", c.Workdirs.GitTimeout}, {"workdirs.setup_timeout", c.Workdirs.SetupTimeout}} {
+		if d.v.Duration < 0 {
+			errs = append(errs, fmt.Errorf("%s must not be negative, got %s", d.name, d.v.Duration))
+		}
 	}
 	for id, h := range c.Harness {
 		if h.Cap < 0 {

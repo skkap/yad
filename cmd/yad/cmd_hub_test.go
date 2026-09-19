@@ -93,6 +93,8 @@ func TestSubmitUsage(t *testing.T) {
 		{"hub", "submit", "--harness", "claude", "hi"},
 		{"hub", "submit", "--harness", "claude", "--model", "opus"},
 		{"hub", "submit", "--harness", "claude", "--model", "opus", "--session", "a", "--new-session", "b", "hi"},
+		{"hub", "submit", "--harness", "claude", "--model", "opus", "--git", "https://x/y", "--path", "/src", "hi"},
+		{"hub", "submit", "--harness", "claude", "--model", "opus", "--branch", "b", "hi"},
 		{"hub", "watch"},
 	} {
 		if code, _, errs := p.yad("", args...); code == 0 || errs == "" {
@@ -152,6 +154,35 @@ func (r *hubRig) submit(t *testing.T, args ...string) string {
 		t.Fatalf("submit: exit %d: %s", code, errs)
 	}
 	return strings.TrimSpace(out)
+}
+
+// A run's source travels to the hub as the flags name it.
+func TestSubmitSources(t *testing.T) {
+	r := newHubRig(t)
+	for _, tc := range []struct {
+		args []string
+		want []v1.Source
+	}{
+		{[]string{"--git", "git@github.com:a/b.git", "--base", "main", "--branch", "fix"},
+			[]v1.Source{{Git: &v1.GitSource{URL: "git@github.com:a/b.git", Base: "main", Branch: "fix"}}}},
+		{[]string{"--path", "/src/app"}, []v1.Source{{Path: "/src/app"}}},
+		{nil, nil},
+	} {
+		id := r.submit(t, append(tc.args, "hi")...)
+		row, err := r.s.GetRun(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var run v1.Run
+		if err := json.Unmarshal([]byte(row.Spec), &run); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := json.Marshal(run.Sources)
+		want, _ := json.Marshal(tc.want)
+		if string(got) != string(want) {
+			t.Errorf("%v: sources %s, want %s", tc.args, got, want)
+		}
+	}
 }
 
 // watch starts `yad hub watch` and returns its output as it grows and a
