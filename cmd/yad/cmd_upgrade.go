@@ -9,6 +9,7 @@ import (
 	"runtime"
 
 	"github.com/skkap/yad/internal/buildinfo"
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/control"
 	"github.com/skkap/yad/internal/upgrade"
 )
@@ -80,7 +81,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	// Decision 0028 settles it — re-running install replaces the unit and
 	// starts it again — and nothing here can tell which kind this is, so both
 	// are named rather than one guessed.
-	restart := "restart it to pick this one up: `yad service install` if this profile runs as a service (0028: install replaces the unit and starts it again), otherwise `yad daemon restart`"
+	restart := restartAdvice(g.paths.Profile)
 	// control.Holder reads one profile's lock, and every profile on this
 	// machine shares the binary just replaced — so silence is not "nothing is
 	// running", only "nothing is running here".
@@ -103,6 +104,22 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 // so the operator sets it the same way both times.
 func releaseSource() upgrade.GH {
 	return upgrade.GH{Repo: os.Getenv("YAD_REPO")}
+}
+
+// restartAdvice is what to type to put a running runner on the new binary.
+// Both commands have to carry the profile the message names, and they take it
+// in different places: `yad service install` has a --profile flag of its own,
+// while `yad daemon restart` has none and reads the global one before the
+// subcommand. Printed bare beside "profile work", either would act on default
+// — and `service install` would bootstrap a supervised unit for a profile
+// nobody meant to run as a service (0028).
+func restartAdvice(profile string) string {
+	global, sub := "", ""
+	if profile != config.DefaultProfile {
+		global = " --profile " + profile
+		sub = " --profile " + profile
+	}
+	return fmt.Sprintf("restart it to pick this one up: `yad service install%s` if this profile runs as a service (0028: install replaces the unit and starts it again), otherwise `yad%s daemon restart`", sub, global)
 }
 
 // checkLine is the one sentence that says where this build stands, and what

@@ -1,5 +1,7 @@
-// Package upgrade replaces this binary with a newer tagged release, on the
-// owner's command and never on anyone else's: there is no poller here, no
+// Package upgrade replaces this binary with another tagged release — the
+// newest by default, or the one Options.Tag names, which may be older and
+// deliberately is when a bad release is being rolled back. On the owner's
+// command and never on anyone else's: there is no poller here, no
 // control message and no re-exec — decision 0018 holds those back to a backlog
 // item, and this package is deliberately the whole of what v1 does about
 // updating itself.
@@ -71,12 +73,15 @@ func AssetName(goos, goarch string) (string, error) {
 type State int
 
 const (
-	// Behind: the release is newer than this build, which is what upgrade is for.
+	// Behind: the release under consideration is newer than this build, which
+	// is what a bare `yad upgrade` is for. Every state below describes that
+	// release, which is the newest one only when no tag was named.
 	Behind State = iota
 	// Current: this build is that release. A build a few commits past the tag
 	// reads as Current too — buildinfo.Number compares release cores only.
 	Current
-	// Ahead: this build is newer than the newest release.
+	// Ahead: this build is newer than that release — an ordinary answer when a
+	// tag was named, since naming an older one is how a rollback is asked for.
 	Ahead
 	// Unstamped: this build carries no version number, so there is nothing to
 	// compare it with — `go build ./cmd/yad` without the Makefile's ldflags

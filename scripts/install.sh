@@ -6,7 +6,15 @@
 # fetching, and the login you already have is what grants access:
 #
 #   gh api -H "Accept: application/vnd.github.raw" \
-#     repos/skkap/yad/contents/scripts/install.sh | sh
+#     repos/skkap/yad/contents/scripts/install.sh > yad-install.sh
+#   sh yad-install.sh && rm yad-install.sh
+#
+# Two steps rather than a pipe into sh: a pipeline reports only the status of
+# its last command, so a gh that cannot fetch this file — not installed, not
+# logged in, no network — hands sh an empty stream, and sh exits 0 having
+# installed nothing. That is the one failure a chained provisioning script
+# would read as success, and it is the case this file's own "gh is not on
+# PATH" refusal can never reach, since gh is also what fetched it.
 #
 # Fetch it with gh rather than curl: a curl carrying `Authorization: Bearer
 # $(gh auth token)` puts the live token in curl's argv, where /proc and ps
@@ -14,11 +22,10 @@
 # same token from its own keyring and never passes it as an argument.
 #
 # YAD_VERSION pins a release, YAD_INSTALL_DIR moves where it lands, and
-# YAD_REPO points at a fork. The assignment belongs on `sh`, not on `gh` — a
-# prefix applies to the one command it prefixes and does not cross the pipe:
+# YAD_REPO points at a fork — set the same YAD_REPO for `yad upgrade` later,
+# since nothing records where the binary came from:
 #
-#   gh api -H "Accept: application/vnd.github.raw" \
-#     repos/skkap/yad/contents/scripts/install.sh | YAD_VERSION=v0.3.1 sh
+#   YAD_VERSION=v0.3.1 sh yad-install.sh
 #
 # Nothing here restarts anything: a runner already running keeps the binary it
 # started from until someone restarts it.
@@ -137,6 +144,9 @@ if [ "$had_one" = yes ]; then
   # Under a service manager a clean stop is meant to stay stopped, so
   # `yad daemon restart` would replace the unit's supervision with a loose
   # process. Decision 0028 makes re-running install the upgrade path.
-  echo "note: a runner already running keeps the old binary until it is restarted — \`yad service install\` if it runs as a service, otherwise \`yad daemon restart\`"
+  # This script has no profile concept, so it names the flag rather than
+  # filling it in: bare, both commands act on the default profile, and
+  # `service install` would bootstrap a unit for one nobody meant to supervise.
+  echo "note: a runner already running keeps the old binary until it is restarted — \`yad service install\` if it runs as a service, otherwise \`yad daemon restart\` (each takes --profile if this runner is not the default: after \`service install\`, but before \`daemon\`)"
 fi
 echo "next: yad doctor"

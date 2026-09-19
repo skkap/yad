@@ -111,6 +111,26 @@ func TestCheckLineBlamesTheUnreadableSide(t *testing.T) {
 	}
 }
 
+// The restart advice names a profile, so the commands it offers have to act on
+// that profile. They take it in different places — `yad service install` has
+// its own --profile, `yad daemon restart` has none and reads the global one —
+// and a bare `yad service install` would bootstrap a supervised unit for the
+// default profile, which is a state change nobody asked for (0028).
+func TestRestartAdviceCarriesTheProfile(t *testing.T) {
+	for _, c := range []struct{ profile, wantService, wantDaemon string }{
+		{"work", "`yad service install --profile work`", "`yad --profile work daemon restart`"},
+		{"default", "`yad service install`", "`yad daemon restart`"},
+	} {
+		line := restartAdvice(c.profile)
+		if !strings.Contains(line, c.wantService) {
+			t.Errorf("profile %s: advice %q, want it to offer %s", c.profile, line, c.wantService)
+		}
+		if !strings.Contains(line, c.wantDaemon) {
+			t.Errorf("profile %s: advice %q, want it to offer %s", c.profile, line, c.wantDaemon)
+		}
+	}
+}
+
 func TestCheckLineOnANamedTag(t *testing.T) {
 	for _, state := range everyState {
 		line := checkLine(state, "v0.1.0", true)

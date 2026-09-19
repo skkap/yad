@@ -63,8 +63,14 @@ GitHub login you already have is what grants access:
 
 ```bash
 gh api -H "Accept: application/vnd.github.raw" \
-  repos/skkap/yad/contents/scripts/install.sh | sh
+  repos/skkap/yad/contents/scripts/install.sh > yad-install.sh
+sh yad-install.sh && rm yad-install.sh
 ```
+
+Two steps rather than a pipe into `sh`, so a `gh` that cannot fetch the script
+is a failure rather than a silent success: a pipeline reports only its last
+command's status, so `gh api … | sh` hands `sh` an empty stream and exits 0
+having installed nothing. It also lets you read the script before running it.
 
 It puts `yad` in `~/.local/bin`, checks the release's SHA-256 before writing
 anything, and tells you if that directory is not on your `PATH`. Then
@@ -75,13 +81,10 @@ Fetch it with `gh` rather than `curl`: a `curl` carrying
 where `/proc` and `ps` hand it to every local account for the length of the
 request.
 
-`YAD_VERSION` pins a release and `YAD_INSTALL_DIR` moves where it lands. The
-assignment goes on `sh`, not on `gh` — a prefix applies to the one command it
-prefixes and does not cross the pipe:
+`YAD_VERSION` pins a release and `YAD_INSTALL_DIR` moves where it lands:
 
 ```bash
-gh api -H "Accept: application/vnd.github.raw" \
-  repos/skkap/yad/contents/scripts/install.sh | YAD_VERSION=v0.3.1 sh
+YAD_VERSION=v0.3.1 sh yad-install.sh
 ```
 
 Later, on your command and never on its own:
@@ -100,11 +103,14 @@ fork's build with upstream's.
 checks its SHA-256 against the release's `checksums.txt`, and only then renames
 it into place — so an upgrade that fails at any step leaves a working `yad`. It
 restarts nothing: a runner already running holds the binary it started from
-until you restart it, and `yad upgrade` says so. If that runner is a service,
-re-run `yad service install` rather than `yad daemon restart` — install
-replaces the unit and starts it again, where a restart would leave an
+until you restart it, and `yad upgrade` says so — naming the profile, and
+carrying it in the commands it offers. If that runner is a service, re-run
+`yad service install [--profile name]` rather than `yad daemon restart`:
+install replaces the unit and starts it again, where a restart would leave an
 unsupervised process the service manager is no longer watching
-([0028](docs/decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)). Nothing in
+([0028](docs/decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)).
+The profile goes after `service install` but *before* `daemon` —
+`yad --profile work daemon restart` — because `daemon` has no flag of its own. Nothing in
 YAD updates itself on a schedule or on a hub's say-so
 ([0018](docs/decisions/0018-no-self-update-in-v1.md)).
 
