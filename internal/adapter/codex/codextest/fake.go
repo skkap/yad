@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -204,7 +205,8 @@ func openLog() *os.File {
 
 // schema is `codex app-server generate-json-schema --out DIR`: it writes the
 // bundle named by CODEX_TEST_SCHEMA, or fails as a codex without the command
-// would.
+// would. With CODEX_TEST_SCHEMA_DETACH set, it leaves behind a detached
+// process holding its stdout.
 func schema() {
 	args := os.Args[1:]
 	if len(args) != 4 || args[0] != "app-server" || args[1] != "generate-json-schema" || args[2] != "--out" {
@@ -215,6 +217,23 @@ func schema() {
 	if src == "fail" {
 		os.Stderr.WriteString("error: unrecognized subcommand 'generate-json-schema'\n")
 		os.Exit(2)
+	}
+	if os.Getenv("CODEX_TEST_SCHEMA_DETACH") != "" {
+		// A descendant that leaves the process group with setsid and keeps
+		// stdout open, as a launcher's detached updater can.
+		// It says when it has left, or the group kill at the fake's exit
+		// would take it first and nothing would hold the pipe.
+		left := filepath.Join(args[3], "left")
+		cmd := exec.Command("perl", "-MPOSIX", "-e", `POSIX::setsid(); open(F, ">", $ARGV[0]); close F; sleep 10`, left)
+		cmd.Stdout = os.Stdout
+		if err := cmd.Start(); err != nil {
+			os.Exit(5)
+		}
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if _, err := os.Stat(left); err == nil {
+				break
+			}
+		}
 	}
 	b, err := os.ReadFile(src)
 	if err != nil {

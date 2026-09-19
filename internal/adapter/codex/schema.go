@@ -192,27 +192,42 @@ func stripDocs(v any) any {
 // a codex that takes seconds is broken in a way its version probe reports.
 const schemaTimeout = 10 * time.Second
 
+var errSchemaTimeout = fmt.Errorf("no answer within %s", schemaTimeout)
+
+// schemaRetry is how long a failed check is believed. A check that could not
+// run — a loaded machine at boot, a full temp directory — may run next time,
+// and a warning that outlives its cause misleads the owner and every hub; a
+// codex that can never generate a schema is asked again only this often.
+const schemaRetry = 10 * time.Minute
+
 // generateSchema runs `codex app-server generate-json-schema` into a
 // throwaway directory and returns its bundle.
-func generateSchema(ctx context.Context, bin string) ([]byte, error) {
+func generateSchema(parent context.Context, bin string) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "yad-codex-schema-*")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(dir)
-	ctx, cancel := context.WithTimeout(ctx, schemaTimeout)
+	ctx, cancel := context.WithTimeout(parent, schemaTimeout)
 	defer cancel()
 	p, err := supervise.Start(ctx, supervise.Spec{Path: bin, Args: []string{"app-server", "generate-json-schema", "--out", dir}})
 	if err != nil {
 		return nil, err
 	}
-	io.Copy(io.Discard, io.LimitReader(p.Stdout(), 1<<20))
+	// What it prints is not wanted, and the read must not wait for EOF: a
+	// descendant that left the group with setsid can hold the pipe open for
+	// ever, and this runs on the daemon's capability tick. The leader's exit
+	// decides, and closing our end ends the read.
+	go io.Copy(io.Discard, p.Stdout())
+	werr := p.Wait()
 	p.Stdout().Close()
-	if err := p.Wait(); err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("no answer within %s", schemaTimeout)
-		}
-		return nil, fmt.Errorf("%v %s", err, strings.TrimSpace(p.Stderr()))
+	switch {
+	case parent.Err() != nil:
+		return nil, parent.Err()
+	case ctx.Err() != nil:
+		return nil, errSchemaTimeout
+	case werr != nil:
+		return nil, fmt.Errorf("%v %s", werr, strings.TrimSpace(p.Stderr()))
 	}
 	b, err := os.ReadFile(filepath.Join(dir, schemaFile))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -222,46 +237,69 @@ func generateSchema(ctx context.Context, bin string) ([]byte, error) {
 	return b, err
 }
 
+type check struct {
+	warning string
+	// until is when a failed check is asked again; zero for an answer that
+	// holds for the binary and version it was given.
+	until time.Time
+}
+
 var (
 	checkMu sync.Mutex
-	checked = map[string]string{}
+	checked = map[string]check{}
+	now     = time.Now
 )
 
 // SchemaWarning compares the installed codex's app-server protocol with the
 // pinned ones and returns a readiness warning, or "" when it matches. It is
-// asked on every capability probe, so the answer is kept per binary and
-// version; an upgrade changes the version and is checked again.
+// asked on every capability probe, so an answer is kept per binary and
+// version — an upgrade changes the version and is checked again — and a
+// check that could not run is kept only for schemaRetry.
 func SchemaWarning(ctx context.Context, bin, version string) string {
 	key := bin + "\x00" + version
 	checkMu.Lock()
-	w, ok := checked[key]
+	c, ok := checked[key]
 	checkMu.Unlock()
-	if ok {
-		return w
+	if ok && (c.until.IsZero() || now().Before(c.until)) {
+		return c.warning
 	}
-	w = schemaWarning(ctx, bin, version)
+	w, final, err := schemaWarning(ctx, bin, version)
+	if err != nil {
+		// The caller stopped asking; that says nothing about codex.
+		return ""
+	}
+	c = check{warning: w}
+	if !final {
+		c.until = now().Add(schemaRetry)
+	}
 	checkMu.Lock()
-	checked[key] = w
+	checked[key] = c
 	checkMu.Unlock()
 	return w
 }
 
-func schemaWarning(ctx context.Context, bin, version string) string {
+// schemaWarning checks once. final says the answer holds for this binary and
+// version; err, that ctx ended and there is no answer at all.
+func schemaWarning(ctx context.Context, bin, version string) (warning string, final bool, err error) {
 	b, err := generateSchema(ctx, bin)
+	if ctx.Err() != nil {
+		return "", false, ctx.Err()
+	}
 	if err != nil {
-		return fmt.Sprintf("yad could not check this codex's app-server protocol (%v) — runs may still work; `codex app-server generate-json-schema --out DIR` shows the error", err)
+		return fmt.Sprintf("yad could not check this codex's app-server protocol (%v) — runs may still work; `codex app-server generate-json-schema --out DIR` shows the error", err), false, nil
 	}
 	sum, err := SchemaHash(b)
 	if err != nil {
-		return fmt.Sprintf("yad could not check this codex's app-server protocol: %v", err)
+		// The same bytes hash the same way next time.
+		return fmt.Sprintf("yad could not check this codex's app-server protocol: %v", err), true, nil
 	}
 	if _, ok := pinned[sum]; ok {
-		return ""
+		return "", true, nil
 	}
 	known := make([]string, 0, len(pinned))
 	for _, v := range pinned {
 		known = append(known, v)
 	}
 	slices.Sort(known)
-	return fmt.Sprintf("the app-server protocol of %s differs from the one this yad was built against (codex %s) in the parts the adapter uses — runs may fail; install a pinned codex or a yad that knows this one", version, strings.Join(known, ", "))
+	return fmt.Sprintf("the app-server protocol of %s differs from the one this yad was built against (codex %s) in the parts the adapter uses — runs may fail; install a pinned codex or a yad that knows this one", version, strings.Join(known, ", ")), true, nil
 }

@@ -718,3 +718,105 @@ func TestStartRefusals(t *testing.T) {
 		t.Errorf("no binary: %v", err)
 	}
 }
+
+// inject writes a copy of a recorded conversation with extra lines after the
+// first line starting with after.
+func inject(t *testing.T, name, after string, lines ...string) string {
+	t.Helper()
+	b, err := os.ReadFile(fixture(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	done := false
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		out = append(out, line)
+		if !done && strings.HasPrefix(line, after) {
+			out = append(out, lines...)
+			done = true
+		}
+	}
+	if !done {
+		t.Fatalf("%s has no line starting %s", name, after)
+	}
+	return writeFixture(t, strings.Join(out, "\n")+"\n")
+}
+
+// A turn/started that names no turn opens nothing, and the run goes on to its
+// own turn — rather than closing the gate twice and taking the runner down.
+func TestTurnStartedWithoutAnID(t *testing.T) {
+	thread := threadIn(t, "plain")
+	h := &harness{fixture: inject(t, "plain", `{">":{"jsonrpc":"2.0","id":3,"method":"turn/start"`,
+		`{"method":"turn/started","params":{"threadId":"`+thread+`","turn":{"id":"","items":[],"status":"inProgress"}}}`)}
+	evs, out, _ := drive(t, context.Background(), h.spec(t), nil)
+	if out.State != v1.RunSucceeded || text(evs) != "pong" {
+		t.Fatalf("outcome = %+v, text %q", out, text(evs))
+	}
+}
+
+// A steer waits for the turn to start and for Codex to take it within one
+// bound, not one bound each: the runner's event loop and its cancel ladder
+// wait on it.
+func TestSteerHasOneBound(t *testing.T) {
+	defer func(d time.Duration) { steerTimeout = d }(steerTimeout)
+	steerTimeout = time.Second
+	hold := filepath.Join(t.TempDir(), "go")
+	// Codex takes the steer and never answers it.
+	h := &harness{fixture: cutBefore(t, "steer", `{"id":4,"result"`), env: map[string]string{"CODEX_TEST_HOLD": hold}}
+	tr, err := Adapter{}.Start(context.Background(), h.spec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(600 * time.Millisecond)
+		os.WriteFile(hold, nil, 0o600)
+	}()
+	start := time.Now()
+	err = tr.Steer("Also: end your final reply with the word STEERED.")
+	took := time.Since(start)
+	if err == nil {
+		t.Fatal("a steer Codex never answered was reported taken")
+	}
+	if took > steerTimeout+300*time.Millisecond {
+		t.Errorf("steer took %s, past its %s bound", took, steerTimeout)
+	}
+	tr.Terminate()
+	collect(t, tr, nil)
+}
+
+// Codex's rate-limit updates are sparse: a window an update leaves out keeps
+// what the last one said, so the limit names the window that is really full.
+func TestRateLimitUpdatesMerge(t *testing.T) {
+	tr := newTranslator(func(v1.Event) {})
+	tr.rateLimits([]byte(`{"rateLimits":{"primary":{"usedPercent":100,"resetsAt":1789803060},"secondary":{"usedPercent":40,"resetsAt":1790300000}}}`))
+	tr.rateLimits([]byte(`{"rateLimits":{"secondary":{"usedPercent":41,"resetsAt":1790300000}}}`))
+	l := tr.limit()
+	if l.Window != "primary" || !l.ResetAt.Equal(time.Unix(1789803060, 0)) {
+		t.Errorf("limit = %+v", l)
+	}
+}
+
+// The older approval requests name their thread conversationId; the run's
+// own are declined and said to be, as the newer ones are.
+func TestLegacyApprovalDeclined(t *testing.T) {
+	thread := threadIn(t, "plain")
+	h := &harness{fixture: inject(t, "plain", `{"method":"turn/started"`,
+		`{"method":"execCommandApproval","id":"a1","params":{"conversationId":"`+thread+`","callId":"c","command":["touch","x"],"cwd":"/work","parsedCmd":[]}}`,
+		`{">":{"jsonrpc":"2.0","id":"a1","result":{}}}`)}
+	evs, out, _ := drive(t, context.Background(), h.spec(t), nil)
+	if out.State != v1.RunSucceeded {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if !slices.Contains(statuses(evs), "approval declined: execCommand") {
+		t.Errorf("statuses = %v", statuses(evs))
+	}
+	var reply string
+	for _, m := range h.seen(t).stdin {
+		if m["id"] == "a1" {
+			reply = mustJSON(m["result"])
+		}
+	}
+	if !strings.Contains(reply, `"denied"`) {
+		t.Errorf("reply = %s", reply)
+	}
+}

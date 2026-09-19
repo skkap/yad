@@ -88,6 +88,11 @@ func hubClass(class string, resumed bool) string {
 // outlier. A MiB of prose is past anything a person reads from a stream.
 const maxTextBytes = 1 << 20
 
+// maxStatusBytes caps an event's status. A status is a word or a line — a
+// phase, a declined command — but some carry the harness's own text, and a
+// harness can write a line of 32 MiB.
+const maxStatusBytes = 1 << 10
+
 // eventBatch is the most events one upload carries, and how many a run may
 // spool before its reporter is woken ahead of its one-second tick
 // (ARCHITECTURE.md §2).
@@ -687,6 +692,7 @@ func (e *Exec) spool(ctx context.Context, c Claim, ev *v1.Event, seq int64) bool
 		ev.At = time.Now().UTC()
 	}
 	ev.Text, _ = capBytes(ev.Text, maxTextBytes)
+	ev.Status, _ = capBytes(ev.Status, maxStatusBytes)
 	if ev.Error != nil {
 		e := *ev.Error
 		e.Message, _ = capBytes(e.Message, maxTextBytes)

@@ -265,15 +265,20 @@ func (c *Conn) Read(r io.Reader, handle func(Line)) {
 	}
 }
 
-// threadOf is the threadId a notification or server request names, or "".
+// threadOf is the thread a notification or server request names, or "".
 // Codex runs subagents as threads of their own on the same pipe, so anything
-// naming another thread is not this run's.
+// naming another thread is not this run's. The older approval requests
+// (execCommandApproval, applyPatchApproval) name it conversationId.
 func threadOf(params json.RawMessage) string {
 	var p struct {
-		ThreadID string `json:"threadId"`
+		ThreadID       string `json:"threadId"`
+		ConversationID string `json:"conversationId"`
 	}
 	if len(params) == 0 || json.Unmarshal(params, &p) != nil {
 		return ""
 	}
-	return p.ThreadID
+	if p.ThreadID != "" {
+		return p.ThreadID
+	}
+	return p.ConversationID
 }

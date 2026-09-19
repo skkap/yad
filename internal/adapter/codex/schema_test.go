@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func recordedSchema(t *testing.T) []byte {
@@ -147,5 +148,61 @@ func TestSchemaWarning(t *testing.T) {
 	t.Setenv("CODEX_TEST_SCHEMA", "fail")
 	if got := SchemaWarning(context.Background(), os.Args[0], "codex-cli 0.147.0"); got != "" {
 		t.Errorf("a remembered answer was checked again: %q", got)
+	}
+}
+
+// A codex whose detached descendant holds stdout open is answered when codex
+// itself exits: the check runs on the daemon's capability tick, and a read
+// that waited for EOF would stop that loop for good.
+func TestSchemaCheckDoesNotWaitForAHeldPipe(t *testing.T) {
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
+	pinnedFile, _ := filepath.Abs(filepath.Join(fixtures, schemaFile))
+	t.Setenv("CODEX_TEST_SCHEMA", pinnedFile)
+	t.Setenv("CODEX_TEST_SCHEMA_DETACH", "1")
+	done := make(chan string, 1)
+	go func() { done <- SchemaWarning(context.Background(), os.Args[0], "codex-cli detached") }()
+	select {
+	case w := <-done:
+		if w != "" {
+			t.Errorf("warning = %q", w)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the check waited on a pipe a detached process holds")
+	}
+}
+
+// A check that could not run is believed only for schemaRetry, so a transient
+// failure does not follow a correctly pinned codex around for the daemon's
+// life; one cut short by its caller is not remembered at all.
+func TestFailedSchemaCheckIsRetried(t *testing.T) {
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
+	clock := time.Now()
+	defer func(f func() time.Time) { now = f }(now)
+	now = func() time.Time { return clock }
+	const version = "codex-cli retry"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	t.Setenv("CODEX_TEST_SCHEMA", "fail")
+	if w := SchemaWarning(ctx, os.Args[0], version); w != "" {
+		t.Errorf("a cancelled check warned %q", w)
+	}
+	if w := SchemaWarning(context.Background(), os.Args[0], version); !strings.Contains(w, "could not check") {
+		t.Fatalf("warning = %q: the cancelled check was remembered", w)
+	}
+	pinnedFile, _ := filepath.Abs(filepath.Join(fixtures, schemaFile))
+	t.Setenv("CODEX_TEST_SCHEMA", pinnedFile)
+	if w := SchemaWarning(context.Background(), os.Args[0], version); !strings.Contains(w, "could not check") {
+		t.Errorf("warning = %q: a failure is believed for schemaRetry", w)
+	}
+	clock = clock.Add(schemaRetry + time.Second)
+	if w := SchemaWarning(context.Background(), os.Args[0], version); w != "" {
+		t.Errorf("warning = %q after schemaRetry, when codex answers", w)
+	}
+	// A definite answer holds: no timer undoes it.
+	t.Setenv("CODEX_TEST_SCHEMA", "fail")
+	clock = clock.Add(100 * schemaRetry)
+	if w := SchemaWarning(context.Background(), os.Args[0], version); w != "" {
+		t.Errorf("warning = %q: a definite answer was asked again", w)
 	}
 }

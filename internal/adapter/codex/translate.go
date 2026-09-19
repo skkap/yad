@@ -284,13 +284,27 @@ func (t *translator) notification(method string, params json.RawMessage) {
 
 // rateLimits records the account's windows. Not scoped to a thread or a turn:
 // it is the account's, and the latest word on it is what a limit is read
-// from.
+// from. The schema calls an update sparse — clients merge what it carries
+// into what they have — so a window it leaves out keeps its last value.
 func (t *translator) rateLimits(params json.RawMessage) {
 	var p struct {
 		RateLimits *rateLimits `json:"rateLimits"`
 	}
-	if json.Unmarshal(params, &p) == nil && p.RateLimits != nil {
-		t.limits = p.RateLimits
+	if json.Unmarshal(params, &p) != nil || p.RateLimits == nil {
+		return
+	}
+	if t.limits == nil {
+		t.limits = &rateLimits{}
+	}
+	u := p.RateLimits
+	if u.Primary != nil {
+		t.limits.Primary = u.Primary
+	}
+	if u.Secondary != nil {
+		t.limits.Secondary = u.Secondary
+	}
+	if u.RateLimitReachedType != nil {
+		t.limits.RateLimitReachedType = u.RateLimitReachedType
 	}
 }
 

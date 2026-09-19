@@ -39,7 +39,8 @@ as soon as it exists.
   A turn that completed before an interrupt reached it stands, as decision
   [0025](0025-a-cancel-is-repeated-and-an-answer-that-landed-stands.md) has it.
 - **A usage limit carries its window.** Codex publishes the account's windows
-  in `account/rateLimits/updated`; the limit is the window at 100% (the later
+  in `account/rateLimits/updated`, each update carrying only what changed and
+  merged into the last; the limit is the window at 100% (the later
   reset when both are), named as Codex names it, `primary` or `secondary`. When
   no snapshot came before the failure, the adapter asks
   `account/rateLimits/read` once, for 5 s, before it closes the conversation.
@@ -54,8 +55,9 @@ as soon as it exists.
   keeps them apart, as Claude's does. Codex gives no cost.
 - **Steer is `turn/steer` into the same turn**, which answers once, having
   read it. Codex accepts or refuses it before the turn goes on, so `Steer`
-  waits (up to 10 s) and a refusal reaches the hub as `steer_failed`. A steer
-  that arrives before the turn has an id waits for it.
+  waits and a refusal reaches the hub as `steer_failed`. A steer that arrives
+  before the turn has an id waits for it. Both waits share one 10 s bound:
+  the runner's event loop, and its cancel ladder, wait on it.
 - **Interrupt is `turn/interrupt`, and nothing waits on its answer**: Codex
   answers only while a turn is live, and the `turn/completed` that follows is
   the answer that matters. One that arrives before the turn has an id is sent

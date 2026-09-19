@@ -57,8 +57,9 @@ var (
 	// longer is a descendant that escaped the process group.
 	drainGrace = 2 * time.Second
 	termGrace  = 5 * time.Second
-	// steerTimeout bounds a steer: waiting for the turn to start, and for
-	// Codex to take the input. The runner's event loop is waiting on it.
+	// steerTimeout bounds a steer, all of it: waiting for the turn to start,
+	// then for Codex to take the input. The runner's event loop is waiting on
+	// it, and so is the cancel ladder.
 	steerTimeout = 10 * time.Second
 	// limitsTimeout bounds the one extra question asked after a usage limit
 	// when Codex has not yet said which window ran out.
@@ -201,11 +202,11 @@ func (t *turn) Wait() adapter.Outcome {
 // the same turn — it answers once, with the steer read — and says so before
 // the turn goes on, so a steer it refused is reported here.
 func (t *turn) Steer(text string) error {
-	timer := time.NewTimer(steerTimeout)
-	defer timer.Stop()
+	ctx, cancel := context.WithTimeout(t.ctx, steerTimeout)
+	defer cancel()
 	select {
 	case <-t.begun:
-	case <-timer.C:
+	case <-ctx.Done():
 		return errors.New("codex has not started the turn yet — send the steer again in a moment")
 	}
 	t.mu.Lock()
@@ -214,8 +215,6 @@ func (t *turn) Steer(text string) error {
 	if over || id == "" {
 		return errors.New("the run has already finished — send this as a new run in the same session")
 	}
-	ctx, cancel := context.WithTimeout(t.ctx, steerTimeout)
-	defer cancel()
 	_, err := t.conn.Call(ctx, "turn/steer", map[string]any{
 		"threadId": thread, "expectedTurnId": id, "input": textInput(text),
 	})
@@ -462,7 +461,9 @@ func (t *turn) refused(method string, e *RPCError) {
 func (t *turn) begin(id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.turnID != "" || t.over {
+	// An empty id opens nothing: it names no turn a notification could
+	// match, and turnID doubles as the sign that begun is closed.
+	if id == "" || t.turnID != "" || t.over {
 		return
 	}
 	t.turnID = id

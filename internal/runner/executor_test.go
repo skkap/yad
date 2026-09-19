@@ -410,7 +410,8 @@ func contains(xs []string, s string) bool {
 	return false
 }
 
-// Text, error messages and final text are capped at maxTextBytes each, cut on
+// Text, error messages and final text are capped at maxTextBytes each, and a
+// status at maxStatusBytes, cut on
 // a rune boundary, so one event or one result stays well under yad hub's body
 // limit.
 func TestTextIsCapped(t *testing.T) {
@@ -422,11 +423,12 @@ func TestTextIsCapped(t *testing.T) {
 		Events: []v1.Event{
 			{Kind: v1.EventText, Text: huge},
 			{Kind: v1.EventError, Error: &v1.RunError{Class: "x", Message: huge}},
+			{Kind: v1.EventStatus, Status: "warning: " + huge},
 		},
 		Outcome: adapter.Outcome{State: v1.RunFailed, FinalText: huge, Error: &v1.RunError{Class: "x", Message: huge}},
 	})))
 	rows, err := e.store.UnackedEvents(context.Background(), db.UnackedEventsParams{Connection: "hub", RunID: "a", Limit: 10})
-	if err != nil || len(rows) != 2 {
+	if err != nil || len(rows) != 3 {
 		t.Fatalf("spool %d rows, %v", len(rows), err)
 	}
 	var text, errEv v1.Event
@@ -435,6 +437,13 @@ func TestTextIsCapped(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(rows[1].Body), &errEv); err != nil {
 		t.Fatal(err)
+	}
+	var status v1.Event
+	if err := json.Unmarshal([]byte(rows[2].Body), &status); err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Status) > maxStatusBytes || len(status.Status) < maxStatusBytes-1 || !utf8.ValidString(status.Status) {
+		t.Errorf("status is %d bytes, valid UTF-8 %v", len(status.Status), utf8.ValidString(status.Status))
 	}
 	res, _ := outboxResult(t, e, "a")
 	for name, s := range map[string]string{"text": text.Text, "event error": errEv.Error.Message, "final text": res.FinalText, "result error": res.Error.Message} {
