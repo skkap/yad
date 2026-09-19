@@ -9,15 +9,31 @@ import (
 	"testing"
 
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/hostool"
 	"github.com/skkap/yad/internal/hubclient"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
+// noTools puts every probe out of reach. An empty PATH is not enough on its
+// own: a path override left in the environment would have the capability
+// document's probes spawn the machine's real docker, and reach its daemon.
+func noTools(t *testing.T) {
+	t.Helper()
+	t.Setenv("PATH", t.TempDir())
+	for _, h := range harness.Catalog() {
+		t.Setenv(h.EnvPath, "")
+	}
+	for _, tool := range hostool.Catalog() {
+		t.Setenv(tool.EnvPath, "")
+	}
+}
+
 // The round trip: a token from the hub, yad connect, and a runner that can
 // sync with what connect wrote.
 func TestConnectRoundTrip(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	noTools(t)
 	e := newEnv(t)
 	ctx := context.Background()
 	tok := e.token(t)
@@ -70,7 +86,7 @@ func TestConnectRoundTrip(t *testing.T) {
 }
 
 func TestConnectRefusals(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	noTools(t)
 	e := newEnv(t)
 	ctx := context.Background()
 	if _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err != nil {
@@ -119,7 +135,7 @@ func TestNameFromURL(t *testing.T) {
 // It costs one host-tool probe timeout in wall time, which is the point: that
 // is the whole of what a hanging tool may cost a registration.
 func TestConnectSucceedsWhileAHostToolHangs(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	noTools(t)
 	dir := t.TempDir()
 	docker := filepath.Join(dir, "docker")
 	if err := os.WriteFile(docker, []byte("#!/bin/sh\n/bin/sleep 60\n"), 0o755); err != nil {

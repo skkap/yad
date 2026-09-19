@@ -12,8 +12,22 @@ import (
 	"github.com/skkap/yad/internal/hostool"
 )
 
-func TestFingerprintIgnoresTimeOnly(t *testing.T) {
+// noTools puts every probe out of reach: an empty PATH is not enough on its
+// own, because a path override left in the environment would have Build spawn
+// the machine's real docker, and reach its daemon.
+func noTools(t *testing.T) {
+	t.Helper()
 	t.Setenv("PATH", t.TempDir())
+	for _, h := range harness.Catalog() {
+		t.Setenv(h.EnvPath, "")
+	}
+	for _, tool := range hostool.Catalog() {
+		t.Setenv(tool.EnvPath, "")
+	}
+}
+
+func TestFingerprintIgnoresTimeOnly(t *testing.T) {
+	noTools(t)
 	cfg := config.Default()
 	a := Build(context.Background(), "r1", cfg)
 	b := a
@@ -29,7 +43,7 @@ func TestFingerprintIgnoresTimeOnly(t *testing.T) {
 
 // Label order is the owner's typing order, not a change in the machine.
 func TestLabelOrderDoesNotMoveFingerprint(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	noTools(t)
 	cfg := config.Default()
 	cfg.Labels = []string{"b", "a"}
 	x := Build(context.Background(), "r", cfg)
@@ -94,10 +108,7 @@ func TestHostToolReportIsPublicSafe(t *testing.T) {
 // routing on docker has to be able to tell "no docker here" from "this runner
 // is too old to know the question".
 func TestBuildReportsEveryHostTool(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	for _, tool := range hostool.Catalog() {
-		t.Setenv(tool.EnvPath, "")
-	}
+	noTools(t)
 	doc := Build(context.Background(), "r1", config.Default())
 	if len(doc.HostTools) != len(hostool.Catalog()) {
 		t.Fatalf("document carries %d host tools, want %d", len(doc.HostTools), len(hostool.Catalog()))
