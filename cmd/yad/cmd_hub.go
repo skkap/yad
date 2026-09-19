@@ -50,7 +50,13 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 	fs := flag.NewFlagSet("hub serve", flag.ContinueOnError)
 	listen := fs.String("listen", defaultHubListen, "address to serve the protocol and the service API on")
 	dbFile := fs.String("db", g.paths.HubDB(), "the hub's database")
+	minVersion := fs.String("min-version", "", "refuse runners older than this yad version, e.g. 0.4.0 (default: take any version)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	// Checked before the listener: a floor the hub cannot read would refuse
+	// nothing, and the operator would never learn their flag was ignored.
+	if err := hub.ValidateMinVersion(*minVersion); err != nil {
 		return err
 	}
 	s, err := store.Open(ctx, *dbFile)
@@ -58,7 +64,7 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 		return err
 	}
 	defer s.Close()
-	h := hub.New(hub.Options{Store: s})
+	h := hub.New(hub.Options{Store: s, MinVersion: *minVersion})
 
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
@@ -67,6 +73,13 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	fmt.Fprintf(w, "yad hub serving protocol v1 at http://%s%s — register a runner with a token from `yad hub token create`\n", ln.Addr(), hub.BasePath)
 	fmt.Fprintf(w, "service API at http://%s%s — submit runs with `yad hub submit` and an admin token from `yad hub admin-token create`\n", ln.Addr(), hubapi.BasePath)
+	if *minVersion != "" {
+		fmt.Fprintf(w, "runners older than yad %s are refused at register and at sync, with the next action `yad upgrade`\n", *minVersion)
+		// A refused runner stops syncing, so whatever it holds stops renewing
+		// too. An operator raising the floor on a working fleet is entitled to
+		// hear that before the sweep records those runs lost.
+		fmt.Fprintln(w, "a runner refused mid-run stops syncing, so the runs it holds lose their leases and are recorded lost — drain it first (`yad hub drain <runner>`) to raise the floor without that")
+	}
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()

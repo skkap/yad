@@ -66,7 +66,7 @@ internal/config          profiles, config.toml, credentials on disk
 internal/store           SQLite: schema, migrations, sqlc-generated queries
 internal/harness         the catalog, detection, versions
 internal/capability      the capability document and its fingerprint
-internal/hostool         probing host tools (gh, git, docker, zumino)
+internal/hostool         probing host tools (git, gh, docker) and how far each works
 internal/account         accounts per harness, homes, limit state, failover
 internal/service         yad service: launchd agent and systemd user unit, login PATH (0028)
 internal/adapter         the Adapter interface and event normalisation
@@ -80,6 +80,7 @@ internal/hubclient       the runner side of the protocol
 internal/hubapiclient    the caller side of yad hub's service API
 internal/hub             `yad hub`: huma server, store, submit/watch API
 internal/control         the Unix control socket, server and client
+internal/upgrade         `yad upgrade`: releases fetched with gh, checksum, atomic replace
 internal/conformance     the protocol conformance suite, run against any hub
 ```
 
@@ -90,8 +91,11 @@ Dependencies point downward only: `cmd` → `runner`/`hub` → everything else;
 
 JSON over HTTPS. The Go types in `protocol/v1` are the source; `openapi.yaml`
 beside them is generated and committed, and a test fails when they drift —
-[0017](docs/decisions/0017-protocol-types-are-the-source.md). Nothing in the
-protocol is harness-specific: a hub never learns what a rollout file is.
+[0017](docs/decisions/0017-protocol-types-are-the-source.md). A field's
+description reaches the document through its `doc:` struct tag; huma does not
+read Go comments, so a field documented only in a comment generates none.
+Nothing in the protocol is harness-specific: a hub never learns what a rollout
+file is.
 
 A **connection** is a base URL — `https://zumino.cc/api/yad/v1` — and every path
 below is relative to it, so a hub can mount the protocol anywhere.
@@ -261,8 +265,30 @@ state again is acknowledged.
 
 The major version is in the path. Within it, both sides advertise feature
 strings — the runner in its capability document, the hub in its register
-response — and nothing is used that the other side did not advertise. A hub may
-refuse a runner below `min_version` with `version_too_old` and a next action.
+response — and nothing is used that the other side did not advertise: a hub
+sends `drain`, `close_session`, `steer` and `interrupt` only to a runner
+advertising each, and offers a run carrying `start_at` whose moment is still
+ahead only to a runner that will hold it back rather than start it at once —
+once the moment has passed there is nothing to hold, and the run goes to any
+runner, or it would wait for ever on a fleet without the feature. A runner
+whose fingerprint moved without the document it promised is treated as
+advertising neither, until the document it is asked for arrives. `yad hub` advertises no
+`hub_features` of its own — it has nothing beyond the v1 baseline.
+
+A hub may refuse a runner below `min_version` with `version_too_old` and a next
+action. `yad hub serve --min-version 0.4.0` sets that floor: a runner under it
+is refused at register — before its registration token is burned, so the
+upgraded runner can still use it — and at every sync, with the next action
+`yad upgrade`. The floor rides in the register and sync responses as
+`min_version`, so a runner can say what it is being asked for. A runner refused
+mid-run stops syncing, so the runs it holds stop renewing and the sweep records
+them `lost` — raising the floor on a working fleet is a drain first
+([0023](docs/decisions/0023-lost-stands-against-a-late-result.md) makes `lost`
+final, so a result that lands afterwards is refused). Versions are
+compared on the release core alone, because `git describe` writes
+`v0.4.0-4-gabc1234` for a build four commits *after* v0.4.0, which semver would
+sort before it; a version neither side can parse — an unstamped `dev` build, a
+mistyped floor — is never refused.
 
 ### yad hub's service API
 
@@ -278,8 +304,8 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `GET /runs/{run}` | the run's hub-side state (`queued`, `offered`, then the protocol's) and its result; never its grants |
 | `GET /runs/{run}/events?after=N&wait_ms=…` | long poll: events after `N`, the run, and `done` once the stream is complete |
 | `POST /runs/{run}/cancel` | a run no runner started ends `cancelled` here; a held one gets a `cancel` control, and shows `cancel_requested_at` until it ends |
-| `POST /runs/{run}/interrupt` | an `interrupt` control for a held run; 409 before it starts |
-| `POST /runs/{run}/steer` | a `steer` control with `{text}` for a held run, sent once; 409 before it starts |
+| `POST /runs/{run}/interrupt` | an `interrupt` control for a held run; 409 before it starts, and for a runner without the `interrupt` feature |
+| `POST /runs/{run}/steer` | a `steer` control with `{text}` for a held run, sent once; 409 before it starts, and for a runner without the `steer` feature |
 | `POST /runners/{runner}/drain` | a `drain` control, repeated until the runner says it is draining; 409 for a runner without the `drain` feature |
 | `GET /sessions/{session}` | the session: its runner, and `open`, `closing` or `closed` with the reason |
 | `POST /sessions/{session}/close` | a session no runner holds closes here, its unstarted runs cancelled; a held one gets `close_session` until its runner reports it closed; 409 for a runner without the `close_session` feature. A closing or closed session takes no new run |
@@ -640,6 +666,8 @@ yad hub token create [--ttl 1h] [--runner id]
                                    a one-time registration token; --runner re-registers
                                    that runner, the only way to replace its credential
 yad conformance <url>              check any hub against v1
+yad upgrade [--check] [--force] [--tag v]
+                                   replace this binary with the newest release
 ```
 
 `yad daemon start` backgrounds itself — it re-executes `yad daemon start
@@ -677,8 +705,12 @@ line here is a reviewed change.
 
 ## §7 Testing
 
-- **No test spends a token or touches the network.** Harness detection runs
-  against an empty `PATH`; adapters replay fixtures.
+- **No test spends a token or touches the network.** Harness and host-tool
+  detection run against an empty `PATH`; adapters replay fixtures. An empty
+  `PATH` is not the whole of it: a `YAD_*_PATH` override is consulted *before*
+  `PATH`, so a test that must reach no real binary clears those too. It passes
+  either way on a machine where none is set, which is what makes forgetting
+  invisible.
 - **Two fakes.** `internal/adapter/fake` plays a scripted run in memory, for
   runner and hub logic. Child-process behaviour — hangs, ignored `SIGTERM`,
   oversized lines, orphaned grandchildren — is tested by re-executing the test
@@ -718,6 +750,12 @@ line here is a reviewed change.
   or `codex`, the built binary and `yad hub serve` (`scripts/smoke.sh
   <harness>`; a few cents of haiku or gpt-5.6-luna, `SMOKE_MODEL` to change
   it).
+- **No release is downloaded.** `internal/upgrade` fakes the release source
+  outright, and reads what the installed binary held *at the moment the
+  download ran* to prove nothing was replaced before the checksum was checked.
+  `gh` itself, and `scripts/install.sh` around it, are tested against a `gh`
+  that is a shell script on `PATH` — which proves the argv, the checksum gate
+  and where the binary lands, and proves nothing about a real GitHub release.
 - Table-driven, `t.Setenv`, `t.TempDir`, no assertion library; `-race` always.
 
 ## §8 Security

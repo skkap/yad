@@ -85,7 +85,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cmdErr = cmdSessions(ctx, g, rest, stdout)
 	case "account":
 		cmdErr = cmdAccount(ctx, g, rest, stdout)
-	case "disconnect", "conformance", "upgrade":
+	case "upgrade":
+		cmdErr = cmdUpgrade(ctx, g, rest, stdout)
+	case "disconnect", "conformance":
 		cmdErr = notYet(cmd, rest)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
@@ -163,6 +165,11 @@ usage: yad [--profile name] <command> [flags]
   service install|uninstall|status [--profile name]
                       run this profile's runner as a launchd agent or a
                       systemd user unit, as you, restarted after a crash
+  upgrade [--check] [--force] [--tag v]
+                      replace this binary with the newest release, verifying
+                      its checksum first. Nothing upgrades on its own, and a
+                      runner already running keeps the old binary until it is
+                      restarted
   version             version and build
 
   disconnect · conformance · account use

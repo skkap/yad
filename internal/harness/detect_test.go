@@ -109,9 +109,33 @@ func TestLookup(t *testing.T) {
 	}
 }
 
-// A probe that hangs is reported, not waited on, and it takes its descendants
-// with it: a launcher that forks and hangs would otherwise leave one orphan per
-// daemon tick.
+// Leader fate is what these two tests prove, and no absolute duration proves it
+// on a loaded machine: spawning a shell here took over a second under the full
+// suite, which is what made the old budgets red in a tree nobody had touched
+// ("took 1.385s, want under 1s", DEV-56). Nor does the outcome separate the two
+// — a probe held by a detached child answers the same in the end, once its
+// deadline closes the pipe underneath it. What separates them is which side of
+// the deadline the answer came from: the leader's, or the deadline's. So every
+// case names that side, and the deadline is either far above any spawn a
+// machine could plausibly take, or brought by the test itself.
+const (
+	// Never reached while leader fate holds, and far above any plausible spawn:
+	// a case that returns with its leader returns long before this.
+	leaderProbeTimeout = 10 * time.Second
+	// Reached on purpose, so the one case that waits out a real versionTimeout
+	// waits as little as it can.
+	hangingProbeTimeout = 250 * time.Millisecond
+	// Every child below sleeps a minute. A probe still running this long after
+	// its deadline is held by one of them, which is the regression these tests
+	// exist for; it is a bound on a broken build, not a budget for a busy one.
+	afterTheDeadline = 15 * time.Second
+)
+
+// A probe that hangs takes its descendants with it: a launcher that forks and
+// hangs would otherwise leave one orphan per daemon tick. The deadline is the
+// test's own, so the grandchild is in place before it arrives however slow the
+// machine is; that a versionTimeout ends a hanging probe by itself is the
+// "hangs" case of TestProbeOutcomeFollowsTheLeader.
 func TestHangingProbeIsBoundedAndLeavesNothing(t *testing.T) {
 	dir := t.TempDir()
 	pidfile := filepath.Join(dir, "grandchild.pid")
@@ -122,15 +146,17 @@ func TestHangingProbeIsBoundedAndLeavesNothing(t *testing.T) {
 	}
 	t.Setenv("YAD_CODEX_PATH", script)
 	old := versionTimeout
-	versionTimeout = 1500 * time.Millisecond
+	versionTimeout = leaderProbeTimeout
 	t.Cleanup(func() { versionTimeout = old })
 
 	h, _ := Lookup("codex")
-	start := time.Now()
-	d := detectOne(context.Background(), h)
-	if took := time.Since(start); took > 5*time.Second {
-		t.Fatalf("probe took %s; the timeout is not bounding it", took)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan Detected, 1)
+	go func() { done <- detectOne(ctx, h) }()
+	waitForPIDs(t, pidfile)
+	cancel()
+	d := answer(t, done)
 	if !strings.Contains(d.Error, "no answer") {
 		t.Errorf("Error = %q, want a timeout report", d.Error)
 	}
@@ -139,7 +165,9 @@ func TestHangingProbeIsBoundedAndLeavesNothing(t *testing.T) {
 		t.Fatalf("grandchild never started: %v", err)
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
-	deadline := time.Now().Add(2 * time.Second)
+	// Generous, because only a failing run waits it out: the grandchild dies
+	// with its group, and a loaded machine may take a moment to reap it.
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
 			return
@@ -203,9 +231,6 @@ func TestKindsMatchDomain(t *testing.T) {
 // The probe's outcome is the leader's, whoever else holds the pipe. Every
 // leader fate against every kind of descendant.
 func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
-	old := versionTimeout
-	versionTimeout = 1500 * time.Millisecond
-	t.Cleanup(func() { versionTimeout = old })
 	// Each child records its pid only once it is in place, and the leader waits
 	// for that: a leader that exited at once would have its group killed before
 	// the child had left it, and the test would not be testing a detached child.
@@ -216,15 +241,27 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 		name, body  string
 		wantVersion string
 		wantErr     string
-		within      time.Duration
+		// waitsItOut says the answer must come from the deadline rather than
+		// from the leader, and endsAtCancel says the test brings that deadline
+		// itself — once the script has recorded the descendant that holds the
+		// pipe, so no machine is too slow to have started it in time.
+		waitsItOut   bool
+		endsAtCancel bool
 	}{
-		{"exits 0, alone", "echo 'codex-cli 1.0'\n", "codex-cli 1.0", "", time.Second},
-		{"exits 0, in-group child holds stdout", inGroup + "echo 'codex-cli 1.0'\n", "codex-cli 1.0", "", time.Second},
-		{"exits 0, detached child holds stdout", detached + "echo 'codex-cli 1.0'\n", "codex-cli 1.0", "", time.Second},
-		{"exits 3", "echo oops >&2\nexit 3\n", "", "exit status 3", time.Second},
-		{"exits 3, detached child holds stdout", detached + "exit 3\n", "", "exit status 3", time.Second},
-		{"hangs", "sleep 60\n", "", "no answer", 3 * time.Second},
-		{"hangs, detached child holds stdout", detached + "sleep 60\n", "", "no answer", 3 * time.Second},
+		{name: "exits 0, alone", body: "echo 'codex-cli 1.0'\n",
+			wantVersion: "codex-cli 1.0"},
+		{name: "exits 0, in-group child holds stdout", body: inGroup + "echo 'codex-cli 1.0'\n",
+			wantVersion: "codex-cli 1.0"},
+		{name: "exits 0, detached child holds stdout", body: detached + "echo 'codex-cli 1.0'\n",
+			wantVersion: "codex-cli 1.0"},
+		{name: "exits 3", body: "echo oops >&2\nexit 3\n",
+			wantErr: "exit status 3"},
+		{name: "exits 3, detached child holds stdout", body: detached + "exit 3\n",
+			wantErr: "exit status 3"},
+		{name: "hangs", body: "sleep 60\n",
+			wantErr: "no answer", waitsItOut: true},
+		{name: "hangs, detached child holds stdout", body: detached + "sleep 60\n",
+			wantErr: "no answer", waitsItOut: true, endsAtCancel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -243,11 +280,31 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 					}
 				}
 			})
+			timeout := leaderProbeTimeout
+			if tc.waitsItOut && !tc.endsAtCancel {
+				timeout = hangingProbeTimeout
+			}
+			old := versionTimeout
+			versionTimeout = timeout
+			t.Cleanup(func() { versionTimeout = old })
+
 			h, _ := Lookup("codex")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan Detected, 1)
 			start := time.Now()
-			d := detectOne(context.Background(), h)
-			if took := time.Since(start); took > tc.within {
-				t.Errorf("took %s, want under %s", took, tc.within)
+			go func() { done <- detectOne(ctx, h) }()
+			if tc.endsAtCancel {
+				waitForPIDs(t, pids)
+				cancel()
+			}
+			d := answer(t, done)
+			// The deadline is the only clock trusted here, and only for which
+			// side of it the answer came from; see the note above the constants.
+			if took := time.Since(start); !tc.waitsItOut && took >= timeout {
+				t.Errorf("answered after %s: it waited out its deadline instead of following the leader", took)
+			} else if tc.waitsItOut && !tc.endsAtCancel && took < timeout {
+				t.Errorf("answered in %s, before the %s deadline it had to reach", took, timeout)
 			}
 			if d.Version != tc.wantVersion {
 				t.Errorf("Version = %q, want %q", d.Version, tc.wantVersion)
@@ -256,5 +313,35 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 				t.Errorf("Error = %q, want %q", d.Error, tc.wantErr)
 			}
 		})
+	}
+}
+
+// answer is the probe's. One still running this long past its deadline is held
+// by a descendant's pipe — the regression leader fate exists to prevent — and
+// the test says so rather than hanging until the package times out.
+func answer(t *testing.T, done <-chan Detected) Detected {
+	t.Helper()
+	select {
+	case d := <-done:
+		return d
+	case <-time.After(afterTheDeadline):
+		t.Fatalf("the probe was still running %s past its deadline: a descendant is holding it", afterTheDeadline)
+		return Detected{}
+	}
+}
+
+// waitForPIDs returns once the script has recorded a descendant, so a test that
+// ends the probe's deadline itself never ends it before there is a descendant
+// to hold the pipe. Polling, not a duration: the deadline it gates is the
+// test's, so a slow machine only makes this take longer.
+func waitForPIDs(t *testing.T, path string) {
+	t.Helper()
+	for deadline := time.Now().Add(afterTheDeadline); ; time.Sleep(5 * time.Millisecond) {
+		if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the fake harness recorded no descendant in %s", afterTheDeadline)
+		}
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/hub/store"
 )
 
@@ -53,10 +54,12 @@ func (f *fixture) tokenFor(t *testing.T, ttl time.Duration, runner string) strin
 }
 
 // doc is a capability document for a runner that can drive the fake harness
-// "claude", as a first-class one would be advertised.
+// "claude", as a first-class one would be advertised, and that advertises
+// everything this build of the runner acts on — what a current yad sends.
 func doc(id string) v1.Capabilities {
 	return v1.Capabilities{
 		RunnerID: id, Name: id, YadVersion: "dev", OS: "linux", Arch: "amd64",
+		ProtocolFeatures: capability.Features(),
 		Harnesses: []v1.HarnessReport{
 			{ID: "claude", Label: "Claude Code", Kind: "first-class", Present: true, Version: "2.1.276"},
 			{ID: "codex", Label: "Codex", Kind: "recognised", Present: true, Version: "0.1"},

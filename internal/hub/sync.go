@@ -43,6 +43,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 	out := v1.SyncResponse{
 		NextSyncMS: int(h.interval / time.Millisecond),
 		LeaseMS:    int(h.lease / time.Millisecond),
+		MinVersion: h.minVersion,
 	}
 
 	err = h.store.Tx(ctx, func(q *db.Queries) error {
@@ -73,6 +74,31 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		case req.Fingerprint != runner.Fingerprint:
 			wants = true
 		}
+		// A fingerprint that moved with no document says the copy on file no
+		// longer describes this runner — the report_capabilities below asks
+		// for it. Until it lands, what the runner acts on is unknown, so a
+		// control gated on a feature waits a sync rather than being spent
+		// against a document known to be out of date. v1 says the document
+		// goes with the first sync after a move, so this window opens only for
+		// a runner that did not send it.
+		described := req.Capabilities != nil || req.Fingerprint == runner.Fingerprint
+		// The document holds the only version a sync knows — a sync request
+		// carries none — so the floor is judged on what this runner last sent,
+		// before anything is recorded: a refused sync renews no lease and
+		// claims no run, and the transaction rolls back to prove it.
+		//
+		// Deliberately unlike the controls above, which wait when `described`
+		// is false: the floor judges a document it knows to be stale rather
+		// than deferring, because a check a runner could suspend by moving its
+		// fingerprint and sending nothing is not a floor. Do not make these
+		// two agree — the asymmetry is the point.
+		var doc v1.Capabilities
+		if err := json.Unmarshal([]byte(docJSON), &doc); err != nil {
+			return fmt.Errorf("stored capability document for %s: %w", runner.ID, err)
+		}
+		if err := h.refuseOld(doc.YadVersion); err != nil {
+			return err
+		}
 		if err := q.RecordSync(ctx, db.RecordSyncParams{
 			LastSyncAt: sql.NullInt64{Int64: store.Ms(now), Valid: true}, Health: sql.NullString{String: string(health), Valid: true},
 			WantsCapabilities: boolInt(wants), ID: runner.ID,
@@ -89,7 +115,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			if err := q.ClearDrain(ctx, runner.ID); err != nil {
 				return err
 			}
-		case runner.DrainRequestedAt.Valid:
+		case runner.DrainRequestedAt.Valid && described && advertises(doc, capability.FeatureDrain):
 			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlDrain})
 		}
 
@@ -116,7 +142,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 					return err
 				}
 			}
-			controls, err := deliver(ctx, q, run.ID)
+			controls, err := deliver(ctx, q, run.ID, doc, described)
 			if err != nil {
 				return err
 			}
@@ -142,8 +168,10 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		if err != nil {
 			return err
 		}
-		for _, id := range closing {
-			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlCloseSession, SessionID: id})
+		if described && advertises(doc, capability.FeatureCloseSession) {
+			for _, id := range closing {
+				out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlCloseSession, SessionID: id})
+			}
 		}
 
 		// Whatever is still offered to this runner was in the last response
@@ -158,16 +186,12 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			}
 		}
 
-		var doc v1.Capabilities
-		if err := json.Unmarshal([]byte(docJSON), &doc); err != nil {
-			return fmt.Errorf("stored capability document for %s: %w", runner.ID, err)
-		}
 		// A draining runner takes nothing, and one asked to drain is about
 		// to: an offer now would only come back.
 		if req.Health.Draining || runner.DrainRequestedAt.Valid {
 			return nil
 		}
-		out.Runs, err = h.offer(ctx, q, runner.ID, doc, req.Health.FreeCapacity, lease, now)
+		out.Runs, err = h.offer(ctx, q, runner.ID, doc, described, req.Health.FreeCapacity, lease, now)
 		return err
 	})
 	if err != nil {
@@ -182,7 +206,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 // offer picks queued runs for this runner and marks them offered. Never more
 // than the free capacity it declared, in total or for any harness it capped,
 // and never a harness it cannot drive: the runner would have to refuse it.
-func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, free v1.Capacity, lease sql.NullInt64, now time.Time) ([]v1.Run, error) {
+func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, free v1.Capacity, lease sql.NullInt64, now time.Time) ([]v1.Run, error) {
 	me := sql.NullString{String: runnerID, Valid: true}
 	left := map[string]int{}
 	for id, n := range free.ByHarness {
@@ -202,6 +226,24 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 		}
 		return ids
 	}
+	// A run whose start moment is still ahead goes only to a runner that will
+	// hold it back: one without the feature starts it on arrival. Once the
+	// moment has passed there is nothing left to hold, so the run is offered
+	// to anyone — otherwise a fleet of runners without the feature would leave
+	// it queued for good, and nothing else rescues it.
+	//
+	// The skip is here rather than in OfferCandidates, whose comment asks for
+	// the opposite, because the moment lives in the run's JSON spec in
+	// whatever zone the submitter wrote it, and SQLite date maths over that is
+	// a worse bet than a page walked twice. The cost is paid only by a runner
+	// that does not advertise start_at — no yad build produces one — and only
+	// against runs still waiting for their moment.
+	//
+	// A document the hub has asked to replace cannot answer this either, and
+	// an offer is the one thing a later sync cannot take back: a run started
+	// early has started. So an undescribed runner is offered nothing it would
+	// have to hold, and hears about those runs a sync later.
+	holdsStartAt := described && advertises(doc, capability.FeatureStartAt)
 	var (
 		runs   []v1.Run
 		cursor db.Run
@@ -234,6 +276,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 			var run v1.Run
 			if err := json.Unmarshal([]byte(c.Spec), &run); err != nil {
 				return nil, fmt.Errorf("stored run %s: %w", c.ID, err)
+			}
+			if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
+				continue
 			}
 			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
 				return nil, err

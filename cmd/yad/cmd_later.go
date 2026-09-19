@@ -8,7 +8,6 @@ import "fmt"
 var arrivesIn = map[string]string{
 	"disconnect":  "E7",
 	"conformance": "E7",
-	"upgrade":     "E9 (backlog — decision 0018)",
 }
 
 func notYet(cmd string, _ []string) error {

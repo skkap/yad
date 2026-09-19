@@ -21,14 +21,29 @@ import (
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/hostool"
 )
 
 // Features is what this build of the runner supports beyond the v1 baseline.
 // A hub must not use a feature the runner did not advertise, so "live_sessions"
 // is absent until it is built.
 func Features() []string {
-	return []string{"start_at", "steer", "interrupt", FeatureDrain, FeatureCloseSession}
+	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession}
 }
+
+// FeatureStartAt is a runner that holds a run until its start_at rather than
+// beginning it at once. A hub offers a run carrying one only to such a runner.
+const FeatureStartAt = "start_at"
+
+// FeatureSteer is a runner that hands a steer control's text to the running
+// harness; FeatureInterrupt, one that ends a turn without ending the session.
+// A hub sends neither control to a runner that does not advertise it: nothing
+// acknowledges a control, so one that is ignored looks exactly like one that
+// landed.
+const (
+	FeatureSteer     = "steer"
+	FeatureInterrupt = "interrupt"
+)
 
 // FeatureDrain is a runner that acts on the drain control and reports
 // draining in its health (decision 0029).
@@ -40,12 +55,24 @@ const FeatureDrain = "drain"
 const FeatureCloseSession = "close_session"
 
 // Build probes the machine and assembles the document from it and the owner's
-// config. Host tools are filled in by their package as it lands.
+// config.
 //
 // accounts is the runner's accounts with their states, or nil when there are
 // none to report — a harness with no accounts runs on its own default home and
 // says so by reporting none, which is a state and not a failure.
 func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []account.Account) v1.Capabilities {
+	// The two probes run side by side because the daemon re-probes on a fixed
+	// interval: one machine where every harness and every host tool hangs must
+	// still finish within it, and in series it would not.
+	var tools []hostool.Detected
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tools = hostool.Detect(ctx)
+	}()
+	found := Detect(ctx)
+	<-done
+
 	goos, goarch := harness.Platform()
 	name := cfg.Name
 	if name == "" {
@@ -67,7 +94,8 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []a
 		OS:               goos,
 		Arch:             goarch,
 		Labels:           sortedCopy(cfg.Labels),
-		Harnesses:        Harnesses(Detect(ctx), cfg, accounts),
+		Harnesses:        Harnesses(found, cfg, accounts),
+		HostTools:        HostTools(tools),
 		Capacity:         caps,
 		ProtocolFeatures: Features(),
 		ObservedAt:       time.Now().UTC(),
@@ -114,6 +142,19 @@ func Harnesses(found []harness.Detected, cfg config.Config, accounts []account.A
 			}
 		}
 		out = append(out, r)
+	}
+	return out
+}
+
+// HostTools turns host-tool detection into the public report. Only what a hub
+// may route on survives: never a path, and never who a tool is logged in as.
+func HostTools(found []hostool.Detected) []v1.HostTool {
+	out := make([]v1.HostTool, 0, len(found))
+	for _, d := range found {
+		out = append(out, v1.HostTool{
+			ID: d.ID, Present: d.Present, Version: d.Version,
+			LoggedIn: d.LoggedIn, LoginHosts: d.LoginHosts, Error: d.Error,
+		})
 	}
 	return out
 }

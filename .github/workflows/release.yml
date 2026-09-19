@@ -1,0 +1,54 @@
+name: Release
+
+# A pushed tag is the only trigger. Decision 0018 keeps updating on the owner's
+# command, and that starts here: nothing publishes a release except someone
+# tagging a commit.
+on:
+  push:
+    # Narrower than v*, because buildinfo.ParseNumber reads only numeric
+    # components: a `vnext` tag would publish a release that `yad upgrade`
+    # then refuses as an unreadable tag and will not install without --force.
+    # A publishing surface should not emit artefacts its own consumer rejects.
+    # A glob cannot say "digits only" — `v1beta` still matches — so this
+    # narrows the mistake rather than closing it; `yad upgrade --check` against
+    # the new release is what proves a tag is readable.
+    #
+    # Narrower than the parser in the other direction too, on purpose:
+    # ParseNumber reads a bare `0.4.1`, and a tag written that way publishes
+    # nothing. Releases carry the `v` that `git describe` writes and the README
+    # documents, and a trigger that is narrower than its consumer only ever
+    # fails to publish — the reverse publishes something nothing can install.
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: write # gh release create
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The Makefile stamps the version with `git describe --tags
+          # --always`, which needs the tags. Without them it does not fail —
+          # it falls back to a short SHA, so a shallow clone would ship a
+          # plausible-looking binary that no version floor can read.
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: sqlc-dev/setup-sqlc@v4
+        with:
+          sqlc-version: '1.31.1'
+      # The same bar as every other push. A tag can sit on a commit CI never
+      # saw, and a release is the one artefact nobody re-checks by hand.
+      - run: make check
+      - run: make dist
+      # sha256sum's own output, so one line of it verifies one download by
+      # hand exactly as yad upgrade and scripts/install.sh do — each of those
+      # matches the single asset it took, because the file names all four.
+      - run: cd dist && sha256sum yad-* > checksums.txt
+      - run: gh release create "$GITHUB_REF_NAME" dist/yad-* dist/checksums.txt --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

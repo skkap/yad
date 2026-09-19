@@ -50,12 +50,29 @@ const (
 	minLease            = 60 * time.Second
 )
 
+// SyncFloorForTests replaces MinSyncInterval in the clamp while it is positive,
+// so a test that is both sides of the protocol can run it in milliseconds
+// instead of waiting five seconds for every sync — at the shipped floor the
+// end-to-end tests spend their time asleep, 201 s of a 315 s suite (DEV-63).
+// It is deliberately not an Options field and not reachable from the protocol:
+// timings are the hub's (ARCHITECTURE.md §2), and a runner must never be able
+// to lower them. Nothing outside a test may set it: TestOnlyTestsReachTheSyncFloor
+// fails on any shipped file of the module that assigns it, this one included.
+// That is a backstop against the assignment someone would actually write, not a
+// proof — reading the source cannot see a value reached some other way.
+var SyncFloorForTests time.Duration
+
 // Options configure a hub. Store is required to serve; generating the OpenAPI
 // document needs none.
 type Options struct {
 	Store *store.Store
 	// SyncInterval is what runners are told; zero means DefaultSyncInterval.
 	SyncInterval time.Duration
+	// MinVersion is the oldest yad an operator will support against this hub.
+	// Empty is no floor, and is the default: a hub only refuses a runner when
+	// its operator has said which version to refuse below. Validate it with
+	// ValidateMinVersion — one the hub cannot parse is no floor.
+	MinVersion string
 	// Now is the clock, replaced in tests so a lease can lapse without a sleep.
 	Now func() time.Time
 }
@@ -70,18 +87,25 @@ type Hub struct {
 	now      func() time.Time
 	interval time.Duration
 	lease    time.Duration
+	// minVersion is the floor runners are refused below, and is sent to every
+	// runner in the register and sync responses so it can say why it stopped.
+	minVersion string
 }
 
 // New builds a hub with every v1 operation registered.
 func New(opts Options) *Hub {
-	h := &Hub{store: opts.Store, now: opts.Now, interval: opts.SyncInterval}
+	h := &Hub{store: opts.Store, now: opts.Now, interval: opts.SyncInterval, minVersion: opts.MinVersion}
 	if h.now == nil {
 		h.now = time.Now
 	}
 	if h.interval == 0 {
 		h.interval = DefaultSyncInterval
 	}
-	h.interval = min(max(h.interval, MinSyncInterval), MaxSyncInterval)
+	floor := MinSyncInterval
+	if SyncFloorForTests > 0 {
+		floor = SyncFloorForTests
+	}
+	h.interval = min(max(h.interval, floor), MaxSyncInterval)
 	h.lease = max(missedIntervals*h.interval, minLease)
 
 	inner := http.NewServeMux()

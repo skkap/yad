@@ -3,7 +3,6 @@ package hub
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -79,9 +78,9 @@ func (h *Hub) registerSessions(api huma.API) {
 				if err != nil {
 					return err
 				}
-				var doc v1.Capabilities
-				if err := json.Unmarshal([]byte(r.Capabilities), &doc); err != nil {
-					return fmt.Errorf("stored capability document for %s: %w", r.ID, err)
+				doc, err := storedDoc(r)
+				if err != nil {
+					return err
 				}
 				if !slices.Contains(doc.ProtocolFeatures, capability.FeatureCloseSession) {
 					return Fail(http.StatusConflict, v1.CodeConflict,

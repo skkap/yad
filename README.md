@@ -55,6 +55,82 @@ no free capacity and claims nothing, and the events, result and deregister
 calls still answer `not_implemented`. The build order is `ARCHITECTURE.md §9`;
 the epics and tasks are in Zumino, project `yad/dev`.
 
+## Install
+
+The repository is private, so there is no URL to download from without a token
+— for the binaries or for the install script. `gh` does the fetching, and the
+GitHub login you already have is what grants access:
+
+```bash
+gh api -H "Accept: application/vnd.github.raw" \
+  repos/skkap/yad/contents/scripts/install.sh > yad-install.sh &&
+  sh yad-install.sh
+```
+
+The `&&` is the point, not the two steps. A pipeline reports only its last
+command's status, so `gh api … | sh` hands `sh` an empty stream and exits 0
+having installed nothing — and so does `gh api … > f` followed by a separate
+`sh f`, because the redirection creates the file whether `gh` succeeds or not
+and `sh` on an empty file exits 0. Joined with `&&`, a `gh` that cannot fetch
+the script fails the whole command.
+
+The file is kept because the pinning example below re-runs it — not so you can
+read it first: the `&&` runs it as soon as the fetch succeeds. To read it
+before it runs, fetch and run as two separate commands, and check `gh`'s exit
+status yourself, because the redirection creates the file whether `gh`
+succeeded or not.
+
+It puts `yad` in `~/.local/bin`, checks the release's SHA-256 before writing
+anything, and tells you if that directory is not on your `PATH`. Then
+`yad doctor`.
+
+Fetch it with `gh` rather than `curl`: a `curl` carrying
+`Authorization: Bearer $(gh auth token)` puts the live token in `curl`'s argv,
+where `/proc` and `ps` hand it to every local account for the length of the
+request.
+
+`YAD_VERSION` pins a release and `YAD_INSTALL_DIR` moves where it lands:
+
+```bash
+YAD_VERSION=v0.3.1 sh yad-install.sh   # the file the command above left behind
+```
+
+Later, on your command and never on its own:
+
+```bash
+yad upgrade --check       # what the newest release is; changes nothing
+yad upgrade               # fetch it, verify its checksum, then replace this binary
+yad upgrade --tag v0.3.1  # that release, newer or older — how a bad one is rolled back
+```
+
+If you installed from a fork, set `YAD_REPO` for the upgrade too — nothing
+records where the binary came from, so an upgrade without it would replace your
+fork's build with upstream's.
+
+`yad upgrade` downloads to a temporary directory beside the installed binary,
+checks its SHA-256 against the release's `checksums.txt`, and only then renames
+it into place — so an upgrade that fails at any step leaves a working `yad`. It
+restarts nothing: a runner already running holds the binary it started from
+until you restart it, and `yad upgrade` says so — naming the profile, and
+carrying it in the commands it offers. If that runner is a service, re-run
+`yad service install [--profile name]` rather than `yad daemon restart`:
+install replaces the unit and starts it again, where a restart would leave an
+unsupervised process the service manager is no longer watching
+([0028](docs/decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)).
+The profile goes after `service install` but *before* `daemon` —
+`yad --profile work daemon restart` — because `daemon` has no flag of its own. Nothing in
+YAD updates itself on a schedule or on a hub's say-so
+([0018](docs/decisions/0018-no-self-update-in-v1.md)).
+
+Releases are built by CI on a `v*` tag: linux and darwin × amd64 and arm64,
+`CGO_ENABLED=0`, with a `checksums.txt` covering all four. To check a download
+by hand, pull out the one line for the binary you took — a checker given the
+whole file reports the three you did not download as failures:
+
+```bash
+grep " yad-linux-amd64$" checksums.txt | sha256sum -c -   # or: shasum -a 256 -c -
+```
+
 ## Run it safely
 
 A runner auto-approves everything its harness does — nobody is there to answer a
@@ -96,7 +172,7 @@ is yours to run. Why it is shaped this way: [0028](docs/decisions/0028-a-runner-
 ```bash
 make check      # lint, test, build, generated-file drift, cross-compile — see CHECKS.md
 make build      # ./bin/yad
-make install    # ~/.local/bin/yad
+make install    # ~/.local/bin/yad, from this checkout rather than a release
 make generate   # sqlc and the OpenAPI document
 ```
 

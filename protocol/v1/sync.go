@@ -126,6 +126,12 @@ func ControlKinds() []ControlKind {
 // feature, and is repeated until the session appears in the runner's
 // closed_sessions. A session with a run held closes once that run ends; a
 // session the runner does not hold, or already closed, is reported closed.
+//
+// steer and interrupt are gated the same way, on the "steer" and "interrupt"
+// features. Only cancel and report_capabilities go to every v1 runner; update
+// is reserved and goes to none. Nothing acknowledges a control, so one sent to
+// a runner that does not act on it is indistinguishable, to whoever asked for
+// it, from one that was obeyed.
 type Control struct {
 	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update"`
 	RunID     string      `json:"run_id,omitempty"`

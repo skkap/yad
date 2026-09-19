@@ -36,6 +36,11 @@ func (h *Hub) registerRunner(ctx context.Context, in *registerInput) (*registerO
 	if caps.Name == "" {
 		return nil, Fail(http.StatusBadRequest, v1.CodeInvalid, "capabilities.name is required", "set name in config.toml, or give the machine a hostname")
 	}
+	// Before the token is looked at, so a runner refused for its version
+	// leaves the token unburned for the upgraded runner to use.
+	if err := h.refuseOld(caps.YadVersion); err != nil {
+		return nil, err
+	}
 	doc, err := json.Marshal(caps)
 	if err != nil {
 		return nil, err
@@ -89,10 +94,13 @@ func (h *Hub) registerRunner(ctx context.Context, in *registerInput) (*registerO
 	if err != nil {
 		return nil, err
 	}
+	// HubFeatures stays empty: this hub has no feature beyond the v1 baseline,
+	// and a string nothing acts on would be one for a runner to guess about.
 	return &registerOutput{Body: v1.RegisterResponse{
 		RunnerCredential: cred,
 		SyncIntervalMS:   int(h.interval / time.Millisecond),
 		LeaseMS:          int(h.lease / time.Millisecond),
+		MinVersion:       h.minVersion,
 	}}, nil
 }
 
