@@ -82,6 +82,10 @@ type Collector struct {
 	// before the directory itself is removed: workdir.Manager.Reclaim, the
 	// same manager the executor prepares with. Nil frees the slots alone.
 	Reclaim func(ctx context.Context, connection, session, dir string) error
+	// Prune clears the bare caches of worktrees whose directories are gone,
+	// after a sweep that reclaimed something: workdir.Manager.Prune. Its
+	// failure is logged and blocks nothing. Nil prunes nothing.
+	Prune func(ctx context.Context) error
 	// DiskFree measures the free space at a path; nil is statfs.
 	DiskFree func(path string) (int64, error)
 	Clock    Clock
@@ -92,6 +96,9 @@ type Collector struct {
 	// mu makes sweeps one at a time, so two of them never reclaim the same
 	// workdir together.
 	mu sync.Mutex
+	// reclaimed is whether this sweep reclaimed a workdir, and so has
+	// caches to prune. Only the sweep holding mu touches it.
+	reclaimed bool
 }
 
 func (c *Collector) init() {
@@ -228,6 +235,12 @@ func (c *Collector) Sweep(ctx context.Context) error {
 	for _, s := range left {
 		c.reclaim(ctx, s)
 	}
+	if c.reclaimed && c.Prune != nil {
+		if err := c.Prune(ctx); err != nil {
+			c.Log.Warn("a bare cache could not be pruned of worktrees whose directories are gone; tried again after the next reclaim", "err", err)
+		}
+	}
+	c.reclaimed = false
 	return errors.Join(errs...)
 }
 
@@ -355,6 +368,7 @@ func (c *Collector) reclaim(ctx context.Context, s db.Session) {
 		}
 		log.Info("workdir reclaimed")
 	}
+	c.reclaimed = true
 	if err := c.Store.SetSessionReclaimed(ctx, db.SetSessionReclaimedParams{
 		ReclaimedAt: sql.NullInt64{Int64: c.Clock.Now().UnixMilli(), Valid: true}, Connection: s.Connection, ID: s.ID,
 	}); err != nil {

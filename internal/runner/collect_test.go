@@ -556,3 +556,31 @@ func TestCollectionReclaimsGitWorktrees(t *testing.T) {
 		t.Errorf("not recorded as reclaimed: %+v", s)
 	}
 }
+
+// Pruning the bare caches runs after a sweep that reclaimed something, and
+// only then; its failure is logged and deletes nothing less.
+func TestPruneFollowsAReclaimAndBlocksNothing(t *testing.T) {
+	e := newCollectEnv(t)
+	ctx := context.Background()
+	prunes := 0
+	e.c.Prune = func(context.Context) error {
+		prunes++
+		return errors.New("aaa-broken.git: not a git repository")
+	}
+	e.sweep(t)
+	if prunes != 0 {
+		t.Errorf("pruned %d times with nothing reclaimed", prunes)
+	}
+	dir := e.session(t, "s1", time.Hour, 0, "")
+	if _, err := e.c.Close(ctx, "hub", "s1", v1.SessionClosed); err != nil {
+		t.Fatal(err)
+	}
+	e.sweep(t)
+	if prunes != 1 || !gone(dir) {
+		t.Errorf("pruned %d times, workdir gone %v; want 1 and gone", prunes, gone(dir))
+	}
+	e.sweep(t)
+	if prunes != 1 {
+		t.Errorf("pruned again with nothing new reclaimed: %d", prunes)
+	}
+}

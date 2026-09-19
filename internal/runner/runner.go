@@ -77,7 +77,7 @@ func Serve(ctx context.Context, o Options) error {
 	sessions := &Collector{
 		Store: st, Workdirs: filepath.Join(o.Paths.Data, "workdirs"),
 		IdleTTL: o.Config.Sessions.IdleTTL.Duration, DiskFloor: int64(o.Config.Sessions.DiskFloor),
-		Reclaim: workdirs.Reclaim, Log: o.Log,
+		Reclaim: workdirs.Reclaim, Prune: workdirs.Prune, Log: o.Log,
 	}
 	o.Monitor.attach(pool, st, sessions)
 	// Runs before the store closes: a status read after it would fail.

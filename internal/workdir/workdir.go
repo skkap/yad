@@ -603,13 +603,19 @@ func forgotten(wt, repos string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
-// prune drops, from every bare cache, the worktrees whose directories are
-// gone: a workdir deleted by hand, or removed after a failed reclaim, leaves
-// its entry behind, and the entry holds its branch — no other worktree can
-// check it out — until it is pruned.
-func (m *Manager) prune(ctx context.Context, repos string) error {
-	if repos == "" {
+// Prune drops, from every bare cache, the worktrees whose directories are
+// gone: a workdir deleted by hand leaves its entry behind, and the entry holds
+// its branch — no other worktree can check it out — until it is pruned. It is
+// apart from Reclaim so that one broken cache fails only this, never a
+// session's reclaim; each cache is pruned whatever the others do.
+func (m *Manager) Prune(ctx context.Context) error {
+	m.init()
+	repos, err := filepath.EvalSymlinks(filepath.Join(m.Data, "repos"))
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
+	}
+	if err != nil {
+		return err
 	}
 	caches, err := filepath.Glob(filepath.Join(repos, "*.git"))
 	if err != nil {
@@ -630,12 +636,14 @@ func (m *Manager) prune(ctx context.Context, repos string) error {
 }
 
 // Reclaim undoes what Prepare left in a session's workdir: its worktrees are
-// removed from their bare caches — uncommitted work in them included — every
-// cache is pruned of worktrees whose directories are gone, and the session's
-// slots are freed for the next worktree. Branches stay in the cache; a path
-// source is never touched, and a symlink to one is not followed. Deleting the
-// workdir itself is the caller's, once this has returned. Workdir collection
-// (decision 0035) calls it, and calls it again after an error.
+// removed from their bare caches — uncommitted work in them included — and,
+// once every one is out, the session's slots are freed for the next worktree.
+// A slot freed while its worktree is still registered could go to another
+// session's worktree of the same repository, and a setup hook derives ports
+// from it. Branches stay in the cache; a path source is never touched, and a
+// symlink to one is not followed. Deleting the workdir itself is the caller's,
+// once this has returned without error. Workdir collection (decision 0035)
+// calls it, and calls it again after an error.
 func (m *Manager) Reclaim(ctx context.Context, connection, session, dir string) error {
 	m.init()
 	candidates := []string{dir}
@@ -686,9 +694,8 @@ func (m *Manager) Reclaim(ctx context.Context, connection, session, dir string) 
 		}
 		unlock()
 	}
-	errs = append(errs, m.prune(ctx, repos))
-	if err := m.Slots.ReleaseSlots(ctx, connection, session); err != nil {
-		errs = append(errs, err)
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
-	return errors.Join(errs...)
+	return m.Slots.ReleaseSlots(ctx, connection, session)
 }
