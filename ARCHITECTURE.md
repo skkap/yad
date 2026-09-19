@@ -338,7 +338,9 @@ harness process. Recording new ones is a manual step, behind a build tag
 - **One spawn point.** Every child — harness, git, setup hook, `--version` probe —
   starts through `supervise.Start`: its own process group, a scrubbed environment
   (`CLAUDECODE`, every `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY` unless configured,
-  anything `YAD_*`), and a stderr tail kept at 2 KiB. `Start` hands back the raw
+  anything `YAD_*`), and a stderr tail kept at 2 KiB. git and setup hooks start
+  with `NoTTY` — a session of their own, no controlling terminal — so nothing
+  they run can prompt. `Start` hands back the raw
   stdout pipe; the 32 MiB line cap belongs to the adapters' line reader
   (`adapter.LineReader`), which skips an oversized line and reports it rather
   than ending the run.
@@ -385,14 +387,28 @@ harness process. Recording new ones is a manual step, behind a build tag
 - **Workdir** per session under `<data>/workdirs/<connection>/<session>/` — the
   session id is the hub's, so it is kept only when it is a plain name and hashed
   otherwise; no hub-chosen id becomes a path. Git sources come from
-  a bare cache per repository (`<data>/repos/<hash>.git`, fetched before every
-  checkout) as a worktree on the run's branch; a `path` source is used in place
-  under a per-path lock. No sources → an empty directory.
+  a bare cache per repository (`<data>/repos/<name>-<hash>.git`, fetched before
+  every checkout) as a worktree on the run's branch — as it stands when it
+  exists, else cut from `base`, else `yad/<session>` from the default branch;
+  a continuing session finds its worktree as it left it. One git source is the
+  workdir itself; one `path` source is used in place, the harness running in
+  it, under a per-path `flock` held until the run ends; several lie side by
+  side under the workdir. No sources → an empty directory. Hub strings are
+  checked before git sees them, git never prompts, and a local source must
+  resolve inside the owner's `[workdirs] roots` — none configured, none taken
+  ([0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md)).
+  `internal/workdir` does all of it; the executor calls `Prepare` in
+  `preparing`, spools what it reports as the run's first events, and fails
+  the run with `source_refused` or `source_failed`.
 - **Setup hook**: if the worktree has an executable `.worktree/setup`, it runs
   with `WT_ROOT`, `WT_MAIN` (the bare cache), `WT_BRANCH`, `WT_SLUG`, `WT_REPO`
-  and `WT_SLOT` — the contract in `~/my/gpi-tools/docs/worktrees/README.md`.
-  Slots are allocated per repository per runner and recycled when a workdir is
-  reclaimed.
+  and `WT_SLOT` — the contract in `~/my/gpi-tools/docs/worktrees/README.md` —
+  under `[workdirs] setup_timeout`, its output a `tool_call`/`tool_result` pair
+  capped at 8 KiB. It runs until it has succeeded once in a worktree; a hook
+  that fails fails the run with `setup_failed`
+  ([0034](docs/decisions/0034-a-failing-setup-hook-fails-the-run.md)).
+  Slots are allocated per repository per runner, from 1, and recycled when a
+  workdir is reclaimed (`workdir.Manager.Reclaim`).
 - **Reclaiming** — [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md):
   on `close_session`, on the idle TTL (default 14 days, reported as expired), and
   oldest-idle-first under disk pressure. A first collection after an upgrade
@@ -464,6 +480,11 @@ idle_ttl = "336h"
 
 [drain]
 wait = "30m"   # how long a drain lets runs finish before cancelling them — 0029
+
+[workdirs]
+roots         = ["/home/me/src"]  # where path sources and local git URLs may point — 0033; none = refused
+git_timeout   = "10m"
+setup_timeout = "15m"
 ```
 
 ### `state.db`
@@ -573,7 +594,11 @@ line here is a reviewed change.
   workdir; a run cancelled or interrupted mid-run ends cancelled, with its
   latency measured and no process left; a runner process gets one, two and
   three real stop signals and drains, cancels, or exits; `yad hub drain`
-  drains a runner, which exits by itself.
+  drains a runner, which exits by itself; a run with a git source — a bare
+  repository on disk inside the owner's root — is checked out, its setup hook
+  writes a file, and the harness answers with what it read there.
+  `internal/workdir`'s tests use local bare repositories, and a loopback TLS
+  server for a remote that asks for a password or never answers.
 - **Real harnesses** only behind `//go:build realharness` and
   `YAD_REAL_HARNESS=1`, run by hand — and `make smoke`, the same path as the
   end-to-end tests with the real `claude`, the built binary and `yad hub
@@ -600,6 +625,10 @@ line here is a reviewed change.
   field can set them — [0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md).
 - A hub is untrusted input; harness output is data. Neither is ever executed or
   interpreted as an instruction to YAD.
+- A run's sources are argv, never a shell: https and ssh only, no remote
+  helpers, no leading `-`, no password in a URL, and nothing on the machine
+  outside the owner's `[workdirs] roots` —
+  [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md).
 - `claude -p` loads a repository's `.claude/settings.json` hooks and `.mcp.json`
   servers without a trust prompt. With auto-approve that is no worse than the run
   itself — which is exactly why a runner belongs on a machine you would let the

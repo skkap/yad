@@ -163,6 +163,10 @@ _Avoid_: prompt, for the whole thing — the prompt is only the instruction
 **Sources** — the material a run's workdir is built from: git repositories
 (URL, base ref, branch) or an existing local path. Optional — a run that answers
 a question or uses host tools has none.
+_Rules_: A source is hub input. It reaches the network over https or ssh with
+the machine's own credentials, and the machine itself only inside the roots the
+owner allows — none by default.
+_See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), `internal/workdir`
 
 **Workdir** — the directory a session's runs execute in. Owned by the session,
 kept between its runs, reclaimed after it closes. Built from the sources, or
@@ -173,7 +177,9 @@ _See_: [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md), `inte
 **Setup hook** — a repository's own `.worktree/setup`, which YAD runs in a new
 workdir with the `WT_*` variables, exactly as `gpiwt` does. Optional; a repo
 without one still runs, and the run's events say so.
-_See_: `~/my/gpi-tools/docs/worktrees/README.md`
+_Rules_: A hook that fails fails the run while it is preparing; the session's
+next run tries it again.
+_See_: `~/my/gpi-tools/docs/worktrees/README.md`, [0034](docs/decisions/0034-a-failing-setup-hook-fails-the-run.md)
 
 **Slot** — `WT_SLOT`: a small integer unique among one repository's live
 worktrees on a machine, from which the setup hook derives ports and container
