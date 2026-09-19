@@ -668,12 +668,25 @@ func fatal(err error) bool {
 	return false
 }
 
+// SyncFloorForTests replaces minInterval while it is positive, so an
+// end-to-end test that is also the hub can drive the protocol in milliseconds;
+// at the shipped floor those tests spend their time asleep (DEV-63). The floor
+// itself stays: it is what keeps a hostile or broken hub from spinning this
+// machine, so it is reachable from no configuration file, flag or protocol
+// field — only from a test in this module, and the only thing enforcing that is
+// TestOnlyTestsReachTheSyncFloor, which reads the source.
+var SyncFloorForTests time.Duration
+
 // interval is the hub's chosen interval, held within bounds.
 func interval(ms int) time.Duration {
 	if ms <= 0 {
 		return defaultInterval
 	}
-	return min(max(time.Duration(ms)*time.Millisecond, minInterval), maxInterval)
+	floor := minInterval
+	if SyncFloorForTests > 0 {
+		floor = SyncFloorForTests
+	}
+	return min(max(time.Duration(ms)*time.Millisecond, floor), maxInterval)
 }
 
 // backoff doubles from firstBackoff to maxBackoff over consecutive failures.
