@@ -23,6 +23,10 @@ that epic E6 needs before it is built.
 - **A session that cannot move stays put.** If the DEV-24 spike shows a
   transcript cannot be shared between account homes, a session is pinned to its
   account and its run waits for that account's reset.
+  _The spike ran on 2026-09-19: transcripts do share, so this branch did not
+  come into effect._
+  [0013](0013-accounts-fail-over-and-limited-runs-wait.md) carries what was
+  measured, and DEV-58 the one part that was not.
 - **Using several subscriptions is the owner's decision.** YAD does not second-
   guess it. The terms-of-service question in 0013's consequences is withdrawn.
 
