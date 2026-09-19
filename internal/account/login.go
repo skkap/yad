@@ -151,6 +151,16 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 	}
 	err = proc.Wait()
 
+	// A check the deadline killed answered nothing, whatever it had printed
+	// before it died. Without this a codex that writes "Not logged in" as the
+	// first line of a longer answer and then hangs is read as a definitive
+	// logged-out — the supervisor kills it, Wait returns an ExitError, and the
+	// prefix below matches — and the account is parked on the strength of a
+	// timeout. harness.detectOne tracks the same distinction for --version.
+	if ctx.Err() != nil {
+		return false, fmt.Errorf("%s did not answer whether %s holds a login within %s — run `%s %v` there to see what it does", harness, home, statusTimeout, binary, args)
+	}
+
 	switch harness {
 	case "codex":
 		if err == nil {

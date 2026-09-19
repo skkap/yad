@@ -418,3 +418,108 @@ func TestConcurrentEnsureOnOneHome(t *testing.T) {
 		})
 	}
 }
+
+// Once the link exists it is never observed missing, however many runs are
+// re-linking the same home at once.
+//
+// This is the invariant remove-then-symlink could not hold: in the gap between
+// the two, a harness one run had already started could create a real directory
+// at projects/ and write its transcripts somewhere no other account can see.
+// Replacing by rename closes it, and this watches for the gap rather than
+// checking the state once everyone has finished.
+//
+// A breaker keeps pointing the link at a decoy so the racers have real work —
+// without it every Ensure returns at the already-correct check and the test
+// proves nothing. The breaker replaces atomically itself, so any gap the
+// observer sees belongs to the code under test.
+func TestTheTranscriptLinkIsNeverObservedMissing(t *testing.T) {
+	data := t.TempDir()
+	home, err := Ensure(data, "claude", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, "projects")
+	want := TranscriptDir(data, "claude")
+	decoy := filepath.Join(data, "decoy")
+	if err := os.MkdirAll(decoy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Atomic replace, so the breaker never creates a gap of its own.
+	swapTo := func(target string) {
+		tmp, err := os.MkdirTemp(filepath.Dir(link), ".swap-")
+		if err != nil {
+			return
+		}
+		defer os.RemoveAll(tmp)
+		staged := filepath.Join(tmp, "link")
+		if os.Symlink(target, staged) == nil {
+			os.Rename(staged, link)
+		}
+	}
+
+	stop := make(chan struct{})
+	gaps := make(chan string, 4)
+	var bg sync.WaitGroup
+	bg.Add(2)
+	go func() { // the observer
+		defer bg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// Lstat, not Stat: the question is whether anything is at the
+			// path at all, not whether it resolves.
+			if _, err := os.Lstat(link); err != nil {
+				select {
+				case gaps <- err.Error():
+				default:
+				}
+				return
+			}
+		}
+	}()
+	go func() { // the breaker
+		defer bg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			swapTo(decoy)
+		}
+	}()
+
+	var racers sync.WaitGroup
+	for range 4 {
+		racers.Add(1)
+		go func() {
+			defer racers.Done()
+			for range 60 {
+				if _, err := Ensure(data, "claude", "work"); err != nil {
+					t.Errorf("Ensure failed while another was running: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	racers.Wait()
+	close(stop)
+	bg.Wait()
+
+	select {
+	case g := <-gaps:
+		t.Errorf("the link was missing while a run was re-linking it: %s", g)
+	default:
+	}
+	// The breaker may have won the last write; what matters is that a final
+	// Ensure lands it back on the shared directory.
+	if _, err := Ensure(data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if at, err := os.Readlink(link); err != nil || at != want {
+		t.Errorf("link is %q (%v), want %s", at, err, want)
+	}
+}

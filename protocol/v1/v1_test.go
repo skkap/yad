@@ -2,6 +2,7 @@ package v1
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"reflect"
@@ -264,5 +265,48 @@ func TestGrantNames(t *testing.T) {
 				t.Errorf("%s as %s: err %v, want one mentioning %q", tc.name, as, err, tc.want)
 			}
 		}
+	}
+}
+
+// A runner built before AccountReport.state existed sends accounts as
+// {"label": "work"}. yad hub validates request bodies against the generated
+// schema, so a state listed in required would give that runner a 422 and it
+// could not register at all — and hubs upgrade centrally while runners sit on
+// other people's machines.
+//
+// This pins the compatibility rather than the tag: removing `omitempty` and
+// regenerating puts state back in required, and nothing else in the suite
+// would notice.
+func TestAccountReportStaysOptionalForOlderRunners(t *testing.T) {
+	doc, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The schema block for AccountReport, up to the next component.
+	const head = "    AccountReport:\n"
+	i := bytes.Index(doc, []byte(head))
+	if i < 0 {
+		t.Fatal("openapi.yaml has no AccountReport schema")
+	}
+	block := doc[i+len(head):]
+	if j := bytes.Index(block, []byte("\n    Ack:")); j >= 0 {
+		block = block[:j]
+	}
+	req := block[bytes.Index(block, []byte("required:")):]
+	if bytes.Contains(req, []byte("- state")) {
+		t.Errorf("AccountReport requires state, so a runner from before the field cannot register:\n%s", req)
+	}
+	if !bytes.Contains(req, []byte("- label")) {
+		t.Errorf("AccountReport no longer requires label:\n%s", req)
+	}
+
+	// And the value itself is still constrained, so optional does not mean
+	// a hub may see something outside the set.
+	var rep AccountReport
+	if err := json.Unmarshal([]byte(`{"label":"work"}`), &rep); err != nil {
+		t.Fatalf("an older runner's account object no longer decodes: %v", err)
+	}
+	if rep.Label != "work" || rep.State != "" {
+		t.Errorf("decoded %+v", rep)
 	}
 }

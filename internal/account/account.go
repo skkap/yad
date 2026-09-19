@@ -38,8 +38,11 @@ type Account struct {
 // inside the owner's machine is not a hub's business, and everything under it
 // is the credential.
 func (a Account) Report() v1.AccountReport {
-	// state is a required field of a public type, so an Account built without
-	// one needs a value rather than an empty string no hub's enum allows.
+	// state is optional in the schema but constrained by an enum, so an
+	// Account built without one needs a value rather than an empty string the
+	// enum does not allow. Optional is deliberate — see protocol/v1 — and this
+	// default is what lets it be: every producer sets a real value, so nothing
+	// on the wire depends on the field being required.
 	//
 	// It resolves to free, which fails open: the account gets tried. The
 	// opposite — treating an unknown state as unusable "to be safe" — would
@@ -180,9 +183,9 @@ func linkOnce(from, to string) (keep bool, err error) {
 		if at, err := os.Readlink(from); err == nil && at == to {
 			return false, nil // already what this function exists to make
 		}
-		if err := os.Remove(from); err != nil {
-			return false, err
-		}
+		// Deliberately not removed first: placeLink renames over an existing
+		// symlink, and removing it would open exactly the gap that replacing
+		// by rename exists to close.
 	default:
 		entries, err := os.ReadDir(from)
 		if errors.Is(err, os.ErrNotExist) {
@@ -207,7 +210,29 @@ func linkOnce(from, to string) (keep bool, err error) {
 			return false, err
 		}
 	}
-	return false, os.Symlink(to, from)
+	return false, placeLink(from, to)
+}
+
+// placeLink puts the link at from without ever leaving the path empty.
+//
+// Symlink-then-rename rather than remove-then-symlink: rename replaces
+// atomically, so a concurrent run — or a harness the winning run has already
+// started — never observes a missing projects/ and never gets to create a real
+// directory in the gap, which would send that run's transcripts somewhere only
+// it can see. The remove above is still needed for a real directory, since
+// rename will not replace one, but that case happens once per home rather than
+// on every race.
+func placeLink(from, to string) error {
+	tmp, err := os.MkdirTemp(filepath.Dir(from), ".link-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	staged := filepath.Join(tmp, "link")
+	if err := os.Symlink(to, staged); err != nil {
+		return err
+	}
+	return os.Rename(staged, from)
 }
 
 // Remove deletes an account's harness home, and nothing else.
