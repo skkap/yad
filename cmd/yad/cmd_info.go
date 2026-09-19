@@ -8,6 +8,7 @@ import (
 	"io"
 	"text/tabwriter"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
@@ -88,7 +89,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 
 // cmdHarnesses prints the exact capability document this runner would register
 // with, so a mismatch can be diagnosed on the machine instead of from a hub's logs.
-func cmdHarnesses(ctx context.Context, g global, args []string, w io.Writer) error {
+func cmdHarnesses(ctx context.Context, g global, args []string, w, errw io.Writer) error {
 	fs := flag.NewFlagSet("harnesses", flag.ContinueOnError)
 	// --json is accepted for symmetry with doctor; the document is always JSON.
 	fs.Bool("json", true, "print the capability document as JSON")
@@ -103,7 +104,20 @@ func cmdHarnesses(ctx context.Context, g global, args []string, w io.Writer) err
 	if err != nil {
 		return err
 	}
-	return writeJSON(w, capability.Build(ctx, id, cfg))
+	// The document is what a hub receives, and a state database this binary
+	// cannot read — one migration behind, because the daemon has not restarted
+	// — is no reason to refuse to print it. capability.Build reports the
+	// owner's configured labels as free when it is given none.
+	//
+	// The note goes to stderr: the document goes to w and has to stay
+	// parseable, and an owner reading "free" for an account that may need
+	// login should be told the states were never read.
+	accounts, err := account.Read(ctx, g.paths, cfg)
+	if err != nil {
+		fmt.Fprintln(errw, "note: account states could not be read, so every configured account is shown free:", err)
+		accounts = nil
+	}
+	return writeJSON(w, capability.Build(ctx, id, cfg, accounts))
 }
 
 func writeJSON(w io.Writer, v any) error {

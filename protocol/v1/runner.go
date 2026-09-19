@@ -20,7 +20,7 @@ type Capabilities struct {
 }
 
 // HarnessReport is one harness as it exists on the runner. Accounts appear by
-// label only; credentials never leave the machine.
+// label and state only; credentials never leave the machine.
 type HarnessReport struct {
 	ID       string          `json:"id"`
 	Label    string          `json:"label"`
@@ -37,11 +37,43 @@ type HarnessReport struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// AccountReport is an account's public face: its label and whether it is at a
-// usage limit, and until when.
+// AccountState is what a hub may know about an account, and the whole of it.
+// The words are DOMAIN.md's: an account is free, limited until a reset, or
+// needs login.
+type AccountState string
+
+const (
+	// AccountFree takes runs.
+	AccountFree AccountState = "free"
+	// AccountLimited is at a usage limit until LimitedUntil.
+	AccountLimited AccountState = "limited"
+	// AccountNeedsLogin cannot run a turn until the owner logs it in again:
+	// its harness home holds no working login, or the home is not there at
+	// all. The owner runs `yad account add` at the machine. Skipped for
+	// claiming exactly as a limited account is, and never an error that stops
+	// a runner registering.
+	AccountNeedsLogin AccountState = "needs_login"
+)
+
+// AccountStates lists the closed set.
+func AccountStates() []AccountState {
+	return []AccountState{AccountFree, AccountLimited, AccountNeedsLogin}
+}
+
+// AccountReport is an account's public face: its label, its state, and until
+// when a limit lasts. A label is not a secret and a credential is — nothing
+// else from an account's home is reportable, and none of it appears here.
 type AccountReport struct {
-	Label        string     `json:"label"`
-	LimitedUntil *time.Time `json:"limited_until,omitempty"`
+	Label string `json:"label"`
+	// omitempty keeps state out of the schema's required list. Every runner
+	// that has this field always sets it — Report substitutes free for an
+	// empty one — so the wire is unchanged; what it buys is that a runner
+	// from before this field still validates against a hub generated after
+	// it. Hubs update centrally and runners sit on other people's machines,
+	// so that is the direction that matters, and §2's rule is that a field
+	// added within v1 never breaks an older runner.
+	State        AccountState `json:"state,omitempty" enum:"free,limited,needs_login"`
+	LimitedUntil *time.Time   `json:"limited_until,omitempty"`
 }
 
 // HostTool is a non-harness executable a run may need — git, gh, docker.

@@ -150,6 +150,21 @@ ON CONFLICT (harness, label) DO UPDATE SET limited_until = excluded.limited_unti
 -- name: ListAccounts :many
 SELECT * FROM accounts WHERE harness = ? ORDER BY label;
 
+-- The state an account is in, without disturbing limited_until: DEV-27 owns
+-- the limit, this owns free and needs_login.
+-- name: SetAccountState :exec
+INSERT INTO accounts (harness, label, state, updated_at) VALUES (?, ?, ?, ?)
+ON CONFLICT (harness, label) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at;
+
+-- Every account this runner has a row for, across harnesses: what
+-- `yad account list` and the health report read. The owner's order lives in
+-- config.toml, so this sorts only for a stable read.
+-- name: ListAllAccounts :many
+SELECT * FROM accounts ORDER BY harness, label;
+
+-- name: DeleteAccount :exec
+DELETE FROM accounts WHERE harness = ? AND label = ?;
+
 -- name: TakeSlot :exec
 INSERT INTO slots (repo, slot, connection, session_id) VALUES (?, ?, ?, ?);
 

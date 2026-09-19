@@ -2,6 +2,7 @@ package v1
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"reflect"
@@ -84,15 +85,19 @@ func TestKindsMatchDomain(t *testing.T) {
 			t.Errorf("**%s** kinds: DOMAIN.md says %v, protocol/v1 has %v", entry, want, got)
 		}
 	}
-	var events, states []string
+	var events, states, accounts []string
 	for _, k := range EventKinds() {
 		events = append(events, string(k))
 	}
 	for _, s := range RunStates() {
 		states = append(states, string(s))
 	}
+	for _, s := range AccountStates() {
+		accounts = append(accounts, string(s))
+	}
 	check("Event", events)
 	check("Run state", states)
+	check("Account", accounts)
 	check("Session", []string{string(SessionPerRun), string(SessionLive)})
 }
 
@@ -132,7 +137,7 @@ func domainKinds(t *testing.T, path string) map[string][]string {
 // the Go sets — non-terminal states where a run is held, terminal ones where a
 // result is reported.
 func TestEnumTagsMatchSets(t *testing.T) {
-	var held, terminal, events, controls []string
+	var held, terminal, events, controls, accounts []string
 	for _, s := range RunStates() {
 		if s.IsTerminal() {
 			terminal = append(terminal, string(s))
@@ -146,6 +151,9 @@ func TestEnumTagsMatchSets(t *testing.T) {
 	for _, k := range ControlKinds() {
 		controls = append(controls, string(k))
 	}
+	for _, s := range AccountStates() {
+		accounts = append(accounts, string(s))
+	}
 	for _, tc := range []struct {
 		v     any
 		field string
@@ -155,6 +163,7 @@ func TestEnumTagsMatchSets(t *testing.T) {
 		{Result{}, "State", terminal},
 		{Event{}, "Kind", events},
 		{Control{}, "Kind", controls},
+		{AccountReport{}, "State", accounts},
 		{Grant{}, "As", []string{string(GrantEnv), string(GrantFile)}},
 		{SessionRef{}, "Mode", []string{string(SessionPerRun), string(SessionLive)}},
 	} {
@@ -256,5 +265,58 @@ func TestGrantNames(t *testing.T) {
 				t.Errorf("%s as %s: err %v, want one mentioning %q", tc.name, as, err, tc.want)
 			}
 		}
+	}
+}
+
+// A runner built before AccountReport.state existed sends accounts as
+// {"label": "work"}. yad hub validates request bodies against the generated
+// schema, so a state listed in required would give that runner a 422 and it
+// could not register at all — and hubs upgrade centrally while runners sit on
+// other people's machines.
+//
+// This pins the compatibility rather than the tag: removing `omitempty` and
+// regenerating puts state back in required, and nothing else in the suite
+// would notice.
+func TestAccountReportStaysOptionalForOlderRunners(t *testing.T) {
+	doc, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The schema block for AccountReport, up to the next component.
+	const head = "    AccountReport:\n"
+	i := bytes.Index(doc, []byte(head))
+	if i < 0 {
+		t.Fatal("openapi.yaml has no AccountReport schema")
+	}
+	block := doc[i+len(head):]
+	if j := bytes.Index(block, []byte("\n    Ack:")); j >= 0 {
+		block = block[:j]
+	}
+	at := bytes.Index(block, []byte("required:"))
+	if at < 0 {
+		t.Fatalf("AccountReport has no required list at all:\n%s", block)
+	}
+	req := block[at:]
+	if bytes.Contains(req, []byte("- state")) {
+		t.Errorf("AccountReport requires state, so a runner from before the field cannot register:\n%s", req)
+	}
+	if !bytes.Contains(req, []byte("- label")) {
+		t.Errorf("AccountReport no longer requires label:\n%s", req)
+	}
+
+	// Optional in the schema still means constrained when present: the enum
+	// has to be published, or a hub gains no way to reject a value outside
+	// the set.
+	if !bytes.Contains(block, []byte("- needs_login")) {
+		t.Errorf("AccountReport.state publishes no enum:\n%s", block)
+	}
+	// And an older runner's account object, which carries no state at all,
+	// still decodes.
+	var rep AccountReport
+	if err := json.Unmarshal([]byte(`{"label":"work"}`), &rep); err != nil {
+		t.Fatalf("an older runner's account object no longer decodes: %v", err)
+	}
+	if rep.Label != "work" || rep.State != "" {
+		t.Errorf("decoded %+v", rep)
 	}
 }

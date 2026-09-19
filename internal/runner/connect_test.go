@@ -37,7 +37,7 @@ func TestConnectRoundTrip(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	tok := e.token(t)
-	conn, res, err := Connect(ctx, e.paths, e.url, tok, "home")
+	conn, res, _, err := Connect(ctx, e.paths, e.url, tok, "home")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,16 +68,16 @@ func TestConnectRoundTrip(t *testing.T) {
 	}
 
 	// The token is spent: a second connect with it is refused, with the way on.
-	_, _, err = Connect(ctx, e.paths, e.url, tok, "home")
+	_, _, _, err = Connect(ctx, e.paths, e.url, tok, "home")
 	if err == nil || !strings.Contains(err.Error(), "already used") || !strings.Contains(err.Error(), "yad hub token create") {
 		t.Errorf("reused token: %v", err)
 	}
 	// A token for a new runner cannot replace this one's credential; a token
 	// issued for it can, under the same name.
-	if _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err == nil || !strings.Contains(err.Error(), "--runner "+id) {
+	if _, _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err == nil || !strings.Contains(err.Error(), "--runner "+id) {
 		t.Errorf("re-connect with a new-runner token: %v", err)
 	}
-	if _, res2, err := Connect(ctx, e.paths, e.url, e.token(t, id), "home"); err != nil || res2.RunnerCredential == res.RunnerCredential {
+	if _, res2, _, err := Connect(ctx, e.paths, e.url, e.token(t, id), "home"); err != nil || res2.RunnerCredential == res.RunnerCredential {
 		t.Errorf("re-connect: %v", err)
 	}
 	if cfg, _ := config.Load(e.paths); len(cfg.Connections) != 1 {
@@ -89,7 +89,7 @@ func TestConnectRefusals(t *testing.T) {
 	noTools(t)
 	e := newEnv(t)
 	ctx := context.Background()
-	if _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err != nil {
+	if _, _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -102,7 +102,7 @@ func TestConnectRefusals(t *testing.T) {
 		{"bad name", "https://other.example/v1", "t", "Bad Name", "lowercase"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := Connect(ctx, e.paths, tc.url, tc.token, tc.conn)
+			_, _, _, err := Connect(ctx, e.paths, tc.url, tc.token, tc.conn)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v, want %q", err, tc.want)
 			}
@@ -145,7 +145,7 @@ func TestConnectSucceedsWhileAHostToolHangs(t *testing.T) {
 
 	e := newEnv(t)
 	ctx := context.Background()
-	if _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err != nil {
+	if _, _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err != nil {
 		t.Fatalf("a docker that never answers blocked registration: %v", err)
 	}
 
