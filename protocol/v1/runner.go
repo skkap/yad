@@ -44,13 +44,29 @@ type AccountReport struct {
 	LimitedUntil *time.Time `json:"limited_until,omitempty"`
 }
 
-// HostTool is a non-harness executable a run may need — gh, git, docker.
+// HostTool is a non-harness executable a run may need — git, gh, docker.
+//
+// A tool that is present is not necessarily usable: a gh nobody has signed in
+// cannot open a pull request, and a docker whose daemon is down cannot run a
+// container. A hub routing on a tool wants `present`, no `error`, and
+// `logged_in` where the tool has a login.
 type HostTool struct {
 	ID      string `json:"id"`
 	Present bool   `json:"present"`
 	Version string `json:"version,omitempty"`
-	// LoggedIn is nil when the tool has no notion of a login.
+	// LoggedIn is nil when the tool has no notion of a login, and nil too when
+	// it has one and the runner could not find out — Error says why.
 	LoggedIn *bool `json:"logged_in,omitempty"`
+	// LoginHost is the host the tool is signed in to — github.com, or a GitHub
+	// Enterprise hostname — so a hub can tell a runner that can reach its
+	// repositories from one that cannot. Never who it is signed in as: an
+	// account name is the machine owner's, not the hub's.
+	LoginHost string `json:"login_host,omitempty"`
+	// Error is what is wrong with a tool that is installed: a probe that timed
+	// out, a binary that would not run, a Docker daemon that is not answering.
+	// It carries the next action, and it never stops a runner registering —
+	// absence and breakage are both facts a hub routes around.
+	Error string `json:"error,omitempty"`
 }
 
 // Capacity is how many runs a runner executes at once: one pool, with the

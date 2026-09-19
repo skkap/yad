@@ -20,6 +20,7 @@ import (
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/hostool"
 )
 
 // Features is what this build of the runner supports beyond the v1 baseline.
@@ -39,8 +40,20 @@ const FeatureDrain = "drain"
 const FeatureCloseSession = "close_session"
 
 // Build probes the machine and assembles the document from it and the owner's
-// config. Accounts and host tools are filled in by their packages as they land.
+// config. Accounts are filled in by their package as they land.
 func Build(ctx context.Context, runnerID string, cfg config.Config) v1.Capabilities {
+	// The two probes run side by side because the daemon re-probes on a fixed
+	// interval: one machine where every harness and every host tool hangs must
+	// still finish within it, and in series it would not.
+	var tools []hostool.Detected
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tools = hostool.Detect(ctx)
+	}()
+	found := Detect(ctx)
+	<-done
+
 	goos, goarch := harness.Platform()
 	name := cfg.Name
 	if name == "" {
@@ -62,7 +75,8 @@ func Build(ctx context.Context, runnerID string, cfg config.Config) v1.Capabilit
 		OS:               goos,
 		Arch:             goarch,
 		Labels:           sortedCopy(cfg.Labels),
-		Harnesses:        Harnesses(Detect(ctx), cfg),
+		Harnesses:        Harnesses(found, cfg),
+		HostTools:        HostTools(tools),
 		Capacity:         caps,
 		ProtocolFeatures: Features(),
 		ObservedAt:       time.Now().UTC(),
@@ -99,6 +113,19 @@ func Harnesses(found []harness.Detected, cfg config.Config) []v1.HarnessReport {
 			r.Accounts = append(r.Accounts, v1.AccountReport{Label: a})
 		}
 		out = append(out, r)
+	}
+	return out
+}
+
+// HostTools turns host-tool detection into the public report. Only what a hub
+// may route on survives: never a path, and never who a tool is logged in as.
+func HostTools(found []hostool.Detected) []v1.HostTool {
+	out := make([]v1.HostTool, 0, len(found))
+	for _, d := range found {
+		out = append(out, v1.HostTool{
+			ID: d.ID, Present: d.Present, Version: d.Version,
+			LoggedIn: d.LoggedIn, LoginHost: d.LoginHost, Error: d.Error,
+		})
 	}
 	return out
 }

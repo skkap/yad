@@ -1,0 +1,37 @@
+package hostool
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"runtime"
+)
+
+// dockerStatus asks the daemon, not the binary.
+//
+// A docker CLI with nothing listening runs a container exactly as well as no
+// docker at all — on a Mac it is installed for good the moment Docker Desktop
+// is, and answers only while the app is open. So the probe asks for the
+// *server* version, and a daemon that does not answer is reported with the way
+// to start it.
+func dockerStatus(ctx context.Context, path string, d *Detected) {
+	out, err := run(ctx, path, []string{"version", "--format", "{{.Server.Version}}"}, false)
+	switch {
+	case err != nil:
+		d.Error = err.Error()
+	case out.TimedOut:
+		d.Error = fmt.Sprintf("the Docker daemon did not answer within %s — %s", probeTimeout, startDocker())
+	case out.Err != nil, len(bytes.TrimSpace(out.Stdout)) == 0:
+		// The daemon's own message goes no further: it names the socket, and a
+		// DOCKER_HOST may carry credentials in its URL. The next action is
+		// worth more to whoever reads this than the text was.
+		d.Error = "the Docker daemon is not answering — " + startDocker()
+	}
+}
+
+func startDocker() string {
+	if runtime.GOOS == "darwin" {
+		return "start Docker Desktop (`open -a Docker`) and it will be picked up at the next probe"
+	}
+	return "start the daemon (`sudo systemctl start docker`) and it will be picked up at the next probe"
+}

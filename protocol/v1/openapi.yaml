@@ -350,10 +350,14 @@ components:
     HostTool:
       additionalProperties: true
       properties:
+        error:
+          type: string
         id:
           type: string
         logged_in:
           type: boolean
+        login_host:
+          type: string
         present:
           type: boolean
         version:

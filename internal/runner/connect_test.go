@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,5 +109,55 @@ func TestNameFromURL(t *testing.T) {
 		if got := NameFromURL(raw); got != want {
 			t.Errorf("NameFromURL(%q) = %q, want %q", raw, got, want)
 		}
+	}
+}
+
+// DEV-31's acceptance criterion, end to end: a host tool that never answers
+// must not keep a runner off a hub. The probe times out, what it found is in
+// the document the hub stores, and registration succeeds anyway.
+//
+// It costs one host-tool probe timeout in wall time, which is the point: that
+// is the whole of what a hanging tool may cost a registration.
+func TestConnectSucceedsWhileAHostToolHangs(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	dir := t.TempDir()
+	docker := filepath.Join(dir, "docker")
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\n/bin/sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAD_DOCKER_PATH", docker)
+
+	e := newEnv(t)
+	ctx := context.Background()
+	if _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err != nil {
+		t.Fatalf("a docker that never answers blocked registration: %v", err)
+	}
+
+	id, err := e.paths.RunnerID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := e.hubStore.GetRunner(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc v1.Capabilities
+	if err := json.Unmarshal([]byte(r.Capabilities), &doc); err != nil {
+		t.Fatalf("the hub stored something that is not a document: %v", err)
+	}
+	var docked bool
+	for _, tool := range doc.HostTools {
+		if tool.ID != "docker" {
+			continue
+		}
+		docked = true
+		// Reported, not dropped and not silently absent: a hub routing a
+		// container run has to be able to see why this machine is no good.
+		if !tool.Present || !strings.Contains(tool.Error, "no answer") {
+			t.Errorf("docker in the registered document = %+v", tool)
+		}
+	}
+	if !docked {
+		t.Errorf("the registered document has no docker at all: %+v", doc.HostTools)
 	}
 }
