@@ -516,6 +516,65 @@ func (q *Queries) ListReportingRuns(ctx context.Context, connection string) ([]R
 	return items, nil
 }
 
+const listSessions = `-- name: ListSessions :many
+SELECT s.connection, s.id, s.harness, s.native_id, s.workdir, s.state, s.created_at, s.last_used_at,
+  CAST(COALESCE((SELECT r.id FROM runs r
+    WHERE r.connection = s.connection AND r.session_id = s.id
+      AND r.state IN ('claimed', 'preparing', 'running', 'waiting')), '') AS TEXT) AS live_run,
+  CAST((SELECT count(*) FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id) AS INTEGER) AS runs
+FROM sessions s
+ORDER BY s.last_used_at DESC, s.connection, s.id
+`
+
+type ListSessionsRow struct {
+	Connection string
+	ID         string
+	Harness    string
+	NativeID   sql.NullString
+	Workdir    string
+	State      string
+	CreatedAt  int64
+	LastUsedAt int64
+	LiveRun    string
+	Runs       int64
+}
+
+// What `yad sessions` lists: every session, most recently used first, with
+// the run live in it, if any.
+func (q *Queries) ListSessions(ctx context.Context) ([]ListSessionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSessionsRow{}
+	for rows.Next() {
+		var i ListSessionsRow
+		if err := rows.Scan(
+			&i.Connection,
+			&i.ID,
+			&i.Harness,
+			&i.NativeID,
+			&i.Workdir,
+			&i.State,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.LiveRun,
+			&i.Runs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const outboxDepth = `-- name: OutboxDepth :one
 SELECT count(*) FROM outbox
 `
@@ -778,6 +837,23 @@ func (q *Queries) TakeSlot(ctx context.Context, arg TakeSlotParams) error {
 		arg.Connection,
 		arg.SessionID,
 	)
+	return err
+}
+
+const touchSession = `-- name: TouchSession :exec
+UPDATE sessions SET last_used_at = ? WHERE connection = ? AND id = ?
+`
+
+type TouchSessionParams struct {
+	LastUsedAt int64
+	Connection string
+	ID         string
+}
+
+// A session's idle time runs from the end of its last run, not its start: a
+// run of three hours leaves a session used three hours later than it began.
+func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
+	_, err := q.db.ExecContext(ctx, touchSession, arg.LastUsedAt, arg.Connection, arg.ID)
 	return err
 }
 

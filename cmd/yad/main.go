@@ -81,7 +81,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cmdErr = cmdConnect(ctx, g, rest, stdout)
 	case "status":
 		cmdErr = cmdStatus(ctx, g, rest, stdout)
-	case "disconnect", "sessions", "account", "conformance", "upgrade":
+	case "sessions":
+		cmdErr = cmdSessions(ctx, g, rest, stdout)
+	case "disconnect", "account", "conformance", "upgrade":
 		cmdErr = notYet(cmd, rest)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
@@ -127,6 +129,8 @@ usage: yad [--profile name] <command> [flags]
                       its log: the last lines, then (-f) what follows
   status [--json]     what the runner is doing: connections, capacity, runs,
                       sessions and recent errors
+  sessions [--json]   the sessions this runner holds: their workdirs, runs and
+                      last use — read from disk, so the daemon may be stopped
   hub serve           the standalone hub (headless)
   hub token create    a one-time registration token for yad connect
   hub admin-token create|list|revoke
@@ -145,7 +149,7 @@ usage: yad [--profile name] <command> [flags]
                       systemd user unit, as you, restarted after a crash
   version             version and build
 
-  disconnect · sessions · account · conformance
+  disconnect · account · conformance · sessions close
                       exist, and each says which epic brings it
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.

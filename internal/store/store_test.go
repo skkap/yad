@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -140,5 +141,58 @@ func TestConnectionsDoNotShareIDs(t *testing.T) {
 	// A run naming a session that exists only on another connection is refused.
 	if err := s.CreateRun(ctx, db.CreateRunParams{ID: "r9", SessionID: "s1", Connection: "third", Harness: "claude", Spec: "{}", CreatedAt: 1, UpdatedAt: 1}); err == nil {
 		t.Error("a run on one connection attached to another connection's session")
+	}
+}
+
+// `yad sessions` reads beside a running daemon: it sees what the daemon
+// wrote, cannot write, and never creates or migrates the file.
+func TestOpenReadOnly(t *testing.T) {
+	ctx := context.Background()
+	missing := filepath.Join(t.TempDir(), "state.db")
+	if _, err := OpenReadOnly(ctx, missing); err != ErrNoState {
+		t.Errorf("a missing database: %v, want ErrNoState", err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Errorf("OpenReadOnly created %s", missing)
+	}
+
+	s, file := open(t)
+	seed(t, s) // s1 with r1 live
+	if err := s.CreateSession(ctx, db.CreateSessionParams{ID: "s2", Connection: "hub", Harness: "claude", Workdir: "/w2", CreatedAt: 1, LastUsedAt: 5}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []string{"r2", "r3"} {
+		if err := s.CreateRun(ctx, db.CreateRunParams{ID: r, SessionID: "s2", Connection: "hub", Harness: "claude", Spec: "{}", CreatedAt: 2, UpdatedAt: 2}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetRunState(ctx, db.SetRunStateParams{State: "succeeded", UpdatedAt: 3, Connection: "hub", ID: r}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ro, err := OpenReadOnly(ctx, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	got, err := ro.ListSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "s2" || got[0].Runs != 2 || got[0].LiveRun != "" ||
+		got[1].ID != "s1" || got[1].Runs != 1 || got[1].LiveRun != "r1" {
+		t.Errorf("sessions = %+v; want s2 (used last, 2 runs, none live) then s1 (r1 live)", got)
+	}
+	if err := ro.TouchSession(ctx, db.TouchSessionParams{LastUsedAt: 9, Connection: "hub", ID: "s1"}); err == nil {
+		t.Error("a read-only open wrote")
+	}
+
+	for _, v := range []int{0, 999} {
+		if _, err := s.DB.Exec(fmt.Sprintf("PRAGMA user_version = %d", v)); err != nil {
+			t.Fatal(err)
+		}
+		if ro, err := OpenReadOnly(ctx, file); err == nil {
+			ro.Close()
+			t.Errorf("opened a database at schema %d", v)
+		}
 	}
 }

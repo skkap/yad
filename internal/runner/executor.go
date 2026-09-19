@@ -56,7 +56,23 @@ const (
 	// stopped without finishing it; the next start reports it lost
 	// (decision 0030).
 	ClassRunnerRestarted = "runner_restarted"
+	// ClassResumeRejected — the run continued a session and the harness had
+	// no conversation to continue: the transcript is gone. The session's
+	// context cannot come back on this runner; the hub starts a new session
+	// (decision 0031).
+	ClassResumeRejected = "resume_rejected"
 )
+
+// hubClass is the class a hub sees for an adapter's. The adapters name what
+// the harness said; the hub needs what it can do about it, and "the harness
+// has no such session" on a resume is the one case where the two differ.
+// session_mismatch passes through as itself (decision 0031).
+func hubClass(class string, resumed bool) string {
+	if resumed && class == adapter.ClassSessionNotFound {
+		return ClassResumeRejected
+	}
+	return class
+}
 
 // maxTextBytes caps an event's text and error message and a result's final
 // text and error message, each. The protocol caps only tool payloads, but a
@@ -398,6 +414,13 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassStart, err.Error())
 		return
 	}
+	// Pinned before the first event: an adapter that chooses the id (Claude)
+	// knows it at spawn, and a crash between the spawn and the first line
+	// must not leave the session pointing nowhere (ARCHITECTURE.md §3).
+	if id := turn.NativeSessionID(); id != "" && id != native {
+		e.setNative(bg, c, id)
+		native = id
+	}
 	// From here an interrupt reaches the turn; one that arrived while the
 	// harness started closed cancelled instead, which the stream sees at once.
 	a.mu.Lock()
@@ -407,7 +430,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	e.setState(bg, c, v1.RunRunning)
 	log.Info("run started", "harness", run.Harness, "model", run.Model, "workdir", workdir)
 
-	w := e.stream(bg, c, a, turn, cancel, native, started)
+	w := e.stream(bg, c, a, turn, cancel, native, spec.NativeSessionID != "", started)
 	out := turn.Wait()
 	if !w.stopAt.IsZero() {
 		w.latency = latency(w.stopAt)
@@ -423,6 +446,9 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		return
 	}
 	res := e.result(out, w, started)
+	if res.Error != nil {
+		res.Error.Class = hubClass(res.Error.Class, spec.NativeSessionID != "")
+	}
 	if res.State == v1.RunCancelled && w.cancelled {
 		res.Error = runnerStopped(a.stoppedByRunner())
 	}
@@ -468,7 +494,7 @@ type watch struct {
 // ladder: interrupt, which keeps the session resumable; SIGTERM to the
 // process group Grace later; SIGKILL TermGrace after that. Events keep being
 // spooled all the way down, so what the harness says as it stops is kept.
-func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.Turn, kill context.CancelFunc, native string, started time.Time) watch {
+func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.Turn, kill context.CancelFunc, native string, resumed bool, started time.Time) watch {
 	w := watch{firstEventMS: -1, native: native}
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	idleFor := e.inactivity(c.Run)
@@ -515,6 +541,12 @@ func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.T
 			}
 			if ev.Kind == v1.EventToolCall {
 				w.toolCalls++
+			}
+			if ev.Error != nil {
+				// The event says what the result will: one class per cause.
+				er := *ev.Error
+				er.Class = hubClass(er.Class, resumed)
+				ev.Error = &er
 			}
 			if e.spool(ctx, c, &ev, w.lastSeq+1) {
 				w.lastSeq = ev.Seq
@@ -717,6 +749,9 @@ func (e *Exec) finish(ctx context.Context, c Claim, res v1.Result) {
 		}); err != nil {
 			return err
 		}
+		if err := q.TouchSession(ctx, db.TouchSessionParams{LastUsedAt: now, Connection: c.Connection, ID: c.Run.Session.ID}); err != nil {
+			return err
+		}
 		return q.PutOutbox(ctx, db.PutOutboxParams{Connection: c.Connection, RunID: c.Run.RunID, Body: string(body), NextAttemptAt: now})
 	})
 	if err != nil {
@@ -763,8 +798,11 @@ func (e *Exec) inactivity(run v1.Run) time.Duration {
 }
 
 // workdir returns the session's workdir, creating it on first use, and the
-// session's native id. E2 workdirs are empty directories; sources and the
-// setup hook are E4.
+// session's native id. The directory is the session's, not the run's: a
+// resumed conversation expects the files its earlier runs left, so a later
+// run reuses the recorded path and recreates it if it vanished, and nothing
+// here deletes one — reclaiming is the session's close or its idle TTL
+// (decision 0011). Sources inside it are internal/workdir's.
 func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native string, err error) {
 	sess, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
 	if err != nil {
@@ -785,7 +823,10 @@ func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native string, err er
 	return dir, sess.NativeID.String, nil
 }
 
-var safeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+// safeName is an id kept as it is. Lower case only: macOS and Windows file
+// systems fold case, so "S1" and "s1" — two sessions to a hub — would share one
+// workdir, and two runs' grant files one directory.
+var safeName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // pathName turns a hub-chosen id into one path component. A hub is untrusted
 // input: an id like "../../.ssh" must not name a directory. A readable id is

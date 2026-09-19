@@ -291,6 +291,37 @@ func TestRecordedStreams(t *testing.T) {
 	}
 }
 
+// A resume that takes, recorded from claude 2.1.278: the second turn of a
+// session is started with --resume and the session's own id, never
+// --session-id, and answers from the first turn's context ("plum") in the
+// session it was told to continue.
+func TestRecordedResume(t *testing.T) {
+	p, err := filepath.Abs("testdata/claude-2.1.278/resume.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &harness{fixture: p}
+	spec := h.spec(t)
+	spec.NativeSessionID = "6f1c2b1e-9d3a-4c55-8e7f-0a1b2c3d4e5f"
+	evs, out, tr := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunSucceeded || strings.TrimSpace(out.FinalText) != "plum" {
+		t.Fatalf("outcome %s %q (error %+v)", out.State, out.FinalText, out.Error)
+	}
+	if slices.Contains(errorClasses(evs), adapter.ClassSessionMismatch) {
+		t.Error("a resume that took was reported as a mismatch")
+	}
+	if tr.NativeSessionID() != spec.NativeSessionID || out.NativeSessionID != spec.NativeSessionID {
+		t.Errorf("native session %q, outcome %q; resumed %q", tr.NativeSessionID(), out.NativeSessionID, spec.NativeSessionID)
+	}
+	s := h.seen(t)
+	if id, ok := s.flag("--resume"); !ok || id != spec.NativeSessionID {
+		t.Errorf("--resume %q, %v", id, ok)
+	}
+	if _, ok := s.flag("--session-id"); ok {
+		t.Error("a resume also passed --session-id, which would start a new conversation")
+	}
+}
+
 func TestPlainTurn(t *testing.T) {
 	h := &harness{fixture: fixture("plain")}
 	spec := h.spec(t)
