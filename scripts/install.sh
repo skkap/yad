@@ -6,15 +6,18 @@
 # fetching, and the login you already have is what grants access:
 #
 #   gh api -H "Accept: application/vnd.github.raw" \
-#     repos/skkap/yad/contents/scripts/install.sh > yad-install.sh
-#   sh yad-install.sh && rm yad-install.sh
+#     repos/skkap/yad/contents/scripts/install.sh > yad-install.sh &&
+#     sh yad-install.sh
 #
-# Two steps rather than a pipe into sh: a pipeline reports only the status of
-# its last command, so a gh that cannot fetch this file — not installed, not
-# logged in, no network — hands sh an empty stream, and sh exits 0 having
-# installed nothing. That is the one failure a chained provisioning script
-# would read as success, and it is the case this file's own "gh is not on
-# PATH" refusal can never reach, since gh is also what fetched it.
+# The && is the point. A pipeline reports only the status of its last command,
+# so a gh that cannot fetch this file — not installed, not logged in, no
+# network — hands sh an empty stream and sh exits 0 having installed nothing;
+# a bare redirection followed by a separate `sh` does the same, because the
+# file is created whether gh ran or not. That is the one failure a chained
+# provisioning script reads as success, and it is the case this file's own
+# "gh is not on PATH" refusal can never reach, since gh is what fetched it.
+# The file is kept rather than deleted: the YAD_VERSION example below re-runs
+# it.
 #
 # Fetch it with gh rather than curl: a curl carrying `Authorization: Bearer
 # $(gh auth token)` puts the live token in curl's argv, where /proc and ps

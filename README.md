@@ -63,14 +63,17 @@ GitHub login you already have is what grants access:
 
 ```bash
 gh api -H "Accept: application/vnd.github.raw" \
-  repos/skkap/yad/contents/scripts/install.sh > yad-install.sh
-sh yad-install.sh && rm yad-install.sh
+  repos/skkap/yad/contents/scripts/install.sh > yad-install.sh &&
+  sh yad-install.sh
 ```
 
-Two steps rather than a pipe into `sh`, so a `gh` that cannot fetch the script
-is a failure rather than a silent success: a pipeline reports only its last
+The `&&` is the point, not the two steps. A pipeline reports only its last
 command's status, so `gh api … | sh` hands `sh` an empty stream and exits 0
-having installed nothing. It also lets you read the script before running it.
+having installed nothing — and so does `gh api … > f` followed by a separate
+`sh f`, because the redirection creates the file whether `gh` succeeds or not
+and `sh` on an empty file exits 0. Joined with `&&`, a `gh` that cannot fetch
+the script fails the whole command. Keeping the file also lets you read what
+you are about to run, and re-run it.
 
 It puts `yad` in `~/.local/bin`, checks the release's SHA-256 before writing
 anything, and tells you if that directory is not on your `PATH`. Then
@@ -84,7 +87,7 @@ request.
 `YAD_VERSION` pins a release and `YAD_INSTALL_DIR` moves where it lands:
 
 ```bash
-YAD_VERSION=v0.3.1 sh yad-install.sh
+YAD_VERSION=v0.3.1 sh yad-install.sh   # the file the command above left behind
 ```
 
 Later, on your command and never on its own:

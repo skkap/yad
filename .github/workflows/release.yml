@@ -5,7 +5,14 @@ name: Release
 # tagging a commit.
 on:
   push:
-    tags: ['v*']
+    # Narrower than v*, because buildinfo.ParseNumber reads only numeric
+    # components: a `vnext` tag would publish a release that `yad upgrade`
+    # then refuses as an unreadable tag and will not install without --force.
+    # A publishing surface should not emit artefacts its own consumer rejects.
+    # A glob cannot say "digits only" — `v1beta` still matches — so this
+    # narrows the mistake rather than closing it; `yad upgrade --check` against
+    # the new release is what proves a tag is readable.
+    tags: ['v[0-9]*']
 
 permissions:
   contents: write # gh release create

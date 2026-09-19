@@ -81,19 +81,11 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	// Decision 0028 settles it — re-running install replaces the unit and
 	// starts it again — and nothing here can tell which kind this is, so both
 	// are named rather than one guessed.
-	restart := restartAdvice(g.paths.Profile)
 	// control.Holder reads one profile's lock, and every profile on this
 	// machine shares the binary just replaced — so silence is not "nothing is
 	// running", only "nothing is running here".
 	pid, running, err := control.Holder(g.paths)
-	switch {
-	case err != nil:
-		fmt.Fprintf(w, "could not tell whether a runner is running under profile %s (%v) — if one is, %s\n", g.paths.Profile, err, restart)
-	case running:
-		fmt.Fprintf(w, "the runner (pid %d) is still on the old binary — %s\n", pid, restart)
-	default:
-		fmt.Fprintf(w, "no runner is running under profile %s; any running under another profile is still on the old binary — %s\n", g.paths.Profile, restart)
-	}
+	fmt.Fprintln(w, restartNote(g.paths.Profile, pid, running, err))
 	return nil
 }
 
@@ -104,6 +96,30 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 // so the operator sets it the same way both times.
 func releaseSource() upgrade.GH {
 	return upgrade.GH{Repo: os.Getenv("YAD_REPO")}
+}
+
+// restartNote says what the upgrade means for any runner already running.
+//
+// It offers a command only where the profile to run it against is known, which
+// is the profile whose lock was read. Where no runner was found there, the
+// runner that needs restarting is by definition under some *other* profile —
+// and every command available here starts something rather than restarting
+// something: `yad service install` writes and bootstraps a unit, and `yad
+// daemon restart` finds nothing to stop and falls through to a background
+// start. Offering either would create a supervised runner nobody asked for,
+// under the one profile that provably does not need it, while the runner the
+// sentence warns about stays on the old binary.
+func restartNote(profile string, pid int, running bool, err error) string {
+	switch {
+	case err != nil:
+		// The lock could not be read, so a runner may be there — and if it is,
+		// it is this profile's, which makes the advice the right advice.
+		return fmt.Sprintf("could not tell whether a runner is running under profile %s (%v) — if one is, %s", profile, err, restartAdvice(profile))
+	case running:
+		return fmt.Sprintf("the runner (pid %d) is still on the old binary — %s", pid, restartAdvice(profile))
+	default:
+		return fmt.Sprintf("no runner is running under profile %s. A runner under any other profile keeps the old binary until it is restarted under that profile", profile)
+	}
 }
 
 // restartAdvice is what to type to put a running runner on the new binary.

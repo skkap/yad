@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -129,6 +130,54 @@ func TestRestartAdviceCarriesTheProfile(t *testing.T) {
 			t.Errorf("profile %s: advice %q, want it to offer %s", c.profile, line, c.wantDaemon)
 		}
 	}
+}
+
+// Three rounds of review found three different defects in this one sentence,
+// each time because it offered a command built from a profile that was not the
+// profile needing the command. The rule that ends that: offer one only where
+// the profile whose lock was read is the profile that needs restarting.
+//
+// The branch that must offer nothing is the one where no runner was found —
+// there the runner in question is under some other profile, and every command
+// available here *starts* something rather than restarting it.
+func TestRestartNoteOffersACommandOnlyWhereItKnowsTheProfile(t *testing.T) {
+	commands := []string{"yad service install", "daemon restart"}
+
+	t.Run("no runner under this profile", func(t *testing.T) {
+		note := restartNote("default", 0, false, nil)
+		for _, c := range commands {
+			if strings.Contains(note, c) {
+				t.Errorf("note %q offers %q against the one profile that does not need it", note, c)
+			}
+		}
+		if !strings.Contains(note, "under that profile") {
+			t.Errorf("note %q does not say where the restart has to happen", note)
+		}
+	})
+
+	t.Run("a runner is running here", func(t *testing.T) {
+		note := restartNote("work", 4711, true, nil)
+		if !strings.Contains(note, "pid 4711") {
+			t.Errorf("note %q does not name the runner it found", note)
+		}
+		for _, want := range []string{"`yad service install --profile work`", "`yad --profile work daemon restart`"} {
+			if !strings.Contains(note, want) {
+				t.Errorf("note %q, want it to offer %s", note, want)
+			}
+		}
+	})
+
+	t.Run("the lock could not be read", func(t *testing.T) {
+		// A runner may be there, and if it is, it is this profile's — so the
+		// advice is the right advice, and the uncertainty is stated.
+		note := restartNote("work", 0, false, errors.New("permission denied"))
+		if !strings.Contains(note, "could not tell") || !strings.Contains(note, "permission denied") {
+			t.Errorf("note %q does not report that the state is unknown", note)
+		}
+		if !strings.Contains(note, "--profile work") {
+			t.Errorf("note %q drops the profile it was asked about", note)
+		}
+	})
 }
 
 func TestCheckLineOnANamedTag(t *testing.T) {
