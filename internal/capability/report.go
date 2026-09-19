@@ -16,6 +16,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/adapter/codex"
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
@@ -56,11 +57,27 @@ func Build(ctx context.Context, runnerID string, cfg config.Config) v1.Capabilit
 		OS:               goos,
 		Arch:             goarch,
 		Labels:           sortedCopy(cfg.Labels),
-		Harnesses:        Harnesses(harness.Detect(ctx), cfg),
+		Harnesses:        Harnesses(Detect(ctx), cfg),
 		Capacity:         caps,
 		ProtocolFeatures: Features(),
 		ObservedAt:       time.Now().UTC(),
 	}
+}
+
+// Detect is harness.Detect with the checks an adapter adds for its harness:
+// for Codex, whether the installed app-server protocol is one the adapter was
+// built against (decision 0037). A check never fails detection; what it finds
+// is a warning.
+func Detect(ctx context.Context) []harness.Detected {
+	found := harness.Detect(ctx)
+	for i, d := range found {
+		if d.ID == "codex" && d.Ready() {
+			if w := codex.SchemaWarning(ctx, d.Path, d.Version); w != "" {
+				found[i].Warnings = append(found[i].Warnings, w)
+			}
+		}
+	}
+	return found
 }
 
 // Harnesses turns detection into the public report, with the owner's accounts
@@ -71,6 +88,7 @@ func Harnesses(found []harness.Detected, cfg config.Config) []v1.HarnessReport {
 		r := v1.HarnessReport{
 			ID: d.ID, Label: d.Label, Kind: string(d.Kind),
 			Present: d.Present, Version: d.Version, Error: d.Error, Models: d.Models,
+			Warnings: d.Warnings,
 		}
 		for _, a := range cfg.Harness[d.ID].Accounts {
 			r.Accounts = append(r.Accounts, v1.AccountReport{Label: a})

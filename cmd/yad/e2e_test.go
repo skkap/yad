@@ -19,6 +19,7 @@ import (
 	"github.com/skkap/yad/protocol/hubapi"
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/adapter/codex/codextest"
 	"github.com/skkap/yad/internal/hub"
 	hubstore "github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hubapiclient"
@@ -39,6 +40,12 @@ func TestMain(m *testing.M) {
 		// service manager would; the harness it spawns is still the fake.
 		os.Unsetenv(childYad)
 		main()
+		return
+	}
+	// Before the fake claude: a test with both fakes set up tells them
+	// apart by the name each was started under.
+	if codextest.Child() {
+		codextest.Main()
 		return
 	}
 	if os.Getenv(fakeClaudeFixture) != "" {

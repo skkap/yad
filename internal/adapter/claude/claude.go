@@ -106,8 +106,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		session:   session,
 		frames:    make(chan []byte, 16),
 		written:   1,
-		out:       make(chan v1.Event),
-		wake:      make(chan struct{}, 1),
+		q:         adapter.NewQueue(),
 		done:      make(chan struct{}),
 		final:     make(chan struct{}),
 		eof:       make(chan struct{}),
@@ -117,7 +116,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 	// child that is not reading stdin yet would otherwise block Start.
 	t.frames <- instruction
 	go t.write(p.Stdin())
-	go t.pump()
+	go t.q.Pump(ctx)
 	var raw io.Writer
 	if a.Raw != nil {
 		raw = a.Raw(spec)
@@ -254,15 +253,7 @@ type turn struct {
 	requests    int
 	settled     bool // the result in hand answered every frame we sent
 
-	// Events are queued without bound between the reader and the consumer. The
-	// reader must never block on a consumer that has stopped reading, or Claude
-	// blocks on a full pipe and Wait never returns. The queue is bounded by the
-	// stream itself, which ends.
-	qmu    sync.Mutex
-	queue  []v1.Event
-	closed bool
-	wake   chan struct{}
-	out    chan v1.Event
+	q *adapter.Queue
 
 	final   chan struct{} // closed once the last result is in
 	eof     chan struct{} // closed once Claude's output has ended
@@ -272,7 +263,7 @@ type turn struct {
 	exitGrace, drainGrace, termGrace time.Duration
 }
 
-func (t *turn) Events() <-chan v1.Event { return t.out }
+func (t *turn) Events() <-chan v1.Event { return t.q.Out() }
 
 func (t *turn) NativeSessionID() string { return t.session }
 
@@ -406,7 +397,7 @@ func (t *turn) write(stdin io.WriteCloser) {
 
 func (t *turn) read(raw io.Writer, contextFile string) {
 	defer removeFile(contextFile)
-	tr := newTranslator(t.session, t.enqueue)
+	tr := newTranslator(t.session, t.q.Push)
 	// One channel for lines and skipped lines alike, so a skipped line is
 	// reported where it was in the stream.
 	type item struct {
@@ -435,7 +426,7 @@ func (t *turn) read(raw io.Writer, contextFile string) {
 			lines <- item{line: bytes.Clone(line)}
 		}
 	}()
-	tick := time.NewTicker(textFlush / 4)
+	tick := time.NewTicker(adapter.TextFlush / 4)
 	defer tick.Stop()
 loop:
 	for {
@@ -469,10 +460,7 @@ loop:
 	}
 	t.mu.Unlock()
 	t.outcome = tr.outcome(e)
-	t.qmu.Lock()
-	t.closed = true
-	t.qmu.Unlock()
-	t.notify()
+	t.q.Close()
 	close(t.done)
 }
 
@@ -518,51 +506,5 @@ func (t *turn) reap() {
 	case <-t.done:
 	case <-time.After(t.drainGrace):
 		t.p.Stdout().Close()
-	}
-}
-
-func (t *turn) enqueue(e v1.Event) {
-	t.qmu.Lock()
-	t.queue = append(t.queue, e)
-	t.qmu.Unlock()
-	t.notify()
-}
-
-func (t *turn) notify() {
-	select {
-	case t.wake <- struct{}{}:
-	default:
-	}
-}
-
-// pump hands queued events to the consumer in order and closes the channel
-// after the last. It gives up when the run's context ends, so a consumer that
-// cancelled and stopped reading does not leave it blocked for ever.
-func (t *turn) pump() {
-	defer close(t.out)
-	for {
-		t.qmu.Lock()
-		batch := t.queue
-		t.queue = nil
-		closed := t.closed
-		t.qmu.Unlock()
-		for _, e := range batch {
-			select {
-			case t.out <- e:
-			case <-t.ctx.Done():
-				return
-			}
-		}
-		if len(batch) > 0 {
-			continue
-		}
-		if closed {
-			return
-		}
-		select {
-		case <-t.wake:
-		case <-t.ctx.Done():
-			return
-		}
 	}
 }

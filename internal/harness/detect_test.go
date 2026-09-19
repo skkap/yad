@@ -94,13 +94,15 @@ func TestDetectReadsVersionAndHonoursEnvPath(t *testing.T) {
 }
 
 func TestLookup(t *testing.T) {
-	// Claude has an adapter; Codex is recognised until its adapter lands, and
-	// nothing becomes first-class without one (CLAUDE.md).
-	if h, ok := Lookup("claude"); !ok || h.Kind != FirstClass {
-		t.Errorf("Lookup(claude) = %+v, %v", h, ok)
+	// Claude and Codex have adapters; the rest are recognised, and nothing
+	// becomes first-class without one (CLAUDE.md).
+	for _, id := range []string{"claude", "codex"} {
+		if h, ok := Lookup(id); !ok || h.Kind != FirstClass {
+			t.Errorf("Lookup(%s) = %+v, %v", id, h, ok)
+		}
 	}
-	if h, ok := Lookup("codex"); !ok || h.Kind != Recognised {
-		t.Errorf("Lookup(codex) = %+v, %v", h, ok)
+	if h, ok := Lookup("gemini"); !ok || h.Kind != Recognised {
+		t.Errorf("Lookup(gemini) = %+v, %v", h, ok)
 	}
 	if _, ok := Lookup("nope"); ok {
 		t.Error("Lookup(nope) found something")
