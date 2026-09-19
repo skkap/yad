@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
+	"github.com/skkap/yad/internal/workdir"
 )
 
 // collectEnv is a runner store and a collector over it, on a fake clock and a
@@ -483,5 +485,74 @@ func TestDiskPressurePassesSessionsWithNoWorkdir(t *testing.T) {
 	}
 	if s := e.get(t, "empty-000"); s.State != "open" {
 		t.Errorf("a session with no workdir was closed for disk: %+v", s)
+	}
+}
+
+// Collection with the manager the runner prepares with: a session whose
+// workdir is a git worktree loses it from the bare cache, its WT_SLOT is
+// freed for the next worktree, and its directory goes.
+func TestCollectionReclaimsGitWorktrees(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	e := newCollectEnv(t)
+	ctx := context.Background()
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	src := t.TempDir()
+	origin := filepath.Join(src, "acme.git")
+	work := filepath.Join(t.TempDir(), "acme")
+	git(src, "init", "--quiet", "--bare", "--initial-branch=main", origin)
+	git(src, "clone", "--quiet", origin, work)
+	os.WriteFile(filepath.Join(work, "README"), []byte("x"), 0o600)
+	git(work, "-c", "user.name=t", "-c", "user.email=t@example.com", "checkout", "--quiet", "-b", "main")
+	git(work, "add", ".")
+	git(work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "initial")
+	git(work, "push", "--quiet", "origin", "main")
+
+	m := &workdir.Manager{Data: filepath.Dir(e.root), Roots: []string{src}, Slots: e.store, GitTimeout: time.Minute, SetupTimeout: time.Minute}
+	e.c.Reclaim = m.Reclaim
+	dir := e.session(t, "s1", time.Hour, 0, "")
+	os.RemoveAll(dir)
+	os.MkdirAll(dir, 0o700)
+	p, err := m.Prepare(ctx, workdir.Request{Dir: dir, Connection: "hub", Session: "s1",
+		Sources: []v1.Source{{Git: &v1.GitSource{URL: origin, Branch: "b1"}}}, Emit: func(v1.Event) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	caches, _ := filepath.Glob(filepath.Join(m.Data, "repos", "*.git"))
+	if len(caches) != 1 || !strings.Contains(git(caches[0], "worktree", "list"), dir) {
+		t.Fatalf("no worktree to reclaim in %v", caches)
+	}
+	var held int
+	if err := e.store.DB.QueryRowContext(ctx, "SELECT count(*) FROM slots WHERE session_id = 's1'").Scan(&held); err != nil || held != 1 {
+		t.Fatalf("the session holds %d WT_SLOTs after preparing (%v), want 1", held, err)
+	}
+
+	if _, err := e.c.Close(ctx, "hub", "s1", v1.SessionClosed); err != nil {
+		t.Fatal(err)
+	}
+	e.sweep(t)
+	if !gone(dir) {
+		t.Error("the workdir is still there")
+	}
+	if wts := git(caches[0], "worktree", "list", "--porcelain"); strings.Contains(wts, dir) {
+		t.Errorf("the bare cache still lists the session's worktree:\n%s", wts)
+	}
+	var slots int
+	if err := e.store.DB.QueryRowContext(ctx, "SELECT count(*) FROM slots WHERE session_id = 's1'").Scan(&slots); err != nil || slots != 0 {
+		t.Errorf("the session holds %d WT_SLOTs after collection (%v)", slots, err)
+	}
+	if s := e.get(t, "s1"); !s.ReclaimedAt.Valid {
+		t.Errorf("not recorded as reclaimed: %+v", s)
 	}
 }

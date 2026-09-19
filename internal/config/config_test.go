@@ -88,6 +88,9 @@ cap  = 2
 [sessions]
 idle_ttl   = "336h"
 disk_floor = "10GiB"
+
+[workdirs]
+roots = ["/home/me/src"]
 `
 	if err := os.MkdirAll(p.Config, 0o700); err != nil {
 		t.Fatal(err)
@@ -107,6 +110,9 @@ disk_floor = "10GiB"
 	}
 	if c.Supervise.Inactivity.Duration != DefaultInactivity {
 		t.Errorf("an unset section lost its default: %v", c.Supervise.Inactivity)
+	}
+	if c.Workdirs.Roots[0] != "/home/me/src" || c.Workdirs.GitTimeout.Duration != DefaultGitTimeout || c.Workdirs.SetupTimeout.Duration != DefaultSetupTimeout {
+		t.Errorf("workdirs %+v: the root must load and the unset timeouts keep their defaults", c.Workdirs)
 	}
 	if c.Drain.Wait.Duration != DefaultDrainWait {
 		t.Errorf("an unset drain wait is %v, want the default %v", c.Drain.Wait, DefaultDrainWait)
@@ -137,6 +143,9 @@ func TestLoadRefuses(t *testing.T) {
 		"negative size":     "[sessions]\ndisk_floor = \"-5GB\"\n",
 		"size overflow":     "[sessions]\ndisk_floor = \"99999999999TiB\"\n",
 		"connection no url": "[[connection]]\nname = \"x\"\n",
+		"relative root":     "[workdirs]\nroots = [\"src\"]\n",
+		"root is /":         "[workdirs]\nroots = [\"/\"]\n",
+		"negative git":      "[workdirs]\ngit_timeout = \"-1s\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := testPaths(t)

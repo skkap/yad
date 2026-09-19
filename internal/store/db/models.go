@@ -56,6 +56,7 @@ type Session struct {
 	State            string
 	CreatedAt        int64
 	LastUsedAt       int64
+	Sources          sql.NullString
 	CloseReason      sql.NullString
 	CloseRequestedAt sql.NullInt64
 	ClosedAt         sql.NullInt64

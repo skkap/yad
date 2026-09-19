@@ -198,11 +198,12 @@ func TestOpenReadOnly(t *testing.T) {
 	}
 }
 
-// Migrations are numbered in the order they merge. 0002 is retired: it was set
-// aside for the git sources work (DEV-16/17), which needed none, and a file
-// added under it now would be skipped by every database already at 0003.
+// Migrations are numbered in the order they merge, with no gap and no number
+// used twice: 0002_session_sources (git sources) merged before
+// 0003_session_collection, and a file numbered below the latest would be
+// skipped by every database already past it.
 func TestMigrationNumbering(t *testing.T) {
-	if err := CheckNumbering(migrations, 2); err != nil {
+	if err := CheckNumbering(migrations); err != nil {
 		t.Error(err)
 	}
 	for _, tc := range []struct {

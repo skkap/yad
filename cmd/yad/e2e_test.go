@@ -76,6 +76,10 @@ const (
 	// fakeClaudeDeaf makes the fake ignore interrupts at its gate, as a
 	// wedged harness does: only a signal stops it.
 	fakeClaudeDeaf = "E2E_CLAUDE_DEAF"
+	// fakeClaudeRead, when set, names a file in the fake's working directory
+	// whose contents replace the recorded answer, as if the recorded Read had
+	// read it there: the harness sees what the workdir holds.
+	fakeClaudeRead = "E2E_CLAUDE_READ"
 	// fakeClaudeTranscripts, when set, is a directory where the fake keeps a
 	// conversation per session id, as claude keeps its transcripts: each
 	// instruction is appended, a --resume with no transcript is refused as
@@ -163,6 +167,15 @@ func fakeClaude() {
 		os.Exit(2)
 	}
 	body := string(raw)
+	if name := os.Getenv(fakeClaudeRead); name != "" {
+		note, err := os.ReadFile(name)
+		if err != nil {
+			os.Stderr.WriteString(err.Error())
+			os.Exit(2)
+		}
+		quoted, _ := json.Marshal(strings.TrimSpace(string(note)))
+		body = strings.ReplaceAll(body, e2eAnswer, string(quoted[1:len(quoted)-1]))
+	}
 	const recorded = "6d684e55-cf7f-4a32-860a-8c92bde94cb0"
 	if session != "" {
 		body = strings.ReplaceAll(body, recorded, session)

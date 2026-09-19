@@ -41,12 +41,15 @@ check-generated: generate
 	@untracked=$$(git ls-files --others --exclude-standard -- $(GENERATED)); \
 	  if [ -n "$$untracked" ]; then echo "generated files not committed:"; echo "$$untracked"; exit 1; fi
 
-# Compiles every release target without writing binaries: a build that only
-# works on the laptop is a broken build.
+# Compiles every release target without writing binaries, and vets it — vet
+# type-checks the test files too, which a build never sees: a build or a test
+# that only works on the laptop is a broken one. A darwin-only symbol such as
+# syscall.Getsid passes every host check on a Mac and fails CI on Linux.
 cross:
 	@for t in $(TARGETS); do \
-	  echo "go build $$t"; \
+	  echo "go build + vet $$t"; \
 	  GOOS=$${t%/*} GOARCH=$${t#*/} go build -o /dev/null ./... || exit 1; \
+	  GOOS=$${t%/*} GOARCH=$${t#*/} go vet ./... || exit 1; \
 	done
 
 check: lint test build check-generated cross

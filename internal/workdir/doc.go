@@ -1,8 +1,9 @@
-// Package workdir builds and reclaims session workdirs: bare caches per
+// Package workdir builds a run's workdir from its sources: a bare cache per
 // repository, a worktree per session, local-path sources under a per-path lock,
-// the repository's own .worktree/setup hook with the WT_* contract, WT_SLOT
-// allocation, and collection on close, idle TTL and disk pressure
-// (ARCHITECTURE.md §3, decision 0011).
+// the repository's own .worktree/setup hook with the WT_* contract, and WT_SLOT
+// allocation (ARCHITECTURE.md §3, decisions 0033 and 0034).
 //
-// Epic E4 (Zumino yad/dev). E2 uses a plain empty directory per session.
+// Collection on close, idle TTL and disk pressure (decisions 0011 and 0035)
+// is internal/runner's Collector, which calls Manager.Reclaim with the
+// manager the executor prepares with, before it deletes a workdir.
 package workdir

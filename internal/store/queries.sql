@@ -153,6 +153,9 @@ SELECT * FROM accounts WHERE harness = ? ORDER BY label;
 -- name: TakeSlot :exec
 INSERT INTO slots (repo, slot, connection, session_id) VALUES (?, ?, ?, ?);
 
+-- name: SessionSlot :one
+SELECT slot FROM slots WHERE repo = ? AND connection = ? AND session_id = ?;
+
 -- name: SlotsInUse :many
 SELECT slot FROM slots WHERE repo = ? ORDER BY slot;
 
@@ -199,3 +202,6 @@ SELECT s.connection, s.id, s.harness, s.native_id, s.workdir, s.state, s.created
   CAST((SELECT count(*) FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id) AS INTEGER) AS runs
 FROM sessions s
 ORDER BY s.last_used_at DESC, s.connection, s.id;
+
+-- name: SetSessionSources :exec
+UPDATE sessions SET sources = ? WHERE connection = ? AND id = ?;

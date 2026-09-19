@@ -26,9 +26,13 @@ sync nor the owner's CLI should wait on it. A removal that fails — a git lock,
 a permission — leaves the session closed and is tried again at the next sweep.
 The collector removes only paths inside `<data>/workdirs/`, whatever the row
 says, and never follows a symlink out of one. What preparing left outside the
-workdir — git worktrees in the bare caches, `WT_SLOT`s — is undone first,
-through a `Reclaim` function the git sources work supplies
-(`internal/workdir`); without it, the slots alone are freed.
+workdir is undone first, by `workdir.Manager.Reclaim` on the same manager the
+executor prepares with, under the same per-repository locks: the session's
+worktrees leave their bare caches, every cache is pruned of worktrees whose
+directories are gone — a workdir deleted by hand still holds its branch until
+then — and the session's `WT_SLOT`s are freed. A worktree its cache already
+forgot, because an earlier attempt removed it, is plain files and no failure,
+so a retry always gets past it.
 
 **The hub hears in its sync.** A runner advertising the `close_session`
 feature lists every session it has closed, and why, in `closed_sessions` on

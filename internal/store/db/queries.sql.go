@@ -301,7 +301,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE connection = ? AND id = ?
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE connection = ? AND id = ?
 `
 
 type GetSessionParams struct {
@@ -322,6 +322,7 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session
 		&i.State,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.Sources,
 		&i.CloseReason,
 		&i.CloseRequestedAt,
 		&i.ClosedAt,
@@ -365,7 +366,7 @@ func (q *Queries) HeldRunInSession(ctx context.Context, arg HeldRunInSessionPara
 }
 
 const idleSessions = `-- name: IdleSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < ?1
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < ?1
   AND (?2 = 0 OR s.workdir != '')
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
     AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
@@ -402,6 +403,7 @@ func (q *Queries) IdleSessions(ctx context.Context, arg IdleSessionsParams) ([]S
 			&i.State,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.Sources,
 			&i.CloseReason,
 			&i.CloseRequestedAt,
 			&i.ClosedAt,
@@ -770,8 +772,25 @@ func (q *Queries) RunsWithUnackedEvents(ctx context.Context, connection string) 
 	return items, nil
 }
 
+const sessionSlot = `-- name: SessionSlot :one
+SELECT slot FROM slots WHERE repo = ? AND connection = ? AND session_id = ?
+`
+
+type SessionSlotParams struct {
+	Repo       string
+	Connection string
+	SessionID  string
+}
+
+func (q *Queries) SessionSlot(ctx context.Context, arg SessionSlotParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, sessionSlot, arg.Repo, arg.Connection, arg.SessionID)
+	var slot int64
+	err := row.Scan(&slot)
+	return slot, err
+}
+
 const sessionsCloseRequested = `-- name: SessionsCloseRequested :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions s WHERE s.state = 'open' AND s.close_requested_at IS NOT NULL
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions s WHERE s.state = 'open' AND s.close_requested_at IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
     AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
 ORDER BY s.close_requested_at
@@ -796,6 +815,7 @@ func (q *Queries) SessionsCloseRequested(ctx context.Context) ([]Session, error)
 			&i.State,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.Sources,
 			&i.CloseReason,
 			&i.CloseRequestedAt,
 			&i.ClosedAt,
@@ -925,6 +945,21 @@ type SetSessionReportedParams struct {
 
 func (q *Queries) SetSessionReported(ctx context.Context, arg SetSessionReportedParams) error {
 	_, err := q.db.ExecContext(ctx, setSessionReported, arg.ReportedAt, arg.Connection, arg.ID)
+	return err
+}
+
+const setSessionSources = `-- name: SetSessionSources :exec
+UPDATE sessions SET sources = ? WHERE connection = ? AND id = ?
+`
+
+type SetSessionSourcesParams struct {
+	Sources    sql.NullString
+	Connection string
+	ID         string
+}
+
+func (q *Queries) SetSessionSources(ctx context.Context, arg SetSessionSourcesParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionSources, arg.Sources, arg.Connection, arg.ID)
 	return err
 }
 
@@ -1100,7 +1135,7 @@ func (q *Queries) UnackedEvents(ctx context.Context, arg UnackedEventsParams) ([
 }
 
 const unreclaimedSessions = `-- name: UnreclaimedSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE state != 'open' AND reclaimed_at IS NULL ORDER BY closed_at
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE state != 'open' AND reclaimed_at IS NULL ORDER BY closed_at
 `
 
 func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
@@ -1122,6 +1157,7 @@ func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
 			&i.State,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.Sources,
 			&i.CloseReason,
 			&i.CloseRequestedAt,
 			&i.ClosedAt,
@@ -1142,7 +1178,7 @@ func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
 }
 
 const unreportedClosedSessions = `-- name: UnreportedClosedSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE connection = ?1 AND state != 'open' AND reported_at IS NULL
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE connection = ?1 AND state != 'open' AND reported_at IS NULL
 ORDER BY closed_at, id LIMIT ?2
 `
 
@@ -1170,6 +1206,7 @@ func (q *Queries) UnreportedClosedSessions(ctx context.Context, arg UnreportedCl
 			&i.State,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.Sources,
 			&i.CloseReason,
 			&i.CloseRequestedAt,
 			&i.ClosedAt,

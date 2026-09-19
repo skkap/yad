@@ -79,7 +79,8 @@ type Collector struct {
 	DiskFloor int64
 	// Reclaim undoes what preparing the workdir left outside it — git
 	// worktrees registered in the bare caches, the session's WT_SLOTs —
-	// before the directory itself is removed. Nil frees the slots alone.
+	// before the directory itself is removed: workdir.Manager.Reclaim, the
+	// same manager the executor prepares with. Nil frees the slots alone.
 	Reclaim func(ctx context.Context, connection, session, dir string) error
 	// DiskFree measures the free space at a path; nil is statfs.
 	DiskFree func(path string) (int64, error)

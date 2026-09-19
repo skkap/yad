@@ -80,6 +80,23 @@ func child(mode string) {
 		}
 		fmt.Println(gc.Process.Pid)
 		time.Sleep(time.Hour)
+	case "tty":
+		// Whether a prompt could reach a person, and whose group and session
+		// the child is in.
+		tty := "tty"
+		if f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err != nil {
+			tty = "none"
+		} else {
+			f.Close()
+		}
+		pgid, _ := syscall.Getpgid(0)
+		// syscall has Getsid on darwin only; the raw call is on every unix
+		// the runner builds for.
+		sid, _, _ := syscall.RawSyscall(syscall.SYS_GETSID, 0, 0, 0)
+		fmt.Println(tty, pgid == os.Getpid(), int(sid) == os.Getpid())
+	case "both":
+		fmt.Println("out")
+		os.Stderr.WriteString("err\n")
 	case "deaf":
 		signal.Ignore(syscall.SIGTERM, syscall.SIGINT)
 		fmt.Println("deaf")
@@ -115,6 +132,43 @@ func TestOutputIsNotLostToWait(t *testing.T) {
 	}
 	if string(out) != "one\ntwo\n" {
 		t.Errorf("stdout = %q", out)
+	}
+}
+
+// A child started with NoTTY has no terminal to prompt on, and still leads its
+// own process group, so the group signals reach it.
+func TestNoTTY(t *testing.T) {
+	for _, tc := range []struct {
+		noTTY       bool
+		wantSession string
+	}{{false, "false"}, {true, "true"}} {
+		p, err := Start(context.Background(), Spec{Path: os.Args[0], NoTTY: tc.noTTY,
+			Env: []string{"SUPERVISE_TEST_CHILD=tty", "GORACE=atexit_sleep_ms=0"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, _ := io.ReadAll(p.Stdout())
+		p.Wait()
+		f := strings.Fields(string(out))
+		if len(f) != 3 || f[1] != "true" || f[2] != tc.wantSession {
+			t.Fatalf("NoTTY %v: child said %q; want its own group, and its own session only with NoTTY", tc.noTTY, out)
+		}
+		if tc.noTTY && f[0] != "none" {
+			t.Errorf("a NoTTY child could open /dev/tty")
+		}
+	}
+}
+
+func TestMergeStderr(t *testing.T) {
+	p, err := Start(context.Background(), Spec{Path: os.Args[0], MergeStderr: true,
+		Env: []string{"SUPERVISE_TEST_CHILD=both", "GORACE=atexit_sleep_ms=0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := io.ReadAll(p.Stdout())
+	p.Wait()
+	if string(out) != "out\nerr\n" || p.Stderr() != "" {
+		t.Errorf("merged output %q, stderr tail %q", out, p.Stderr())
 	}
 }
 

@@ -27,6 +27,7 @@ CGO_ENABLED=1 go test -race ./...
 go build ./cmd/yad
 make generate && git diff --exit-code internal/store/db internal/hub/store/db protocol/v1/openapi.yaml protocol/hubapi/openapi.yaml
 GOOS=… GOARCH=… go build ./...   # linux/amd64, linux/arm64, darwin/arm64, darwin/amd64
+GOOS=… GOARCH=… go vet ./...     # the same four — type-checks the tests for each target
 ```
 
 **Generated files.** A change to `internal/store/*.sql`, `internal/hub/store/*.sql`, or to a `protocol/v1`
@@ -40,7 +41,10 @@ belongs in v2, not in this PR.
 
 **Cross-compilation** is part of the bar because the runner is developed on
 macOS and deployed on Linux: anything reaching for `syscall` outside a `unix`
-build tag, or for cgo, is caught here and nowhere else. Everything builds with
+build tag, or for cgo, is caught here and nowhere else. The build never
+compiles test files, so each target is vetted too: a test using a symbol one
+OS lacks — `syscall.Getsid` exists on darwin only — fails there rather than in
+CI. Everything builds with
 `CGO_ENABLED=0`; only the race detector turns cgo back on, for tests.
 
 ## What CI does not run

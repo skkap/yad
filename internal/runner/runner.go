@@ -14,6 +14,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/store"
+	"github.com/skkap/yad/internal/workdir"
 )
 
 // Options are what Serve needs from the process around it.
@@ -33,9 +34,6 @@ type Options struct {
 	Log   *slog.Logger
 	// Monitor, when set, is kept current for the control socket.
 	Monitor *Monitor
-	// Reclaim undoes what preparing a session's workdir left outside it,
-	// when the session is collected; nil frees its WT_SLOTs alone.
-	Reclaim func(ctx context.Context, connection, session, dir string) error
 }
 
 // Serve syncs every configured connection, all of them drawing on one
@@ -68,10 +66,18 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	defer st.Close()
 	pool := NewPool(o.Capabilities().Capacity)
+	// One manager for preparing and reclaiming: its per-repository locks are
+	// what keep a worktree being added and one being removed from meeting in
+	// the same bare cache.
+	w := o.Config.Workdirs
+	workdirs := &workdir.Manager{
+		Data: o.Paths.Data, Roots: w.Roots, GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
+		Slots: st,
+	}
 	sessions := &Collector{
 		Store: st, Workdirs: filepath.Join(o.Paths.Data, "workdirs"),
 		IdleTTL: o.Config.Sessions.IdleTTL.Duration, DiskFloor: int64(o.Config.Sessions.DiskFloor),
-		Reclaim: o.Reclaim, Log: o.Log,
+		Reclaim: workdirs.Reclaim, Log: o.Log,
 	}
 	o.Monitor.attach(pool, st, sessions)
 	// Runs before the store closes: a status read after it would fail.
@@ -81,7 +87,7 @@ func Serve(ctx context.Context, o Options) error {
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
-		Store: st, Adapters: o.Adapters, Config: o.Config, Data: o.Paths.Data, Log: o.Log,
+		Store: st, Adapters: o.Adapters, Config: o.Config, Data: o.Paths.Data, Workdirs: workdirs, Log: o.Log,
 		Report: func(conn string) {
 			if r := sv.reporters[conn]; r != nil {
 				r.Wake()
