@@ -217,7 +217,7 @@ func TestStopFallsBackToSignals(t *testing.T) {
 		want       string
 		code       int
 	}{
-		{"SIGTERM ends it", false, []string{"--timeout", "300ms"}, "sent it SIGTERM", 0},
+		{"SIGTERM ends it", false, nil, "sent it SIGTERM", 0},
 		{"ignores SIGTERM, no --force", true, []string{"--timeout", "300ms"}, "yad daemon stop --force", 1},
 		{"ignores SIGTERM, --force kills it", true, []string{"--timeout", "300ms", "--force"}, "killed pid", 0},
 	} {
@@ -253,6 +253,11 @@ func TestStopFallsBackToSignals(t *testing.T) {
 // spawnWedged starts a wedged daemon and waits for it to hold the lock.
 func (l *lifecycle) spawnWedged(ignoreTerm bool) int {
 	l.t.Helper()
+	// This daemon answers nothing, ever, so the ask before the signal ladder is
+	// waiting for a certainty: the test need not spend the five seconds a real
+	// owner spends finding out.
+	control.AskTimeoutForTests = 200 * time.Millisecond
+	l.t.Cleanup(func() { control.AskTimeoutForTests = 0 })
 	exe, err := os.Executable()
 	if err != nil {
 		l.t.Fatal(err)

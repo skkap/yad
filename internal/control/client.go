@@ -16,11 +16,20 @@ import (
 	"github.com/skkap/yad/internal/config"
 )
 
-// AskTimeout bounds one request when the caller's context has no deadline. A
+// askTimeout bounds one request when the caller's context has no deadline. A
 // status is a few store reads; a daemon that cannot answer in this is wedged.
-// Exported so a caller working to a shorter budget of its own can hold the ask
-// to the smaller of the two rather than sit here past it.
-const AskTimeout = 5 * time.Second
+const askTimeout = 5 * time.Second
+
+// AskTimeoutForTests replaces askTimeout while it is positive. A test that
+// wedges a daemon on purpose is waiting for a certainty, and at the shipped
+// timeout it waits five seconds for it every time — sixteen across the stop
+// ladder's cases. The shipped value stays where it is: shortening it in the
+// binary would turn a daemon merely busy with a sync into a wedged one, and
+// `yad daemon stop` answers that with a SIGTERM the runner counts as its second
+// stop ask (DEV-65). Nothing outside a test may set it:
+// TestOnlyTestsReachTheAskTimeout fails on any shipped file of the module that
+// assigns it, this one included.
+var AskTimeoutForTests time.Duration
 
 // Holder says whether a daemon holds the profile's lock, and its pid. It is
 // the answer that survives a daemon too wedged to answer on its socket.
@@ -70,8 +79,12 @@ func Send(ctx context.Context, p config.Paths, req Request) (Response, error) {
 		return Response{}, err
 	}
 	if _, ok := ctx.Deadline(); !ok {
+		wait := askTimeout
+		if AskTimeoutForTests > 0 {
+			wait = AskTimeoutForTests
+		}
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, AskTimeout)
+		ctx, cancel = context.WithTimeout(ctx, wait)
 		defer cancel()
 	}
 	res, err := ask(ctx, sock, req)

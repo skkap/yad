@@ -159,14 +159,7 @@ func daemonStop(ctx context.Context, g global, args []string, w io.Writer) error
 // --force's, after the timeout.
 func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
 	var pid int
-	// --timeout is the owner's budget for the whole stop, and the ask starts
-	// it: a daemon told to stop within 300 ms that is then waited on for five
-	// seconds is the CLI spending what it was not given. The shorter of the two
-	// governs, so the default stop still treats a socket that goes quiet for
-	// five seconds as wedged.
-	askCtx, cancelAsk := context.WithTimeout(ctx, min(s.timeout, control.AskTimeout))
-	defer cancelAsk()
-	res, err := control.Ask(askCtx, g.paths, "stop")
+	res, err := control.Ask(ctx, g.paths, "stop")
 	var wedged *control.UnresponsiveError
 	switch {
 	case errors.Is(err, control.ErrNotRunning):
