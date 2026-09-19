@@ -27,7 +27,11 @@ type Spec struct {
 	SessionID       string
 	NativeSessionID string
 	Brief           v1.Brief
-	// Home is the account's harness home (CLAUDE_CONFIG_DIR, CODEX_HOME).
+	// Home is the account's harness home (CLAUDE_CONFIG_DIR, CODEX_HOME), for
+	// an adapter that needs the path itself. What actually points the child at
+	// it is the variable in Env: an adapter that ignores this field still runs
+	// in the right home. Empty when the owner configured no accounts for the
+	// harness, whose runs use the harness's own default home.
 	Home string
 	// Env is added to the child's environment: grants delivered as env, and the
 	// home variable.

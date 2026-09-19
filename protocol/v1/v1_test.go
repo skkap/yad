@@ -84,15 +84,19 @@ func TestKindsMatchDomain(t *testing.T) {
 			t.Errorf("**%s** kinds: DOMAIN.md says %v, protocol/v1 has %v", entry, want, got)
 		}
 	}
-	var events, states []string
+	var events, states, accounts []string
 	for _, k := range EventKinds() {
 		events = append(events, string(k))
 	}
 	for _, s := range RunStates() {
 		states = append(states, string(s))
 	}
+	for _, s := range AccountStates() {
+		accounts = append(accounts, string(s))
+	}
 	check("Event", events)
 	check("Run state", states)
+	check("Account", accounts)
 	check("Session", []string{string(SessionPerRun), string(SessionLive)})
 }
 
@@ -132,7 +136,7 @@ func domainKinds(t *testing.T, path string) map[string][]string {
 // the Go sets — non-terminal states where a run is held, terminal ones where a
 // result is reported.
 func TestEnumTagsMatchSets(t *testing.T) {
-	var held, terminal, events, controls []string
+	var held, terminal, events, controls, accounts []string
 	for _, s := range RunStates() {
 		if s.IsTerminal() {
 			terminal = append(terminal, string(s))
@@ -146,6 +150,9 @@ func TestEnumTagsMatchSets(t *testing.T) {
 	for _, k := range ControlKinds() {
 		controls = append(controls, string(k))
 	}
+	for _, s := range AccountStates() {
+		accounts = append(accounts, string(s))
+	}
 	for _, tc := range []struct {
 		v     any
 		field string
@@ -155,6 +162,7 @@ func TestEnumTagsMatchSets(t *testing.T) {
 		{Result{}, "State", terminal},
 		{Event{}, "Kind", events},
 		{Control{}, "Kind", controls},
+		{AccountReport{}, "State", accounts},
 		{Grant{}, "As", []string{string(GrantEnv), string(GrantFile)}},
 		{SessionRef{}, "Mode", []string{string(SessionPerRun), string(SessionLive)}},
 	} {

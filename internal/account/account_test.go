@@ -195,6 +195,13 @@ func TestLoadReadsTheOwnersOrderAndTheStoresStates(t *testing.T) {
 	cfg.Harness = map[string]config.HarnessConfig{
 		"claude": {Accounts: []string{"personal", "work"}},
 	}
+	// Both homes exist: a home that is not there is needs-login whatever the
+	// store says, which TestAnAccountWhoseHomeIsGoneNeedsLogin covers.
+	for _, label := range []string{"personal", "work"} {
+		if _, err := Ensure(data, "claude", label); err != nil {
+			t.Fatal(err)
+		}
+	}
 	got, err := Load(ctx, st.Queries, data, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -250,6 +257,77 @@ func TestEnsureRefusesABadLabel(t *testing.T) {
 	for _, label := range []string{"../escape", "Work", "", "a/b"} {
 		if _, err := Ensure(t.TempDir(), "claude", label); err == nil {
 			t.Errorf("label %q was accepted; it becomes a directory name", label)
+		}
+	}
+}
+
+// A label left in config.toml whose home is not on disk needs login. This is
+// what `yad account remove` looks like to a daemon still holding the config it
+// started with: without this the account reads free, the next run rebuilds the
+// empty home the owner just deleted, and the turn fails against a logged-out
+// harness.
+func TestAnAccountWhoseHomeIsGoneNeedsLogin(t *testing.T) {
+	data := t.TempDir()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(data, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cfg := config.Default()
+	cfg.Harness = map[string]config.HarnessConfig{"claude": {Accounts: []string{"work"}}}
+
+	// The store says free — it is what a fresh row, or no row at all, means.
+	if err := SetState(ctx, st.Queries, "claude", "work", v1.AccountFree, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(ctx, st.Queries, data, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].State != v1.AccountNeedsLogin {
+		t.Fatalf("accounts = %+v, want the one account needing login", got)
+	}
+	if _, ok := First(got, "claude"); ok {
+		t.Error("a run would have been given an account with no home")
+	}
+
+	// And once the home is there again, the stored state stands.
+	if _, err := Ensure(data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = Load(ctx, st.Queries, data, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].State != v1.AccountFree {
+		t.Fatalf("accounts = %+v, want free once the home is back", got)
+	}
+}
+
+// A path element that walks out of the data directory is refused before
+// os.RemoveAll ever sees it — the harness id as well as the label, because
+// filepath.Join cleans ".." and the result is outside <data>/accounts/.
+func TestPathElementsAreGuarded(t *testing.T) {
+	for _, c := range []struct{ harness, label string }{
+		{"../../etc", "work"},
+		{"claude", "../../etc"},
+		{"Claude", "work"},
+		{"", "work"},
+		{"claude", ""},
+	} {
+		data := t.TempDir()
+		outside := filepath.Join(data, "outside")
+		if err := os.MkdirAll(outside, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := Remove(data, c.harness, c.label); err == nil {
+			t.Errorf("Remove(%q, %q) was accepted", c.harness, c.label)
+		}
+		if _, err := Ensure(data, c.harness, c.label); err == nil {
+			t.Errorf("Ensure(%q, %q) was accepted", c.harness, c.label)
+		}
+		if _, err := os.Stat(outside); err != nil {
+			t.Errorf("Remove(%q, %q) deleted outside the data directory: %v", c.harness, c.label, err)
 		}
 	}
 }

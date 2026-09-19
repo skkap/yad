@@ -183,29 +183,52 @@ func TestOneHomesLoginDoesNotReachAnother(t *testing.T) {
 	}
 }
 
-// LoggedIn decodes one field. Everything else the status prints — the e-mail
-// address, the plan — is dropped where it is read, so there is nowhere later
-// for it to leak from.
-func TestLoginCheckKeepsNothingButTheAnswer(t *testing.T) {
-	bin := self(t, "claude")
-	data := t.TempDir()
-	home, err := Ensure(data, "claude", "work")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	var out strings.Builder
-	if err := Login(ctx, "claude", bin, home, strings.NewReader(""), &out, &out); err != nil {
-		t.Fatal(err)
-	}
-	// Whatever the login printed went to the caller's writer and was never
-	// returned, so an error from here cannot carry it either.
-	if _, err := LoggedIn(ctx, "claude", bin, home); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "TOP-SECRET-LOGIN-CODE") {
-		t.Fatal("the fake login did not print its code; the test below proves nothing")
-	}
+// What a login prints on the way to a login — the code a person pastes into a
+// browser — reaches the caller's own writer and nothing else. YAD keeps none of
+// it: not in a return value, and not in the error when the login fails.
+func TestLoginKeepsNothingItPrinted(t *testing.T) {
+	t.Run("a login that took", func(t *testing.T) {
+		bin := self(t, "claude")
+		home, err := Ensure(t.TempDir(), "claude", "work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out strings.Builder
+		if err := Login(context.Background(), "claude", bin, home, strings.NewReader(""), &out, &out); err != nil {
+			t.Fatal(err)
+		}
+		// The fake prints a code, as a real login does. If it stops, the
+		// assertion below proves nothing, so this is checked first.
+		if !strings.Contains(out.String(), "TOP-SECRET-LOGIN-CODE") {
+			t.Fatal("the fake login printed no code; this test would pass vacuously")
+		}
+		// Login returns only whether the command succeeded. There is no other
+		// value for what it printed to travel in.
+		if _, err := LoggedIn(context.Background(), "claude", bin, home); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("a login that failed", func(t *testing.T) {
+		bin := self(t, "claude")
+		t.Setenv("YAD_ACCOUNT_TEST_LOGIN_FAILS", "1")
+		home, err := Ensure(t.TempDir(), "claude", "work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out strings.Builder
+		err = Login(context.Background(), "claude", bin, home, strings.NewReader(""), &out, &out)
+		if err == nil {
+			t.Fatal("an abandoned login reported success")
+		}
+		// An exec error is an exit status, never the child's output.
+		for _, leak := range []string{"TOP-SECRET-LOGIN-CODE", "login cancelled"} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("the error carries what the login printed (%q): %v", leak, err)
+			}
+		}
+	})
+
 }
 
 func TestUnknownHarnessSaysWhatToDoInstead(t *testing.T) {

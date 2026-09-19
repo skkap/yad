@@ -104,9 +104,13 @@ func cmdHarnesses(ctx context.Context, g global, args []string, w io.Writer) err
 	if err != nil {
 		return err
 	}
+	// The document is what a hub receives, and a state database this binary
+	// cannot read — one migration behind, because the daemon has not restarted
+	// — is no reason to refuse to print it. capability.Build reports the
+	// owner's configured labels as free when it is given none.
 	accounts, err := account.Read(ctx, g.paths, cfg)
 	if err != nil {
-		return err
+		accounts = nil
 	}
 	return writeJSON(w, capability.Build(ctx, id, cfg, accounts))
 }

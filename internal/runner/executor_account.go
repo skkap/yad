@@ -102,9 +102,13 @@ func (e *Exec) checkLogin(ctx context.Context, a account.Account, binary string,
 	if res.Error == nil || !maybeAuth(res.Error.Class) || !account.CanLogIn(a.Harness) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, loginCheckTimeout)
+	// The deadline bounds the harness subprocess and nothing else. Writing the
+	// state under it too would let a check that answered at 29.9s leave the
+	// account unparked, and the next run would spend the same 30 seconds
+	// asking again.
+	checkCtx, cancel := context.WithTimeout(ctx, loginCheckTimeout)
 	defer cancel()
-	in, err := account.LoggedIn(ctx, a.Harness, binary, a.Home)
+	in, err := account.LoggedIn(checkCtx, a.Harness, binary, a.Home)
 	if err != nil {
 		log.Warn("could not check whether the account is still logged in", "err", err)
 		return

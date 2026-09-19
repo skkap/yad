@@ -29,7 +29,8 @@ import (
 // carry it, and distinctive so a single strings.Contains finds it.
 const sentinel = "sk-ant-oat01-A-CREDENTIAL-THAT-MUST-NEVER-LEAVE-THE-HOME"
 
-// withAccounts is the env's executor with the owner's accounts configured.
+// accountExecutor is the env's executor with the owner's accounts configured,
+// and the buffer its log is written to.
 func (e *env) accountExecutor(t *testing.T, cfg config.Config, adapters ...adapter.Adapter) (*Exec, *bytes.Buffer) {
 	t.Helper()
 	var logged bytes.Buffer

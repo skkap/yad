@@ -108,6 +108,7 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	}
 	if in {
 		fmt.Fprintf(w, "\n%s account %q is free and will take runs.\n", id, label)
+		fmt.Fprintln(w, "A runner already running holds the config it started with — `yad daemon restart` to pick this up.")
 		return nil
 	}
 	// Not an error in the state model — the account exists and is reported —
@@ -204,6 +205,12 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected %q — usage: yad account remove <harness> <label> [--yes]", fs.Arg(0))
 	}
+	// Checked before anything is printed or deleted, as `add` does at its own
+	// top: this argument becomes a path element under <data>/accounts/, and
+	// what waits at the end of that path is os.RemoveAll.
+	if err := checkHarness(id); err != nil {
+		return err
+	}
 	if err := config.ValidName(label); err != nil {
 		return fmt.Errorf("account label: %w", err)
 	}
@@ -239,6 +246,11 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 		return err
 	}
 	fmt.Fprintf(w, "removed %s account %q; %s is gone and the shared transcripts are untouched\n", id, label, home)
+	// A runner already running holds the config it started with, so the label
+	// stays in its reports until it restarts. It will not use the account —
+	// a home that is not on disk reads as needs-login, so runs skip it — but
+	// saying nothing here makes the line above look like the whole story.
+	fmt.Fprintln(w, "A runner already running holds the config it started with — `yad daemon restart` to drop the label from its reports.")
 	return nil
 }
 

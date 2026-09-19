@@ -77,9 +77,13 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 	// A runner registers with the accounts the owner configured, whatever
 	// state they are in: a harness whose accounts all need login is still a
 	// runner a hub should know about.
+	// A state database one migration behind — this binary newer than the
+	// daemon that owns it — must not stop a registration. cmd_daemon takes the
+	// same failure the same way, and capability.Build falls back to reporting
+	// the owner's configured labels as free.
 	accounts, err := account.Read(ctx, p, cfg)
 	if err != nil {
-		return conn, none, err
+		accounts = nil
 	}
 	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: capability.Build(ctx, id, cfg, accounts)})
 	if err != nil {

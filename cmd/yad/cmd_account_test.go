@@ -58,6 +58,13 @@ func TestAccountListShowsStateAndKeepsTheHomeOutOfItsJSON(t *testing.T) {
 	if err := config.Save(p, cfg); err != nil {
 		t.Fatal(err)
 	}
+	// Both homes exist, so "free" here is the store's answer and not the
+	// missing-home rule.
+	for _, label := range []string{"personal", "work"} {
+		if _, err := account.Ensure(p.Data, "claude", label); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := recordState(ctx, p, "claude", "work", v1.AccountNeedsLogin); err != nil {
 		t.Fatal(err)
 	}
@@ -76,12 +83,21 @@ func TestAccountListShowsStateAndKeepsTheHomeOutOfItsJSON(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errs)
 	}
-	var reps []v1.HarnessReport
+	// Decoded into the command's own shape, not v1.HarnessReport: the command
+	// deliberately does not emit the capability document's type, and decoding
+	// into it would pass just as well if it started to.
+	var reps []struct {
+		Harness  string             `json:"harness"`
+		Accounts []v1.AccountReport `json:"accounts"`
+	}
 	if err := json.Unmarshal([]byte(out), &reps); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
 	if len(reps) != 1 || len(reps[0].Accounts) != 2 {
 		t.Fatalf("reports = %+v", reps)
+	}
+	if reps[0].Harness != "claude" {
+		t.Errorf("harness = %q, want claude — the accounts are not attributed", reps[0].Harness)
 	}
 	// The owner's order, not the alphabet's and not the store's.
 	if reps[0].Accounts[0].Label != "personal" || reps[0].Accounts[1].Label != "work" {
@@ -267,5 +283,45 @@ func TestRecordedStateIsWhatTheDocumentReports(t *testing.T) {
 	}
 	if accounts[0].UpdatedAt.IsZero() || time.Since(accounts[0].UpdatedAt) > time.Hour {
 		t.Errorf("updated_at = %v", accounts[0].UpdatedAt)
+	}
+}
+
+// A destructive command validates the argument that becomes a path element.
+// `remove` had the guard `add` has only for the label, and filepath.Join cleans
+// "..", so an unchecked harness id resolved outside <data>/accounts/ and was
+// handed to os.RemoveAll.
+func TestAccountRemoveRefusesAHarnessThatWalksOutOfTheDataDirectory(t *testing.T) {
+	p := accountEnv(t)
+	outside := filepath.Join(p.Data, "keep-me")
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"../../../tmp", "..", "Claude"} {
+		code, _, errs := yadIn(t, "account", "remove", id, "work", "--yes")
+		if code == 0 {
+			t.Errorf("harness %q was accepted", id)
+		}
+		if !strings.Contains(errs, "accounts work for") && !strings.Contains(errs, "harness") {
+			t.Errorf("harness %q: refusal does not say what is wrong: %q", id, errs)
+		}
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("a refused remove deleted something anyway: %v", err)
+	}
+}
+
+// The state a daemon already running cannot see: both commands say so, as
+// `yad connect` does for a connection it just wrote.
+func TestAccountAddAndRemoveNameTheDaemonRestart(t *testing.T) {
+	p := accountEnv(t)
+	if _, err := account.Ensure(p.Data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := yadIn(t, "account", "remove", "claude", "work", "--yes")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errs)
+	}
+	if !strings.Contains(out, "yad daemon restart") {
+		t.Errorf("remove does not mention the restart a running runner needs:\n%s", out)
 	}
 }

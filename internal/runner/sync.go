@@ -672,16 +672,24 @@ func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
 // its own slower tick would report the old state.
 func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 	doc := l.Capabilities()
+	rows, err := l.Store.ListAllAccounts(ctx)
+	if err != nil {
+		// Reporting every account free because the read failed would be the
+		// one direction that costs something: the hub keeps offering runs for
+		// a harness whose accounts cannot take them, and each is refused after
+		// being claimed. Saying nothing is the honest answer to a question
+		// that did not get one, and health carries no harnesses when empty.
+		l.Log.Warn("could not read account states; this sync reports no harness health", "connection", l.Connection, "err", err)
+		return nil
+	}
 	live := map[string]v1.AccountReport{}
-	if rows, err := l.Store.ListAllAccounts(ctx); err == nil {
-		for _, r := range rows {
-			rep := v1.AccountReport{Label: r.Label, State: v1.AccountState(r.State)}
-			if r.LimitedUntil.Valid {
-				t := time.UnixMilli(r.LimitedUntil.Int64).UTC()
-				rep.LimitedUntil = &t
-			}
-			live[r.Harness+"\x00"+r.Label] = rep
+	for _, r := range rows {
+		rep := v1.AccountReport{Label: r.Label, State: v1.AccountState(r.State)}
+		if r.LimitedUntil.Valid {
+			t := time.UnixMilli(r.LimitedUntil.Int64).UTC()
+			rep.LimitedUntil = &t
 		}
+		live[r.Harness+"\x00"+r.Label] = rep
 	}
 	var out []v1.HarnessHealth
 	for _, hr := range doc.Harnesses {

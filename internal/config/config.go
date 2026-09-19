@@ -240,10 +240,11 @@ func ValidName(s string) error {
 	return nil
 }
 
-// HarnessIDs is every harness the owner configured, in a stable order: map
-// iteration would otherwise reorder accounts and the capability document's
-// fingerprint with them, and a fingerprint that moves on its own makes a hub
-// re-fetch the document all day.
+// HarnessIDs is every harness the owner configured, in a stable order, so that
+// what groups accounts by harness — `yad account list` and its --json — prints
+// them the same way twice. The capability document does not depend on it: it
+// iterates the detected harnesses and takes each one's accounts in the owner's
+// own order.
 func (c Config) HarnessIDs() []string {
 	ids := make([]string, 0, len(c.Harness))
 	for id := range c.Harness {

@@ -20,7 +20,7 @@ type Capabilities struct {
 }
 
 // HarnessReport is one harness as it exists on the runner. Accounts appear by
-// label only; credentials never leave the machine.
+// label and state only; credentials never leave the machine.
 type HarnessReport struct {
 	ID       string          `json:"id"`
 	Label    string          `json:"label"`

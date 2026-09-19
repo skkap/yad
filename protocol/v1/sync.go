@@ -67,7 +67,13 @@ type Health struct {
 	Draining bool `json:"draining,omitempty"`
 }
 
-// HarnessHealth is per-harness readiness, including which accounts are limited.
+// HarnessHealth is per-harness readiness with each account's state: limited
+// until a reset, needing a login the owner has to finish, or free.
+//
+// Ready is whether the harness can take a run now — at least one free account,
+// or none configured at all, since a harness with no accounts runs on the
+// harness's own login. It is not a claim about the binary being installed;
+// only harnesses the runner can drive appear here.
 type HarnessHealth struct {
 	ID       string          `json:"id"`
 	Ready    bool            `json:"ready"`

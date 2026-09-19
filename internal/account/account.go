@@ -106,8 +106,8 @@ func Env(harness, home string) []string {
 // Both directories are 0700: a harness home holds the credential the harness
 // wrote there, and the transcripts hold whole conversations.
 func Ensure(data, harness, label string) (string, error) {
-	if err := config.ValidName(label); err != nil {
-		return "", fmt.Errorf("account label: %w", err)
+	if err := checkNames(harness, label); err != nil {
+		return "", err
 	}
 	home := HomeDir(data, harness, label)
 	if err := os.MkdirAll(home, 0o700); err != nil {
@@ -144,7 +144,7 @@ func link(from, to string) error {
 		if at, err := os.Readlink(from); err == nil && at == to {
 			return nil
 		}
-		if err := os.Remove(from); err != nil {
+		if err := os.Remove(from); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	default:
@@ -155,11 +155,23 @@ func link(from, to string) error {
 		if len(entries) > 0 {
 			return fmt.Errorf("%s is a directory of transcripts, not a link to %s — move it aside (its sessions can be copied into %s) and run this again", from, to, to)
 		}
-		if err := os.Remove(from); err != nil {
+		if err := os.Remove(from); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
-	return os.Symlink(to, from)
+	// Two runs of one harness prepare the same home at once — capacity is a
+	// shared pool and nothing reserves an account — so both can find no link
+	// and both call Symlink. The loser gets ErrExist for the link the winner
+	// just made, which is the state this function was asked to reach.
+	if err := os.Symlink(to, from); errors.Is(err, os.ErrExist) {
+		if at, rerr := os.Readlink(from); rerr == nil && at == to {
+			return nil
+		}
+		return err
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Remove deletes an account's harness home, and nothing else.
@@ -171,10 +183,26 @@ func link(from, to string) error {
 // rest, which is why the home is a directory to delete and not a file to
 // unlink.
 func Remove(data, harness, label string) error {
+	if err := checkNames(harness, label); err != nil {
+		return err
+	}
+	return os.RemoveAll(HomeDir(data, harness, label))
+}
+
+// checkNames guards the two strings that become path elements under
+// <data>/accounts/. The harness id is checked as well as the label because
+// filepath.Join cleans "..", so an unchecked id resolves outside the data
+// directory — and the caller on the other end of that is os.RemoveAll. Only
+// the owner's own argv reaches here today; a package that builds paths
+// defends them regardless of who calls it.
+func checkNames(harness, label string) error {
+	if err := config.ValidName(harness); err != nil {
+		return fmt.Errorf("harness: %w", err)
+	}
 	if err := config.ValidName(label); err != nil {
 		return fmt.Errorf("account label: %w", err)
 	}
-	return os.RemoveAll(HomeDir(data, harness, label))
+	return nil
 }
 
 // Load is every account the owner configured, per harness in the owner's
@@ -212,6 +240,17 @@ func Load(ctx context.Context, q *db.Queries, data string, cfg config.Config) ([
 				}
 				if r.UpdatedAt > 0 {
 					a.UpdatedAt = time.UnixMilli(r.UpdatedAt).UTC()
+				}
+			}
+			// A home that is not on disk cannot hold a login, so the account
+			// needs one whatever the store last recorded. This is what a label
+			// left in config.toml after `yad account remove` looks like to a
+			// daemon still holding the config it started with: without it the
+			// account reads free, a run rebuilds the empty home the owner just
+			// deleted, and the turn fails against a logged-out harness.
+			if a.State == v1.AccountFree {
+				if _, err := os.Stat(a.Home); errors.Is(err, os.ErrNotExist) {
+					a.State = v1.AccountNeedsLogin
 				}
 			}
 			out = append(out, a)

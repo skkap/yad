@@ -414,6 +414,24 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassStart, fmt.Sprintf("harness %q is not installed on this runner any more — `yad doctor` shows where it was looked for", run.Harness))
 		return
 	}
+	// Which account the run uses. Chosen here, beside the adapter and binary
+	// lookups, because it is a config read and one query and it can refuse the
+	// run: the workdir below clones or fetches a repository, and paying for
+	// that before discovering no account can take the turn is work thrown
+	// away on every run a limited runner is offered.
+	//
+	// The owner's order decides; a limited account and one that needs login
+	// are skipped alike. A harness the owner gave no accounts runs on the
+	// harness's own default home, exactly as every installation did before
+	// accounts existed — no accounts is a state, not a failure.
+	acct, hasAccount, err := e.pickAccount(bg, run.Harness)
+	if err != nil {
+		// A run the runner will not take is refused (§2), not a preparation
+		// that went wrong: nothing was wrong with the run, and a hub may
+		// offer it to a runner whose accounts can take it.
+		fail(ClassRefused, err.Error())
+		return
+	}
 	dir, native, err := e.workdir(bg, c)
 	if err != nil {
 		fail(ClassPrepare, "the workdir could not be prepared: "+err.Error())
@@ -443,19 +461,6 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	defer cleanup()
 	if err != nil {
 		fail(ClassPrepare, err.Error())
-		return
-	}
-	// Which account the run uses, and the harness home it runs in. The
-	// owner's order decides; a limited account and one that needs login are
-	// skipped alike. A harness the owner gave no accounts runs on the
-	// harness's own default home, exactly as every installation did before
-	// accounts existed — no accounts is a state, not a failure.
-	acct, hasAccount, err := e.pickAccount(bg, run.Harness)
-	if err != nil {
-		// A run the runner will not take is refused (§2), not a preparation
-		// that went wrong: nothing was wrong with the run, and a hub may
-		// offer it to a runner whose accounts can take it.
-		fail(ClassRefused, err.Error())
 		return
 	}
 	var home string
