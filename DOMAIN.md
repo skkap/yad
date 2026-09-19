@@ -140,7 +140,12 @@ _Kinds_: per_run (a fresh harness process per run — the default) | live (one
 process kept across runs — reserved, not built)
 _Rules_: A session lives on one runner and is resumable only there. At most one
 run is live in a session at a time. A session may move between accounts of its
-harness. A session **closes** — by its hub's word, its owner's, the idle TTL
+harness: its transcript is the whole of its state, and it lives once in a
+directory every account home links to — measured on both CLIs, not assumed
+([0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md)). What
+stays untested there is a provider accepting the move under the second account;
+that residue is DEV-58, not an open question of the model.
+A session **closes** — by its hub's word, its owner's, the idle TTL
 or disk pressure — only while no run is held in it, takes no new run after, and
 its hub is told why ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md)).
 _States_: open | closed (its hub or its owner closed it) | expired (the idle TTL
@@ -289,10 +294,6 @@ per run.
 
 ## Open questions
 
-- Do both CLIs resume a session from a transcript directory shared between
-  account homes? Assumed by
-  [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md);
-  unverified. If not, a session is pinned to its account.
 - **Release** — handing a session back to its hub so it can resume on another
   runner (Anthropic's runners have it). Needs a transcript that moves; no consumer
   asks for it yet.
