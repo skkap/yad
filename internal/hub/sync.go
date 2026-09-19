@@ -191,7 +191,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		if req.Health.Draining || runner.DrainRequestedAt.Valid {
 			return nil
 		}
-		out.Runs, err = h.offer(ctx, q, runner.ID, doc, req.Health.FreeCapacity, lease, now)
+		out.Runs, err = h.offer(ctx, q, runner.ID, doc, described, req.Health.FreeCapacity, lease, now)
 		return err
 	})
 	if err != nil {
@@ -206,7 +206,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 // offer picks queued runs for this runner and marks them offered. Never more
 // than the free capacity it declared, in total or for any harness it capped,
 // and never a harness it cannot drive: the runner would have to refuse it.
-func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, free v1.Capacity, lease sql.NullInt64, now time.Time) ([]v1.Run, error) {
+func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, free v1.Capacity, lease sql.NullInt64, now time.Time) ([]v1.Run, error) {
 	me := sql.NullString{String: runnerID, Valid: true}
 	left := map[string]int{}
 	for id, n := range free.ByHarness {
@@ -238,7 +238,12 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 	// a worse bet than a page walked twice. The cost is paid only by a runner
 	// that does not advertise start_at — no yad build produces one — and only
 	// against runs still waiting for their moment.
-	holdsStartAt := advertises(doc, capability.FeatureStartAt)
+	//
+	// A document the hub has asked to replace cannot answer this either, and
+	// an offer is the one thing a later sync cannot take back: a run started
+	// early has started. So an undescribed runner is offered nothing it would
+	// have to hold, and hears about those runs a sync later.
+	holdsStartAt := described && advertises(doc, capability.FeatureStartAt)
 	var (
 		runs   []v1.Run
 		cursor db.Run

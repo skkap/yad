@@ -255,8 +255,12 @@ The major version is in the path. Within it, both sides advertise feature
 strings — the runner in its capability document, the hub in its register
 response — and nothing is used that the other side did not advertise: a hub
 sends `drain`, `close_session`, `steer` and `interrupt` only to a runner
-advertising each, and offers a run carrying `start_at` only to a runner that
-will hold it back rather than start it at once. `yad hub` advertises no
+advertising each, and offers a run carrying `start_at` whose moment is still
+ahead only to a runner that will hold it back rather than start it at once —
+once the moment has passed there is nothing to hold, and the run goes to any
+runner, or it would wait for ever on a fleet without the feature. A runner
+whose fingerprint moved without the document it promised is treated as
+advertising neither, until the document it is asked for arrives. `yad hub` advertises no
 `hub_features` of its own — it has nothing beyond the v1 baseline.
 
 A hub may refuse a runner below `min_version` with `version_too_old` and a next

@@ -219,6 +219,35 @@ func TestAGatedControlWaitsForADocumentTheHubKnowsIsStale(t *testing.T) {
 	}
 }
 
+// A withheld control comes round again next sync; a run started early has
+// started. So a run whose moment is still ahead waits for the document too.
+func TestAStartAtRunWaitsForADocumentTheHubKnowsIsStale(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	f.mustSync(t, "r1", cred, first("r1", 1))
+	ahead := f.clock.t.Add(time.Hour)
+	later := run("later", "s1")
+	later.StartAt = &ahead
+	f.enqueue(t, later)
+
+	moved := req("r1", 1)
+	moved.Fingerprint = "fp-r1-moved"
+	res := f.mustSync(t, "r1", cred, moved)
+	if got := ids(res.Runs); len(got) != 0 {
+		t.Errorf("offered %v against a document the hub had just asked to replace", got)
+	}
+	if !kindsOf(res)[v1.ControlReportCapabilities] {
+		t.Error("a moved fingerprint did not ask for the document")
+	}
+
+	// The document lands, and with it the run: withheld for one sync, not lost.
+	answer := first("r1", 1)
+	answer.Fingerprint = moved.Fingerprint
+	if got := ids(f.mustSync(t, "r1", cred, answer).Runs); len(got) != 1 || got[0] != "later" {
+		t.Errorf("offered %v once the document arrived, want [later]", got)
+	}
+}
+
 func kindsOf(res v1.SyncResponse) map[v1.ControlKind]bool {
 	out := map[v1.ControlKind]bool{}
 	for _, c := range res.Controls {
