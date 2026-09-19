@@ -18,15 +18,63 @@ oversized echoed prompt is elided.
 | `steer-followup` | a steer after the last tool boundary: two results |
 | `permission-denied` | `--permission-mode default`, a tool Claude denies itself |
 
-The usage limit, a dead process, a truncated or garbled stream, an oversized
-line and a mismatched session are not recordable on demand; the tests derive
-them from these files (`derive` in `claude_test.go`).
+A dead process, a truncated or garbled stream, an oversized line and a
+mismatched session are not recordable on demand; the tests derive them from
+these files (`derive` in `claude_test.go`).
+
+Derived the same way, and written into the version directory rather than made
+at test time because the acceptance criteria name them (DEV-27):
+
+| Fixture | The turn |
+|---|---|
+| `usage-limit-five-hour` | a `rate_limit_event` rejecting the `five_hour` window, then a 429 result |
+| `usage-limit-weekly` | the same for `seven_day`, with the five-hour window still nearly empty |
+
+**What in them is recorded and what is not.** Every field of
+`rate_limit_info` — `rateLimitType`, `resetsAt`, `status`, and the
+`unifiedWindows` map with each window's `utilization` and `resetsAt` — comes
+from the events in `plain`, which claude really wrote. The one part not
+observed is `status: "rejected"`: see the next section for why it could not be.
+
+## The instrument: recording a limit without exhausting an account
+
+Two fixtures under `claude-2.1.278/` are recorded against a local HTTP server
+that authors claude's answers instead of the API (`instrumentServer` in
+`record_test.go`, from the DEV-24 instrument). They reach no model, spend no
+token and need no login:
+
+| Fixture | The turn |
+|---|---|
+| `api-retry-then-success` | the API answered 429 once, claude retried by itself, the turn succeeded |
+| `usage-limit-429` | 429 to all ten of claude's retries: the turn fails with `api_error_status: 429` |
+
+Together they are DOMAIN.md's usage-limit/rate-limit distinction in two files:
+the first must never mark an account limited, the second must.
+
+```bash
+YAD_REAL_HARNESS=1 YAD_RECORD_ONLY=usage-limit-429 go test -tags realharness -timeout 20m -run TestRecord -v ./internal/adapter/claude/
+```
+
+`-timeout 20m` because `usage-limit-429` is claude's own retry ladder: ten
+attempts with a backoff reaching forty seconds, about three minutes in which
+nothing is asked of a model. Go's default test timeout is ten minutes and the
+whole recording run would pass it.
+
+**What the instrument cannot record.** Claude 2.1.278 reached over
+`ANTHROPIC_BASE_URL` with an `ANTHROPIC_API_KEY` emits no `rate_limit_event`
+at all, whatever rate-limit headers the answer carries — the unified windows
+belong to a subscription and an API key has none. So the subscription
+rejection (`status: "rejected"`) is the one shape here that is inferred rather
+than observed, and it is inferred from the `allowed` events in the recorded
+fixtures, which are real. Recording it for certain needs a real subscription
+that is really out of quota.
 
 To record against a new Claude release:
 
 ```bash
-YAD_REAL_HARNESS=1 go test -tags realharness -run TestRecord -v ./internal/adapter/claude/
+YAD_REAL_HARNESS=1 go test -tags realharness -timeout 20m -run TestRecord -v ./internal/adapter/claude/
 ```
 
 then point `fixtures` in `claude_test.go` at the new directory, and read the
-diff before committing it.
+diff before committing it. The two instrument fixtures above are recorded by
+the same command and cost nothing; `-timeout 20m` is for them.

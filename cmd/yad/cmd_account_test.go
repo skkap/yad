@@ -14,6 +14,7 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/store"
 )
 
 // accountEnv is a profile whose directories the test owns, and the paths to
@@ -365,5 +366,118 @@ func TestBothAccountCommandsShareTheRestartNotice(t *testing.T) {
 	// constant does not make this pass on its own.
 	if n := strings.Count(string(src), "fmt.Fprintln(w, daemonRestartNotice)"); n != 2 {
 		t.Errorf("the notice is printed %d times, want 2 (add's success branch and remove) — one command stopped printing it", n)
+	}
+}
+
+// recordLimit parks an account and gives it two windows, the way a run that
+// hit a usage limit leaves it.
+func recordLimit(t *testing.T, p config.Paths, label string, reset, weekly time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(ctx, p.StateDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := account.SetLimit(ctx, st.Queries, "claude", label, reset, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	err = account.SetWindows(ctx, st.Queries, "claude", label, []v1.AccountWindow{
+		{Name: "five_hour", UsedPercent: 100, ResetsAt: &reset},
+		{Name: "seven_day", UsedPercent: 62, ResetsAt: &weekly},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The owner's own view of a limited account: which window is spent, how much
+// of each is used and when each refills. The reset is the whole of the next
+// action for a limit, since nobody has to do anything but wait.
+func TestAccountListShowsWindowUseAndResets(t *testing.T) {
+	p := accountEnv(t)
+	cfg := config.Default()
+	cfg.Harness = map[string]config.HarnessConfig{"claude": {Accounts: []string{"work"}}}
+	if err := config.Save(p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := account.Ensure(p.Data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	weekly := time.Now().Add(72 * time.Hour).UTC().Truncate(time.Second)
+	recordLimit(t, p, "work", reset, weekly)
+
+	code, out, errs := yadIn(t, "account", "list")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errs)
+	}
+	for _, want := range []string{"WINDOWS", "limited", "five_hour 100%", "seven_day 62%"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("listing does not mention %q:\n%s", want, out)
+		}
+	}
+
+	code, out, errs = yadIn(t, "account", "list", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errs)
+	}
+	var reps []struct {
+		Harness  string             `json:"harness"`
+		Accounts []v1.AccountReport `json:"accounts"`
+	}
+	if err := json.Unmarshal([]byte(out), &reps); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if len(reps) != 1 || len(reps[0].Accounts) != 1 {
+		t.Fatalf("reports = %+v", reps)
+	}
+	a := reps[0].Accounts[0]
+	if a.State != v1.AccountLimited || a.LimitedUntil == nil || !a.LimitedUntil.Equal(reset) {
+		t.Errorf("account = %+v, want limited until %s", a, reset)
+	}
+	if len(a.Windows) != 2 || a.Windows[0].Name != "five_hour" || a.Windows[0].UsedPercent != 100 {
+		t.Fatalf("windows = %+v", a.Windows)
+	}
+	if a.Windows[1].ResetsAt == nil || !a.Windows[1].ResetsAt.Equal(weekly) {
+		t.Errorf("seven_day resets %v, want %s", a.Windows[1].ResetsAt, weekly)
+	}
+	// Still nothing from inside the home.
+	if strings.Contains(out, p.Data) {
+		t.Errorf("the JSON carries the path to the account homes:\n%s", out)
+	}
+}
+
+// An account `yad account remove` forgot takes its windows with it: left
+// behind, they would be reported against a label the owner re-adds later for
+// a different subscription.
+func TestAccountRemoveForgetsItsWindows(t *testing.T) {
+	p := accountEnv(t)
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.Harness = map[string]config.HarnessConfig{"claude": {Accounts: []string{"work"}}}
+	if err := config.Save(p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := account.Ensure(p.Data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	reset := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	recordLimit(t, p, "work", reset, reset)
+
+	if code, _, errs := yadIn(t, "account", "remove", "claude", "work", "--yes"); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs)
+	}
+	st, err := store.Open(ctx, p.StateDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ws, err := st.ListAllAccountWindows(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 0 {
+		t.Errorf("windows left behind after a remove: %+v", ws)
 	}
 }

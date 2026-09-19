@@ -18,12 +18,15 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +48,12 @@ type scenario struct {
 	// act is called with each event and may steer or interrupt; it returns true
 	// once it has acted.
 	act func(t *testing.T, tr adapter.Turn, e v1.Event) bool
+	// instrument points the turn at a local HTTP server that authors the
+	// answer instead of at the API: "retry" for a 429 claude gets past by
+	// itself, "limit" for one it never does. A scenario with it spends no
+	// token and needs no login, and it is the only way to record an
+	// exhausted account without exhausting one (DEV-24, DEV-27).
+	instrument string
 }
 
 var scenarios = []scenario{
@@ -86,6 +95,45 @@ var scenarios = []scenario{
 			return true
 		}},
 	{name: "permission-denied", mode: "default", prompt: "Run the bash command 'echo hi > out.txt' and then say done."},
+
+	// The two rate-limit paths, against the instrument rather than the API.
+	// They are here rather than hand-written because the difference between
+	// them is the whole of DOMAIN.md's usage-limit/rate-limit distinction, and
+	// a stream written by hand agrees with whatever the code already does.
+	{name: "api-retry-then-success", instrument: "retry", prompt: "Reply with exactly: pong"},
+	{name: "usage-limit-429", instrument: "limit", prompt: "Reply with exactly: pong"},
+}
+
+// instrumentServer authors a harness's answers locally: a 429 the client sees
+// as throttling, and in "retry" mode a plain success once it has retried.
+//
+// Claude 2.1.278 reached over an API key emits no rate_limit_event at all, no
+// matter what rate-limit headers the answer carries: the unified windows are a
+// subscription's, and an API key has none. So this records the 429 paths and
+// not the subscription rejection; see testdata/README.md.
+func instrumentServer(t *testing.T, mode string) string {
+	t.Helper()
+	var n int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		attempt := n
+		mu.Unlock()
+		w.Header().Set("content-type", "application/json")
+		// One retry is enough to prove the path and keeps the recording
+		// short; claude's own backoff makes each further one slower.
+		if mode == "retry" && attempt > 2 {
+			w.WriteHeader(http.StatusOK)
+			io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"pong"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1}}`)
+			return
+		}
+		w.Header().Set("retry-after", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"type":"error","error":{"type":"rate_limit_error","message":"You've exceeded your account's rate limit."}}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 func TestRecord(t *testing.T) {
@@ -114,12 +162,30 @@ func TestRecord(t *testing.T) {
 		}
 		t.Run(s.name, func(t *testing.T) {
 			work := t.TempDir()
+			var env []string
+			if s.instrument != "" {
+				// The key is passed in Spec.Env because Scrub removes it from
+				// the inherited environment on purpose; nothing about it is a
+				// credential, and it never reaches the API.
+				env = []string{
+					"ANTHROPIC_BASE_URL=" + instrumentServer(t, s.instrument),
+					"ANTHROPIC_API_KEY=sk-ant-instrument-not-a-real-key",
+				}
+			}
 			if err := os.WriteFile(filepath.Join(work, "note.txt"), []byte("hello from a small file\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var raw bytes.Buffer
 			a := Adapter{Raw: func(adapter.Spec) io.Writer { return &raw }}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			// Two minutes is a short turn's budget. A limit scenario is
+			// claude's own retry ladder instead: ten attempts with a backoff
+			// that reaches forty seconds, about three minutes of waiting in
+			// which nothing is asked of a model.
+			budget := 2 * time.Minute
+			if s.instrument != "" {
+				budget = 6 * time.Minute
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), budget)
 			defer cancel()
 			var native string
 			if s.before != "" {
@@ -143,6 +209,7 @@ func TestRecord(t *testing.T) {
 				Model:    firstNonEmpty(s.model, "haiku"),
 				Brief:    v1.Brief{Context: s.context, Instruction: s.prompt},
 				Settings: map[string]string{"permission_mode": firstNonEmpty(s.mode, "bypassPermissions")},
+				Env:      env,
 			}
 			spec.NativeSessionID = native
 			if s.resume {
