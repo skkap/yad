@@ -3,7 +3,6 @@ package harness
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -36,12 +35,6 @@ func (d Detected) Ready() bool {
 // stalled every registration in Multica — so the probe is bounded and the
 // failure is reported as text. A variable so tests can shorten it.
 var versionTimeout = 5 * time.Second
-
-// probeDrain is how long the reader gets, once the leader has exited or timed
-// out, to collect what is already in the pipe before it is closed. What the
-// leader printed is buffered by then, so this is short; it only has to outlast
-// the reader goroutine's next wakeup, not any process.
-const probeDrain = 250 * time.Millisecond
 
 // versionOutputCap bounds what a probe may print. A version is one line; a CLI
 // that prints megabytes is broken, and must not grow the runner's memory.
@@ -97,57 +90,16 @@ func detectOne(ctx context.Context, h Harness) Detected {
 	// whole process group with it, not leave one orphan per tick.
 	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
 	defer cancel()
-	p, err := supervise.Start(ctx, supervise.Spec{Path: path, Args: h.VersionArgs})
-	if err != nil {
-		d.Error = err.Error()
-		return d
-	}
-	// The read cannot simply run to EOF. When the leader exits the group dies,
-	// but a descendant that left it with setsid — a node launcher spawning a
-	// detached updater with inherited stdio — keeps the pipe open, and EOF
-	// never comes. So the leader's own fate decides: once it has exited, what it
-	// printed is already in the pipe and a short drain collects it; if the
-	// deadline comes first, the probe timed out. Closing our end is what ends a
-	// read the detached process would otherwise hold forever.
-	read := make(chan []byte, 1)
-	go func() {
-		b, _ := io.ReadAll(io.LimitReader(p.Stdout(), versionOutputCap))
-		read <- b
-	}()
-	var raw []byte
-	gotEOF, timedOut := false, false
-	select {
-	case raw = <-read:
-		gotEOF = true
-	case <-p.Done():
-	case <-ctx.Done():
-		select {
-		case <-p.Done():
-		default:
-			timedOut = true
-		}
-	}
-	if !gotEOF {
-		drain := time.NewTimer(probeDrain)
-		select {
-		case raw = <-read:
-			gotEOF = true
-		case <-drain.C:
-		}
-		drain.Stop()
-	}
-	p.Stdout().Close()
-	if !gotEOF {
-		raw = <-read // ReadAll returns what it read before the close
-	}
-	werr := p.Wait()
+	out, err := supervise.Run(ctx, supervise.Spec{Path: path, Args: h.VersionArgs}, versionOutputCap)
 	switch {
-	case timedOut:
+	case err != nil:
+		d.Error = err.Error()
+	case out.TimedOut:
 		d.Error = fmt.Sprintf("no answer to %s within %s", strings.Join(h.VersionArgs, " "), versionTimeout)
-	case werr != nil:
-		d.Error = strings.TrimSpace(werr.Error() + " " + p.Stderr())
+	case out.Err != nil:
+		d.Error = strings.TrimSpace(out.Err.Error() + " " + out.Stderr)
 	default:
-		d.Version = ParseVersion(string(raw))
+		d.Version = ParseVersion(string(out.Stdout))
 	}
 	return d
 }

@@ -66,7 +66,7 @@ internal/config          profiles, config.toml, credentials on disk
 internal/store           SQLite: schema, migrations, sqlc-generated queries
 internal/harness         the catalog, detection, versions
 internal/capability      the capability document and its fingerprint
-internal/hostool         probing host tools (gh, git, docker, zumino)
+internal/hostool         probing host tools (git, gh, docker) and how far each works
 internal/account         accounts per harness, homes, limit state, failover
 internal/service         yad service: launchd agent and systemd user unit, login PATH (0028)
 internal/adapter         the Adapter interface and event normalisation
@@ -90,8 +90,11 @@ Dependencies point downward only: `cmd` → `runner`/`hub` → everything else;
 
 JSON over HTTPS. The Go types in `protocol/v1` are the source; `openapi.yaml`
 beside them is generated and committed, and a test fails when they drift —
-[0017](docs/decisions/0017-protocol-types-are-the-source.md). Nothing in the
-protocol is harness-specific: a hub never learns what a rollout file is.
+[0017](docs/decisions/0017-protocol-types-are-the-source.md). A field's
+description reaches the document through its `doc:` struct tag; huma does not
+read Go comments, so a field documented only in a comment generates none.
+Nothing in the protocol is harness-specific: a hub never learns what a rollout
+file is.
 
 A **connection** is a base URL — `https://zumino.cc/api/yad/v1` — and every path
 below is relative to it, so a hub can mount the protocol anywhere.
@@ -668,8 +671,12 @@ line here is a reviewed change.
 
 ## §7 Testing
 
-- **No test spends a token or touches the network.** Harness detection runs
-  against an empty `PATH`; adapters replay fixtures.
+- **No test spends a token or touches the network.** Harness and host-tool
+  detection run against an empty `PATH`; adapters replay fixtures. An empty
+  `PATH` is not the whole of it: a `YAD_*_PATH` override is consulted *before*
+  `PATH`, so a test that must reach no real binary clears those too. It passes
+  either way on a machine where none is set, which is what makes forgetting
+  invisible.
 - **Two fakes.** `internal/adapter/fake` plays a scripted run in memory, for
   runner and hub logic. Child-process behaviour — hangs, ignored `SIGTERM`,
   oversized lines, orphaned grandchildren — is tested by re-executing the test
