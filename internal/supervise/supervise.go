@@ -36,11 +36,27 @@ type Spec struct {
 	// Stdin, when true, gives the caller a writer to the child's stdin. Adapters
 	// that speak a protocol over stdin need it held open until the turn ends.
 	Stdin bool
+	// NoTTY starts the child in a session of its own, with no controlling
+	// terminal. git and ssh prompt through /dev/tty whatever their environment
+	// says, and a runner started from a shell has one; with none to open, a
+	// prompt fails at once instead of waiting for a person who is not there.
+	// The child still leads its own process group, so the group signals below
+	// reach it the same way.
+	NoTTY bool
+	// MergeStderr sends the child's stderr into the Stdout pipe, in the order it
+	// was written, for a caller that reports one transcript — a setup hook's.
+	// Stderr then returns nothing.
+	MergeStderr bool
 }
 
 // StderrTail is how much of a child's stderr is kept. Enough for the last error
 // message; bounded because a chatty child must not grow the runner's memory.
 const StderrTail = 2 << 10
+
+// stderrSettle is how long Wait gives the stderr copy to finish once the
+// leader has exited. Only a descendant that escaped the group makes it wait
+// this long.
+const stderrSettle = 250 * time.Millisecond
 
 // Process is a running child and its process group.
 type Process struct {
@@ -63,6 +79,11 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 	cmd.Dir = spec.Dir
 	cmd.Env = append(Scrub(os.Environ(), spec.KeepEnv), spec.Env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if spec.NoTTY {
+		// setsid makes the child its group's leader too; asking for setpgid as
+		// well would fail, since a session leader cannot change its group.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	}
 
 	// Pipes are made here rather than with StdoutPipe: exec closes its own pipes
 	// in Wait, which loses output a reader has not consumed yet, and Wait blocks
@@ -77,6 +98,9 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 		return nil, err
 	}
 	cmd.Stdout, cmd.Stderr = outW, errW
+	if spec.MergeStderr {
+		cmd.Stderr = outW
+	}
 	var inR, inW *os.File
 	if spec.Stdin {
 		if inR, inW, err = os.Pipe(); err != nil {
@@ -92,15 +116,24 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 	closeAll(outW, errW, inR)
 
 	p := &Process{cmd: cmd, stdout: outR, stdin: inW, tail: &tailBuffer{max: StderrTail}, done: make(chan struct{})}
+	tailed := make(chan struct{})
 	go func() {
 		io.Copy(p.tail, errR)
 		errR.Close()
+		close(tailed)
 	}()
 	go func() {
 		p.err = cmd.Wait()
 		// The leader is gone; anything left in its group is a descendant holding
 		// pipes or git locks. It dies now, even after a clean exit.
 		p.signalGroup(syscall.SIGKILL)
+		// A caller reading Stderr after Wait wants the child's last words —
+		// git's error is its last line. A descendant that left the group can
+		// hold the pipe open for ever, so the wait for them is bounded.
+		select {
+		case <-tailed:
+		case <-time.After(stderrSettle):
+		}
 		// Nobody is left to read stdin, so its write end is ours to close. Stdout
 		// is not: the caller may still be draining it.
 		if p.stdin != nil {
