@@ -90,8 +90,11 @@ Dependencies point downward only: `cmd` → `runner`/`hub` → everything else;
 
 JSON over HTTPS. The Go types in `protocol/v1` are the source; `openapi.yaml`
 beside them is generated and committed, and a test fails when they drift —
-[0017](docs/decisions/0017-protocol-types-are-the-source.md). Nothing in the
-protocol is harness-specific: a hub never learns what a rollout file is.
+[0017](docs/decisions/0017-protocol-types-are-the-source.md). A field's
+description reaches the document through its `doc:` struct tag; huma does not
+read Go comments, so a field documented only in a comment generates none.
+Nothing in the protocol is harness-specific: a hub never learns what a rollout
+file is.
 
 A **connection** is a base URL — `https://zumino.cc/api/yad/v1` — and every path
 below is relative to it, so a hub can mount the protocol anywhere.
