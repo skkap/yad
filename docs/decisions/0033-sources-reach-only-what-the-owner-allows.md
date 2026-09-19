@@ -51,7 +51,10 @@ waits for a person who is not there.
 **The cache.** One bare repository per URL under `<data>/repos/`, made with
 `init --bare` and an origin whose refspec maps the remote's branches to
 `refs/remotes/origin/*` — not `clone --bare`, which maps them onto its own
-branches, where a fetch would move a branch a session has checked out. A
+branches, where a fetch would move a branch a session has checked out. Tags
+have a forced refspec of their own under `--prune`, so a tag the remote moved
+or deleted is moved or deleted here too, and `origin/HEAD` follows the
+remote's default branch on every fetch (`followRemoteHEAD`, git 2.48+). A
 first fetch is built aside and renamed in, so a failure leaves nothing half
 made. Every change to a cache — a fetch, a worktree added or removed — holds
 that repository's lock, since git's own lockfiles fail rather than wait; the
@@ -70,10 +73,13 @@ directory, and is removed and made again rather than worked in.
 **Layout.** One git source is checked out as the session's workdir itself, so
 the harness starts at the repository's root and finds its `CLAUDE.md`. One
 path source is used in place: the harness runs in that directory, which stays
-locked until the run ends — an `flock` on the directory itself, so every
-profile on the machine and every OS user contends for the same lock and
-nothing is written into the owner's directory — and two runs never edit one
-directory at once. Several sources lie side by side under the
+locked until the run ends, so two runs never edit one directory at once. The
+locks are `flock`s on the directories themselves — every profile on the
+machine and every OS user contends for the same ones, and nothing is written
+into the owner's tree — exclusive on the source and shared on every directory
+above it, so a run on `/src` and one on `/src/app` wait for each other while
+`/src/app` and `/src/lib` run side by side. A run's own path sources may not
+nest. Several sources lie side by side under the
 workdir, a path source as a symlink to where it lives; one repository twice in
 a run is refused, since both would take the session's one slot for it.
 

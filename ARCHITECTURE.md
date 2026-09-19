@@ -404,7 +404,8 @@ harness process. Recording new ones is a manual step, behind a build tag
   exists, else cut from `base`, else `yad/<session>` from the default branch;
   a continuing session finds its worktree and branch as it left them. One git
   source is the session's workdir itself; one `path` source is used in place,
-  the harness running in it, under a per-path `flock` held until the run ends;
+  the harness running in it, under `flock`s held until the run ends —
+  exclusive on it, shared on the directories above it;
   several lie side by side under the workdir. No sources → an empty directory.
   Hub strings are checked before git sees them, git never prompts, and a local
   source must resolve inside the owner's `[workdirs] roots` — none configured,

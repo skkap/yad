@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -153,17 +152,14 @@ func (m *Manager) Prepare(ctx context.Context, req Request) (*Prepared, error) {
 			p.Release()
 		}
 	}()
-	// Locked in one order, so two runs that share two paths cannot each hold
-	// one and wait for the other.
 	var paths []string
 	for _, it := range items {
 		if it.git == nil {
 			paths = append(paths, it.path)
 		}
 	}
-	slices.Sort(paths)
-	for _, path := range slices.Compact(paths) {
-		unlock, err := m.lockPath(ctx, path, req.Emit)
+	if len(paths) > 0 {
+		unlock, err := lockPaths(ctx, paths, req.Emit)
 		if err != nil {
 			return nil, err
 		}
@@ -232,6 +228,15 @@ func (m *Manager) plan(req Request) ([]item, error) {
 		}
 		items = append(items, it)
 		names = append(names, name)
+	}
+	// A run's own path sources may not nest: one is already reachable
+	// through the other, and the locks would have the run wait on itself.
+	for i, a := range items {
+		for j, b := range items {
+			if i != j && a.git == nil && b.git == nil && within(a.path, b.path) {
+				return nil, fmt.Errorf("sources[%d] (%s) is inside sources[%d] (%s); name the outer directory once", j, b.path, i, a.path)
+			}
+		}
 	}
 	if len(items) == 1 {
 		items[0].dest = req.Dir
@@ -366,6 +371,12 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 // clone --bare: a bare clone maps the remote's branches onto its own, where
 // a fetch would move a branch a session has checked out underneath it.
 func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
+	// --prune with the tags in a refspec of their own, forced: a tag the
+	// remote moved is moved here rather than refusing the whole fetch, and one
+	// it deleted is deleted, so no base resolves to a commit the remote no
+	// longer names. Tags are fetched outright, not followed: a base may be a
+	// tag no branch reaches.
+	fetch := []string{"fetch", "--quiet", "--prune", "--no-recurse-submodules", "origin"}
 	if _, err := os.Stat(cache); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(cache), 0o700); err != nil {
 			return err
@@ -380,13 +391,18 @@ func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
 		for _, args := range [][]string{
 			{"init", "--quiet", "--bare"},
 			{"config", "remote.origin.url", r.url},
-			{"config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"},
+			{"config", "--add", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"},
+			{"config", "--add", "remote.origin.fetch", "+refs/tags/*:refs/tags/*"},
+			// origin/HEAD follows the remote's default branch on every fetch
+			// (git 2.48 and later; an older git ignores the setting, and base
+			// asks the remote when origin/HEAD is missing).
+			{"config", "remote.origin.followRemoteHEAD", "always"},
 		} {
 			if _, err := m.git(ctx, tmp, args...); err != nil {
 				return err
 			}
 		}
-		if _, err := m.git(ctx, tmp, "fetch", "--quiet", "--tags", "--no-recurse-submodules", "origin"); err != nil {
+		if _, err := m.git(ctx, tmp, fetch...); err != nil {
 			return fetchFailed(err)
 		}
 		if err := os.Rename(tmp, cache); err != nil {
@@ -396,9 +412,7 @@ func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
 	} else if err != nil {
 		return err
 	}
-	// --tags because a base may be a tag no branch reaches, which git's
-	// automatic tag following never fetches.
-	if _, err := m.git(ctx, cache, "fetch", "--quiet", "--prune", "--tags", "--no-recurse-submodules", "origin"); err != nil {
+	if _, err := m.git(ctx, cache, fetch...); err != nil {
 		return fetchFailed(err)
 	}
 	return nil

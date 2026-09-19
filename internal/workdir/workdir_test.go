@@ -674,6 +674,103 @@ func TestHalfMadeWorktreeIsMadeAgain(t *testing.T) {
 	}
 }
 
+// A path held by one run keeps out a run on a directory above or below it;
+// runs on two directories side by side go on together.
+func TestNestedPathLocks(t *testing.T) {
+	f := newFixture(t)
+	parent := filepath.Join(f.root, "src")
+	child, sibling := filepath.Join(parent, "app"), filepath.Join(parent, "lib")
+	for _, d := range []string{child, sibling} {
+		os.MkdirAll(d, 0o755)
+	}
+	try := func(path string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*lockPoll)
+		defer cancel()
+		p, err := f.m.Prepare(ctx, Request{Dir: t.TempDir(), Connection: "hub", Session: "x", Sources: []v1.Source{{Path: path}}, Emit: func(v1.Event) {}})
+		if err == nil {
+			p.Release()
+		}
+		return err
+	}
+	for _, tc := range []struct {
+		held, other string
+		waits       bool
+	}{
+		{parent, child, true},
+		{child, parent, true},
+		{child, sibling, false},
+		{child, child, true},
+	} {
+		p, _, err := f.prepare("holder", v1.Source{Path: tc.held})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = try(tc.other)
+		if tc.waits && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("%s held, %s: %v — want it to wait", tc.held, tc.other, err)
+		}
+		if !tc.waits && err != nil {
+			t.Errorf("%s held, %s: %v — want it to go on", tc.held, tc.other, err)
+		}
+		p.Release()
+	}
+	// A run's own sources may not nest.
+	if _, _, err := f.prepare("nested", v1.Source{Path: parent}, v1.Source{Path: child}); class(err) != ClassSourceRefused {
+		t.Errorf("nested sources in one run: %v", err)
+	}
+}
+
+// A tag the remote moves is moved in the cache, and one it deletes is gone,
+// rather than failing every fetch or leaving a stale base.
+func TestTagsFollowTheRemote(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", map[string]string{"README": "one"})
+	sh(t, o.work, "git", "tag", "rel")
+	sh(t, o.work, "git", "push", "--quiet", "origin", "rel")
+	if _, _, err := f.prepare("s1", gitSource(o.bare, "rel", "b1")); err != nil {
+		t.Fatal(err)
+	}
+	o.commit("two", map[string]string{"README": "two"})
+	sh(t, o.work, "git", "tag", "-f", "rel")
+	sh(t, o.work, "git", "push", "--quiet", "--force", "origin", "rel")
+	p, _, err := f.prepare("s2", gitSource(o.bare, "rel", "b2"))
+	if err != nil {
+		t.Fatalf("a moved tag: %v", err)
+	}
+	if read(t, filepath.Join(p.Dir, "README")) != "two" {
+		t.Error("the moved tag still names its old commit")
+	}
+	sh(t, o.work, "git", "push", "--quiet", "origin", "--delete", "rel")
+	if _, _, err := f.prepare("s3", gitSource(o.bare, "rel", "b3")); class(err) != ClassSourceFailed || !strings.Contains(err.Error(), `base "rel"`) {
+		t.Errorf("a deleted tag: %v", err)
+	}
+}
+
+// A run naming no base is cut from the remote's default branch as it is now,
+// not as it was at the first fetch.
+func TestDefaultBranchFollowsTheRemote(t *testing.T) {
+	f := newFixture(t)
+	var major, minor int
+	fmt.Sscanf(strings.TrimPrefix(sh(t, "", "git", "version"), "git version "), "%d.%d", &major, &minor)
+	if major < 2 || major == 2 && minor < 48 {
+		t.Skip("remote.origin.followRemoteHEAD needs git 2.48")
+	}
+	o := newOrigin(t, f.root, "acme", map[string]string{"README": "main"})
+	if _, _, err := f.prepare("s1", gitSource(o.bare, "", "")); err != nil {
+		t.Fatal(err)
+	}
+	sh(t, o.work, "git", "checkout", "--quiet", "-b", "trunk")
+	o.commit("trunk", map[string]string{"README": "trunk"})
+	sh(t, o.bare, "git", "symbolic-ref", "HEAD", "refs/heads/trunk")
+	p, _, err := f.prepare("s2", gitSource(o.bare, "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(p.Dir, "README")) != "trunk" {
+		t.Error("the new session was cut from the old default branch")
+	}
+}
+
 // A tag on a commit no branch reaches is still a base.
 func TestTagOffEveryBranch(t *testing.T) {
 	f := newFixture(t)
