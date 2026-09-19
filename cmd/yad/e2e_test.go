@@ -23,6 +23,7 @@ import (
 	"github.com/skkap/yad/internal/hub"
 	hubstore "github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hubapiclient"
+	"github.com/skkap/yad/internal/runner"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 )
@@ -36,7 +37,18 @@ import (
 // Each runs once per harness (e2e_harness_test.go): the same paths drive the
 // Codex adapter against the fake codex.
 
+// testSyncInterval is what the hub in these tests names and the runner accepts.
+// Both sides clamp a configured interval up to five seconds in production — the
+// hub so a lease outlasts the runner's backoff, the runner so no hub can spin
+// the machine — and at that floor these tests spend their time asleep: 201 s of
+// a 315 s suite (DEV-63). A sync every 50 ms is still one round trip per claim,
+// cancel and drain, which is what they are testing.
+const testSyncInterval = 50 * time.Millisecond
+
 func TestMain(m *testing.M) {
+	// Before the child branches below: a child re-executed as yad is a runner
+	// holding the same floor, and it syncs against this test's hub.
+	hub.SyncFloorForTests, runner.SyncFloorForTests = testSyncInterval, testSyncInterval
 	if os.Getenv(childYad) != "" {
 		// The test binary as yad itself, for tests that signal a runner as a
 		// service manager would; the harness it spawns is still the fake.
@@ -315,9 +327,9 @@ func newMachine(t *testing.T, h *e2eHarness) *machine {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { m.hubDB.Close() })
-	// The shortest interval a hub may name, so a cancel reaches the runner
-	// within seconds.
-	m.hub = hub.New(hub.Options{Store: m.hubDB, SyncInterval: hub.MinSyncInterval,
+	// The shortest interval this hub may name, so a cancel reaches the runner
+	// within a poll rather than within seconds.
+	m.hub = hub.New(hub.Options{Store: m.hubDB, SyncInterval: testSyncInterval,
 		Now: func() time.Time { return time.Now().Add(time.Duration(m.skew.Load())) }})
 
 	service := httptest.NewServer(m.hub)

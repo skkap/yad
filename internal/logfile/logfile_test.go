@@ -102,10 +102,13 @@ func TestFollowAcrossRotation(t *testing.T) {
 	l.Write([]byte("before follow\n"))
 
 	var out syncBuf
+	ready := make(chan struct{})
+	followReady = func() { close(ready) }
+	t.Cleanup(func() { followReady = func() {} })
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- Follow(ctx, path, &out) }()
-	time.Sleep(2 * pollEvery) // Follow starts at the end
+	<-ready // watching, from the end: everything below is appended after it
 
 	// Four writes, each rotating, before Follow looks again: the file it
 	// held is rotated out of the three kept, and the lines between it and

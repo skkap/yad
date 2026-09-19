@@ -485,26 +485,45 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 	answersVersion := func(banner string) string {
 		return "case \"$1\" in\n  --version) echo '" + banner + "' ;;\n  *) /bin/sleep 60 ;;\nesac\n"
 	}
+	// A case whose tool answers nothing may have the shortest timeout there is:
+	// however slow the machine, a probe that has not answered by the deadline
+	// is the answer. A case that must first read a version banner may not — it
+	// has to outlast a spawn on a loaded machine, which took over a second
+	// under the full suite (DEV-56).
+	const (
+		nothingToAnswer = 250 * time.Millisecond
+		afterAVersion   = 1500 * time.Millisecond
+	)
 	for _, tc := range []struct {
 		name, id, body string
+		timeout        time.Duration
 		wantErr        string
 		wantVersion    string
 	}{
-		{"git hangs on --version", "git", "/bin/sleep 60\n", "no answer to `git --version`", ""},
-		{"gh hangs on --version", "gh", "/bin/sleep 60\n", "no answer to `gh --version`", ""},
-		{"gh hangs on auth status", "gh", answersVersion("gh version 2.98.0"), "gh auth status", "gh version 2.98.0"},
-		{"docker hangs on the daemon", "docker", answersVersion("Docker version 29.1.3"), "did not answer", "Docker version 29.1.3"},
+		{"git hangs on --version", "git", "/bin/sleep 60\n", nothingToAnswer, "no answer to `git --version`", ""},
+		{"gh hangs on --version", "gh", "/bin/sleep 60\n", nothingToAnswer, "no answer to `gh --version`", ""},
+		{"gh hangs on auth status", "gh", answersVersion("gh version 2.98.0"), afterAVersion, "gh auth status", "gh version 2.98.0"},
+		{"docker hangs on the daemon", "docker", answersVersion("Docker version 29.1.3"), afterAVersion, "did not answer", "Docker version 29.1.3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			old := probeTimeout
-			probeTimeout = 1500 * time.Millisecond
+			probeTimeout = tc.timeout
 			t.Cleanup(func() { probeTimeout = old })
 
 			start := time.Now()
 			d := hanging(t, tc.id, tc.body)
-			// Two probes at most, plus a moment to collect what each printed.
-			if took := time.Since(start); took > 5*time.Second {
-				t.Errorf("took %s; the timeout is not bounding the probe", took)
+			// Three seconds over the timeout in force: enough slack for the
+			// spawns around it on a loaded machine (a shell took 1.4s under the
+			// full suite), and still under the five-second constant, so a probe
+			// that ignored its configured timeout and used the shipped one is
+			// caught here rather than passing a bound wide enough for anything.
+			if took := time.Since(start); took > tc.timeout+3*time.Second {
+				t.Errorf("took %s; the %s timeout is not bounding the probe", took, tc.timeout)
+			}
+			// The report names the timeout it waited, and the only reason to
+			// trust the bound above is that the two are the same value.
+			if !strings.Contains(d.Error, tc.timeout.String()) {
+				t.Errorf("Error = %q, want it to name the %s it waited", d.Error, tc.timeout)
 			}
 			if !d.Present {
 				t.Errorf("a tool that hangs is still installed: %+v", d)

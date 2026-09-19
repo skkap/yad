@@ -51,6 +51,13 @@ func splitLines(b []byte) []string {
 // quarter-second lag is invisible to someone reading logs.
 const pollEvery = 250 * time.Millisecond
 
+// followReady is called once Follow is watching, from the end of the file.
+// A test that appends has to know the follower is in place first, and the only
+// alternative is a sleep long enough to be sure on the slowest machine that
+// will ever run it — which every green run then pays, and a slower one still
+// breaks (DEV-55). Nothing in production assigns it.
+var followReady = func() {}
+
 // Follow writes each whole line appended to the log from its current end,
 // following it across rotation, until ctx ends.
 func Follow(ctx context.Context, path string, w io.Writer) error {
@@ -59,6 +66,7 @@ func Follow(ctx context.Context, path string, w io.Writer) error {
 	if err := t.open(path, true); err != nil {
 		return err
 	}
+	followReady()
 	for {
 		if err := t.drain(); err != nil {
 			return err
