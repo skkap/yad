@@ -22,6 +22,15 @@ func storedDoc(r db.Runner) (v1.Capabilities, error) {
 	return doc, nil
 }
 
+// advertises reports whether a runner's current capability document says it
+// acts on a feature. The document a sync carries is the only current answer:
+// a control queued while the runner advertised more than it does now — a
+// downgrade, a rebuild without a feature — would be ignored, and nothing
+// acknowledges a control, so the hub holds it back rather than spending it.
+func advertises(doc v1.Capabilities, feature string) bool {
+	return slices.Contains(doc.ProtocolFeatures, feature)
+}
+
 // refuseUnadvertised is the answer to a control a runner never said it would
 // act on. Nothing may use a feature the other side did not advertise
 // (ARCHITECTURE.md §2), and a control is not acknowledged: one sent to a
@@ -32,7 +41,7 @@ func refuseUnadvertised(r db.Runner, kind v1.ControlKind, feature, alternative s
 	if err != nil {
 		return err
 	}
-	if slices.Contains(doc.ProtocolFeatures, feature) {
+	if advertises(doc, feature) {
 		return nil
 	}
 	return Fail(http.StatusConflict, v1.CodeConflict,

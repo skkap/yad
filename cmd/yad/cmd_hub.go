@@ -75,6 +75,10 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 	fmt.Fprintf(w, "service API at http://%s%s — submit runs with `yad hub submit` and an admin token from `yad hub admin-token create`\n", ln.Addr(), hubapi.BasePath)
 	if *minVersion != "" {
 		fmt.Fprintf(w, "runners older than yad %s are refused at register and at sync, with the next action `yad upgrade`\n", *minVersion)
+		// A refused runner stops syncing, so whatever it holds stops renewing
+		// too. An operator raising the floor on a working fleet is entitled to
+		// hear that before the sweep records those runs lost.
+		fmt.Fprintln(w, "a runner refused mid-run stops syncing, so the runs it holds lose their leases and are recorded lost — drain it first (`yad hub drain <runner>`) to raise the floor without that")
 	}
 
 	errc := make(chan error, 1)

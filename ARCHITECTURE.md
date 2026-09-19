@@ -264,7 +264,11 @@ action. `yad hub serve --min-version 0.4.0` sets that floor: a runner under it
 is refused at register — before its registration token is burned, so the
 upgraded runner can still use it — and at every sync, with the next action
 `yad upgrade`. The floor rides in the register and sync responses as
-`min_version`, so a runner can say what it is being asked for. Versions are
+`min_version`, so a runner can say what it is being asked for. A runner refused
+mid-run stops syncing, so the runs it holds stop renewing and the sweep records
+them `lost` — raising the floor on a working fleet is a drain first
+([0023](docs/decisions/0023-lost-stands-against-a-late-result.md) makes `lost`
+final, so a result that lands afterwards is refused). Versions are
 compared on the release core alone, because `git describe` writes
 `v0.4.0-4-gabc1234` for a build four commits *after* v0.4.0, which semver would
 sort before it; a version neither side can parse — an unstamped `dev` build, a

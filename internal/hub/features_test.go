@@ -2,6 +2,7 @@ package hub
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -71,10 +72,7 @@ func TestSteerAndInterruptNeedTheFeature(t *testing.T) {
 			t.Fatalf("%s: %d %+v", c.path, code, e)
 		}
 	}
-	kinds := map[v1.ControlKind]bool{}
-	for _, c := range f.mustSync(t, "new", now, req("new", 1, claimed("n1")...)).Controls {
-		kinds[c.Kind] = true
-	}
+	kinds := kindsOf(f.mustSync(t, "new", now, req("new", 1, claimed("n1")...)))
 	if !kinds[v1.ControlSteer] || !kinds[v1.ControlInterrupt] {
 		t.Errorf("controls delivered: %v", kinds)
 	}
@@ -86,15 +84,20 @@ func TestStartAtIsOfferedOnlyToARunnerThatHoldsIt(t *testing.T) {
 	f := newFixture(t)
 	old := f.register(t, "old")
 	f.mustSync(t, "old", old, stale("old", 1))
-	at := f.clock.t.Add(time.Hour)
+	ahead := f.clock.t.Add(time.Hour)
 	later := run("later", "s1")
-	later.StartAt = &at
-	f.enqueue(t, later, run("now", "s2"))
+	later.StartAt = &ahead
+	// A moment already past leaves nothing to hold back, so the gate must not
+	// strand it: a fleet without the feature would keep it queued for good.
+	passed := f.clock.t.Add(-time.Hour)
+	elapsed := run("elapsed", "s3")
+	elapsed.StartAt = &passed
+	f.enqueue(t, later, run("now", "s2"), elapsed)
 
-	// The run with a start time is passed over; the one without is not, so
-	// this is a gate and not a stuck queue.
-	if got := ids(f.mustSync(t, "old", old, req("old", 2)).Runs); len(got) != 1 || got[0] != "now" {
-		t.Fatalf("offered %v to a runner without %q, want only [now]", got, capability.FeatureStartAt)
+	got := ids(f.mustSync(t, "old", old, req("old", 3)).Runs)
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"elapsed", "now"}) {
+		t.Fatalf("offered %v to a runner without %q, want [elapsed now]", got, capability.FeatureStartAt)
 	}
 	if s := f.state(t, "later"); s != "queued" {
 		t.Errorf("run later is %s, want queued", s)
@@ -104,6 +107,92 @@ func TestStartAtIsOfferedOnlyToARunnerThatHoldsIt(t *testing.T) {
 	if got := ids(f.mustSync(t, "r1", cred, first("r1", 2)).Runs); len(got) != 1 || got[0] != "later" {
 		t.Fatalf("offered %v to a runner with %q, want [later]", got, capability.FeatureStartAt)
 	}
+}
+
+// downgraded is a sync carrying a document with one feature taken out of it —
+// a runner restarted under an older binary, which keeps its credential.
+func downgraded(id string, free int, without string) v1.SyncRequest {
+	r := first(id, free)
+	var kept []string
+	for _, f := range r.Capabilities.ProtocolFeatures {
+		if f != without {
+			kept = append(kept, f)
+		}
+	}
+	r.Capabilities.ProtocolFeatures = kept
+	return r
+}
+
+// The enqueue-time check is against the document the runner had then. What
+// reaches it is decided by the document it has now, so a control queued for a
+// runner that has since dropped the feature is held rather than spent on it.
+func TestAControlIsHeldBackFromARunnerThatDowngraded(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	f.held(t, "r1", cred, "a", first("r1", 1))
+	if code, e := f.api(t, "POST", "/runs/a/steer", tok, hubapi.SteerRequest{Text: "try the other file"}, nil); code != http.StatusOK {
+		t.Fatalf("steer: %d %+v", code, e)
+	}
+
+	// The same runner, now reporting a build without steer.
+	down := downgraded("r1", 1, capability.FeatureSteer)
+	down.Runs = claimed("a")
+	if got := kindsOf(f.mustSync(t, "r1", cred, down)); got[v1.ControlSteer] {
+		t.Error("a steer reached a runner that no longer advertises it")
+	}
+	// Held, not dropped: the steer is still there for the runner it was meant
+	// for. A steer delivered twice would be read twice, so this is the only
+	// safe way to answer a downgrade.
+	back := first("r1", 1)
+	back.Runs = claimed("a")
+	if got := kindsOf(f.mustSync(t, "r1", cred, back)); !got[v1.ControlSteer] {
+		t.Error("the steer was lost by the sync that could not deliver it")
+	}
+}
+
+// The same for the two controls a sync emits on its own rather than from the
+// run's queue.
+func TestDrainAndCloseAreHeldBackFromARunnerThatDowngraded(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	f.held(t, "r1", cred, "a", first("r1", 1))
+	for _, path := range []string{"/runners/r1/drain", "/sessions/s-a/close"} {
+		if code, e := f.api(t, "POST", path, tok, nil, nil); code != http.StatusOK {
+			t.Fatalf("%s: %d %+v", path, code, e)
+		}
+	}
+
+	for _, c := range []struct {
+		feature string
+		kind    v1.ControlKind
+	}{
+		{capability.FeatureDrain, v1.ControlDrain},
+		{capability.FeatureCloseSession, v1.ControlCloseSession},
+	} {
+		down := downgraded("r1", 1, c.feature)
+		down.Runs = claimed("a")
+		if got := kindsOf(f.mustSync(t, "r1", cred, down)); got[c.kind] {
+			t.Errorf("a %s reached a runner that no longer advertises %q", c.kind, c.feature)
+		}
+	}
+	// Both requests still stand, and the runner that advertises them again
+	// hears both: neither was answered by a sync that could not deliver it.
+	back := first("r1", 1)
+	back.Runs = claimed("a")
+	got := kindsOf(f.mustSync(t, "r1", cred, back))
+	if !got[v1.ControlDrain] || !got[v1.ControlCloseSession] {
+		t.Errorf("controls after the runner came back: %v", got)
+	}
+}
+
+func kindsOf(res v1.SyncResponse) map[v1.ControlKind]bool {
+	out := map[v1.ControlKind]bool{}
+	for _, c := range res.Controls {
+		out[c.Kind] = true
+	}
+	return out
 }
 
 // Decision 0018: v1 has no self-update. The control name is reserved so the

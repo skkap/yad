@@ -55,7 +55,7 @@ func parseVersion(s string) (version, bool) {
 	var v version
 	for i, p := range parts {
 		n, err := strconv.Atoi(p)
-		if err != nil || n < 0 {
+		if err != nil {
 			return version{}, false
 		}
 		v[i] = n

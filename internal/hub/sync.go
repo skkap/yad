@@ -101,7 +101,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			if err := q.ClearDrain(ctx, runner.ID); err != nil {
 				return err
 			}
-		case runner.DrainRequestedAt.Valid:
+		case runner.DrainRequestedAt.Valid && advertises(doc, capability.FeatureDrain):
 			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlDrain})
 		}
 
@@ -128,7 +128,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 					return err
 				}
 			}
-			controls, err := deliver(ctx, q, run.ID)
+			controls, err := deliver(ctx, q, run.ID, doc)
 			if err != nil {
 				return err
 			}
@@ -154,8 +154,10 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		if err != nil {
 			return err
 		}
-		for _, id := range closing {
-			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlCloseSession, SessionID: id})
+		if advertises(doc, capability.FeatureCloseSession) {
+			for _, id := range closing {
+				out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlCloseSession, SessionID: id})
+			}
 		}
 
 		// Whatever is still offered to this runner was in the last response
@@ -210,9 +212,19 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 		}
 		return ids
 	}
-	// A run that must not start before a moment goes only to a runner that
-	// will hold it back: one without the feature starts it on arrival.
-	holdsStartAt := slices.Contains(doc.ProtocolFeatures, capability.FeatureStartAt)
+	// A run whose start moment is still ahead goes only to a runner that will
+	// hold it back: one without the feature starts it on arrival. Once the
+	// moment has passed there is nothing left to hold, so the run is offered
+	// to anyone — otherwise a fleet of runners without the feature would leave
+	// it queued for good, and nothing else rescues it.
+	//
+	// The skip is here rather than in OfferCandidates, whose comment asks for
+	// the opposite, because the moment lives in the run's JSON spec in
+	// whatever zone the submitter wrote it, and SQLite date maths over that is
+	// a worse bet than a page walked twice. The cost is paid only by a runner
+	// that does not advertise start_at — no yad build produces one — and only
+	// against runs still waiting for their moment.
+	holdsStartAt := advertises(doc, capability.FeatureStartAt)
 	var (
 		runs   []v1.Run
 		cursor db.Run
@@ -246,7 +258,7 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 			if err := json.Unmarshal([]byte(c.Spec), &run); err != nil {
 				return nil, fmt.Errorf("stored run %s: %w", c.ID, err)
 			}
-			if run.StartAt != nil && !holdsStartAt {
+			if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
 				continue
 			}
 			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
