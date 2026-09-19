@@ -265,7 +265,7 @@ components:
             $ref: "#/components/schemas/AccountReport"
           type: array
         error:
-          description: "Why this harness cannot take runs, and the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."
+          description: "Why this harness cannot take runs, and, where the runner can name one, the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."
           type: string
         id:
           type: string

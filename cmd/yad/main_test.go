@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -227,5 +228,62 @@ func TestSessionsOnAFreshProfile(t *testing.T) {
 		if _, err := os.Stat(os.Getenv("YAD_DATA_DIR") + "/state.db"); !os.IsNotExist(err) {
 			t.Errorf("yad %v created the state database", tc.args)
 		}
+	}
+}
+
+// The table's error column is cut to fit, so the message that carries the next
+// action (DEV-60) is printed in full underneath — the footer tells the owner to
+// fix the errors above, and half a sentence is not a fix. The cut itself lands
+// on a rune boundary: both messages carry an em dash, and for `claude` the old
+// byte slice put it across byte 39, printing a replacement character in the
+// first diagnostic anyone runs on a new machine.
+func TestDoctorPrintsTheWholeHarnessError(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+		// viaPATH finds the binary the other way, which is the message whose
+		// em dash lands on the old slice's boundary.
+		viaPATH bool
+	}{
+		{name: "a harness that exits non-zero",
+			body: "#!/bin/sh\necho 'fatal: unable to access https://user:hunter2@proxy.internal/' >&2\nexit 128\n",
+			want: "error: Claude Code — `claude --version` exited with an error — run it on this machine to see why"},
+		{name: "a harness on PATH that will not start", viaPATH: true,
+			body: "#!/nonexistent/interpreter\n",
+			want: "error: Claude Code — claude is installed but will not run — check that the claude PATH resolves to is an executable file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := dir + "/claude"
+			if err := os.WriteFile(bin, []byte(tc.body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("YAD_CONFIG_DIR", t.TempDir())
+			t.Setenv("YAD_DATA_DIR", shortDir(t))
+			noHostTools(t) // and empties PATH
+			if tc.viaPATH {
+				t.Setenv("YAD_CLAUDE_PATH", "")
+				t.Setenv("PATH", dir)
+			} else {
+				t.Setenv("YAD_CLAUDE_PATH", bin)
+			}
+			var o, e bytes.Buffer
+			if code := run(context.Background(), []string{"doctor"}, &o, &e); code != 0 {
+				t.Fatalf("exit %d: %s", code, e.String())
+			}
+			out := o.String()
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("doctor did not print the error in full, want %q:\n%s", tc.want, out)
+			}
+			if !utf8.ValidString(out) || strings.ContainsRune(out, utf8.RuneError) {
+				t.Errorf("doctor printed a broken rune:\n%q", out)
+			}
+			// What the harness printed, and where it lives, stay on the machine
+			// here too.
+			for _, leak := range []string{"hunter2", "proxy.internal", "fatal:", "fork/exec"} {
+				if strings.Contains(out, leak) {
+					t.Errorf("doctor printed %q:\n%s", leak, out)
+				}
+			}
+		})
 	}
 }

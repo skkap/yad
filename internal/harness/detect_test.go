@@ -369,17 +369,30 @@ func TestStartFailureNamesNoPath(t *testing.T) {
 		name string
 		// body and mode make a binary that cannot be started for the reason
 		// this case is about; fromEnv picks which of the two ways detection
-		// finds it, because that is what the next action must name.
-		body, want string
-		mode       os.FileMode
-		fromEnv    bool
+		// finds it, because that is what the next action must name. absent
+		// writes no file at all, which only an override can reach.
+		// want is where the message must send its reader and wantAction is what
+		// it must tell them to do there; wantNot is what it must not say.
+		body, want, wantAction, wantNot string
+		mode                            os.FileMode
+		fromEnv, absent                 bool
 	}{
 		{name: "an override that lost its execute bit", body: "#!/bin/sh\necho 'claude 1.0'\n",
-			mode: 0o644, fromEnv: true, want: "YAD_CLAUDE_PATH"},
+			mode: 0o644, fromEnv: true, want: "YAD_CLAUDE_PATH",
+			wantAction: "unset it and let PATH decide"},
+		// locate does not stat an override, so this reaches the same branch —
+		// which must therefore not claim the harness is installed.
+		{name: "an override naming nothing at all", absent: true, fromEnv: true,
+			want: "YAD_CLAUDE_PATH", wantAction: "unset it and let PATH decide",
+			wantNot: "is installed"},
 		// Found on PATH, so it must be executable to be found at all; what it
 		// cannot do is exec, because the interpreter it names is not there.
+		// "PATH" alone would not discriminate — it is a substring of
+		// YAD_CLAUDE_PATH, so a locate that mistook this for an override would
+		// still satisfy it.
 		{name: "on PATH, naming an interpreter that is gone", body: "#!/nonexistent/interpreter\n",
-			mode: 0o755, want: "PATH"},
+			mode: 0o755, want: "PATH", wantAction: "executable file",
+			wantNot: "YAD_CLAUDE_PATH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -388,8 +401,10 @@ func TestStartFailureNamesNoPath(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(bin, []byte(tc.body), tc.mode); err != nil {
-				t.Fatal(err)
+			if !tc.absent {
+				if err := os.WriteFile(bin, []byte(tc.body), tc.mode); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tc.fromEnv {
 				t.Setenv("PATH", t.TempDir())
@@ -404,6 +419,9 @@ func TestStartFailureNamesNoPath(t *testing.T) {
 			if !d.Present || d.Error == "" {
 				t.Fatalf("claude = %+v, want it present and broken", d)
 			}
+			if tc.wantNot != "" && strings.Contains(d.Error, tc.wantNot) {
+				t.Errorf("Error = %q, want it not to say %q", d.Error, tc.wantNot)
+			}
 			leaks := []string{home, bin, "fork/exec", "/Users/", "permission denied", "no such file"}
 			// The literal above is macOS-only, and this runner deploys on Linux.
 			if realHome != "" && realHome != "/" {
@@ -416,8 +434,8 @@ func TestStartFailureNamesNoPath(t *testing.T) {
 			}
 			// Where to look is half the next action: the name of an override is
 			// safe to print where its value is not.
-			if !strings.Contains(d.Error, tc.want) || !strings.Contains(d.Error, "executable file") {
-				t.Errorf("Error = %q, want the next action naming %s", d.Error, tc.want)
+			if !strings.Contains(d.Error, tc.want) || !strings.Contains(d.Error, tc.wantAction) {
+				t.Errorf("Error = %q, want %q and %q", d.Error, tc.want, tc.wantAction)
 			}
 		})
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"text/tabwriter"
+	"unicode/utf8"
 
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/capability"
@@ -61,6 +62,12 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		return err
 	}
 	for _, d := range found {
+		// In full, because the column above is truncated and what a harness
+		// error carries now is the next action (DEV-60) — the footer below
+		// tells the owner to fix the errors above, so they have to be readable.
+		if d.Error != "" {
+			fmt.Fprintf(w, "\nerror: %s — %s\n", d.Label, d.Error)
+		}
 		for _, warn := range d.Warnings {
 			fmt.Fprintf(w, "\nwarning: %s — %s\n", d.Label, warn)
 		}
@@ -112,9 +119,17 @@ func writeJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
+// truncate cuts to n bytes on a rune boundary. Bytes rather than runes because
+// the column it fills is a byte width, and on the boundary because these
+// strings carry em dashes: a byte cut mid-rune prints a replacement character
+// in the first diagnostic anyone runs on a new machine.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	cut := n - 1
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }

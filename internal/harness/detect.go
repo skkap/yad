@@ -18,11 +18,12 @@ type Detected struct {
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
 	Present bool   `json:"present"`
-	// Error is what is wrong with this harness and what to do about it. It
-	// never carries a word the harness printed, nor the path it was started
-	// from: the capability document reaches every connected hub, and a child's
-	// stderr is unbounded text nobody vetted — a proxy URL with a password in
-	// it, a loader error naming the owner's home (DEV-60).
+	// Error is what is wrong with this harness and, where the runner can name
+	// one, what to do about it. It never carries a word the harness printed,
+	// nor the path it was started from: the capability document reaches every
+	// connected hub, and a child's stderr is unbounded text nobody vetted — a
+	// proxy URL with a password in it, a loader error naming the owner's home
+	// (DEV-60).
 	Error string `json:"error,omitempty"`
 	// Warnings are readiness checks beyond the version probe that failed
 	// without making the harness undrivable; capability.Detect fills them.
@@ -113,20 +114,23 @@ func detectOne(ctx context.Context, h Harness) Detected {
 	return d
 }
 
-// wontStart and wontAnswer are the two things that go wrong with a harness that
-// is installed, said without quoting it. The wrapped exec error names the
+// wontStart and wontAnswer are the two things that go wrong with a harness the
+// runner found, said without quoting it. The wrapped exec error names the
 // binary's absolute path — under /Users/<name> on a Mac, which is the owner's
 // name — and a harness's own stderr is unbounded text nobody vetted: a dyld
 // failure listing libraries under that same home, a proxy URL with a password
 // in it. Neither travels. What a hub can act on is that the harness does not
 // work; what its owner needs is where to look, and an override's *name* is safe
 // where its value is the thing that leaks.
+//
+// The two are worded apart because only one of them may say "installed":
+// locate does not stat an override, so a YAD_<ID>_PATH naming nothing at all
+// reaches here, while PATH has already proved the file is there and executable.
 func wontStart(h Harness, fromEnv bool) string {
-	where := "the " + h.Binary + " that PATH resolves to"
 	if fromEnv {
-		where = h.EnvPath
+		return fmt.Sprintf("%s does not name a %s this runner can start — point it at an executable %s, or unset it and let PATH decide", h.EnvPath, h.Binary, h.Binary)
 	}
-	return fmt.Sprintf("%s is installed but will not run — check that %s names an executable file", h.Binary, where)
+	return fmt.Sprintf("%s is installed but will not run — check that the %s PATH resolves to is an executable file", h.Binary, h.Binary)
 }
 
 func wontAnswer(h Harness) string {
