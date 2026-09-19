@@ -136,7 +136,9 @@ func harnessPID(t *testing.T, file string) int {
 // delivers it. (A run cut short with no cancel under way is reported lost —
 // TestE2ERunnerRestartMidRun.) In every case no harness process is left
 // behind.
-func TestE2EStopSignals(t *testing.T) {
+func TestE2EStopSignals(t *testing.T) { eachHarness(t, testE2EStopSignals) }
+
+func testE2EStopSignals(t *testing.T, h *e2eHarness) {
 	for _, tc := range []struct {
 		name    string
 		signals int
@@ -151,11 +153,11 @@ func TestE2EStopSignals(t *testing.T) {
 		{"three exit now", 3, true, v1.RunCancelled, "runner_stopping"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := newMachine(t)
-			pidFile := filepath.Join(t.TempDir(), "claude.pid")
-			t.Setenv(fakeClaudePID, pidFile)
+			m := newMachine(t, h)
+			pidFile := filepath.Join(t.TempDir(), "harness.pid")
+			t.Setenv(h.pid, pidFile)
 			if tc.deaf {
-				t.Setenv(fakeClaudeDeaf, "1")
+				t.Setenv(h.deaf, "deaf")
 			}
 			m.setDrainWait(time.Hour)
 			m.gated()
@@ -224,8 +226,10 @@ func TestE2EStopSignals(t *testing.T) {
 
 // yad hub drain: the runner hears it at its next sync, lets its run finish,
 // and exits by itself; the run is delivered first.
-func TestE2EHubDrain(t *testing.T) {
-	m := newMachine(t)
+func TestE2EHubDrain(t *testing.T) { eachHarness(t, testE2EHubDrain) }
+
+func testE2EHubDrain(t *testing.T, h *e2eHarness) {
+	m := newMachine(t, h)
 	m.gated()
 	m.submit("e2e-held")
 	d := m.daemon()
@@ -271,8 +275,10 @@ func TestE2EHubDrain(t *testing.T) {
 // yad daemon stop, through the control socket, is the first stop signal: the
 // runner drains — the hub sees it, and offers it nothing — the run it holds
 // finishes and is delivered, and the daemon exits, which is when stop returns.
-func TestE2EDaemonStopDrains(t *testing.T) {
-	m := newMachine(t)
+func TestE2EDaemonStopDrains(t *testing.T) { eachHarness(t, testE2EDaemonStopDrains) }
+
+func testE2EDaemonStopDrains(t *testing.T, h *e2eHarness) {
+	m := newMachine(t, h)
 	m.gated()
 	m.submit("e2e-held")
 	d := m.daemon()
@@ -321,11 +327,13 @@ func TestE2EDaemonStopDrains(t *testing.T) {
 // so the runner kills its own harnesses' process groups and exits by itself,
 // with no SIGKILL and no harness left running. The run was being cancelled and
 // says so once the next start delivers it.
-func TestE2EDaemonStopForce(t *testing.T) {
-	m := newMachine(t)
-	pidFile := filepath.Join(t.TempDir(), "claude.pid")
-	t.Setenv(fakeClaudePID, pidFile)
-	t.Setenv(fakeClaudeDeaf, "1")
+func TestE2EDaemonStopForce(t *testing.T) { eachHarness(t, testE2EDaemonStopForce) }
+
+func testE2EDaemonStopForce(t *testing.T, h *e2eHarness) {
+	m := newMachine(t, h)
+	pidFile := filepath.Join(t.TempDir(), "harness.pid")
+	t.Setenv(h.pid, pidFile)
+	t.Setenv(h.deaf, "deaf")
 	m.setDrainWait(time.Hour)
 	m.gated()
 	m.submit("e2e-held")

@@ -11,10 +11,11 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
-// The Codex adapter through the same path as Claude's: the commands an
-// operator types, yad hub in process, and the test binary started as `codex`,
-// playing conversations recorded from codex 0.147.0 (codextest). Every other
-// end-to-end test is Claude's; parametrising them over the harness is DEV-23.
+// The fake codex's side of the end-to-end tests: the test binary started as
+// `codex`, playing conversations recorded from codex 0.147.0 (codextest).
+// Every end-to-end test runs through it (e2e_harness_test.go); the one here
+// plays the recorded resume, missing rollout and interrupt as recorded, where
+// the others have the fake keep threads itself.
 
 const (
 	codexFixtures = "../../internal/adapter/codex/testdata/codex-0.147.0/"
@@ -67,14 +68,9 @@ func recordedThread(t *testing.T, name string) string {
 // gone fails resume_rejected (decision 0031); and an interrupt from the hub
 // ends a run cancelled.
 func TestE2ECodexSession(t *testing.T) {
-	m := newMachine(t)
-	t.Setenv("YAD_CODEX_PATH", fakeCodexBin(t))
-	schema, err := filepath.Abs(codexSchema)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CODEX_TEST_SCHEMA", schema)
-	t.Setenv("CODEX_TEST_WAIT", "30s")
+	m := newMachine(t, codexE2E)
+	// The thread ids are the recorded ones here.
+	t.Setenv("CODEX_TEST_THREADS", "")
 	log := filepath.Join(t.TempDir(), "codex.log")
 	t.Setenv("CODEX_TEST_LOG", log)
 

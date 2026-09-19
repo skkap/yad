@@ -33,6 +33,8 @@ import (
 // hub's own handler on loopback, as `yad hub serve` serves it; the harness is
 // the real Claude adapter driving a fake claude, which is this test binary
 // replaying a recorded stream. Nothing spends a token or leaves the machine.
+// Each runs once per harness (e2e_harness_test.go): the same paths drive the
+// Codex adapter against the fake codex.
 
 func TestMain(m *testing.M) {
 	if os.Getenv(childYad) != "" {
@@ -281,6 +283,7 @@ func awaitGate(interrupts <-chan string) (string, bool) {
 // token, and the runner's config, credential and state.
 type machine struct {
 	t       *testing.T
+	h       *e2eHarness
 	p       *profile
 	hub     *hub.Hub
 	hubDB   *hubstore.Store
@@ -295,26 +298,18 @@ type machine struct {
 	skew atomic.Int64
 }
 
-func newMachine(t *testing.T) *machine {
+func newMachine(t *testing.T, h *e2eHarness) *machine {
 	t.Helper()
-	m := &machine{t: t, p: newProfile(t)}
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixture, err := filepath.Abs(e2eFixture)
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := &machine{t: t, h: h, p: newProfile(t)}
 	gates := t.TempDir()
 	m.gate, m.atGate = filepath.Join(gates, "open"), filepath.Join(gates, "reached")
-	t.Setenv("YAD_CLAUDE_PATH", self)
-	t.Setenv(fakeClaudeFixture, fixture)
+	h.install(t)
 	// A race-enabled child otherwise sleeps a second at exit.
 	t.Setenv("GORACE", "atexit_sleep_ms=0")
 	// A fake left waiting at its gate by a failed test is let go.
 	t.Cleanup(m.open)
 
+	var err error
 	m.hubDB, err = hubstore.Open(context.Background(), filepath.Join(m.p.data, "hub.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -364,8 +359,8 @@ func (m *machine) ok2(in string, args ...string) string {
 }
 
 func (m *machine) gated() {
-	m.t.Setenv(fakeClaudeGate, m.gate)
-	m.t.Setenv(fakeClaudeAtGate, m.atGate)
+	m.t.Setenv(m.h.gate, m.gate)
+	m.t.Setenv(m.h.atGate, m.atGate)
 }
 
 func (m *machine) open() {
@@ -377,11 +372,17 @@ func (m *machine) open() {
 // submit queues the run the fixture answers, under a chosen id.
 func (m *machine) submit(runID string) {
 	m.t.Helper()
-	out := m.ok("hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku",
-		"--run-id", runID, "Use the Read tool to read note.txt, then reply with its contents only.")
+	out := m.ok(m.submitArgs("--run-id", runID, m.h.instruction)...)
 	if strings.TrimSpace(out) != runID {
 		m.t.Fatalf("submit printed %q, want the run id alone", out)
 	}
+}
+
+// submitArgs is `yad hub submit` for the machine's harness and model.
+func (m *machine) submitArgs(args ...string) []string { return m.submitAs(m.h, args...) }
+
+func (m *machine) submitAs(h *e2eHarness, args ...string) []string {
+	return append([]string{"hub", "submit", "--hub", m.service, "--harness", h.name, "--model", h.model}, args...)
 }
 
 // daemon is `yad daemon start --foreground` until stop.
@@ -510,10 +511,12 @@ func localRun(t *testing.T, s *store.Store, runID string) db.Run {
 }
 
 // The whole path, once: a run submitted to the hub is claimed by the runner,
-// driven through the Claude adapter, streamed, and reported, and the person
+// driven through the harness's adapter, streamed, and reported, and the person
 // watching sees the tool call, the answer and the result.
-func TestE2ERunSucceeds(t *testing.T) {
-	m := newMachine(t)
+func TestE2ERunSucceeds(t *testing.T) { eachHarness(t, testE2ERunSucceeds) }
+
+func testE2ERunSucceeds(t *testing.T, h *e2eHarness) {
+	m := newMachine(t, h)
 	m.submit("e2e-1")
 	d := m.daemon()
 
@@ -521,7 +524,7 @@ func TestE2ERunSucceeds(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
 	}
-	for _, want := range []string{"→ Read", e2eAnswer, "── succeeded in"} {
+	for _, want := range []string{h.tool, e2eAnswer, "── succeeded in"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("watch output lacks %q:\n%s", want, out)
 		}
@@ -558,7 +561,9 @@ func TestE2ERunSucceeds(t *testing.T) {
 // The network drops mid-run and comes back: the run finishes while the hub is
 // out of reach, and every event and the result still land, in order, once it
 // is back — from the runner's spool and outbox, with nothing lost.
-func TestE2ENetworkDropMidRun(t *testing.T) {
+func TestE2ENetworkDropMidRun(t *testing.T) { eachHarness(t, testE2ENetworkDropMidRun) }
+
+func testE2ENetworkDropMidRun(t *testing.T, h *e2eHarness) {
 	for _, tc := range []struct {
 		name string
 		cut  func(*http.Request) bool
@@ -571,7 +576,7 @@ func TestE2ENetworkDropMidRun(t *testing.T) {
 		{"the result", func(r *http.Request) bool { return strings.HasSuffix(r.URL.Path, "/result") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := newMachine(t)
+			m := newMachine(t, h)
 			m.gated()
 			m.submit("e2e-drop")
 			d := m.daemon()
@@ -625,10 +630,12 @@ func TestE2ENetworkDropMidRun(t *testing.T) {
 // streamed before the restart, every one, exactly as the runner held them.
 // The session survives: its native id and its workdir are kept, and the next
 // run in it resumes the conversation in the same directory.
-func TestE2ERunnerRestartMidRun(t *testing.T) {
-	m := newMachine(t)
-	argsFile := filepath.Join(t.TempDir(), "claude.args")
-	t.Setenv(fakeClaudeArgs, argsFile)
+func TestE2ERunnerRestartMidRun(t *testing.T) { eachHarness(t, testE2ERunnerRestartMidRun) }
+
+func testE2ERunnerRestartMidRun(t *testing.T, h *e2eHarness) {
+	m := newMachine(t, h)
+	argsFile := filepath.Join(t.TempDir(), "harness.starts")
+	t.Setenv(h.starts, argsFile)
 	// Uploads are cut from the start, so every event the run streams is
 	// still in the spool when the runner stops: the delivery after the
 	// restart is the only way any of them reaches the hub.
@@ -711,8 +718,7 @@ func TestE2ERunnerRestartMidRun(t *testing.T) {
 	// The next run in the session resumes the conversation where it was,
 	// in the same workdir.
 	m.open()
-	out = m.ok("hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku",
-		"--session", run.SessionID, "--run-id", "e2e-resumed", "Carry on.")
+	out = m.ok(m.submitArgs("--session", run.SessionID, "--run-id", "e2e-resumed", "Carry on.")...)
 	if strings.TrimSpace(out) != "e2e-resumed" {
 		t.Fatalf("submit printed %q", out)
 	}
@@ -734,7 +740,7 @@ func TestE2ERunnerRestartMidRun(t *testing.T) {
 	if len(starts) != 2 {
 		t.Fatalf("the harness started %d times, want 2:\n%s", len(starts), b)
 	}
-	resume := "--resume " + before.NativeID.String
+	resume := h.resumed(before.NativeID.String)
 	if wd, _ := filepath.EvalSymlinks(before.Workdir); !strings.Contains(starts[1], resume) ||
 		!(strings.HasPrefix(starts[1], before.Workdir+" ") || strings.HasPrefix(starts[1], wd+" ")) {
 		t.Errorf("the second start was %q; want %q in %s", starts[1], resume, before.Workdir)
@@ -745,12 +751,14 @@ func TestE2ERunnerRestartMidRun(t *testing.T) {
 // with `yad hub cancel` or `yad hub interrupt`, the runner hears it at its
 // next sync, the harness answers the interrupt, and the run ends cancelled —
 // with the latency measured, the watcher told, and no process left behind.
-func TestE2EStopMidRun(t *testing.T) {
+func TestE2EStopMidRun(t *testing.T) { eachHarness(t, testE2EStopMidRun) }
+
+func testE2EStopMidRun(t *testing.T, h *e2eHarness) {
 	for _, verb := range []string{"cancel", "interrupt"} {
 		t.Run(verb, func(t *testing.T) {
-			m := newMachine(t)
-			pidFile := filepath.Join(t.TempDir(), "claude.pid")
-			t.Setenv(fakeClaudePID, pidFile)
+			m := newMachine(t, h)
+			pidFile := filepath.Join(t.TempDir(), "harness.pid")
+			t.Setenv(h.pid, pidFile)
 			m.gated()
 			runID := "e2e-" + verb
 			m.submit(runID)
@@ -803,17 +811,19 @@ func TestE2EStopMidRun(t *testing.T) {
 // and `yad sessions` shows it. A transcript that is gone makes the next
 // resume fail as resume_rejected, and the session is still listed for the
 // hub to decide about.
-func TestE2ESessionContinues(t *testing.T) {
-	m := newMachine(t)
+func TestE2ESessionContinues(t *testing.T) { eachHarness(t, testE2ESessionContinues) }
+
+func testE2ESessionContinues(t *testing.T, h *e2eHarness) {
+	m := newMachine(t, h)
 	transcripts := t.TempDir()
-	t.Setenv(fakeClaudeTranscripts, transcripts)
-	argsFile := filepath.Join(t.TempDir(), "claude.args")
-	t.Setenv(fakeClaudeArgs, argsFile)
+	h.remember(t, transcripts)
+	argsFile := filepath.Join(t.TempDir(), "harness.starts")
+	t.Setenv(h.starts, argsFile)
 	d := m.daemon()
 	submit := func(runID string, session []string, instruction string) {
 		t.Helper()
-		args := append([]string{"hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku", "--run-id", runID}, session...)
-		if out := m.ok(append(args, instruction)...); strings.TrimSpace(out) != runID {
+		args := m.submitArgs(append(append([]string{"--run-id", runID}, session...), instruction)...)
+		if out := m.ok(args...); strings.TrimSpace(out) != runID {
 			t.Fatalf("submit printed %q", out)
 		}
 	}
@@ -851,7 +861,7 @@ func TestE2ESessionContinues(t *testing.T) {
 	}
 	dir0, _, _ := strings.Cut(starts[0], " ")
 	dir1, _, _ := strings.Cut(starts[1], " ")
-	if dir0 != dir1 || !strings.Contains(starts[0], "--session-id ") || !strings.Contains(starts[1], "--resume ") {
+	if dir0 != dir1 || !strings.Contains(starts[0], h.fresh) || !strings.Contains(starts[1], h.resumed("")) {
 		t.Errorf("starts:\n%s\nwant a new session then a resume, both in one workdir", b)
 	}
 
@@ -888,14 +898,15 @@ func TestE2ESessionContinues(t *testing.T) {
 // goes, the hub hears it and refuses a continuation; and the owner's
 // `yad sessions close` does the same from the runner's side, which the hub
 // hears as closed by the owner.
-func TestE2ESessionsClose(t *testing.T) {
-	m := newMachine(t)
+func TestE2ESessionsClose(t *testing.T) { eachHarness(t, testE2ESessionsClose) }
+
+func testE2ESessionsClose(t *testing.T, h *e2eHarness) {
+	m := newMachine(t, h)
 	d := m.daemon()
 	ctx := context.Background()
 	start := func(runID, sessionID string) string {
 		t.Helper()
-		m.ok("hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku", "--run-id", runID,
-			"--new-session", sessionID, "Use the Read tool to read note.txt, then reply with its contents only.")
+		m.ok(m.submitArgs("--run-id", runID, "--new-session", sessionID, h.instruction)...)
 		if code, out, errs := m.watch(runID); code != 0 {
 			t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
 		}
@@ -935,8 +946,7 @@ func TestE2ESessionsClose(t *testing.T) {
 	}
 	goneFromDisk(byHub)
 	closedOnHub("e2e-by-hub", "closed")
-	code, _, errs := m.p.yad("", "hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku",
-		"--session", "e2e-by-hub", "And now?")
+	code, _, errs := m.p.yad("", m.submitArgs("--session", "e2e-by-hub", "And now?")...)
 	if code == 0 || !strings.Contains(errs, "closed") {
 		t.Errorf("a continuation of the closed session: exit %d: %s", code, errs)
 	}

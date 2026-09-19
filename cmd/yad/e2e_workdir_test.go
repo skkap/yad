@@ -20,7 +20,9 @@ import (
 // harness — which reads the file the hook wrote, in the worktree it was
 // given. The repository is a bare one on disk, inside the root the owner
 // allowed; nothing leaves the machine.
-func TestE2EGitSourceAndSetupHook(t *testing.T) {
+func TestE2EGitSourceAndSetupHook(t *testing.T) { eachHarness(t, testE2EGitSourceAndSetupHook) }
+
+func testE2EGitSourceAndSetupHook(t *testing.T, h *e2eHarness) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git is not installed")
@@ -32,7 +34,7 @@ func TestE2EGitSourceAndSetupHook(t *testing.T) {
 	} {
 		t.Setenv(k, v)
 	}
-	m := newMachine(t)
+	m := newMachine(t, h)
 	// The profile's PATH is an empty directory, so no real harness is found;
 	// the runner gets git there and nothing else.
 	if err := os.Symlink(git, filepath.Join(os.Getenv("PATH"), "git")); err != nil {
@@ -76,12 +78,10 @@ func TestE2EGitSourceAndSetupHook(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	argsFile := filepath.Join(t.TempDir(), "claude.args")
-	t.Setenv(fakeClaudeArgs, argsFile)
-	t.Setenv(fakeClaudeRead, "note.txt")
-	out := m.ok("hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku",
-		"--run-id", "e2e-git", "--git", "file://"+bare, "--branch", "e2e/hooked",
-		"Use the Read tool to read note.txt, then reply with its contents only.")
+	argsFile := filepath.Join(t.TempDir(), "harness.starts")
+	t.Setenv(h.starts, argsFile)
+	t.Setenv(h.read, "note.txt")
+	out := m.ok(m.submitArgs("--run-id", "e2e-git", "--git", "file://"+bare, "--branch", "e2e/hooked", h.instruction)...)
 	if strings.TrimSpace(out) != "e2e-git" {
 		t.Fatalf("submit printed %q", out)
 	}

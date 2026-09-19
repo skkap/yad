@@ -54,8 +54,12 @@ CI. Everything builds with
   recorded fixtures. Nothing in the suite spends a token or needs `claude` or
   `codex` on the box. Tests against real harnesses sit behind the `realharness`
   build tag and `YAD_REAL_HARNESS=1`, and are run by hand when recording new
-  fixtures. `make smoke` runs one real Claude run through `yad hub` end to
-  end; it spends tokens, so it is run by hand, never here or in CI.
+  fixtures. Every end-to-end test runs once per harness, each against its
+  fake. `make smoke` runs one real Claude run through `yad hub` end to end,
+  and `make smoke-codex` one real Codex run (`scripts/smoke.sh <harness>`, the
+  cheapest model unless `SMOKE_MODEL` says otherwise); they spend tokens and
+  need the harness installed and logged in, so they are run by hand, never
+  here or in CI.
 - **No hub is contacted.** The runner is tested against `yad hub` in process.
   There is no test against Zumino or yashiki; `yad conformance <url>` (epic E7)
   is how a real hub is checked, by hand.
