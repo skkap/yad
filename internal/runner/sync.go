@@ -13,7 +13,9 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/capability"
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
@@ -114,6 +116,11 @@ type Loop struct {
 	Log  *slog.Logger
 	// Monitor, when set, hears how every sync went.
 	Monitor *Monitor
+	// Config and Data are what account.Load reads: the owner's account order
+	// and where the homes live. Health reports account state through the same
+	// call the executor picks an account with, so the two cannot disagree.
+	Config config.Config
+	Data   string
 	// Sessions closes sessions for the hub's close_session control and
 	// measures the disk for health. Nil ignores the control, and the hub
 	// hears of no close.
@@ -656,7 +663,49 @@ func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
 	if n, err := l.Store.OutboxDepth(ctx); err == nil {
 		h.OutboxDepth = int(n)
 	}
+	h.Harnesses = l.harnessHealth(ctx)
 	return h
+}
+
+// harnessHealth is every harness this runner can drive, with each of its
+// accounts' state, so a hub can see why a runner is not claiming: an account
+// limited until a reset, or one whose login the owner has to finish, is a
+// reason, and having no accounts at all is not.
+//
+// The states come from account.Load — the same call pickAccount makes, so what
+// health reports and what a claim would actually do cannot disagree. Building
+// them here from store rows instead was how an account whose home had been
+// deleted came out free in health while the capability document, built from
+// Load in the same sync, called it needs_login.
+func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
+	doc := l.Capabilities()
+	accounts, err := account.Load(ctx, l.Store.Queries, l.Data, l.Config)
+	if err != nil {
+		// Reporting every account free because the read failed would be the
+		// one direction that costs something: the hub keeps offering runs for
+		// a harness whose accounts cannot take them, and each is refused after
+		// being claimed. Saying nothing is the honest answer to a question
+		// that did not get one, and health carries no harnesses when empty.
+		l.Log.Warn("could not read account states; this sync reports no harness health", "connection", l.Connection, "err", err)
+		return nil
+	}
+	var out []v1.HarnessHealth
+	for _, hr := range doc.Harnesses {
+		// The predicate a claim uses, not a copy of part of it: a harness
+		// present but unusable — a --version that would not parse — must not
+		// be reported ready to a hub that routes on health.
+		if !capability.Drivable(doc, hr.ID) {
+			continue
+		}
+		hh := v1.HarnessHealth{ID: hr.ID, Accounts: account.Reports(accounts, hr.ID)}
+		// No accounts means the harness runs on its own default home, which
+		// is ready; accounts that all need login or are limited mean it is
+		// not. Acting on that — declining to claim — is DEV-28's.
+		_, usable := account.First(accounts, hr.ID)
+		hh.Ready = len(hh.Accounts) == 0 || usable
+		out = append(out, hh)
+	}
+	return out
 }
 
 // fatal is an answer no retry can change: the owner has to act.

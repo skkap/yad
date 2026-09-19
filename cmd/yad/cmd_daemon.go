@@ -14,6 +14,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter/claude"
 	"github.com/skkap/yad/internal/adapter/codex"
 	"github.com/skkap/yad/internal/buildinfo"
@@ -136,7 +137,16 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	defer signal.Stop(sigs)
 	go runner.OnSignals(runCtx, sigs, drain, stop, log)
 
-	doc := capability.Build(runCtx, id, cfg)
+	// Account states come from the state database, read-only and closed
+	// again: the runner's own store is opened inside runner.Serve, and a
+	// document built before it exists must still name the owner's accounts.
+	// A read that fails is not a reason not to start — the labels are still
+	// reported, free, which is what a runner with no limits would say.
+	accounts, err := account.Read(runCtx, g.paths, cfg)
+	if err != nil {
+		log.Warn("could not read account states; reporting the owner's accounts as free", "err", err)
+	}
+	doc := capability.Build(runCtx, id, cfg, accounts)
 	last := capability.Fingerprint(doc)
 	fmt.Fprintf(w, "runner %s (%s) — profile %s, %s/%s, yad %s, capacity %d\n", doc.Name, id, g.paths.Profile, doc.OS, doc.Arch, doc.YadVersion, cfg.Capacity)
 	if len(cfg.Connections) > 0 {
@@ -211,7 +221,11 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			}
 			return err
 		case t := <-tick.C:
-			next := capability.Build(runCtx, id, cfg)
+			accounts, err := account.Read(runCtx, g.paths, cfg)
+			if err != nil {
+				log.Warn("could not read account states", "err", err)
+			}
+			next := capability.Build(runCtx, id, cfg, accounts)
 			if fp := capability.Fingerprint(next); fp != last {
 				log.Info("capabilities changed", "from", last, "to", fp)
 				fmt.Fprintf(w, "%s capabilities changed %s → %s\n", t.Format(time.TimeOnly), last, fp)

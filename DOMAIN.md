@@ -117,8 +117,9 @@ _See_: [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md),
 **Account** — one harness login (subscription) on a runner, with its own harness
 home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), logged in by the harness's own login.
 Configured by the owner per harness; the free account whose window resets
-soonest takes the next run. An account is free, limited until a reset, or needs
-login. Hubs see an account's label, state and reset time, never its credentials.
+soonest takes the next run. Hubs see an account's label, state and reset time,
+never its credentials.
+_Kinds_: free | limited | needs_login
 _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
 [0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)
 
@@ -300,5 +301,6 @@ per run.
 
 - **Release** — handing a session back to its hub so it can resume on another
   runner (Anthropic's runners have it). Needs a transcript that moves; no consumer
-  asks for it yet.
+  asks for it yet. Not the *release* `yad upgrade` installs: that one is a tagged
+  build of this binary, and the two words only ever meet in this line.
 - **Live** sessions: when, and what idle cost a runner accepts.

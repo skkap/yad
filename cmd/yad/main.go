@@ -70,7 +70,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "doctor":
 		cmdErr = cmdDoctor(ctx, g, rest, stdout)
 	case "harnesses":
-		cmdErr = cmdHarnesses(ctx, g, rest, stdout)
+		cmdErr = cmdHarnesses(ctx, g, rest, stdout, stderr)
 	case "daemon":
 		cmdErr = cmdDaemon(ctx, g, rest, stdout)
 	case "hub":
@@ -83,7 +83,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cmdErr = cmdStatus(ctx, g, rest, stdout)
 	case "sessions":
 		cmdErr = cmdSessions(ctx, g, rest, stdout)
-	case "disconnect", "account", "conformance", "upgrade":
+	case "account":
+		cmdErr = cmdAccount(ctx, g, rest, stdout)
+	case "upgrade":
+		cmdErr = cmdUpgrade(ctx, g, rest, stdout)
+	case "disconnect", "conformance":
 		cmdErr = notYet(cmd, rest)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
@@ -134,6 +138,14 @@ usage: yad [--profile name] <command> [flags]
   sessions close [--connection c] <session>
                       close a session and reclaim its workdir; its hub hears
                       of it. One with a run held closes when the run ends
+  account add <harness> <label>
+                      run the harness's own login in a home of its own, with
+                      you at the terminal; yad keeps no token of its own
+  account list [--json]
+                      the accounts this runner has, and the state of each
+  account remove <harness> <label> [--yes]
+                      delete that account's home and its login; the shared
+                      transcripts are kept
   hub serve           the standalone hub (headless)
   hub token create    a one-time registration token for yad connect
   hub admin-token create|list|revoke
@@ -153,9 +165,14 @@ usage: yad [--profile name] <command> [flags]
   service install|uninstall|status [--profile name]
                       run this profile's runner as a launchd agent or a
                       systemd user unit, as you, restarted after a crash
+  upgrade [--check] [--force] [--tag v]
+                      replace this binary with the newest release, verifying
+                      its checksum first. Nothing upgrades on its own, and a
+                      runner already running keeps the old binary until it is
+                      restarted
   version             version and build
 
-  disconnect · account · conformance
+  disconnect · conformance · account use
                       exist, and each says which epic brings it
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.
