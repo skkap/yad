@@ -11,6 +11,9 @@ import (
 	"testing"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/hostool"
 )
 
 // shortDir is a private temporary directory short enough to hold the
@@ -26,11 +29,36 @@ func shortDir(t *testing.T) string {
 	return dir
 }
 
+// noHostTools puts the host-tool probes out of reach. An empty PATH is not the
+// whole of it (ARCHITECTURE.md §7): a path override is consulted first, so a
+// developer with YAD_GH_PATH exported would have `yad harnesses` and every
+// daemon tick probe the real gh — and `gh auth status` is an authenticated
+// request to github.com with that owner's token. Harness overrides are left
+// alone here: a test that wants a fake claude sets one and then calls a helper
+// that runs the command straight away.
+func noHostTools(t *testing.T) {
+	t.Helper()
+	t.Setenv("PATH", t.TempDir())
+	for _, tool := range hostool.Catalog() {
+		t.Setenv(tool.EnvPath, "")
+	}
+}
+
+// noTools also clears the harness overrides, for the helpers that only set a
+// profile up: whatever they run comes later, and sets its own.
+func noTools(t *testing.T) {
+	t.Helper()
+	noHostTools(t)
+	for _, h := range harness.Catalog() {
+		t.Setenv(h.EnvPath, "")
+	}
+}
+
 func yad(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	t.Setenv("YAD_CONFIG_DIR", t.TempDir())
 	t.Setenv("YAD_DATA_DIR", shortDir(t))
-	t.Setenv("PATH", t.TempDir())
+	noHostTools(t)
 	var out, errb bytes.Buffer
 	code := run(context.Background(), args, &out, &errb)
 	return code, out.String(), errb.String()
