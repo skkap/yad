@@ -158,7 +158,7 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 	// prefix below matches — and the account is parked on the strength of a
 	// timeout. harness.detectOne tracks the same distinction for --version.
 	if ctx.Err() != nil {
-		return false, fmt.Errorf("%s did not answer whether %s holds a login within %s — run `%s %v` there to see what it does", harness, home, statusTimeout, binary, args)
+		return false, fmt.Errorf("%s did not answer whether %s holds a login within %s — run `%s %s` there to see what it does", harness, home, statusTimeout, binary, strings.Join(args, " "))
 	}
 
 	switch harness {
@@ -173,10 +173,10 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 		// Anything else is a question that did not get an answer, and an
 		// unanswered question is not a "no". The message deliberately carries
 		// none of what the command printed.
-		return false, fmt.Errorf("could not read codex's login state for the home %s — run `%s %v` there to see what it says", home, binary, args)
+		return false, fmt.Errorf("could not read codex's login state for the home %s — run `%s %s` there to see what it says", home, binary, strings.Join(args, " "))
 	default:
 		if err != nil {
-			return false, fmt.Errorf("`%s %v` failed in %s: %w", binary, args, home, err)
+			return false, fmt.Errorf("`%s %s` failed in %s: %w", binary, strings.Join(args, " "), home, err)
 		}
 		// Only this one field is decoded. A version that stops answering in
 		// JSON is an error rather than a guess: reporting an account free
@@ -186,7 +186,7 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 			LoggedIn *bool `json:"loggedIn"`
 		}
 		if err := json.Unmarshal(stdout, &s); err != nil || s.LoggedIn == nil {
-			return false, fmt.Errorf("could not read %s's login state for the home %s — run `%s %v` there to see what it says", harness, home, binary, args)
+			return false, fmt.Errorf("could not read %s's login state for the home %s — run `%s %s` there to see what it says", harness, home, binary, strings.Join(args, " "))
 		}
 		return *s.LoggedIn, nil
 	}

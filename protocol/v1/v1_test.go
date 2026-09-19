@@ -292,7 +292,11 @@ func TestAccountReportStaysOptionalForOlderRunners(t *testing.T) {
 	if j := bytes.Index(block, []byte("\n    Ack:")); j >= 0 {
 		block = block[:j]
 	}
-	req := block[bytes.Index(block, []byte("required:")):]
+	at := bytes.Index(block, []byte("required:"))
+	if at < 0 {
+		t.Fatalf("AccountReport has no required list at all:\n%s", block)
+	}
+	req := block[at:]
 	if bytes.Contains(req, []byte("- state")) {
 		t.Errorf("AccountReport requires state, so a runner from before the field cannot register:\n%s", req)
 	}
@@ -300,8 +304,14 @@ func TestAccountReportStaysOptionalForOlderRunners(t *testing.T) {
 		t.Errorf("AccountReport no longer requires label:\n%s", req)
 	}
 
-	// And the value itself is still constrained, so optional does not mean
-	// a hub may see something outside the set.
+	// Optional in the schema still means constrained when present: the enum
+	// has to be published, or a hub gains no way to reject a value outside
+	// the set.
+	if !bytes.Contains(block, []byte("- needs_login")) {
+		t.Errorf("AccountReport.state publishes no enum:\n%s", block)
+	}
+	// And an older runner's account object, which carries no state at all,
+	// still decodes.
 	var rep AccountReport
 	if err := json.Unmarshal([]byte(`{"label":"work"}`), &rep); err != nil {
 		t.Fatalf("an older runner's account object no longer decodes: %v", err)

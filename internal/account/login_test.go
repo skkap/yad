@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The test binary doubles as the harness. Re-executed with
@@ -72,6 +73,18 @@ func fakeHarness(id string, args []string) int {
 		fmt.Println(string(b))
 		return 0
 	case "login status":
+		// Prints the logged-out phrase and then hangs, so the deadline kills
+		// it: the exit the supervisor produces is an *exec.ExitError and the
+		// output carries the prefix, which together used to be read as a
+		// definitive answer.
+		if os.Getenv("ACCOUNT_TEST_HANG_AFTER_PHRASE") != "" {
+			fmt.Println(codexLoggedOut + " — and now this hangs")
+			// Not select{}: with no other goroutine Go turns that into an
+			// immediate deadlock panic, and the child would exit at once
+			// rather than hang.
+			time.Sleep(5 * time.Minute)
+			return 1
+		}
 		// codex exits 1 both for a missing login and for a home it could not
 		// read; only what it printed tells the two apart.
 		if os.Getenv("ACCOUNT_TEST_BROKEN_HOME") != "" {
@@ -305,4 +318,40 @@ func TestALoginCheckThatCannotAnswerIsAnError(t *testing.T) {
 			t.Errorf("the error quotes what the command printed: %v", err)
 		}
 	})
+}
+
+// A check its own deadline killed answered nothing, whatever it printed first.
+//
+// This is the narrow case the phrase match opened: the supervisor kills the
+// child, Wait returns an *exec.ExitError, and the output already begins with
+// the logged-out phrase — so without the deadline check the account would be
+// parked on the strength of a timeout, which is what the rest of this file
+// exists to prevent.
+func TestATimedOutCheckIsNotAnAnswer(t *testing.T) {
+	bin := self(t, "codex")
+	t.Setenv("ACCOUNT_TEST_HANG_AFTER_PHRASE", "1")
+	data := t.TempDir()
+	home, err := Ensure(data, "codex", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The login is there; only the check cannot finish.
+	if err := os.WriteFile(filepath.Join(home, credentialFile), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A deadline of the test's own, so this does not wait out statusTimeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	in, err := LoggedIn(ctx, "codex", bin, home)
+	if err == nil {
+		t.Fatalf("a check killed by its deadline was read as an answer: in=%v", in)
+	}
+	if in {
+		t.Error("an error answer also said the home was logged in")
+	}
+	// The message names a command the owner can actually run.
+	if strings.Contains(err.Error(), "[") {
+		t.Errorf("the next action prints argv as a Go slice, so it is not runnable: %v", err)
+	}
 }

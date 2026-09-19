@@ -131,7 +131,7 @@ plain-text 404 or 405.
 ```
 → { runner_id, fingerprint, capabilities?,        // document only when asked
     health: { load, free_capacity: {total, by_harness}, disk_free_bytes,
-              harnesses: [{id, ready, accounts: [{label, state, limited_until?}]}],
+              harnesses: [{id, ready, accounts: [{label, state?, limited_until?}]}],
               spool_depth, outbox_depth, recent_errors[], draining? },
     runs: [{ run_id, state, resumes_at?, reason? }],    // every run held
     closed_sessions: [{ session_id, reason, closed_at }] }  // until answered
@@ -141,7 +141,9 @@ plain-text 404 or 405.
     min_version? }
 ```
 
-- **Account state**: `free`, `limited` (until `limited_until`) or `needs_login`
+- **Account state**: `free`, `limited` (until `limited_until`) or `needs_login`,
+  and optional — a runner from before the field omits it, and a hub must not
+  refuse one that does. Absent means the runner cannot say.
   — a home whose login the owner has to finish. A limited account and one that
   needs login are both skipped for runs; `ready` is whether a harness has a free
   account, or no accounts at all, in which case it runs on the harness's own

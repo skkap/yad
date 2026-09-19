@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -445,6 +446,7 @@ func TestTheTranscriptLinkIsNeverObservedMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Atomic replace, so the breaker never creates a gap of its own.
+	var swaps atomic.Int64
 	swapTo := func(target string) {
 		tmp, err := os.MkdirTemp(filepath.Dir(link), ".swap-")
 		if err != nil {
@@ -452,8 +454,8 @@ func TestTheTranscriptLinkIsNeverObservedMissing(t *testing.T) {
 		}
 		defer os.RemoveAll(tmp)
 		staged := filepath.Join(tmp, "link")
-		if os.Symlink(target, staged) == nil {
-			os.Rename(staged, link)
+		if os.Symlink(target, staged) == nil && os.Rename(staged, link) == nil {
+			swaps.Add(1)
 		}
 	}
 
@@ -513,6 +515,13 @@ func TestTheTranscriptLinkIsNeverObservedMissing(t *testing.T) {
 	case g := <-gaps:
 		t.Errorf("the link was missing while a run was re-linking it: %s", g)
 	default:
+	}
+	// Without a breaker that actually broke it, every Ensure returned at the
+	// already-correct check and nothing was contended — which is how the
+	// first version of this test passed against the code it was written to
+	// catch.
+	if n := swaps.Load(); n == 0 {
+		t.Error("the breaker never re-pointed the link, so no racer had to re-link and this test proved nothing")
 	}
 	// The breaker may have won the last write; what matters is that a final
 	// Ensure lands it back on the shared directory.
