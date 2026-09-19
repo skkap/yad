@@ -162,6 +162,10 @@ func (c *Collector) Close(ctx context.Context, connection, id string, reason v1.
 	}
 	if closed {
 		c.Wake()
+		// A reason asked for earlier, while a run was held, is the one kept.
+		if sess.CloseReason.Valid {
+			reason = v1.SessionCloseReason(sess.CloseReason.String)
+		}
 		return CloseResult{Outcome: CloseDone, Reason: reason, ClosedAt: c.Clock.Now().UTC()}, nil
 	}
 	now := c.Clock.Now().UnixMilli()
@@ -180,7 +184,11 @@ func (c *Collector) Close(ctx context.Context, connection, id string, reason v1.
 		// finds the request with nothing held, and closes it.
 		c.Wake()
 	}
-	c.Log.Info("session closes when its run ends", "connection", connection, "session", id, "reason", reason, "run", live)
+	// A hub repeats close_session on every sync until it hears the close;
+	// only the first request is news.
+	if !sess.CloseRequestedAt.Valid {
+		c.Log.Info("session closes when its run ends", "connection", connection, "session", id, "reason", reason, "run", live)
+	}
 	return CloseResult{Outcome: CloseWaiting, LiveRun: live}, nil
 }
 
@@ -225,7 +233,7 @@ func (c *Collector) Sweep(ctx context.Context) error {
 // expire closes every session idle past the TTL.
 func (c *Collector) expire(ctx context.Context, now time.Time) error {
 	for {
-		idle, err := c.Store.IdleSessions(ctx, db.IdleSessionsParams{IdleSince: now.Add(-c.IdleTTL).UnixMilli(), Max: sweepPage})
+		idle, err := c.Store.IdleSessions(ctx, db.IdleSessionsParams{IdleSince: now.Add(-c.IdleTTL).UnixMilli(), WithWorkdir: 0, Max: sweepPage})
 		if err != nil {
 			return err
 		}
@@ -257,24 +265,34 @@ func (c *Collector) relieve(ctx context.Context, now time.Time) error {
 	if free >= c.DiskFloor {
 		return nil
 	}
-	idle, err := c.Store.IdleSessions(ctx, db.IdleSessionsParams{IdleSince: now.Add(-diskGrace).UnixMilli(), Max: sweepPage})
-	if err != nil {
-		return err
-	}
-	for _, s := range idle {
-		if s.Workdir == "" {
-			continue
-		}
-		c.Log.Warn("the disk under the workdirs is below its floor; closing the longest idle session",
-			"free_bytes", free, "floor_bytes", c.DiskFloor, "connection", s.Connection, "session", s.ID)
-		if _, err := c.closeNow(ctx, s, v1.SessionDiskPressure, true); err != nil {
+	for {
+		idle, err := c.Store.IdleSessions(ctx, db.IdleSessionsParams{IdleSince: now.Add(-diskGrace).UnixMilli(), WithWorkdir: 1, Max: sweepPage})
+		if err != nil {
 			return err
 		}
-		if free, err = c.DiskFree(c.Workdirs); err != nil {
-			return fmt.Errorf("measuring the free space under %s: %w", c.Workdirs, err)
+		closed := 0
+		for _, s := range idle {
+			ok, err := c.closeNow(ctx, s, v1.SessionDiskPressure, true)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
+			closed++
+			c.Log.Warn("the disk under the workdirs was below its floor; closed the longest idle session",
+				"free_bytes", free, "floor_bytes", c.DiskFloor, "connection", s.Connection, "session", s.ID)
+			if free, err = c.DiskFree(c.Workdirs); err != nil {
+				return fmt.Errorf("measuring the free space under %s: %w", c.Workdirs, err)
+			}
+			if free >= c.DiskFloor {
+				return nil
+			}
 		}
-		if free >= c.DiskFloor {
-			return nil
+		// Each page closes what it can and the next starts past it; a page
+		// that closed nothing would come back the same.
+		if len(idle) < sweepPage || closed == 0 {
+			break
 		}
 	}
 	c.Log.Warn("the disk under the workdirs is below its floor and no idle session is left to reclaim — free space on it, or lower sessions.disk_floor",

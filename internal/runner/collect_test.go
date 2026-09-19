@@ -1,11 +1,15 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -417,5 +421,67 @@ func TestWithin(t *testing.T) {
 		if got := within("/d/workdirs", tc.dir); got != tc.want {
 			t.Errorf("within(%q) = %v, want %v", tc.dir, got, tc.want)
 		}
+	}
+}
+
+// Whichever close is asked for first — the owner's or the hub's — is the
+// reason kept, including when the second arrives after the run ended and
+// before a sweep took the first; and the repeat the hub sends on every sync
+// is logged once.
+func TestTheFirstReasonStands(t *testing.T) {
+	for _, tc := range []struct{ first, second v1.SessionCloseReason }{
+		{v1.SessionClosedByOwner, v1.SessionClosed},
+		{v1.SessionClosed, v1.SessionClosedByOwner},
+	} {
+		t.Run(string(tc.first), func(t *testing.T) {
+			e := newCollectEnv(t)
+			ctx := context.Background()
+			var logs bytes.Buffer
+			e.c.Log = slog.New(slog.NewTextHandler(&logs, nil))
+			e.session(t, "s1", time.Hour, 0, "running")
+			for range 3 {
+				if res, err := e.c.Close(ctx, "hub", "s1", tc.first); err != nil || res.Outcome != CloseWaiting {
+					t.Fatalf("close = %+v, %v", res, err)
+				}
+			}
+			if n := strings.Count(logs.String(), "session closes when its run ends"); n != 1 {
+				t.Errorf("the waiting close was logged %d times, want once:\n%s", n, logs.String())
+			}
+			if err := e.store.SetRunState(ctx, db.SetRunStateParams{State: "succeeded", UpdatedAt: 2, Connection: "hub", ID: "s1-run"}); err != nil {
+				t.Fatal(err)
+			}
+			res, err := e.c.Close(ctx, "hub", "s1", tc.second)
+			if err != nil || res.Outcome != CloseDone || res.Reason != tc.first {
+				t.Errorf("the second close = %+v, %v; want closed for %s", res, err, tc.first)
+			}
+			if s := e.get(t, "s1"); s.CloseReason.String != string(tc.first) {
+				t.Errorf("recorded %q, want %q", s.CloseReason.String, tc.first)
+			}
+		})
+	}
+}
+
+// Sessions with no workdir free nothing, so they never fill disk pressure's
+// page ahead of one that would.
+func TestDiskPressurePassesSessionsWithNoWorkdir(t *testing.T) {
+	e := newCollectEnv(t)
+	ctx := context.Background()
+	e.c.DiskFloor = 500
+	e.capacity = 450
+	for i := range sweepPage + 10 {
+		if err := e.store.CreateSession(ctx, db.CreateSessionParams{
+			Connection: "hub", ID: fmt.Sprintf("empty-%03d", i), Harness: "claude", CreatedAt: 1,
+			LastUsedAt: e.clock.Now().Add(-100 * time.Hour).UnixMilli(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := e.session(t, "full", 2*time.Hour, 100, "")
+	e.sweep(t)
+	if !gone(dir) || !slices.Equal(e.reclaims, []string{"full"}) {
+		t.Errorf("reclaimed %v, workdir gone %v", e.reclaims, gone(dir))
+	}
+	if s := e.get(t, "empty-000"); s.State != "open" {
+		t.Errorf("a session with no workdir was closed for disk: %+v", s)
 	}
 }

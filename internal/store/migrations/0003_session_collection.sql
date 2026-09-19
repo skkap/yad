@@ -4,8 +4,10 @@
 -- is tried again, so closed and reclaimed are separate facts. Its hub is told
 -- in every sync until one carrying it is answered.
 --
--- 0002 is left to the git sources work (DEV-16/17) should it need one; the
--- runner applies migrations by number and skips none it has not seen.
+-- 0002 was set aside for the git sources work (DEV-16/17), which needed none,
+-- and is retired: migrate applies only numbers above a database's schema
+-- version, so a 0002 written after this one would be skipped on every database
+-- already at 3. TestMigrationNumbering holds that line.
 
 -- Why the session closed: closed | closed_by_owner | expired | disk_pressure
 -- (protocol/v1 SessionCloseReason). Set with close_requested_at while a run

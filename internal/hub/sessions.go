@@ -86,7 +86,7 @@ func (h *Hub) registerSessions(api huma.API) {
 				if !slices.Contains(doc.ProtocolFeatures, capability.FeatureCloseSession) {
 					return Fail(http.StatusConflict, v1.CodeConflict,
 						fmt.Sprintf("session %s is on runner %s, which does not advertise the %q feature; it would ignore the control", sess.ID, r.ID, capability.FeatureCloseSession),
-						"upgrade yad on that runner, or close it there with `yad sessions close`")
+						"upgrade yad on that runner — until then its workdir stays on its disk; a run naming a new session starts fresh")
 				}
 				if err := q.RequestSessionClose(ctx, db.RequestSessionCloseParams{Now: sql.NullInt64{Int64: store.Ms(now), Valid: true}, ID: sess.ID}); err != nil {
 					return err

@@ -22,9 +22,9 @@ UPDATE sessions SET state = ?, last_used_at = ? WHERE connection = ? AND id = ?;
 -- open whatever else is true: its workdir is in use. The close is one
 -- statement, so a claim cannot slip a run into the session between the check
 -- and the write; it answers 0 rows when a run is held or the session is not
--- open.
+-- open. A reason already asked for while a run was held stands.
 -- name: CloseSession :execrows
-UPDATE sessions SET state = sqlc.arg(state), close_reason = sqlc.arg(reason), closed_at = sqlc.arg(now),
+UPDATE sessions SET state = sqlc.arg(state), close_reason = COALESCE(close_reason, sqlc.arg(reason)), closed_at = sqlc.arg(now),
   close_requested_at = NULL
 WHERE sessions.connection = sqlc.arg(connection) AND sessions.id = sqlc.arg(id) AND sessions.state = 'open'
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id
@@ -54,9 +54,12 @@ ORDER BY s.close_requested_at;
 UPDATE sessions SET last_used_at = sqlc.arg(now) WHERE state = 'open' AND last_used_at <= 0;
 
 -- Open sessions nothing has run in since before idle_since, longest idle
--- first: the idle TTL's and disk pressure's candidates.
+-- first: the idle TTL's and disk pressure's candidates. Disk pressure asks
+-- only for sessions with a workdir, since the rest free nothing and would
+-- fill its page.
 -- name: IdleSessions :many
 SELECT * FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < sqlc.arg(idle_since)
+  AND (sqlc.arg(with_workdir) = 0 OR s.workdir != '')
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
     AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
 ORDER BY s.last_used_at, s.connection, s.id

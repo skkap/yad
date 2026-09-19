@@ -50,7 +50,7 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) error 
 }
 
 const closeSession = `-- name: CloseSession :execrows
-UPDATE sessions SET state = ?1, close_reason = ?2, closed_at = ?3,
+UPDATE sessions SET state = ?1, close_reason = COALESCE(close_reason, ?2), closed_at = ?3,
   close_requested_at = NULL
 WHERE sessions.connection = ?4 AND sessions.id = ?5 AND sessions.state = 'open'
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id
@@ -70,7 +70,7 @@ type CloseSessionParams struct {
 // open whatever else is true: its workdir is in use. The close is one
 // statement, so a claim cannot slip a run into the session between the check
 // and the write; it answers 0 rows when a run is held or the session is not
-// open.
+// open. A reason already asked for while a run was held stands.
 func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, closeSession,
 		arg.State,
@@ -366,21 +366,25 @@ func (q *Queries) HeldRunInSession(ctx context.Context, arg HeldRunInSessionPara
 
 const idleSessions = `-- name: IdleSessions :many
 SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < ?1
+  AND (?2 = 0 OR s.workdir != '')
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
     AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
 ORDER BY s.last_used_at, s.connection, s.id
-LIMIT ?2
+LIMIT ?3
 `
 
 type IdleSessionsParams struct {
-	IdleSince int64
-	Max       int64
+	IdleSince   int64
+	WithWorkdir interface{}
+	Max         int64
 }
 
 // Open sessions nothing has run in since before idle_since, longest idle
-// first: the idle TTL's and disk pressure's candidates.
+// first: the idle TTL's and disk pressure's candidates. Disk pressure asks
+// only for sessions with a workdir, since the rest free nothing and would
+// fill its page.
 func (q *Queries) IdleSessions(ctx context.Context, arg IdleSessionsParams) ([]Session, error) {
-	rows, err := q.db.QueryContext(ctx, idleSessions, arg.IdleSince, arg.Max)
+	rows, err := q.db.QueryContext(ctx, idleSessions, arg.IdleSince, arg.WithWorkdir, arg.Max)
 	if err != nil {
 		return nil, err
 	}

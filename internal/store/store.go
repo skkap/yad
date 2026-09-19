@@ -18,6 +18,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -197,6 +198,43 @@ func migrationNumber(name string) (int, error) {
 		return 0, fmt.Errorf("migration %s has no numeric prefix", name)
 	}
 	return n, nil
+}
+
+// CheckNumbering fails unless the migrations in fsys are numbered 1, 2, 3 …
+// with no number used twice and no gap but the retired ones. migrate applies
+// a file only when its number is above the database's schema version, so a
+// file added later under a number below the latest — a gap filled, or a
+// number taken twice by two branches — is skipped on every database already
+// past it, silently. A retired number is one that must never be used: each
+// package's test names its own, with the reason.
+func CheckNumbering(fsys fs.FS, retired ...int) error {
+	files, err := fs.Glob(fsys, "migrations/*.sql")
+	if err != nil {
+		return err
+	}
+	seen := map[int]string{}
+	latest := 0
+	for _, name := range files {
+		n, err := migrationNumber(name)
+		if err != nil {
+			return err
+		}
+		if prev, ok := seen[n]; ok {
+			return fmt.Errorf("migrations %s and %s share the number %d — renumber the newer one above %d", prev, name, n, len(files))
+		}
+		seen[n] = name
+		latest = max(latest, n)
+	}
+	for n := 1; n <= latest; n++ {
+		_, used := seen[n]
+		switch {
+		case used && slices.Contains(retired, n):
+			return fmt.Errorf("migration %s uses retired number %d, which databases past it will never apply — renumber it %d", seen[n], n, latest+1)
+		case !used && !slices.Contains(retired, n):
+			return fmt.Errorf("migrations skip number %d — a file added under it later would never be applied; renumber, or retire it with the reason", n)
+		}
+	}
+	return nil
 }
 
 // latestVersion is the schema version the embedded migrations end at.

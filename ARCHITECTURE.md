@@ -400,8 +400,10 @@ harness process. Recording new ones is a manual step, behind a build tag
   Neither moves the pointer or closes the session; the hub decides —
   [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md).
 - **One live run per session**, enforced by the store. A run continuing a
-  session this runner does not hold, of another harness, or closed, is refused
-  at the claim (`refused`, [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md)).
+  session this runner does not hold, or of another harness, is refused at the
+  claim (`refused`, [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md));
+  one in a closed or closing session with `session_closed`
+  ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md)).
 - **Workdir** per session under `<data>/workdirs/<connection>/<session>/`, kept
   across its runs and never deleted by one —
   [0032](docs/decisions/0032-a-workdir-belongs-to-its-session.md). The session
