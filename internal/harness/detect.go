@@ -18,7 +18,12 @@ type Detected struct {
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
 	Present bool   `json:"present"`
-	Error   string `json:"error,omitempty"`
+	// Error is what is wrong with this harness and what to do about it. It
+	// never carries a word the harness printed, nor the path it was started
+	// from: the capability document reaches every connected hub, and a child's
+	// stderr is unbounded text nobody vetted — a proxy URL with a password in
+	// it, a loader error naming the owner's home (DEV-60).
+	Error string `json:"error,omitempty"`
 	// Warnings are readiness checks beyond the version probe that failed
 	// without making the harness undrivable; capability.Detect fills them.
 	Warnings []string `json:"warnings,omitempty"`
@@ -65,22 +70,26 @@ func Locate(id string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return locate(h)
+	path, _, found := locate(h)
+	return path, found
 }
 
-func locate(h Harness) (string, bool) {
+// locate says where the binary is and which of the two places it came from.
+// Which one is what a broken harness's report sends its owner to: the override
+// they set, or whatever PATH resolved.
+func locate(h Harness) (path string, fromEnv, found bool) {
 	if path := os.Getenv(h.EnvPath); path != "" {
-		return path, true
+		return path, true, true
 	}
 	path, err := exec.LookPath(h.Binary)
-	return path, err == nil
+	return path, false, err == nil
 }
 
 func detectOne(ctx context.Context, h Harness) Detected {
 	d := Detected{Harness: h}
 
-	path, ok := locate(h)
-	if !ok {
+	path, fromEnv, found := locate(h)
+	if !found {
 		return d // absent, and that is not an error
 	}
 	d.Path, d.Present = path, true
@@ -93,15 +102,35 @@ func detectOne(ctx context.Context, h Harness) Detected {
 	out, err := supervise.Run(ctx, supervise.Spec{Path: path, Args: h.VersionArgs}, versionOutputCap)
 	switch {
 	case err != nil:
-		d.Error = err.Error()
+		d.Error = wontStart(h, fromEnv)
 	case out.TimedOut:
 		d.Error = fmt.Sprintf("no answer to %s within %s", strings.Join(h.VersionArgs, " "), versionTimeout)
 	case out.Err != nil:
-		d.Error = strings.TrimSpace(out.Err.Error() + " " + out.Stderr)
+		d.Error = wontAnswer(h)
 	default:
 		d.Version = ParseVersion(string(out.Stdout))
 	}
 	return d
+}
+
+// wontStart and wontAnswer are the two things that go wrong with a harness that
+// is installed, said without quoting it. The wrapped exec error names the
+// binary's absolute path — under /Users/<name> on a Mac, which is the owner's
+// name — and a harness's own stderr is unbounded text nobody vetted: a dyld
+// failure listing libraries under that same home, a proxy URL with a password
+// in it. Neither travels. What a hub can act on is that the harness does not
+// work; what its owner needs is where to look, and an override's *name* is safe
+// where its value is the thing that leaks.
+func wontStart(h Harness, fromEnv bool) string {
+	where := "the " + h.Binary + " that PATH resolves to"
+	if fromEnv {
+		where = h.EnvPath
+	}
+	return fmt.Sprintf("%s is installed but will not run — check that %s names an executable file", h.Binary, where)
+}
+
+func wontAnswer(h Harness) string {
+	return fmt.Sprintf("`%s %s` exited with an error — run it on this machine to see why", h.Binary, strings.Join(h.VersionArgs, " "))
 }
 
 // ParseVersion reduces a CLI's version banner to one line.

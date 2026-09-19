@@ -254,10 +254,13 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 			wantVersion: "codex-cli 1.0"},
 		{name: "exits 0, detached child holds stdout", body: detached + "echo 'codex-cli 1.0'\n",
 			wantVersion: "codex-cli 1.0"},
+		// The status and the stderr these two used to be asserted on are the
+		// leak DEV-60 closed; what the report says now is the command and the
+		// next action, and the check below proves the child's words are gone.
 		{name: "exits 3", body: "echo oops >&2\nexit 3\n",
-			wantErr: "exit status 3"},
+			wantErr: "`codex --version` exited with an error"},
 		{name: "exits 3, detached child holds stdout", body: detached + "exit 3\n",
-			wantErr: "exit status 3"},
+			wantErr: "`codex --version` exited with an error"},
 		{name: "hangs", body: "sleep 60\n",
 			wantErr: "no answer", waitsItOut: true},
 		{name: "hangs, detached child holds stdout", body: detached + "sleep 60\n",
@@ -312,6 +315,13 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 			if (tc.wantErr == "") != (d.Error == "") || !strings.Contains(d.Error, tc.wantErr) {
 				t.Errorf("Error = %q, want %q", d.Error, tc.wantErr)
 			}
+			// Whatever the leader's fate, nothing it printed and no wrapped
+			// exit status travels: the report goes to every connected hub.
+			for _, leak := range []string{"oops", "exit status"} {
+				if strings.Contains(d.Error, leak) {
+					t.Errorf("Error carries %q: %q", leak, d.Error)
+				}
+			}
 		})
 	}
 }
@@ -343,5 +353,100 @@ func waitForPIDs(t *testing.T, path string) {
 		if time.Now().After(deadline) {
 			t.Fatalf("the fake harness recorded no descendant in %s", afterTheDeadline)
 		}
+	}
+}
+
+// A harness that is installed and will not start is reported broken without a
+// word of the machine it is on. supervise.Start wraps a start failure as
+// `start <path>: fork/exec <path>: permission denied`, and that path is under
+// the owner's home the moment an override names a file there that lost its
+// execute bit — the ordinary way this happens (DEV-60). HOME is the test's own,
+// so the assertion holds wherever the suite runs; the real one is checked too,
+// since a leak of that is the thing being prevented.
+func TestStartFailureNamesNoPath(t *testing.T) {
+	realHome, _ := os.UserHomeDir()
+	for _, tc := range []struct {
+		name string
+		// body and mode make a binary that cannot be started for the reason
+		// this case is about; fromEnv picks which of the two ways detection
+		// finds it, because that is what the next action must name.
+		body, want string
+		mode       os.FileMode
+		fromEnv    bool
+	}{
+		{name: "an override that lost its execute bit", body: "#!/bin/sh\necho 'claude 1.0'\n",
+			mode: 0o644, fromEnv: true, want: "YAD_CLAUDE_PATH"},
+		// Found on PATH, so it must be executable to be found at all; what it
+		// cannot do is exec, because the interpreter it names is not there.
+		{name: "on PATH, naming an interpreter that is gone", body: "#!/nonexistent/interpreter\n",
+			mode: 0o755, want: "PATH"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			bin := filepath.Join(home, "bin", "claude")
+			if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(bin, []byte(tc.body), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if tc.fromEnv {
+				t.Setenv("PATH", t.TempDir())
+				t.Setenv("YAD_CLAUDE_PATH", bin)
+			} else {
+				t.Setenv("PATH", filepath.Dir(bin))
+				t.Setenv("YAD_CLAUDE_PATH", "")
+			}
+
+			h, _ := Lookup("claude")
+			d := detectOne(context.Background(), h)
+			if !d.Present || d.Error == "" {
+				t.Fatalf("claude = %+v, want it present and broken", d)
+			}
+			leaks := []string{home, bin, "fork/exec", "/Users/", "permission denied", "no such file"}
+			// The literal above is macOS-only, and this runner deploys on Linux.
+			if realHome != "" && realHome != "/" {
+				leaks = append(leaks, realHome)
+			}
+			for _, leak := range leaks {
+				if strings.Contains(d.Error, leak) {
+					t.Errorf("Error carries %q: %q", leak, d.Error)
+				}
+			}
+			// Where to look is half the next action: the name of an override is
+			// safe to print where its value is not.
+			if !strings.Contains(d.Error, tc.want) || !strings.Contains(d.Error, "executable file") {
+				t.Errorf("Error = %q, want the next action naming %s", d.Error, tc.want)
+			}
+		})
+	}
+}
+
+// What a harness prints on its way out is unbounded text nobody vetted: a proxy
+// URL with a password in it, a loader error naming the owner's home. None of it
+// reaches the capability document, which every connected hub reads.
+func TestHarnessOutputIsNeverQuotedInTheReport(t *testing.T) {
+	const secret = "https://user:hunter2@proxy.internal/"
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	body := "#!/bin/sh\necho 'fatal: unable to access " + secret + "' >&2\nexit 128\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAD_CLAUDE_PATH", script)
+
+	h, _ := Lookup("claude")
+	d := detectOne(context.Background(), h)
+	if d.Error == "" {
+		t.Fatalf("claude = %+v, want the failure reported", d)
+	}
+	for _, leak := range []string{secret, "hunter2", "fatal:", "exit status", dir} {
+		if strings.Contains(d.Error, leak) {
+			t.Errorf("Error carries %q: %q", leak, d.Error)
+		}
+	}
+	if !strings.Contains(d.Error, "run it on this machine") {
+		t.Errorf("Error = %q, want the next action", d.Error)
 	}
 }
