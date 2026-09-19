@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -52,6 +54,7 @@ func Serve(ctx context.Context, o Options) error {
 	if o.Drain == nil {
 		o.Drain = NewDrain()
 	}
+	sweepGrants(o.Paths.Data, o.Log)
 	if len(o.Config.Connections) == 0 {
 		o.Monitor.markReady()
 		select {
@@ -71,7 +74,7 @@ func Serve(ctx context.Context, o Options) error {
 	// the same bare cache.
 	w := o.Config.Workdirs
 	workdirs := &workdir.Manager{
-		Data: o.Paths.Data, Roots: w.Roots, GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
+		Data: o.Paths.Data, Roots: w.EffectiveRoots(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
 		Slots: st,
 	}
 	sessions := &Collector{
@@ -120,6 +123,39 @@ func Serve(ctx context.Context, o Options) error {
 		})
 	}
 	return sv.run(ctx)
+}
+
+// sweepGrants deletes the grant files a runner that died left behind. They are
+// 0600 files holding the secrets a hub sent, and the cleanup that removes them
+// when a run ends is a deferred call in the run's goroutine: a SIGKILL, a power
+// cut or an OOM kill skips it.
+//
+// Everything under <data>/grants belongs to a run that is already over. A run's
+// grants live only in the process that claimed them — the store keeps the run
+// without them (Loop.record) — so no run survives a restart, and holding the
+// profile's daemon lock, which `yad daemon start` takes before it reaches Serve
+// (decision 0026), is what makes that true of a live daemon's runs too: there
+// is no second daemon on this profile whose grants these could be.
+func sweepGrants(data string, log *slog.Logger) {
+	dir := filepath.Join(data, "grants")
+	// Counted before the delete: a start that finds anything here has learned
+	// that a run died hard and left a hub's secrets on disk, which the owner
+	// would want to know. The count and nothing else — a grant's name can say
+	// as much about what a hub sent as its value.
+	var left int
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() {
+			left++
+		}
+		return nil
+	})
+	if err := os.RemoveAll(dir); err != nil {
+		log.Error("grant files left by an earlier run were not removed — delete them by hand", "dir", dir, "err", err)
+		return
+	}
+	if left > 0 {
+		log.Warn("deleted grant files an earlier run left behind: it did not shut down, and the secrets a hub sent it were on disk until now", "files", left)
+	}
 }
 
 // server is one Serve: its loops and reporters, the executor they share, and

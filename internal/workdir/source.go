@@ -117,11 +117,14 @@ func localRemote(raw, path string, roots []string) (remote, error) {
 }
 
 // inRoots resolves an absolute path, symlinks included, and returns it only
-// when it is a directory inside one of the owner's roots. With no roots
-// configured, nothing on the machine is reachable.
+// when it is a directory inside one of the owner's roots. With no roots,
+// nothing on the machine is reachable — where the owner has configured none,
+// their home directory is the root (config.WorkdirsConfig.EffectiveRoots), so
+// a manager reaching this line is one on a machine with no home to fall back
+// to.
 func inRoots(field, path string, roots []string) (string, error) {
 	if len(roots) == 0 {
-		return "", fmt.Errorf("%s %q is a directory on this machine, and this runner's owner has allowed none — they list the directories runs may use under [workdirs] roots in config.toml", field, path)
+		return "", fmt.Errorf("%s %q is a directory on this machine, and this runner may reach none — with no [workdirs] roots in config.toml the owner's home directory is used, and this runner has none; list the directories runs may use there", field, path)
 	}
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("%s %q is not an absolute path", field, path)

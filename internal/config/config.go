@@ -86,13 +86,39 @@ type DrainConfig struct {
 type WorkdirsConfig struct {
 	// Roots are the directories a hub's run may reach on this machine: a path
 	// source, or a git source whose URL is a local path or file://, is taken
-	// only when it resolves inside one of them. None means none is taken.
+	// only when it resolves inside one of them. Unset is the owner's home
+	// directory — EffectiveRoots, not this field, is what a runner reads.
 	Roots []string `toml:"roots,omitempty"`
 	// GitTimeout bounds each git command a workdir needs — a first clone of a
 	// large repository is the longest.
 	GitTimeout Duration `toml:"git_timeout"`
 	// SetupTimeout bounds a repository's .worktree/setup.
 	SetupTimeout Duration `toml:"setup_timeout"`
+}
+
+// EffectiveRoots is what a runner reads: the roots the owner listed, or their
+// home directory when they listed none. The owner trusts the hubs it connects
+// (decision 0038), and 0033's refuse-everything default cost them every folder
+// source before they had written any configuration at all.
+//
+// The default is resolved here and never written to config.toml: a home
+// directory is the machine's, not the configuration's, and a config saved on
+// one machine would carry the other's path.
+//
+// A machine with no usable home allows nothing, and the refusal names
+// [workdirs] roots as before. The failure direction matters: a default that
+// became "every directory" when a lookup failed is how this shape of bug is
+// usually written. "/" is refused for the same reason Validate refuses it as a
+// configured root — it is every directory on the machine.
+func (w WorkdirsConfig) EffectiveRoots() []string {
+	if len(w.Roots) > 0 {
+		return w.Roots
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || !filepath.IsAbs(home) || filepath.Clean(home) == "/" {
+		return nil
+	}
+	return []string{home}
 }
 
 // Duration is a time.Duration written as "336h" in TOML.

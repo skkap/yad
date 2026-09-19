@@ -12,64 +12,46 @@ import (
 // environment variable, and for a file grant also the file's name — so a name
 // that passes these rules is a plain file name too, never a path.
 //
-// A hub is untrusted input (decision 0015), and an environment variable is a
-// lever: the loader, a runtime, a proxy, a CA bundle, a shell option or a
-// harness's own configuration can all be moved by one. So the rules are, in
-// order (decision 0024):
+// The owner trusts the hubs it connects (decision 0038). A hub writes the
+// brief, and a brief can tell the harness to read any file or send any secret
+// anywhere, which the harness then auto-approves (0015) — so filtering
+// variable names never protected the machine, and any valid environment
+// variable name is accepted. Decision 0024's secret-shaped suffix rule and its
+// namespace reservations are gone with that reasoning.
 //
-//  1. the name matches grantNamePattern;
-//  2. it is not reserved — reservedGrantNames and reservedGrantPrefixes, each
-//     entry with the reason it is refused;
-//  3. it is named as the secret it is: it ends in one of secretSuffixes.
+// What remains is not a security control: the four below would break the run
+// rather than attack it, and they are refused so that a hub's mistake cannot
+// unset PATH and make every run on the machine fail in a way nobody can trace
+// back. A grant is still delivered to the harness process alone, kept out of
+// the prompt, the logs and the events, and deleted when the run ends — that
+// protects the secret from being recorded, not the machine from the hub.
 //
-// The last rule is what makes the list above safe to be incomplete: the
-// variables that steer a program — HTTPS_PROXY, NODE_EXTRA_CA_CERTS,
-// SHELLOPTS, PS4, JAVA_TOOL_OPTIONS and the next one somebody invents — are
-// not named like secrets. The reserved list catches the secret-shaped names
-// that steer anyway (ANTHROPIC_API_KEY and the cloud providers' credentials
-// move billing; GIT_* and NODE_* belong to tools a harness runs).
+// Where a variable is the owner's to set rather than the hub's, the code that
+// owns it keeps its own guard, which is not a naming rule: IS_SANDBOX is an
+// acceptable grant name here and the Claude adapter still strips it from the
+// run's environment, because permission mode and sandbox are runner
+// configuration (0015, and 0038 keeps it).
 
-// grantNamePattern is an environment variable name as POSIX shells accept it,
-// upper case only: no lower case, so no name differs from a reserved one by
-// case alone on a case-insensitive filesystem.
-var grantNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+// grantNamePattern is an environment variable name as a POSIX shell accepts
+// one, and nothing else: no '/', '.', '=' or space, so a file grant's name is
+// a plain file name and never a path. ASCII only, which is also what keeps a
+// lookalike out — Cyrillic "РАТН" does not match this pattern at all.
+var grantNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// secretSuffixes are the endings a grant's name may have.
-var secretSuffixes = []string{"_TOKEN", "_KEY", "_SECRET", "_PASSWORD", "_CREDENTIAL", "_CREDENTIALS"}
-
-// reservedGrantNames are refused outright, whatever their shape.
-var reservedGrantNames = map[string]string{
-	"PATH":         "chooses which executable every command runs",
-	"HOME":         "moves every tool's configuration and credentials",
-	"SHELL":        "chooses the shell the harness runs commands in",
-	"TMPDIR":       "moves where tools write temporary files",
-	"BASH_ENV":     "runs a file in every non-interactive bash",
-	"ENV":          "runs a file in every sh",
-	"NODE_OPTIONS": "loads code into every Node process, the Claude CLI among them",
-	"IS_SANDBOX":   "switches off Claude's refusal to bypass permissions as root; only the owner declares it",
+// deniedGrantNames and deniedGrantPrefixes are matched case-insensitively.
+// Environment variables are case-sensitive on linux and darwin, so "path" is
+// not PATH to a process — but a file grant's name is a file name, and macOS
+// folds case, so "path" beside the loader variables is the same mistake with
+// the same untraceable end. A hub with a use for either name has another it
+// can use instead.
+var deniedGrantNames = map[string]string{
+	"PATH": "chooses which executable every command runs, so a run carrying it may not find its harness at all",
+	"HOME": "moves every tool's configuration and credentials, the harness's own among them",
 }
 
-// reservedGrantPrefixes are namespaces a grant may not use.
-var reservedGrantPrefixes = []struct{ prefix, why string }{
-	{"LD_", "the Linux dynamic loader reads it: LD_PRELOAD loads code into every process"},
-	{"DYLD_", "the macOS dynamic loader reads it"},
-	{"YAD_", "the runner's own configuration"},
-	{"CLAUDE", "Claude Code's configuration and credentials (CLAUDE_CONFIG_DIR, CLAUDE_CODE_*)"},
-	{"ANTHROPIC_", "Claude's API settings: ANTHROPIC_BASE_URL redirects the owner's traffic, ANTHROPIC_API_KEY moves billing"},
-	{"CODEX_", "Codex's configuration and credentials"},
-	{"OPENAI_", "Codex's API settings: OPENAI_BASE_URL redirects the owner's traffic, OPENAI_API_KEY moves billing"},
-	{"GIT_", "git's configuration: GIT_SSH_COMMAND and GIT_CONFIG_* run commands"},
-	{"NODE_", "Node's runtime settings, which the Claude CLI reads"},
-	{"NPM_CONFIG_", "npm's configuration, which a harness's tools read"},
-	{"BUN_", "Bun's runtime settings"},
-	// A harness pointed at a cloud provider reads that provider's own
-	// credential chain: a grant there would sign the owner's model traffic as
-	// the hub's account, which moves billing and puts prompts where the hub can
-	// read them. A deploy credential for AWS, Google or Azure is exactly what
-	// an owner's allowlist of grants (epic E7) is for; until then, none.
-	{"AWS_", "Claude on Bedrock reads the AWS credential chain (AWS_BEARER_TOKEN_BEDROCK, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN)"},
-	{"GOOGLE_", "Claude on Vertex reads Google's application credentials (GOOGLE_APPLICATION_CREDENTIALS)"},
-	{"AZURE_", "Codex on Azure reads the Azure OpenAI credentials (AZURE_OPENAI_API_KEY)"},
+var deniedGrantPrefixes = []struct{ prefix, why string }{
+	{"LD_", "the Linux dynamic loader reads it, and LD_PRELOAD loads code into every process the run starts"},
+	{"DYLD_", "the macOS dynamic loader reads it the same way"},
 }
 
 // Validate checks a grant's name and delivery. A run carrying a grant that
@@ -80,21 +62,17 @@ func (g Grant) Validate() error {
 		return fmt.Errorf("grant %q is delivered as %q, not env or file", g.Name, g.As)
 	}
 	if !grantNamePattern.MatchString(g.Name) {
-		return fmt.Errorf("grant name %q is not an upper-case environment variable name ([A-Z_][A-Z0-9_]*)", g.Name)
+		return fmt.Errorf("grant name %q is not an environment variable name ([A-Za-z_][A-Za-z0-9_]*), which is also the file name a file grant is written to", g.Name)
 	}
-	if why, ok := reservedGrantNames[g.Name]; ok {
-		return fmt.Errorf("grant name %s is reserved: it %s", g.Name, why)
-	}
-	for _, r := range reservedGrantPrefixes {
-		if strings.HasPrefix(g.Name, r.prefix) {
-			return fmt.Errorf("grant name %s is in the reserved namespace %s*: %s", g.Name, r.prefix, r.why)
+	for name, why := range deniedGrantNames {
+		if strings.EqualFold(g.Name, name) {
+			return fmt.Errorf("grant name %s is refused: %s %s — send the value under another name", g.Name, name, why)
 		}
 	}
-	for _, s := range secretSuffixes {
-		if strings.HasSuffix(g.Name, s) && len(g.Name) > len(s) {
-			return nil
+	for _, d := range deniedGrantPrefixes {
+		if len(g.Name) >= len(d.prefix) && strings.EqualFold(g.Name[:len(d.prefix)], d.prefix) {
+			return fmt.Errorf("grant name %s is refused: %s* is denied because %s — send the value under another name", g.Name, d.prefix, d.why)
 		}
 	}
-	return fmt.Errorf("grant name %s is not named as a secret: it must end in %s, such as ZUMINO_TOKEN",
-		g.Name, strings.Join(secretSuffixes, ", "))
+	return nil
 }

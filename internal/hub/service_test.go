@@ -216,6 +216,14 @@ func TestSubmit(t *testing.T) {
 		{"no model", []step{{with(func(r *hubapi.SubmitRequest) { r.Model = "" }), 422}}},
 		{"path-shaped run id", []step{{with(func(r *hubapi.SubmitRequest) { r.RunID = "../x" }), 400}}},
 		{"source with neither git nor path", []step{{with(func(r *hubapi.SubmitRequest) { r.Sources = []v1.Source{{}} }), 400}}},
+		// Grant names: any valid one, except the four that would break the
+		// run, in any case (decision 0038).
+		{"a grant the old rules refused", []step{{with(func(r *hubapi.SubmitRequest) {
+			r.Grants = []v1.Grant{{Name: "DATABASE_URL", Value: "postgres://", As: v1.GrantEnv}}
+		}), 201}}},
+		{"a grant that would replace the path", []step{{with(func(r *hubapi.SubmitRequest) {
+			r.Grants = []v1.Grant{{Name: "path", Value: "/tmp", As: v1.GrantFile}}
+		}), 400}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)

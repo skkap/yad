@@ -3,6 +3,7 @@ package v1
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -152,6 +153,13 @@ func (r Run) Validate() error {
 		}
 	}
 	seen := map[string]bool{}
+	// A file grant's name is also its file's name, and macOS folds case: two
+	// that differ only by case share one file, and the second's value silently
+	// becomes the first's. Env grants are deliberately not held to this — FOO
+	// and foo are two variables on linux and darwin alike, and both arrive
+	// intact. The filesystem and the environment have different rules, so the
+	// asymmetry is the point and not something to tidy into agreement.
+	folded := map[string]string{}
 	for i, g := range r.Grants {
 		if err := g.Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("grants[%d]: %w", i, err))
@@ -161,6 +169,13 @@ func (r Run) Validate() error {
 			errs = append(errs, fmt.Errorf("grants[%d]: grant name %s is given twice", i, g.Name))
 		}
 		seen[g.Name] = true
+		if g.As == GrantFile {
+			key := strings.ToLower(g.Name)
+			if first, ok := folded[key]; ok && first != g.Name {
+				errs = append(errs, fmt.Errorf("grants[%d]: file grants %s and %s differ only by case and would share one file — rename one", i, first, g.Name))
+			}
+			folded[key] = g.Name
+		}
 	}
 	return errors.Join(errs...)
 }

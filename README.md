@@ -138,6 +138,24 @@ prompt. Run it on a machine, VM or container you would let an unknown repository
 execute code on, never on a laptop holding credentials you care about, and one
 runner per trust domain: personal and work are two runners.
 
+You trust the hubs you connect, and YAD does not police what they send
+([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A hub
+writes the brief, and a brief can tell the harness to read any file or send any
+secret anywhere — so a hub that can queue a run here reaches whatever this
+machine reaches, and filtering the names it uses would never have changed that.
+Connect the hubs you would hand that much to, and nothing else.
+
+What that means in practice. A run's grants may be named anything a shell
+accepts as a variable, except `PATH`, `HOME` and the loader variables `LD_*` and
+`DYLD_*` — refused whatever their case, and only because a hub's mistake there
+would make every run fail for no visible reason. A grant reaches the harness
+process alone, never the prompt, the logs or the events, as `NAME=value` or a
+`0600` file outside the workdir, and it is deleted when the run ends, or at the
+next start if the runner was killed before it could. A folder source is taken
+only inside `[workdirs] roots` in `config.toml`; with none listed that is your
+home directory, so list the directories runs may use if you want them to reach
+less.
+
 Claude Code runs with `--permission-mode bypassPermissions` unless
 `permission_mode` under `[harness.claude]` in `config.toml` says otherwise.
 Claude refuses that mode as root; run the runner as an ordinary user.

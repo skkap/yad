@@ -470,9 +470,11 @@ for `codex`); the suite never runs a real harness.
   exclusive on it, shared on the directories above it;
   several lie side by side under the workdir. No sources → an empty directory.
   Hub strings are checked before git sees them, git never prompts, and a local
-  source must resolve inside the owner's `[workdirs] roots` — none configured,
-  none taken
-  ([0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md)).
+  source must resolve inside the owner's `[workdirs] roots` — with none
+  configured, the owner's home directory
+  ([0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md),
+  [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A
+  runner with no home directory to resolve reaches nothing.
   `internal/workdir` does all of it; the executor calls `Prepare` on the
   session's directory in `preparing`, spools what it reports as the run's
   first events, and fails the run with `source_refused`, `source_failed` or
@@ -574,7 +576,7 @@ disk_floor = "5GiB"   # below this free under the workdirs, idle sessions go; "0
 wait = "30m"   # how long a drain lets runs finish before cancelling them — 0029
 
 [workdirs]
-roots         = ["/home/me/src"]  # where path sources and local git URLs may point — 0033; none = refused
+roots         = ["/home/me/src"]  # where path sources and local git URLs may point — 0033; unset = your home directory (0038)
 git_timeout   = "10m"
 setup_timeout = "15m"
 ```
@@ -731,18 +733,20 @@ line here is a reviewed change.
 
 - The runner runs as an ordinary user, never root; the service units say so.
 - Tokens: `0600` files, never logged, never printed, never in argv, never in an
-  event. Grants are deleted when their run ends. An `env` grant is `NAME=value`
+  event. Grants are deleted when their run ends — including by the next start,
+  after a crash that skipped the deletion. An `env` grant is `NAME=value`
   in the harness's environment; a `file` grant is a `0600` file whose path is
-  in `NAME`. A grant is named as the secret it is — upper case, ending in
-  `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD` or `_CREDENTIAL(S)` — and never a
-  reserved name or in a loader, runtime or harness namespace (`LD_*`,
-  `NODE_*`, `ANTHROPIC_*`, `IS_SANDBOX` …). `protocol/v1` checks it; a run
-  carrying one that fails is refused by the hub and by the runner, never run
-  with it stripped — [0024](docs/decisions/0024-grants-are-named-as-secrets.md).
-  Superseded by [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)
-  and changing with DEV-30: any valid name except `PATH`, `HOME`, `LD_*` and
-  `DYLD_*`.
-  The service API never returns a grant.
+  in `NAME`, in a directory of the run's own under `<data>/grants`, never in the
+  workdir. A grant's name is any valid environment variable name
+  (`[A-Za-z_][A-Za-z0-9_]*`, which is also a plain file name) except four that
+  would break the run rather than attack it: `PATH`, `HOME`, `LD_*` and
+  `DYLD_*`, matched whatever their case. `protocol/v1` checks it; a run carrying
+  one that fails is refused by the hub and by the runner, never run with it
+  stripped — [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md),
+  which supersedes 0024's secret-shaped suffix and its reserved namespaces.
+  Filtering names never protected the machine: the brief could ask the harness
+  for the same secret, and it auto-approves. The service API never returns a
+  grant.
 - Three secret kinds, never interchangeable: registration token, runner
   credential, admin token. The protocol accepts only the first two, the service
   API only the third.
@@ -754,9 +758,12 @@ line here is a reviewed change.
   never passed to a shell, never an instruction to the runner.
 - A run's sources are argv, never a shell: https and ssh only, no remote
   helpers, no leading `-`, no password in a URL, and nothing on the machine
-  outside the owner's `[workdirs] roots` —
-  [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md); with
-  no roots set they will default to the home directory (0038, DEV-30).
+  outside the owner's `[workdirs] roots`, which default to the owner's home
+  directory when unset —
+  [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md),
+  [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md). Those
+  guards prevent bugs, not attacks: the trust boundary is the machine and its
+  owner.
 - `claude -p` loads a repository's `.claude/settings.json` hooks and `.mcp.json`
   servers without a trust prompt. With auto-approve that is no worse than the run
   itself — which is exactly why a runner belongs on a machine you would let the

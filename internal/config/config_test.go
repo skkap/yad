@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -303,5 +304,49 @@ func TestByteSize(t *testing.T) {
 		if out, _ := b.MarshalText(); string(out) != tc.out {
 			t.Errorf("%d marshals as %q, want %q", b, out, tc.out)
 		}
+	}
+}
+
+// With no roots configured, a runner reaches the owner's home directory
+// (decision 0038) — and a machine where there is no home to resolve reaches
+// nothing, rather than everything.
+func TestEffectiveRoots(t *testing.T) {
+	home := t.TempDir()
+	for _, tc := range []struct {
+		name  string
+		roots []string
+		home  string
+		want  []string
+	}{
+		{"the roots the owner listed", []string{"/srv/src"}, home, []string{"/srv/src"}},
+		{"none listed, so the home directory", nil, home, []string{home}},
+		{"none listed and no home directory", nil, "", nil},
+		{"a home directory of /, which is every directory", nil, "/", nil},
+		{"a home directory that is not absolute", nil, "somewhere", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", tc.home)
+			got := WorkdirsConfig{Roots: tc.roots}.EffectiveRoots()
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("EffectiveRoots() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The default is the runner's, not the configuration's: a config saved on one
+// machine must not carry that machine's home directory to the next.
+func TestTheHomeDefaultIsNeverSaved(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := Paths{Config: t.TempDir(), Data: t.TempDir()}
+	if err := Save(p, Default()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "roots") {
+		t.Errorf("config.toml names roots the owner never set:\n%s", b)
 	}
 }
