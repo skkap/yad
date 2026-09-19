@@ -56,6 +56,11 @@ type Options struct {
 	Store *store.Store
 	// SyncInterval is what runners are told; zero means DefaultSyncInterval.
 	SyncInterval time.Duration
+	// MinVersion is the oldest yad an operator will support against this hub.
+	// Empty is no floor, and is the default: a hub only refuses a runner when
+	// its operator has said which version to refuse below. Validate it with
+	// ValidateMinVersion — one the hub cannot parse is no floor.
+	MinVersion string
 	// Now is the clock, replaced in tests so a lease can lapse without a sleep.
 	Now func() time.Time
 }
@@ -70,11 +75,14 @@ type Hub struct {
 	now      func() time.Time
 	interval time.Duration
 	lease    time.Duration
+	// minVersion is the floor runners are refused below, and is sent to every
+	// runner in the register and sync responses so it can say why it stopped.
+	minVersion string
 }
 
 // New builds a hub with every v1 operation registered.
 func New(opts Options) *Hub {
-	h := &Hub{store: opts.Store, now: opts.Now, interval: opts.SyncInterval}
+	h := &Hub{store: opts.Store, now: opts.Now, interval: opts.SyncInterval, minVersion: opts.MinVersion}
 	if h.now == nil {
 		h.now = time.Now
 	}

@@ -50,9 +50,9 @@ func (h *Hub) registerDrain(api huma.API) {
 			// Recorded even for a runner whose last sync said draining: that
 			// may be a process which has since exited, and only a sync after
 			// this request can answer it.
-			var doc v1.Capabilities
-			if err := json.Unmarshal([]byte(r.Capabilities), &doc); err != nil {
-				return fmt.Errorf("stored capability document for %s: %w", r.ID, err)
+			doc, err := storedDoc(r)
+			if err != nil {
+				return err
 			}
 			if !slices.Contains(doc.ProtocolFeatures, capability.FeatureDrain) {
 				return Fail(http.StatusConflict, v1.CodeConflict,

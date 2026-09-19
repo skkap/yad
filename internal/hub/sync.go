@@ -43,6 +43,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 	out := v1.SyncResponse{
 		NextSyncMS: int(h.interval / time.Millisecond),
 		LeaseMS:    int(h.lease / time.Millisecond),
+		MinVersion: h.minVersion,
 	}
 
 	err = h.store.Tx(ctx, func(q *db.Queries) error {
@@ -72,6 +73,17 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			}
 		case req.Fingerprint != runner.Fingerprint:
 			wants = true
+		}
+		// The document holds the only version a sync knows — a sync request
+		// carries none — so the floor is judged on what this runner last sent,
+		// before anything is recorded: a refused sync renews no lease and
+		// claims no run, and the transaction rolls back to prove it.
+		var doc v1.Capabilities
+		if err := json.Unmarshal([]byte(docJSON), &doc); err != nil {
+			return fmt.Errorf("stored capability document for %s: %w", runner.ID, err)
+		}
+		if err := h.refuseOld(doc.YadVersion); err != nil {
+			return err
 		}
 		if err := q.RecordSync(ctx, db.RecordSyncParams{
 			LastSyncAt: sql.NullInt64{Int64: store.Ms(now), Valid: true}, Health: sql.NullString{String: string(health), Valid: true},
@@ -158,10 +170,6 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			}
 		}
 
-		var doc v1.Capabilities
-		if err := json.Unmarshal([]byte(docJSON), &doc); err != nil {
-			return fmt.Errorf("stored capability document for %s: %w", runner.ID, err)
-		}
 		// A draining runner takes nothing, and one asked to drain is about
 		// to: an offer now would only come back.
 		if req.Health.Draining || runner.DrainRequestedAt.Valid {
@@ -202,6 +210,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 		}
 		return ids
 	}
+	// A run that must not start before a moment goes only to a runner that
+	// will hold it back: one without the feature starts it on arrival.
+	holdsStartAt := slices.Contains(doc.ProtocolFeatures, capability.FeatureStartAt)
 	var (
 		runs   []v1.Run
 		cursor db.Run
@@ -234,6 +245,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 			var run v1.Run
 			if err := json.Unmarshal([]byte(c.Spec), &run); err != nil {
 				return nil, fmt.Errorf("stored run %s: %w", c.ID, err)
+			}
+			if run.StartAt != nil && !holdsStartAt {
+				continue
 			}
 			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
 				return nil, err

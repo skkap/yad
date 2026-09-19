@@ -26,8 +26,22 @@ import (
 // A hub must not use a feature the runner did not advertise, so "live_sessions"
 // is absent until it is built.
 func Features() []string {
-	return []string{"start_at", "steer", "interrupt", FeatureDrain, FeatureCloseSession}
+	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession}
 }
+
+// FeatureStartAt is a runner that holds a run until its start_at rather than
+// beginning it at once. A hub offers a run carrying one only to such a runner.
+const FeatureStartAt = "start_at"
+
+// FeatureSteer is a runner that hands a steer control's text to the running
+// harness; FeatureInterrupt, one that ends a turn without ending the session.
+// A hub sends neither control to a runner that does not advertise it: nothing
+// acknowledges a control, so one that is ignored looks exactly like one that
+// landed.
+const (
+	FeatureSteer     = "steer"
+	FeatureInterrupt = "interrupt"
+)
 
 // FeatureDrain is a runner that acts on the drain control and reports
 // draining in its health (decision 0029).
