@@ -3,64 +3,26 @@ package hub
 import (
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 
+	"github.com/skkap/yad/internal/buildinfo"
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
-// A version floor is compared on the release core alone — major.minor.patch.
-// yad stamps its version with `git describe`, so a build calls itself
-// "v0.3.1-4-gabc1234": four commits *after* v0.3.1. Semver would read that
-// suffix as a prerelease and sort it *before* v0.3.1, refusing a runner that
-// is in fact newer than the floor; reading both as 0.3.1 refuses neither.
-type version [3]int
-
 // meetsFloor reports whether a runner's reported version is at or above the
-// hub's floor. A version either side cannot parse — "dev" from an unstamped
-// build, a floor an operator mistyped — meets it: locking a machine out over a
-// string nobody understands costs more than the stale runner it might catch.
+// hub's floor, compared on the release core alone (buildinfo.Number says why).
+// A version either side cannot parse — "dev" from an unstamped build, a floor
+// an operator mistyped — meets it: locking a machine out over a string nobody
+// understands costs more than the stale runner it might catch.
 func meetsFloor(reported, floor string) bool {
-	want, ok := parseVersion(floor)
+	want, ok := buildinfo.ParseNumber(floor)
 	if !ok {
 		return true
 	}
-	got, ok := parseVersion(reported)
+	got, ok := buildinfo.ParseNumber(reported)
 	if !ok {
 		return true
 	}
-	return !older(got, want)
-}
-
-func older(a, b version) bool {
-	for i := range a {
-		if a[i] != b[i] {
-			return a[i] < b[i]
-		}
-	}
-	return false
-}
-
-// parseVersion reads "v0.4", "0.4.1" or "v0.4.1-4-gabc1234"; missing
-// components are zero, and anything else is not a version.
-func parseVersion(s string) (version, bool) {
-	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
-	if i := strings.IndexAny(s, "-+"); i >= 0 {
-		s = s[:i]
-	}
-	parts := strings.Split(s, ".")
-	if len(parts) > 3 {
-		return version{}, false
-	}
-	var v version
-	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return version{}, false
-		}
-		v[i] = n
-	}
-	return v, true
+	return !got.Older(want)
 }
 
 // ValidateMinVersion refuses a floor the hub could not enforce, so an operator
@@ -69,7 +31,7 @@ func ValidateMinVersion(s string) error {
 	if s == "" {
 		return nil
 	}
-	if _, ok := parseVersion(s); !ok {
+	if _, ok := buildinfo.ParseNumber(s); !ok {
 		return fmt.Errorf("min version %q is not a version number — write it as 0.4.0 or v0.4.0", s)
 	}
 	return nil

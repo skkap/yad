@@ -63,6 +63,11 @@ CI. Everything builds with
 - **No hub is contacted.** The runner is tested against `yad hub` in process.
   There is no test against Zumino or yashiki; `yad conformance <url>` (epic E7)
   is how a real hub is checked, by hand.
+- **No release is fetched.** `yad upgrade` and `scripts/install.sh` both go
+  through `gh`, so both are tested against a `gh` that is a shell stub on
+  `PATH` and a release made of files on disk. Nothing here downloads a real
+  release, and no check on this machine proves the install script on a fresh
+  Linux VM.
 - **No breaking-change check against a released spec yet.** There is no
   released v1 to compare with; `oasdiff` joins the bar with the first release
   (epic E7).

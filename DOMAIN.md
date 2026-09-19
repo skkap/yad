@@ -300,5 +300,6 @@ per run.
 
 - **Release** — handing a session back to its hub so it can resume on another
   runner (Anthropic's runners have it). Needs a transcript that moves; no consumer
-  asks for it yet.
+  asks for it yet. Not the *release* `yad upgrade` installs: that one is a tagged
+  build of this binary, and the two words only ever meet in this line.
 - **Live** sessions: when, and what idle cost a runner accepts.
