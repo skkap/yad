@@ -155,8 +155,9 @@ func queue(ctx context.Context, q *db.Queries, runID string, kind v1.ControlKind
 // against but need no longer match — a runner restarted under an older binary
 // keeps its credential. One it would now ignore stays queued rather than being
 // spent on it: a steer held back can still reach the runner it was meant for,
-// while a steer deleted here is gone and its caller was told it landed.
-func deliver(ctx context.Context, q *db.Queries, runID string, doc v1.Capabilities) ([]v1.Control, error) {
+// while a steer deleted here is gone and its caller was told it landed. The
+// same holds when described is false and doc is known to be out of date.
+func deliver(ctx context.Context, q *db.Queries, runID string, doc v1.Capabilities, described bool) ([]v1.Control, error) {
 	rows, err := q.ControlsFor(ctx, runID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
@@ -165,7 +166,7 @@ func deliver(ctx context.Context, q *db.Queries, runID string, doc v1.Capabiliti
 	var lastSteer int64
 	for _, r := range rows {
 		kind := v1.ControlKind(r.Kind)
-		if feature, _ := controlFeature(kind); feature != "" && !advertises(doc, feature) {
+		if feature, _ := controlFeature(kind); feature != "" && !(described && advertises(doc, feature)) {
 			continue
 		}
 		out = append(out, v1.Control{Kind: kind, RunID: runID, Text: r.Text})

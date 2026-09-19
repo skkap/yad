@@ -187,6 +187,38 @@ func TestDrainAndCloseAreHeldBackFromARunnerThatDowngraded(t *testing.T) {
 	}
 }
 
+// v1 says the document goes with the first sync after a fingerprint move. A
+// runner that moves its fingerprint and sends nothing leaves the hub holding a
+// document it knows is stale, and a control gated on a feature must not be
+// spent against it — least of all a steer, which delivery consumes.
+func TestAGatedControlWaitsForADocumentTheHubKnowsIsStale(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	f.held(t, "r1", cred, "a", first("r1", 1))
+	if code, e := f.api(t, "POST", "/runs/a/steer", tok, hubapi.SteerRequest{Text: "try the other file"}, nil); code != http.StatusOK {
+		t.Fatalf("steer: %d %+v", code, e)
+	}
+
+	moved := req("r1", 1, claimed("a")...)
+	moved.Fingerprint = "fp-r1-moved"
+	got := kindsOf(f.mustSync(t, "r1", cred, moved))
+	if !got[v1.ControlReportCapabilities] {
+		t.Error("a moved fingerprint did not ask for the document")
+	}
+	if got[v1.ControlSteer] {
+		t.Error("a steer was spent against a document the hub had just asked to replace")
+	}
+
+	// The document arrives, and with it the steer — held, not consumed.
+	answer := first("r1", 1)
+	answer.Fingerprint = moved.Fingerprint
+	answer.Runs = claimed("a")
+	if got := kindsOf(f.mustSync(t, "r1", cred, answer)); !got[v1.ControlSteer] {
+		t.Error("the steer was lost by the sync that waited for the document")
+	}
+}
+
 func kindsOf(res v1.SyncResponse) map[v1.ControlKind]bool {
 	out := map[v1.ControlKind]bool{}
 	for _, c := range res.Controls {

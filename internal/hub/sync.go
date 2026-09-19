@@ -74,6 +74,18 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		case req.Fingerprint != runner.Fingerprint:
 			wants = true
 		}
+		// A fingerprint that moved with no document says the copy on file no
+		// longer describes this runner — the report_capabilities below asks
+		// for it. Until it lands, what the runner acts on is unknown, so a
+		// control gated on a feature waits a sync rather than being spent
+		// against a document known to be out of date. v1 says the document
+		// goes with the first sync after a move, so this window opens only for
+		// a runner that did not send it.
+		//
+		// The version floor is judged on the old document all the same: a
+		// runner that could suspend it by moving its fingerprint and sending
+		// nothing would be a floor no hub could hold.
+		described := req.Capabilities != nil || req.Fingerprint == runner.Fingerprint
 		// The document holds the only version a sync knows — a sync request
 		// carries none — so the floor is judged on what this runner last sent,
 		// before anything is recorded: a refused sync renews no lease and
@@ -101,7 +113,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			if err := q.ClearDrain(ctx, runner.ID); err != nil {
 				return err
 			}
-		case runner.DrainRequestedAt.Valid && advertises(doc, capability.FeatureDrain):
+		case runner.DrainRequestedAt.Valid && described && advertises(doc, capability.FeatureDrain):
 			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlDrain})
 		}
 
@@ -128,7 +140,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 					return err
 				}
 			}
-			controls, err := deliver(ctx, q, run.ID, doc)
+			controls, err := deliver(ctx, q, run.ID, doc, described)
 			if err != nil {
 				return err
 			}
@@ -154,7 +166,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		if err != nil {
 			return err
 		}
-		if advertises(doc, capability.FeatureCloseSession) {
+		if described && advertises(doc, capability.FeatureCloseSession) {
 			for _, id := range closing {
 				out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlCloseSession, SessionID: id})
 			}
