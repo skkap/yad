@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/skkap/yad/internal/supervise"
@@ -51,9 +50,9 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 	if err != nil {
 		return "", fmt.Errorf("git could not be started: %w — is git installed and on the runner's PATH?", err)
 	}
-	out, _ := io.ReadAll(io.LimitReader(p.Stdout(), gitOutputCap))
-	_, _ = io.Copy(io.Discard, p.Stdout())
-	p.Stdout().Close()
+	// Bounded as supervise.Start asks: a descendant that left git's group
+	// could otherwise hold stdout open past git's exit and its timeout.
+	out, _ := readTail(p, gitOutputCap)
 	werr := p.Wait()
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
@@ -63,7 +62,7 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 	case werr != nil:
 		return "", &gitError{verb: args[0], msg: lastLine(p.Stderr()), err: werr}
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(out), nil
 }
 
 // gitError is a git command that ran and failed.

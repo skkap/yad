@@ -383,6 +383,11 @@ func TestGitNeverPrompts(t *testing.T) {
 	if !strings.Contains(err.Error(), "prompts disabled") && !strings.Contains(err.Error(), "could not read Username") {
 		t.Errorf("err = %v; want git's refusal to prompt", err)
 	}
+	// The next action names no command holding the hub's URL: pasted into a
+	// shell, a URL can run code.
+	if strings.Contains(err.Error(), "ls-remote "+srv.URL) || strings.Contains(err.Error(), "ls-remote https") {
+		t.Errorf("the next action puts the hub's URL in a command: %v", err)
+	}
 	if d := time.Since(start); d > 20*time.Second {
 		t.Errorf("took %s", d)
 	}
@@ -605,6 +610,111 @@ func TestPathSource(t *testing.T) {
 		t.Fatal("a cancelled run kept waiting")
 	}
 	second.Release()
+}
+
+// Two profiles are two Managers with two data directories; a path is still
+// one run's at a time between them.
+func TestPathLockHoldsAcrossProfiles(t *testing.T) {
+	f := newFixture(t)
+	other := &Manager{Data: t.TempDir(), Roots: f.m.Roots, Slots: &fakeSlots{}}
+	dir := filepath.Join(f.root, "project")
+	os.MkdirAll(dir, 0o755)
+	p, _, err := f.prepare("s1", v1.Source{Path: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*lockPoll)
+	defer cancel()
+	_, err = other.Prepare(ctx, Request{Dir: t.TempDir(), Connection: "hub", Session: "s1", Sources: []v1.Source{{Path: dir}}, Emit: func(v1.Event) {}})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("another profile took a path this one holds: %v", err)
+	}
+	p.Release()
+	q, err := other.Prepare(context.Background(), Request{Dir: t.TempDir(), Connection: "hub", Session: "s1", Sources: []v1.Source{{Path: dir}}, Emit: func(v1.Event) {}})
+	if err != nil {
+		t.Fatalf("once released: %v", err)
+	}
+	q.Release()
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("locking wrote into the owner's directory: %v", entries)
+	}
+}
+
+// A worktree add killed partway leaves .git and a half-filled tree; the
+// session's next run makes it again rather than working in it.
+func TestHalfMadeWorktreeIsMadeAgain(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", map[string]string{"README": "x", "src/main.go": "package main"})
+	p, _, err := f.prepare("s1", gitSource(o.bare, "", "b1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What a SIGKILL during the add leaves: no record of a finished
+	// checkout, and files missing from the tree.
+	gitDir := sh(t, p.Dir, "git", "rev-parse", "--absolute-git-dir")
+	os.Remove(filepath.Join(gitDir, checkedOut))
+	os.RemoveAll(filepath.Join(p.Dir, "src"))
+
+	p2, ev, err := f.prepare("s1", gitSource(o.bare, "", "b1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ev.statuses(), "half made") || strings.Contains(ev.statuses(), "continuing") {
+		t.Errorf("statuses: %s", ev.statuses())
+	}
+	if read(t, filepath.Join(p2.Dir, "src", "main.go")) != "package main" {
+		t.Error("the tree was not made again")
+	}
+	if b := sh(t, p2.Dir, "git", "branch", "--show-current"); b != "b1" {
+		t.Errorf("on %q", b)
+	}
+	// And a finished one is continued, not made again.
+	if _, ev3, err := f.prepare("s1", gitSource(o.bare, "", "b1")); err != nil || !strings.Contains(ev3.statuses(), "continuing") {
+		t.Errorf("a finished worktree: %v %s", err, ev3.statuses())
+	}
+}
+
+// A tag on a commit no branch reaches is still a base.
+func TestTagOffEveryBranch(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", map[string]string{"README": "main"})
+	sh(t, o.work, "git", "checkout", "--quiet", "-b", "gone")
+	o.commit("release", map[string]string{"README": "released"})
+	sh(t, o.work, "git", "tag", "v9")
+	sh(t, o.work, "git", "push", "--quiet", "origin", "v9")
+	sh(t, o.work, "git", "push", "--quiet", "origin", "--delete", "gone")
+	p, _, err := f.prepare("s1", gitSource(o.bare, "v9", "from-tag"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(p.Dir, "README")) != "released" {
+		t.Error("the branch was not cut from the tag")
+	}
+}
+
+// Two repositories of one name in a run are two hooks, told apart by id.
+func TestHookIDsAreDistinct(t *testing.T) {
+	f := newFixture(t)
+	var ids []string
+	var srcs []v1.Source
+	for _, sub := range []string{"a", "b"} {
+		root := filepath.Join(f.root, sub)
+		os.MkdirAll(root, 0o755)
+		o := newOrigin(t, root, "app", map[string]string{hookPath: "#!/bin/sh\necho ok\n"})
+		srcs = append(srcs, gitSource(o.bare, "", ""))
+	}
+	_, ev, err := f.prepare("s1", srcs...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ev.evs {
+		if e.Kind == v1.EventToolCall {
+			ids = append(ids, e.Tool.ID)
+		}
+	}
+	if len(ids) != 2 || ids[0] == ids[1] {
+		t.Errorf("hook ids %v", ids)
+	}
 }
 
 // Several sources lie side by side under the workdir.

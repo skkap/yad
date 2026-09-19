@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +15,8 @@ import (
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/config"
 )
 
 // Error classes a failed preparation carries into the run's result. A hub acts
@@ -50,8 +51,7 @@ type Slots interface {
 
 // Manager turns a run's sources into its working directory.
 type Manager struct {
-	// Data is the profile's data directory: bare caches live in repos/, path
-	// locks in locks/.
+	// Data is the profile's data directory: bare caches live in repos/.
 	Data string
 	// Roots are the owner's directories a hub may reach (decision 0033).
 	Roots []string
@@ -60,7 +60,6 @@ type Manager struct {
 	GitTimeout   time.Duration
 	SetupTimeout time.Duration
 	Slots        Slots
-	Log          *slog.Logger
 
 	once  sync.Once
 	mu    sync.Mutex
@@ -78,13 +77,10 @@ func (m *Manager) init() {
 			}
 		}
 		if m.GitTimeout <= 0 {
-			m.GitTimeout = 10 * time.Minute
+			m.GitTimeout = config.DefaultGitTimeout
 		}
 		if m.SetupTimeout <= 0 {
-			m.SetupTimeout = 15 * time.Minute
-		}
-		if m.Log == nil {
-			m.Log = slog.New(slog.DiscardHandler)
+			m.SetupTimeout = config.DefaultSetupTimeout
 		}
 	})
 }
@@ -307,26 +303,42 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 		}
 		return false, &Error{Class: ClassSourceFailed, Msg: err.Error()}
 	}
+	// The fetch, the ref the new worktree creates and a half-made worktree's
+	// removal are one repository's business at a time; the run that follows
+	// is not, and neither is the setup hook.
+	unlock, err := m.lockRepo(ctx, cache)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
 	if _, err := os.Lstat(filepath.Join(it.dest, ".git")); err == nil {
 		common, err := m.git(ctx, it.dest, "rev-parse", "--path-format=absolute", "--git-common-dir")
 		if err != nil {
 			return failed(fmt.Errorf("the session's workdir %s holds a checkout git cannot read (%v) — start a new session", it.dest, err))
 		}
 		if !samePath(common, cache) {
-			return failed(fmt.Errorf("the session's workdir %s holds a checkout of another repository (%s) — a session keeps its sources; start a new session for %s", it.dest, common, it.git.url))
+			return failed(fmt.Errorf("the session's workdir %s holds a checkout of another repository (%s) — a session keeps its sources; start a new session for %s", it.dest, common, it.git.name))
 		}
-		req.Emit(v1.Event{Kind: v1.EventStatus, Status: fmt.Sprintf("continuing in the session's worktree of %s", it.git.name)})
-		return false, nil
+		gitDir, err := m.git(ctx, it.dest, "rev-parse", "--absolute-git-dir")
+		if err != nil {
+			return failed(err)
+		}
+		if _, err := os.Stat(filepath.Join(gitDir, checkedOut)); err == nil {
+			req.Emit(v1.Event{Kind: v1.EventStatus, Status: fmt.Sprintf("continuing in the session's worktree of %s", it.git.name)})
+			return false, nil
+		}
+		// An add that was killed — a cancel, the git timeout, the runner
+		// stopping — leaves .git in place and the tree half filled, and git's
+		// own cleanup never ran under SIGKILL. No run has worked in it, so it
+		// is removed and made again.
+		req.Emit(v1.Event{Kind: v1.EventStatus, Status: fmt.Sprintf("the worktree of %s was left half made; making it again", it.git.name)})
+		if _, err := m.git(ctx, cache, "worktree", "remove", "--force", "--force", "--", it.dest); err != nil {
+			return failed(fmt.Errorf("%w — the half-made worktree at %s could not be removed; start a new session", err, it.dest))
+		}
+		if err := os.MkdirAll(it.dest, 0o700); err != nil {
+			return failed(err)
+		}
 	}
-
-	// The fetch and the ref the new worktree creates are one repository's
-	// business at a time; the run that follows is not, and neither is the
-	// setup hook.
-	unlock, err := m.lockRepo(ctx, cache)
-	if err != nil {
-		return false, err
-	}
-	defer unlock()
 	req.Emit(v1.Event{Kind: v1.EventStatus, Status: "fetching " + it.git.url})
 	if err := m.fetch(ctx, cache, *it.git); err != nil {
 		return failed(err)
@@ -337,6 +349,13 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 	}
 	if _, err := m.git(ctx, cache, args...); err != nil {
 		return failed(fmt.Errorf("%w — %s", err, "the branch may be checked out by another session, or the workdir not empty"))
+	}
+	gitDir, err := m.git(ctx, it.dest, "rev-parse", "--absolute-git-dir")
+	if err == nil {
+		err = os.WriteFile(filepath.Join(gitDir, checkedOut), nil, 0o600)
+	}
+	if err != nil {
+		return failed(fmt.Errorf("the worktree's checkout could not be recorded: %w", err))
 	}
 	req.Emit(v1.Event{Kind: v1.EventStatus, Status: fmt.Sprintf("worktree of %s on %s from %s", it.git.name, it.branch, from)})
 	return true, nil
@@ -367,8 +386,8 @@ func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
 				return err
 			}
 		}
-		if _, err := m.git(ctx, tmp, "fetch", "--quiet", "--no-recurse-submodules", "origin"); err != nil {
-			return fmt.Errorf("%w — the runner reaches %s with its own credentials (gh, SSH); check `git ls-remote %s` works as the runner's user", err, r.url, r.url)
+		if _, err := m.git(ctx, tmp, "fetch", "--quiet", "--tags", "--no-recurse-submodules", "origin"); err != nil {
+			return fetchFailed(err)
 		}
 		if err := os.Rename(tmp, cache); err != nil {
 			return err
@@ -377,10 +396,23 @@ func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
 	} else if err != nil {
 		return err
 	}
-	if _, err := m.git(ctx, cache, "fetch", "--quiet", "--prune", "--no-recurse-submodules", "origin"); err != nil {
-		return fmt.Errorf("%w — the runner reaches %s with its own credentials (gh, SSH); check `git ls-remote %s` works as the runner's user", err, r.url, r.url)
+	// --tags because a base may be a tag no branch reaches, which git's
+	// automatic tag following never fetches.
+	if _, err := m.git(ctx, cache, "fetch", "--quiet", "--prune", "--tags", "--no-recurse-submodules", "origin"); err != nil {
+		return fetchFailed(err)
 	}
 	return nil
+}
+
+// checkedOut marks a worktree whose add finished, in the worktree's own git
+// directory. Without it, a worktree is one an add left half made.
+const checkedOut = "yad-checked-out"
+
+// fetchFailed says what the owner checks. The URL is the hub's, so it is
+// never written into a command for someone to paste: a URL holding "$(…)" is
+// valid to git and would run in their shell.
+func fetchFailed(err error) error {
+	return fmt.Errorf("%w — the runner reaches repositories with its own credentials (gh, SSH); check that its user can run git ls-remote on the repository's URL", err)
 }
 
 // addArgs is the worktree add for the run's branch: the branch as it stands

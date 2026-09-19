@@ -105,8 +105,9 @@ const (
 	DefaultIdleTTL    = 14 * 24 * time.Hour
 	DefaultInactivity = 30 * time.Minute
 	DefaultDrainWait  = 30 * time.Minute
-	// A first clone of a large repository over a slow link takes minutes;
-	// a git that has said nothing for this long is wedged, not busy.
+	// A whole git command, start to finish, not a silence: a first clone of a
+	// large repository over a slow link takes minutes, and one still going
+	// after ten is more likely wedged than busy.
 	DefaultGitTimeout = 10 * time.Minute
 	// A setup hook installs dependencies and builds; gpiwt measured the
 	// slowest repositories at a few minutes.

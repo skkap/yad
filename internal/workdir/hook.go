@@ -74,7 +74,9 @@ func (m *Manager) setup(ctx context.Context, req Request, h hookEnv) error {
 
 	ctx, cancel := context.WithTimeout(ctx, m.SetupTimeout)
 	defer cancel()
-	id := "setup-" + h.repo
+	// Unique per worktree: two repositories of one name in a run are two
+	// hooks, and a hub joins a call to its result by the id.
+	id := "setup-" + h.repo + "-" + digest(h.root)
 	req.Emit(v1.Event{Kind: v1.EventToolCall, Tool: &v1.ToolEvent{
 		ID: id, Name: "setup hook", Input: fmt.Sprintf("%s in %s on %s, WT_SLOT=%d", hookPath, h.repo, h.branch, h.slot),
 	}})
@@ -182,13 +184,12 @@ func readTail(p *supervise.Process, n int) (string, bool) {
 }
 
 // lockPath takes a path source for this run, waiting while another run —
-// in this runner or another profile's — holds it.
+// in this runner or another profile's — holds it. The lock is on the
+// directory itself, not on a file under the profile's data: every profile on
+// the machine, and every OS user, locks the same thing, and nothing is
+// written into the owner's directory to do it.
 func (m *Manager) lockPath(ctx context.Context, path string, emit func(v1.Event)) (func(), error) {
-	dir := filepath.Join(m.Data, "locks")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, &Error{Class: ClassSourceFailed, Msg: "path lock: " + err.Error()}
-	}
-	f, err := os.OpenFile(filepath.Join(dir, "path-"+digest(path)+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, &Error{Class: ClassSourceFailed, Msg: "path lock: " + err.Error()}
 	}
