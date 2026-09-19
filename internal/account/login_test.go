@@ -353,8 +353,33 @@ func TestATimedOutCheckIsNotAnAnswer(t *testing.T) {
 	// The message names a command the owner can actually run — including the
 	// home variable, without which the paste reads the owner's own default
 	// home and answers about a different account.
-	want := fmt.Sprintf("CODEX_HOME=%q %s login status", home, bin)
+	// Single-quoted, not Go-quoted: a shell expands $ inside double quotes.
+	want := fmt.Sprintf("CODEX_HOME='%s' %s login status", home, bin)
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("the next action is not the command yad ran:\n  want to contain: %s\n  got: %v", want, err)
+	}
+}
+
+// A home a shell would rewrite still comes back as the path yad used. The
+// next-action text is meant to be pasted, and inside double quotes a shell
+// expands $, so Go's %q was not enough.
+func TestTheSuggestedCommandSurvivesAShell(t *testing.T) {
+	for _, home := range []string{
+		"/tmp/yad/$USER/home",
+		"/tmp/yad/with space/home",
+		"/tmp/yad/back`tick/home",
+		"/tmp/yad/it's/home",
+	} {
+		got := suggest("codex", "/bin/codex", home, []string{"login", "status"})
+		// What a POSIX shell would produce for the value, reconstructed the
+		// way sh unquotes it: everything between single quotes is literal,
+		// and '\'' is the one escape.
+		want := "CODEX_HOME='" + strings.ReplaceAll(home, "'", `'\''`) + "' /bin/codex login status"
+		if got != want {
+			t.Errorf("suggest(%q) = %s, want %s", home, got, want)
+		}
+		if strings.Contains(got, `="`) {
+			t.Errorf("suggest(%q) double-quoted the home, so a shell would expand it: %s", home, got)
+		}
 	}
 }

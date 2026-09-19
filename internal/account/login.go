@@ -75,7 +75,18 @@ func suggest(harness, binary, home string, args []string) string {
 		return cmd
 	}
 	name, value, _ := strings.Cut(env[0], "=")
-	return fmt.Sprintf("%s=%q %s", name, value, cmd)
+	return name + "=" + shellQuote(value) + " " + cmd
+}
+
+// shellQuote makes one word a shell will pass through unchanged.
+//
+// Single quotes rather than Go's %q: inside double quotes a shell still
+// expands $, ` and \, so a home under a directory with a $ in its name would
+// be silently rewritten by the very paste this text exists to make work.
+// Inside single quotes nothing is special, and the only case to handle is a
+// single quote itself.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // CanLogIn says whether `yad account add` knows how to log this harness in.

@@ -206,7 +206,14 @@ func linkOnce(from, to string) (keep bool, err error) {
 			}
 			return true, fmt.Errorf("%s is a directory of transcripts, not a link to %s — move it aside (its sessions can be copied into %s) and run this again", from, to, to)
 		}
-		if err := os.Remove(from); err != nil {
+		// Still a real directory? Another run may have replaced it with the
+		// link since the Lstat above, and removing that would reopen the gap
+		// placeLink exists to close. Retrying instead ends at the goal-state
+		// check, with the link the other run already made.
+		if fi, err := os.Lstat(from); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+			return false, errRacedWhileLinking
+		}
+		if err := os.Remove(from); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return false, err
 		}
 	}
