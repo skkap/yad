@@ -122,6 +122,7 @@ func Serve(ctx context.Context, o Options) error {
 		sv.loops = append(sv.loops, &Loop{
 			Connection: conn.Name, RunnerID: o.RunnerID, Hub: client, Store: st, Pool: pool,
 			Capabilities: o.Capabilities, Executor: executor, Drain: o.Drain,
+			Config: o.Config, Data: o.Paths.Data,
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
 		})
 	}

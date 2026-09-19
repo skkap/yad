@@ -29,7 +29,7 @@ func noTools(t *testing.T) {
 func TestFingerprintIgnoresTimeOnly(t *testing.T) {
 	noTools(t)
 	cfg := config.Default()
-	a := Build(context.Background(), "r1", cfg)
+	a := Build(context.Background(), "r1", cfg, nil)
 	b := a
 	b.ObservedAt = a.ObservedAt.Add(time.Hour)
 	if Fingerprint(a) != Fingerprint(b) {
@@ -46,9 +46,9 @@ func TestLabelOrderDoesNotMoveFingerprint(t *testing.T) {
 	noTools(t)
 	cfg := config.Default()
 	cfg.Labels = []string{"b", "a"}
-	x := Build(context.Background(), "r", cfg)
+	x := Build(context.Background(), "r", cfg, nil)
 	cfg.Labels = []string{"a", "b"}
-	if Fingerprint(x) != Fingerprint(Build(context.Background(), "r", cfg)) {
+	if Fingerprint(x) != Fingerprint(Build(context.Background(), "r", cfg, nil)) {
 		t.Error("label order moved the fingerprint")
 	}
 }
@@ -59,7 +59,7 @@ func TestDocumentIsPublicSafe(t *testing.T) {
 	cfg := config.Default()
 	cfg.Harness = map[string]config.HarnessConfig{"claude": {Accounts: []string{"personal"}, Cap: 2}}
 	found := []harness.Detected{{Harness: harness.Catalog()[0], Present: true, Path: "/x/claude", Version: "2.1"}}
-	reps := Harnesses(found, cfg)
+	reps := Harnesses(found, cfg, nil)
 	b, _ := json.Marshal(reps)
 	s := string(b)
 	if !strings.Contains(s, `"label":"personal"`) {
@@ -109,7 +109,7 @@ func TestHostToolReportIsPublicSafe(t *testing.T) {
 // is too old to know the question".
 func TestBuildReportsEveryHostTool(t *testing.T) {
 	noTools(t)
-	doc := Build(context.Background(), "r1", config.Default())
+	doc := Build(context.Background(), "r1", config.Default(), nil)
 	if len(doc.HostTools) != len(hostool.Catalog()) {
 		t.Fatalf("document carries %d host tools, want %d", len(doc.HostTools), len(hostool.Catalog()))
 	}

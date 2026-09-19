@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
@@ -23,30 +24,36 @@ import (
 // Connecting again under the same name and URL registers again, with a token
 // the hub issued for this runner, which gives the runner a fresh credential —
 // the recovery for a lost or leaked one.
-func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (config.Connection, v1.RegisterResponse, error) {
+// Connect returns any notes the owner should see that are not failures —
+// today, that the account states could not be read, so the document
+// registered reports every configured account free. They are returned rather
+// than logged because this runs as a CLI command with no logger, and swallowed
+// they would leave an owner debugging refused runs with no thread to pull.
+func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (config.Connection, v1.RegisterResponse, []string, error) {
+	var notes []string
 	var none v1.RegisterResponse
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return config.Connection{}, none, errors.New("no registration token — create one at the hub (`yad hub token create`, or its Add runner) and pass it with --token")
+		return config.Connection{}, none, notes, errors.New("no registration token — create one at the hub (`yad hub token create`, or its Add runner) and pass it with --token")
 	}
 	if err := config.CheckHubURL(hubURL); err != nil {
-		return config.Connection{}, none, err
+		return config.Connection{}, none, notes, err
 	}
 	if name == "" {
 		name = NameFromURL(hubURL)
 	}
 	cfg, err := config.Load(p)
 	if err != nil {
-		return config.Connection{}, none, err
+		return config.Connection{}, none, notes, err
 	}
 	conn := config.Connection{Name: name, URL: hubURL}
 	existing := -1
 	for i, c := range cfg.Connections {
 		switch {
 		case c.Name == name && c.URL != hubURL:
-			return conn, none, fmt.Errorf("connection %q already points at %s — pick another --name for this hub", name, c.URL)
+			return conn, none, notes, fmt.Errorf("connection %q already points at %s — pick another --name for this hub", name, c.URL)
 		case c.Name != name && c.URL == hubURL:
-			return conn, none, fmt.Errorf("this runner is already connected to %s as %q — a runner has one connection per hub; to register it again, run `yad connect %s --name %s --token <new token>`", hubURL, c.Name, hubURL, c.Name)
+			return conn, none, notes, fmt.Errorf("this runner is already connected to %s as %q — a runner has one connection per hub; to register it again, run `yad connect %s --name %s --token <new token>`", hubURL, c.Name, hubURL, c.Name)
 		case c.Name == name:
 			existing, conn = i, c
 		}
@@ -59,38 +66,55 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		next.Connections = append(next.Connections, conn)
 	}
 	if err := next.Validate(); err != nil {
-		return conn, none, err
+		return conn, none, notes, err
 	}
 
 	if err := p.Ensure(); err != nil {
-		return conn, none, err
+		return conn, none, notes, err
 	}
 	id, err := p.RunnerID()
 	if err != nil {
-		return conn, none, err
+		return conn, none, notes, err
 	}
 	client, err := hubclient.New(hubURL, "")
 	if err != nil {
-		return conn, none, err
+		return conn, none, notes, err
 	}
-	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: capability.Build(ctx, id, cfg)})
+	// A runner registers with the accounts the owner configured, whatever
+	// state they are in: a harness whose accounts all need login is still a
+	// runner a hub should know about.
+	// A state database one migration behind — this binary newer than the
+	// daemon that owns it — must not stop a registration. cmd_daemon takes the
+	// same failure the same way, and capability.Build falls back to reporting
+	// the owner's configured labels as free.
+	accounts, err := account.Read(ctx, p, cfg)
 	if err != nil {
-		return conn, none, fmt.Errorf("register with %s: %w", hubURL, err)
+		// Not fatal: a state database this binary cannot read — one migration
+		// behind, because the daemon has not restarted — must not stop a
+		// registration, and capability.Build falls back to the owner's
+		// configured labels. But the error carries the way out, so it is
+		// handed back rather than dropped.
+		notes = append(notes, "account states could not be read, so every configured account is registered as free: "+err.Error())
+		accounts = nil
+	}
+	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: capability.Build(ctx, id, cfg, accounts)})
+	if err != nil {
+		return conn, none, notes, fmt.Errorf("register with %s: %w", hubURL, err)
 	}
 	if res.RunnerCredential == "" {
-		return conn, none, fmt.Errorf("%s answered register without a runner credential — it is not a working YAD hub", hubURL)
+		return conn, none, notes, fmt.Errorf("%s answered register without a runner credential — it is not a working YAD hub", hubURL)
 	}
 	if err := p.SaveCredential(name, res.RunnerCredential); err != nil {
-		return conn, none, fmt.Errorf("the hub registered this runner but the credential could not be saved (%w) — fix the config directory and connect again with a new token", err)
+		return conn, none, notes, fmt.Errorf("the hub registered this runner but the credential could not be saved (%w) — fix the config directory and connect again with a new token", err)
 	}
 	if existing < 0 {
 		if err := config.Save(p, next); err != nil {
 			// A credential with no connection naming it is a secret nobody
 			// will use or clean up.
-			return conn, none, errors.Join(fmt.Errorf("save %s: %w — connect again with a new token", p.ConfigFile(), err), p.DeleteCredential(name))
+			return conn, none, notes, errors.Join(fmt.Errorf("save %s: %w — connect again with a new token", p.ConfigFile(), err), p.DeleteCredential(name))
 		}
 	}
-	return conn, res, nil
+	return conn, res, notes, nil
 }
 
 var notName = regexp.MustCompile(`[^a-z0-9_-]+`)

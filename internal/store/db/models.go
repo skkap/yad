@@ -12,6 +12,8 @@ type Account struct {
 	Harness      string
 	Label        string
 	LimitedUntil sql.NullInt64
+	State        string
+	UpdatedAt    int64
 }
 
 type Event struct {

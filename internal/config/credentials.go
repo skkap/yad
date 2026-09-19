@@ -18,7 +18,7 @@ func (p Paths) credentialPath(connection string) string {
 
 // SaveCredential writes a connection's runner credential at 0600.
 func (p Paths) SaveCredential(connection, credential string) error {
-	if err := validName(connection); err != nil {
+	if err := ValidName(connection); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Join(p.Config, "credentials"), 0o700); err != nil {
