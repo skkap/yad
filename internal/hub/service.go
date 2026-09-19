@@ -102,6 +102,7 @@ func (h *Hub) registerService(api huma.API) {
 
 	h.registerControls(api)
 	h.registerDrain(api)
+	h.registerSessions(api)
 }
 
 func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error) {
@@ -150,6 +151,9 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 	case errors.Is(err, store.ErrNoSession):
 		return nil, Fail(http.StatusNotFound, v1.CodeNotFound, fmt.Sprintf("this hub has no session %q", run.Session.ID),
 			"set session.new to true to start it, or check the id against an earlier run's session_id")
+	case errors.Is(err, store.ErrSessionClosed):
+		return nil, Fail(http.StatusConflict, v1.CodeConflict, err.Error(),
+			"start a new session: its runner has closed this one, and its workdir with it")
 	case errors.Is(err, store.ErrSessionHarness):
 		return nil, Fail(http.StatusConflict, v1.CodeConflict, err.Error(), "continue the session with its own harness, or start a new session")
 	case err != nil:

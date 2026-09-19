@@ -184,11 +184,12 @@ func TestReportCapabilities(t *testing.T) {
 // scriptedHub answers every sync with the same runs — a hub that checks
 // nothing — and records what it is told.
 type scriptedHub struct {
-	mu      sync.Mutex
-	offer   []v1.Run
-	syncs   []v1.SyncRequest
-	results map[string]v1.Result
-	fail    error
+	mu       sync.Mutex
+	offer    []v1.Run
+	controls []v1.Control
+	syncs    []v1.SyncRequest
+	results  map[string]v1.Result
+	fail     error
 }
 
 func (h *scriptedHub) Sync(_ context.Context, _ string, req v1.SyncRequest) (v1.SyncResponse, error) {
@@ -198,7 +199,7 @@ func (h *scriptedHub) Sync(_ context.Context, _ string, req v1.SyncRequest) (v1.
 	if h.fail != nil {
 		return v1.SyncResponse{}, h.fail
 	}
-	return v1.SyncResponse{NextSyncMS: 15000, Runs: h.offer}, nil
+	return v1.SyncResponse{NextSyncMS: 15000, Runs: h.offer, Controls: h.controls}, nil
 }
 
 func (h *scriptedHub) Result(_ context.Context, runID string, res v1.Result) error {

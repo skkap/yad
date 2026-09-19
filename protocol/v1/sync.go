@@ -15,7 +15,40 @@ type SyncRequest struct {
 	// and how its lease is renewed; a run the hub offered and this list omits
 	// was never received.
 	Runs []HeldRun `json:"runs,omitempty"`
+	// ClosedSessions are sessions this runner has closed and whose workdirs
+	// it reclaims, each listed in every sync until one carrying it is
+	// answered with a 2xx — at least once, so a hub records them by session
+	// id and takes a repeat as the same news. A hub stops offering runs in a
+	// session listed here: the runner refuses them. Sent by runners that
+	// advertise the "close_session" feature, which also act on the
+	// close_session control.
+	ClosedSessions []ClosedSession `json:"closed_sessions,omitempty"`
 }
+
+// ClosedSession is one session a runner has closed, and why.
+type ClosedSession struct {
+	SessionID string             `json:"session_id"`
+	Reason    SessionCloseReason `json:"reason" enum:"closed,closed_by_owner,expired,disk_pressure"`
+	ClosedAt  time.Time          `json:"closed_at"`
+}
+
+// SessionCloseReason is why a runner closed a session. A hub may tell them
+// apart to say what happened; every one of them means the same thing for
+// routing — the session is gone, and a new run needs a new session.
+type SessionCloseReason string
+
+const (
+	// SessionClosed — the hub asked, with the close_session control.
+	SessionClosed SessionCloseReason = "closed"
+	// SessionClosedByOwner — the runner's owner closed it on the machine
+	// (`yad sessions close`).
+	SessionClosedByOwner SessionCloseReason = "closed_by_owner"
+	// SessionExpired — nothing ran in it for the owner's idle TTL.
+	SessionExpired SessionCloseReason = "expired"
+	// SessionDiskPressure — the disk under the workdirs fell below the
+	// owner's floor, and this was among the longest idle.
+	SessionDiskPressure SessionCloseReason = "disk_pressure"
+)
 
 // Health is the runner's state as a hub needs it for routing and alerting.
 type Health struct {
@@ -82,6 +115,11 @@ func ControlKinds() []ControlKind {
 // the kind: runs for cancel/interrupt/steer, sessions for close_session, none
 // for drain — which a hub sends only to a runner advertising the "drain"
 // feature, and repeats until the runner's health says it is draining.
+//
+// close_session goes only to a runner advertising the "close_session"
+// feature, and is repeated until the session appears in the runner's
+// closed_sessions. A session with a run held closes once that run ends; a
+// session the runner does not hold, or already closed, is reported closed.
 type Control struct {
 	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update"`
 	RunID     string      `json:"run_id,omitempty"`

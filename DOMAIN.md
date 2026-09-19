@@ -134,7 +134,11 @@ _Kinds_: per_run (a fresh harness process per run — the default) | live (one
 process kept across runs — reserved, not built)
 _Rules_: A session lives on one runner and is resumable only there. At most one
 run is live in a session at a time. A session may move between accounts of its
-harness.
+harness. A session **closes** — by its hub's word, its owner's, the idle TTL
+or disk pressure — only while no run is held in it, takes no new run after, and
+its hub is told why ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md)).
+_States_: open | closed (its hub or its owner closed it) | expired (the idle TTL
+or disk pressure did)
 _Avoid_: thread, conversation, chat — as names for this; Codex's "thread" is the
 native id underneath
 _See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), `internal/store`
@@ -173,7 +177,7 @@ _See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), 
 kept between its runs, reclaimed after it closes. Built from the sources, or
 empty when there are none.
 _Avoid_: workspace — the tenant in Zumino and in Multica
-_See_: [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md), [0032](docs/decisions/0032-a-workdir-belongs-to-its-session.md), `internal/workdir`
+_See_: [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md), [0032](docs/decisions/0032-a-workdir-belongs-to-its-session.md), [0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md), `internal/workdir`, `internal/runner/collect.go`
 
 **Setup hook** — a repository's own `.worktree/setup`, which YAD runs in a new
 workdir with the `WT_*` variables, exactly as `gpiwt` does. Optional; a repo

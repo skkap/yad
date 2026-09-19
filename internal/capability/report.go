@@ -25,12 +25,17 @@ import (
 // A hub must not use a feature the runner did not advertise, so "live_sessions"
 // is absent until it is built.
 func Features() []string {
-	return []string{"start_at", "steer", "interrupt", FeatureDrain}
+	return []string{"start_at", "steer", "interrupt", FeatureDrain, FeatureCloseSession}
 }
 
 // FeatureDrain is a runner that acts on the drain control and reports
 // draining in its health (decision 0029).
 const FeatureDrain = "drain"
+
+// FeatureCloseSession is a runner that acts on the close_session control and
+// reports every session it closes — by the hub's word, its owner's, the idle
+// TTL or disk pressure — in its syncs' closed_sessions (decision 0035).
+const FeatureCloseSession = "close_session"
 
 // Build probes the machine and assembles the document from it and the owner's
 // config. Accounts and host tools are filled in by their packages as they land.

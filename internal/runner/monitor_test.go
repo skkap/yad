@@ -135,7 +135,7 @@ func TestMonitorReadsTheStore(t *testing.T) {
 	res := p.Reserve()
 	res.Take("claude")
 	res.Close()
-	m.attach(p, e.store)
+	m.attach(p, e.store, nil)
 	s, err := m.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)

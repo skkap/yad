@@ -270,6 +270,38 @@ components:
         - name
         - draining
       type: object
+    Session:
+      additionalProperties: true
+      properties:
+        close_reason:
+          type: string
+        close_requested_at:
+          format: date-time
+          type: string
+        closed_at:
+          format: date-time
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        harness:
+          type: string
+        runner_id:
+          type: string
+        session_id:
+          type: string
+        state:
+          enum:
+            - open
+            - closing
+            - closed
+          type: string
+      required:
+        - session_id
+        - harness
+        - state
+        - created_at
+      type: object
     SessionChoice:
       additionalProperties: true
       properties:
@@ -788,6 +820,103 @@ paths:
       security:
         - admin: []
       summary: Add input to a running turn
+  /sessions/{session}:
+    get:
+      operationId: getSession
+      parameters:
+        - description: The session id.
+          in: path
+          name: session
+          required: true
+          schema:
+            description: The session id.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: "Read a session: its runner, and whether it is open, closing or closed"
+  /sessions/{session}/close:
+    post:
+      description: "The session takes no new run, and its runner deletes its workdir. A session no runner holds yet closes here and now, and its runs that have not started are cancelled. One a runner holds is closing until that runner says it is done, which it does at a sync once no run of the session is held there — a run in it finishes first. Closing a closed session answers it as it is. A runner that does not advertise the close_session feature is 409: it would ignore the control."
+      operationId: closeSession
+      parameters:
+        - description: The session id.
+          in: path
+          name: session
+          required: true
+          schema:
+            description: The session id.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Close a session
 servers:
   - description: where `yad hub` mounts it
     url: /api/v1

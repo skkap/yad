@@ -560,13 +560,90 @@ func (m *Manager) lockRepo(ctx context.Context, cache string) (func(), error) {
 	}
 }
 
+// listed reports whether the cache still has wt as a worktree. When it
+// cannot tell, it says yes: a failure kept is retried, and one dropped is not.
+func (m *Manager) listed(ctx context.Context, cache, wt string) bool {
+	out, err := m.git(ctx, cache, "worktree", "list", "--porcelain")
+	if err != nil {
+		return true
+	}
+	want, _ := filepath.EvalSymlinks(wt)
+	for line := range strings.Lines(out) {
+		path, ok := strings.CutPrefix(strings.TrimRight(line, "\n"), "worktree ")
+		if !ok {
+			continue
+		}
+		if path == wt || path == want {
+			return true
+		}
+		if p, err := filepath.EvalSymlinks(path); err == nil && p == want {
+			return true
+		}
+	}
+	return false
+}
+
+// forgotten reports whether wt's .git file points into one of this runner's
+// bare caches, at a worktree entry that cache no longer has.
+func forgotten(wt, repos string) bool {
+	b, err := os.ReadFile(filepath.Join(wt, ".git"))
+	if err != nil {
+		return false
+	}
+	gitdir, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: ")
+	if !ok || !filepath.IsAbs(gitdir) {
+		return false
+	}
+	// The entry is gone, so resolve the cache it would have been in.
+	cache, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(gitdir)))
+	if err != nil || !within(repos, cache) {
+		return false
+	}
+	_, err = os.Stat(gitdir)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+// Prune drops, from every bare cache, the worktrees whose directories are
+// gone: a workdir deleted by hand leaves its entry behind, and the entry holds
+// its branch — no other worktree can check it out — until it is pruned. It is
+// apart from Reclaim so that one broken cache fails only this, never a
+// session's reclaim; each cache is pruned whatever the others do.
+func (m *Manager) Prune(ctx context.Context) error {
+	m.init()
+	repos, err := filepath.EvalSymlinks(filepath.Join(m.Data, "repos"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	caches, err := filepath.Glob(filepath.Join(repos, "*.git"))
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, cache := range caches {
+		unlock, err := m.lockRepo(ctx, cache)
+		if err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+		if _, err := m.git(ctx, cache, "worktree", "prune"); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", cache, err))
+		}
+		unlock()
+	}
+	return errors.Join(errs...)
+}
+
 // Reclaim undoes what Prepare left in a session's workdir: its worktrees are
-// removed from their bare caches — uncommitted work in them included — and the
-// session's slots are freed for the next worktree. Branches stay in the cache;
-// a path source is never touched, and a symlink to one is not followed.
-// Deleting the workdir itself is the caller's, once this has returned.
-//
-// Workdir collection (DEV-18) calls it; nothing does yet.
+// removed from their bare caches — uncommitted work in them included — and,
+// once every one is out, the session's slots are freed for the next worktree.
+// A slot freed while its worktree is still registered could go to another
+// session's worktree of the same repository, and a setup hook derives ports
+// from it. Branches stay in the cache; a path source is never touched, and a
+// symlink to one is not followed. Deleting the workdir itself is the caller's,
+// once this has returned without error. Workdir collection (decision 0035)
+// calls it, and calls it again after an error.
 func (m *Manager) Reclaim(ctx context.Context, connection, session, dir string) error {
 	m.init()
 	candidates := []string{dir}
@@ -592,6 +669,11 @@ func (m *Manager) Reclaim(ctx context.Context, connection, session, dir string) 
 		}
 		common, err := m.git(ctx, wt, "rev-parse", "--path-format=absolute", "--git-common-dir")
 		if err != nil {
+			if forgotten(wt, repos) {
+				// Its cache no longer knows it — an earlier attempt removed
+				// it — so it is plain files, and the caller deletes them.
+				continue
+			}
 			errs = append(errs, fmt.Errorf("%s: %w", wt, err))
 			continue
 		}
@@ -604,13 +686,16 @@ func (m *Manager) Reclaim(ctx context.Context, connection, session, dir string) 
 		}
 		// Twice forced: a worktree git has marked locked is still this
 		// session's to remove.
-		if _, err := m.git(ctx, common, "worktree", "remove", "--force", "--force", "--", wt); err != nil {
+		if _, err := m.git(ctx, common, "worktree", "remove", "--force", "--force", "--", wt); err != nil && m.listed(ctx, common, wt) {
+			// One the cache no longer lists is plain files, and the caller
+			// deletes them; only one it still holds is a failure, or a
+			// retry could never get past it.
 			errs = append(errs, fmt.Errorf("%s: %w", wt, err))
 		}
 		unlock()
 	}
-	if err := m.Slots.ReleaseSlots(ctx, connection, session); err != nil {
-		errs = append(errs, err)
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
-	return errors.Join(errs...)
+	return m.Slots.ReleaseSlots(ctx, connection, session)
 }

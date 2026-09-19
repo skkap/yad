@@ -131,6 +131,9 @@ usage: yad [--profile name] <command> [flags]
                       sessions and recent errors
   sessions [--json]   the sessions this runner holds: their workdirs, runs and
                       last use — read from disk, so the daemon may be stopped
+  sessions close [--connection c] <session>
+                      close a session and reclaim its workdir; its hub hears
+                      of it. One with a run held closes when the run ends
   hub serve           the standalone hub (headless)
   hub token create    a one-time registration token for yad connect
   hub admin-token create|list|revoke
@@ -144,12 +147,15 @@ usage: yad [--profile name] <command> [flags]
                       add input to a running turn
   hub drain <runner>  the runner takes no new runs, finishes those it holds
                       and exits
+  hub close-session <session>
+                      the session takes no new run, and its runner deletes
+                      its workdir
   service install|uninstall|status [--profile name]
                       run this profile's runner as a launchd agent or a
                       systemd user unit, as you, restarted after a crash
   version             version and build
 
-  disconnect · account · conformance · sessions close
+  disconnect · account · conformance
                       exist, and each says which epic brings it
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.

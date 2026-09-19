@@ -7,9 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/skkap/yad/internal/control"
+	"github.com/skkap/yad/internal/runner"
 	"github.com/skkap/yad/internal/store"
 )
 
@@ -26,6 +29,15 @@ type session struct {
 	LastUsed   time.Time `json:"last_used"`
 	Runs       int64     `json:"runs"`
 	LiveRun    string    `json:"live_run,omitempty"`
+	// Closing is a close asked for while a run is held: the session closes
+	// when it ends.
+	Closing     bool       `json:"closing,omitempty"`
+	CloseReason string     `json:"close_reason,omitempty"`
+	ClosedAt    *time.Time `json:"closed_at,omitempty"`
+	// Reclaimed is a closed session whose workdir is gone; HubTold one whose
+	// close its hub has acknowledged.
+	Reclaimed bool `json:"reclaimed,omitempty"`
+	HubTold   bool `json:"hub_told,omitempty"`
 }
 
 // cmdSessions lists the sessions this profile's runner holds. It reads the
@@ -34,7 +46,7 @@ type session struct {
 // what is on disk.
 func cmdSessions(ctx context.Context, g global, args []string, w io.Writer) error {
 	if len(args) > 0 && args[0] == "close" {
-		return errors.New("`yad sessions close` arrives with Zumino task DEV-18, the rest of epic E4 — until then a hub closes a session (ARCHITECTURE.md §3)")
+		return cmdSessionsClose(ctx, g, args[1:], w)
 	}
 	fs := flag.NewFlagSet("sessions", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print the sessions as JSON")
@@ -57,11 +69,18 @@ func cmdSessions(ctx context.Context, g global, args []string, w io.Writer) erro
 			return fmt.Errorf("reading sessions from %s: %w", g.paths.StateDB(), err)
 		}
 		for _, r := range rows {
-			list = append(list, session{
+			s := session{
 				Connection: r.Connection, ID: r.ID, Harness: r.Harness, NativeID: r.NativeID.String,
 				State: r.State, Workdir: r.Workdir, Created: time.UnixMilli(r.CreatedAt).UTC(),
 				LastUsed: time.UnixMilli(r.LastUsedAt).UTC(), Runs: r.Runs, LiveRun: r.LiveRun,
-			})
+				Closing: r.State == "open" && r.CloseRequestedAt.Valid, CloseReason: r.CloseReason.String,
+				Reclaimed: r.ReclaimedAt.Valid, HubTold: r.ReportedAt.Valid,
+			}
+			if r.ClosedAt.Valid {
+				t := time.UnixMilli(r.ClosedAt.Int64).UTC()
+				s.ClosedAt = &t
+			}
+			list = append(list, s)
 		}
 	}
 	if *asJSON {
@@ -89,12 +108,99 @@ func printSessions(w io.Writer, list []session, now time.Time) {
 			live = "-"
 		}
 		workdir := s.Workdir
-		if workdir == "" {
+		switch {
+		case s.Reclaimed:
+			workdir = "(reclaimed)"
+		case workdir == "":
 			// Claimed, but no run of it has reached its workdir yet.
 			workdir = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", cleanLine(s.Connection), cleanLine(s.ID), cleanLine(s.Harness), s.State,
+		state := s.State
+		switch {
+		case s.Closing:
+			state = "closing"
+		case s.CloseReason != "" && s.CloseReason != s.State:
+			state += " (" + s.CloseReason + ")"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", cleanLine(s.Connection), cleanLine(s.ID), cleanLine(s.Harness), cleanLine(state),
 			now.Sub(s.LastUsed).Round(time.Second).String()+" ago", s.Runs, cleanLine(live), cleanLine(workdir))
 	}
 	tw.Flush()
+}
+
+// cmdSessionsClose is `yad sessions close <id>`: the owner closes a session
+// on this machine. The daemon does it — the state database is its — and the
+// session's hub hears it was closed by the owner. The connection is found
+// from the id when only one holds it.
+func cmdSessionsClose(ctx context.Context, g global, args []string, w io.Writer) error {
+	fs := flag.NewFlagSet("sessions close", flag.ContinueOnError)
+	conn := fs.String("connection", "", "the connection the session belongs to, when more than one has that id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: yad sessions close [--connection name] <session> — `yad sessions` lists them")
+	}
+	id := fs.Arg(0)
+	if *conn == "" {
+		found, err := sessionConnections(ctx, g, id)
+		if err != nil {
+			return err
+		}
+		switch len(found) {
+		case 0:
+			return fmt.Errorf("this runner has no session %q — `yad sessions` lists the ones it holds", id)
+		case 1:
+			*conn = found[0]
+		default:
+			return fmt.Errorf("session %q exists on connections %s — name one with --connection", id, strings.Join(found, ", "))
+		}
+	}
+	res, err := control.Send(ctx, g.paths, control.Request{Op: "close_session", Connection: *conn, Session: id})
+	if errors.Is(err, control.ErrNotRunning) {
+		return fmt.Errorf("the daemon closes sessions, and none is running for this profile — `yad daemon start`, then run this again")
+	}
+	if err != nil {
+		return err
+	}
+	c := res.Closed
+	if c == nil {
+		return errors.New("the daemon answered without saying what it did — `yad daemon restart` after an upgrade")
+	}
+	switch c.Outcome {
+	case runner.CloseDone:
+		fmt.Fprintf(w, "session %s closed; its workdir is being removed, and hub %s hears of it at the next sync\n", id, *conn)
+	case runner.CloseWaiting:
+		fmt.Fprintf(w, "session %s has run %s in it, and closes when that run ends — cancel it from its hub to close sooner\n", id, c.LiveRun)
+	case runner.CloseAlready:
+		fmt.Fprintf(w, "session %s was already closed (%s)\n", id, c.Reason)
+	case runner.CloseUnknown:
+		return fmt.Errorf("connection %s has no session %q — `yad sessions` lists the ones this runner holds", *conn, id)
+	default:
+		fmt.Fprintf(w, "session %s: %s\n", id, c.Outcome)
+	}
+	return nil
+}
+
+// sessionConnections is every connection holding a session by this id.
+func sessionConnections(ctx context.Context, g global, id string) ([]string, error) {
+	s, err := store.OpenReadOnly(ctx, g.paths.StateDB())
+	if errors.Is(err, store.ErrNoState) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer s.Close()
+	rows, err := s.ListSessions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reading sessions from %s: %w", g.paths.StateDB(), err)
+	}
+	var found []string
+	for _, r := range rows {
+		if r.ID == id {
+			found = append(found, r.Connection)
+		}
+	}
+	return found, nil
 }
