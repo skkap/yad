@@ -110,15 +110,32 @@ type WorkdirsConfig struct {
 // became "every directory" when a lookup failed is how this shape of bug is
 // usually written. "/" is refused for the same reason Validate refuses it as a
 // configured root — it is every directory on the machine.
+//
+// An empty list is the same as none at all: the field is omitempty, so a
+// `roots = []` an owner wrote would not survive the next `yad connect`
+// rewriting config.toml anyway. An owner who wants a run to reach less than
+// their home names the directories it may use.
 func (w WorkdirsConfig) EffectiveRoots() []string {
 	if len(w.Roots) > 0 {
 		return w.Roots
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" || !filepath.IsAbs(home) || filepath.Clean(home) == "/" {
+	if err != nil || home == "" || !filepath.IsAbs(home) || isFilesystemRoot(home) {
 		return nil
 	}
 	return []string{home}
+}
+
+// isFilesystemRoot resolves symlinks before deciding, because inRoots resolves
+// its roots too: a home directory that is a link to "/" passes a check on the
+// written path and then reaches every directory on the machine, which is the
+// one thing this default must not do.
+func isFilesystemRoot(p string) bool {
+	if filepath.Clean(p) == "/" {
+		return true
+	}
+	r, err := filepath.EvalSymlinks(p)
+	return err == nil && filepath.Clean(r) == "/"
 }
 
 // Duration is a time.Duration written as "336h" in TOML.

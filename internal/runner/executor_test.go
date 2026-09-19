@@ -612,3 +612,43 @@ func TestStartAtIsHonoured(t *testing.T) {
 		})
 	}
 }
+
+// The sweep's failure line is held to the same rule as its success line: a
+// grant's name never reaches the log. os.RemoveAll returns a *fs.PathError
+// naming the file it could not unlink, so the raw error is the leak — the
+// directory and the reason are what the owner acts on.
+func TestASweepThatFailsNamesNoGrant(t *testing.T) {
+	e := newEnv(t)
+	dir := filepath.Join(e.paths.Data, "grants", "hub", "a")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "AWS_SECRET_ACCESS_KEY"), []byte("file-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Unlinking a child needs write permission on its directory, so this is
+	// a sweep that cannot finish — the branch a read-only mount or an
+	// immutable flag reaches in the field.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	var logged strings.Builder
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Serve(ctx, Options{
+		Paths: e.paths, Config: config.Default(), RunnerID: "r",
+		Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
+		Log:          slog.New(slog.NewTextHandler(&logged, nil)),
+	}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	got := logged.String()
+	if !strings.Contains(got, "delete them by hand") {
+		t.Fatalf("a sweep that could not finish said nothing:\n%s", got)
+	}
+	if strings.Contains(got, "AWS_SECRET_ACCESS_KEY") || strings.Contains(got, "file-secret") {
+		t.Errorf("the failure line names a grant:\n%s", got)
+	}
+}

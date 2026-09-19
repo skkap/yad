@@ -154,7 +154,15 @@ func sweepGrants(data string, log *slog.Logger) {
 		return nil
 	})
 	if err := os.RemoveAll(dir); err != nil {
-		log.Error("grant files left by an earlier run were not removed — delete them by hand", "dir", dir, "err", err)
+		// A PathError names the file it could not unlink, which is a grant's
+		// name — the one thing the line below is careful not to say. The
+		// directory and the reason are what the owner acts on.
+		reason := error(err)
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			reason = pe.Err
+		}
+		log.Error("grant files left by an earlier run were not removed — delete them by hand", "dir", dir, "err", reason)
 		return
 	}
 	if left > 0 {

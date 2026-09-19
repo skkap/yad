@@ -203,6 +203,11 @@ plain-text 404 or 405.
 ```
 
 `session.mode = "live"` is reserved and refused until a runner advertises it.
+A grant's `name` is any valid environment variable name except `PATH`, `HOME`,
+`LD_*` and `DYLD_*` in any case, no two grants share a name, and no two `file`
+grants have names differing only by case — one file on a case-folding
+filesystem. The schema cannot say any of that, so both sides check it and a run
+breaking it is refused whole (`Run.Validate`, decision 0038).
 
 ### Run states
 
@@ -767,14 +772,22 @@ line here is a reviewed change.
   event. Grants are deleted when their run ends — including by the next start,
   after a crash that skipped the deletion. An `env` grant is `NAME=value`
   in the harness's environment; a `file` grant is a `0600` file whose path is
-  in `NAME`, in a directory of the run's own under `<data>/grants`, never in the
-  workdir. A grant's name is any valid environment variable name
+  in `NAME`, in a directory of the run's own under `<data>/grants` — never in
+  the checkout the harness works in, though a run whose `path` source is the
+  owner's home directory has the data directory somewhere beneath it. A grant's
+  name is any valid environment variable name
   (`[A-Za-z_][A-Za-z0-9_]*`, which is also a plain file name) except four that
   would break the run rather than attack it: `PATH`, `HOME`, `LD_*` and
-  `DYLD_*`, matched whatever their case. `protocol/v1` checks it; a run carrying
-  one that fails is refused by the hub and by the runner, never run with it
+  `DYLD_*`, matched whatever their case. Two `file` grants whose names differ
+  only by case are refused too: on a case-folding filesystem they are one file,
+  and the second's value would silently become the first's. `protocol/v1`
+  checks it; a run carrying one that fails is refused by the hub and by the
+  runner, never run with it
   stripped — [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md),
   which supersedes 0024's secret-shaped suffix and its reserved namespaces.
+  A name the owner rather than the hub decides keeps its own guard, which is
+  not a naming rule: `IS_SANDBOX` is an acceptable grant name and the Claude
+  adapter still strips it from the run's environment (0015).
   Filtering names never protected the machine: the brief could ask the harness
   for the same secret, and it auto-approves. The service API never returns a
   grant.

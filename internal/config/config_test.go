@@ -350,3 +350,17 @@ func TestTheHomeDefaultIsNeverSaved(t *testing.T) {
 		t.Errorf("config.toml names roots the owner never set:\n%s", b)
 	}
 }
+
+// A home directory that is a symlink to "/" is every directory on the machine,
+// which is what the default must never become. inRoots resolves its roots, so
+// the check here has to resolve too.
+func TestEffectiveRootsRefusesAHomeThatResolvesToRoot(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink("/", link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", link)
+	if got := (WorkdirsConfig{}).EffectiveRoots(); got != nil {
+		t.Errorf("EffectiveRoots() = %v, want none — that root reaches every directory", got)
+	}
+}
