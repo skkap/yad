@@ -49,8 +49,15 @@ func runOne(t *testing.T, e *env, l *Loop, x *Exec, run v1.Run) {
 func TestASessionResumesInItsWorkdir(t *testing.T) {
 	e := newEnv(t)
 	l := e.loop(t, 1)
+	// The second run lasts a measurable while, from its spawn: a last use
+	// written while it prepared or spawned is before spawned+turn, and only
+	// one written at its end is at or after it.
+	const turn = 50 * time.Millisecond
+	var spawned time.Time
 	h := &fake.Adapter{ID: "claude", Next: func(spec adapter.Spec) fake.Script {
-		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}}
+		spawned = time.Now()
+		return fake.Script{Delay: turn, Events: []v1.Event{{Kind: v1.EventText, Text: "hi"}},
+			Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}}
 	}}
 	x := e.executor(h)
 
@@ -59,8 +66,8 @@ func TestASessionResumesInItsWorkdir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(first.Workdir, "notes.txt"), []byte("left by a"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before := time.Now().UnixMilli()
 	runOne(t, e, l, x, continued("b", "s1"))
+	ended := spawned.Add(turn).UnixMilli()
 
 	if len(h.Starts) != 2 {
 		t.Fatalf("%d starts, want 2", len(h.Starts))
@@ -75,8 +82,8 @@ func TestASessionResumesInItsWorkdir(t *testing.T) {
 		t.Errorf("the first run's file in the second run's workdir: %q, %v", b, err)
 	}
 	after := session(t, e, "s1")
-	if after.LastUsedAt < before || after.Workdir != first.Workdir || after.NativeID.String != "native-1" || after.State != "open" {
-		t.Errorf("session after the second run = %+v; last use should be at or after %d", after, before)
+	if after.LastUsedAt < ended || after.Workdir != first.Workdir || after.NativeID.String != "native-1" || after.State != "open" {
+		t.Errorf("session after the second run = %+v; last use should be the run's end, at or after %d", after, ended)
 	}
 	if r := hubResult(t, e, "b"); r.State != v1.RunSucceeded {
 		t.Errorf("second run = %+v", r)

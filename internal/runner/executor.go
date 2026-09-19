@@ -555,9 +555,9 @@ func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.T
 					unreported = 0
 				}
 			}
-			// Stored the moment the harness reveals it (the Claude adapter
-			// does from its first line), so a crash does not lose the resume
-			// pointer.
+			// For an adapter that learns its id mid-turn (Codex's thread id);
+			// Claude's was pinned at spawn and never differs here. Stored the
+			// moment it appears, so a crash does not lose the resume pointer.
 			if id := turn.NativeSessionID(); id != "" && id != w.native {
 				w.native = id
 				e.setNative(ctx, c, id)

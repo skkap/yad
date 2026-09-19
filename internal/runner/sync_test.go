@@ -433,6 +433,9 @@ func TestOrphansAreReportedLost(t *testing.T) {
 	if err != nil || sess.NativeID.String != "native-1" || sess.Workdir != "/work/s1" || sess.State != "open" {
 		t.Errorf("session after the restart %+v, %v: its native id, workdir and state must survive", sess, err)
 	}
+	if sess.LastUsedAt <= 1 {
+		t.Errorf("session last used at %d after its run was reported lost; the lost result must move it as any result does", sess.LastUsedAt)
+	}
 
 	// Recovering again is a no-op: nothing is reported twice.
 	if err := l.Recover(ctx); err != nil {

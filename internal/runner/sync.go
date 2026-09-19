@@ -565,6 +565,13 @@ func (l *Loop) Recover(ctx context.Context) error {
 			}); err != nil {
 				return err
 			}
+			// When the run really ended is unknown — some time before this
+			// start. Now is the late bound, and late is the safe side: an idle
+			// TTL counted from too early reclaims a workdir a hub still wants
+			// (decision 0032).
+			if err := q.TouchSession(ctx, db.TouchSessionParams{LastUsedAt: now, Connection: l.Connection, ID: r.SessionID}); err != nil {
+				return err
+			}
 			// Due from the start of time: the first flush sends it, whatever
 			// the reporter's clock says.
 			return q.PutOutbox(ctx, db.PutOutboxParams{Connection: l.Connection, RunID: r.ID, Body: string(body), NextAttemptAt: 0})
