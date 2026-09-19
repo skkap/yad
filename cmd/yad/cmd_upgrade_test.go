@@ -29,14 +29,32 @@ func TestUpgradeRejectsUnknownFlags(t *testing.T) {
 	}
 }
 
-// flag stops parsing at the first positional argument, so `yad upgrade v0.3.1
-// --check` would drop the --check and replace the binary for real — the one
-// command where being ignored costs the operator the binary they are running.
-func TestUpgradeRejectsAPositionalArgument(t *testing.T) {
-	code, _, errs := yad(t, "upgrade", "v0.3.1", "--check")
-	if code != 1 {
-		t.Fatalf("exit %d, want a refusal: %q", code, errs)
+// TestUpgradeDoesNotSilentlyBecomeARealUpgrade is named for what went wrong
+// rather than for the flag that caused it. `flag` stops parsing at the first
+// positional argument, so `yad upgrade v0.3.1 --check` never saw the --check:
+// the flag whose whole purpose is "change nothing" was dropped, on the one
+// command that overwrites the binary the operator is running. That is an
+// irreversible action taken in place of a question being answered, and no
+// wording of the refusal matters beside it — what matters is that nothing is
+// installed.
+func TestUpgradeDoesNotSilentlyBecomeARealUpgrade(t *testing.T) {
+	for _, args := range [][]string{
+		{"upgrade", "v0.3.1", "--check"},
+		{"upgrade", "v0.3.1"},
+		{"upgrade", "--check", "extra"},
+	} {
+		code, out, errs := yad(t, args...)
+		if code != 1 {
+			t.Fatalf("yad %v: exit %d, want a refusal: %q", args, code, errs)
+		}
+		// It must not have gone on to resolve a release or touch anything: the
+		// refusal comes before any of that, so stdout carries none of the
+		// lines a real run prints.
+		if strings.Contains(out, "installed ") || strings.Contains(out, "replaced ") {
+			t.Errorf("yad %v printed %q — it acted on a command it could not read", args, out)
+		}
 	}
+	_, _, errs := yad(t, "upgrade", "v0.3.1", "--check")
 	if !strings.Contains(errs, "--tag v0.3.1") {
 		t.Errorf("yad upgrade v0.3.1 = %q, want it to name the flag that means it", errs)
 	}
