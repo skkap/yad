@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 	"github.com/skkap/yad/internal/supervise"
+	"github.com/skkap/yad/internal/workdir"
 )
 
 // Error classes the executor reports itself, beside the adapters' own. A hub
@@ -84,6 +86,9 @@ type Exec struct {
 	// Data is the profile's data directory; workdirs and grant files live
 	// under it.
 	Data string
+	// Workdirs turns a run's sources into its workdir; nil is one built from
+	// Config's [workdirs] and Data.
+	Workdirs *workdir.Manager
 	// Binary resolves a harness to its executable; nil is harness.Locate, the
 	// lookup detection uses.
 	Binary func(harness string) (string, bool)
@@ -204,6 +209,13 @@ func (e *Exec) init() {
 		if e.Log == nil {
 			e.Log = slog.New(slog.DiscardHandler)
 		}
+		if e.Workdirs == nil {
+			w := e.Config.Workdirs
+			e.Workdirs = &workdir.Manager{
+				Data: e.Data, Roots: w.Roots, GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
+				Slots: e.Store, Log: e.Log,
+			}
+		}
 	})
 }
 
@@ -315,8 +327,11 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	run := c.Run
 	log := e.Log.With("connection", c.Connection, "run", run.RunID)
 	started := time.Now()
+	// lastSeq is the last event spooled before the harness is up: preparing
+	// the workdir reports what it does, and the harness's events follow on.
+	var lastSeq int64
 	fail := func(class, msg string) {
-		e.finish(bg, c, v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: class, Message: msg},
+		e.finish(bg, c, v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: class, Message: msg}, LastSeq: lastSeq,
 			Metrics: v1.Metrics{DurationMS: time.Since(started).Milliseconds()}})
 	}
 	// A run stopped before its harness is up is cancelled with nothing
@@ -327,7 +342,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			return false
 		}
 		log.Info("run cancelled before it started")
-		e.finish(bg, c, v1.Result{State: v1.RunCancelled, Error: runnerStopped(a.stoppedByRunner()),
+		e.finish(bg, c, v1.Result{State: v1.RunCancelled, Error: runnerStopped(a.stoppedByRunner()), LastSeq: lastSeq,
 			Metrics: v1.Metrics{DurationMS: time.Since(started).Milliseconds(), CancelLatencyMS: latency(at)}})
 		return true
 	}
@@ -371,11 +386,31 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassStart, fmt.Sprintf("harness %q is not installed on this runner any more — `yad doctor` shows where it was looked for", run.Harness))
 		return
 	}
-	workdir, native, err := e.workdir(bg, c)
+	dir, native, err := e.workdir(bg, c)
 	if err != nil {
 		fail(ClassPrepare, "the workdir could not be prepared: "+err.Error())
 		return
 	}
+	prep, err := e.prepare(ctx, c, a, dir, &lastSeq)
+	if err != nil {
+		if stoppedEarly() {
+			return
+		}
+		if ctx.Err() != nil {
+			log.Warn("runner stopped while the run was preparing; the next start reports it lost")
+			return
+		}
+		class := ClassPrepare
+		if we, ok := errors.AsType[*workdir.Error](err); ok {
+			class = we.Class
+		}
+		log.Warn("the workdir could not be prepared", "class", class, "err", err)
+		fail(class, err.Error())
+		return
+	}
+	// A path source stays locked until the run is over, so another run on
+	// the same directory waits for this one.
+	defer prep.Release()
 	env, cleanup, err := e.grants(c)
 	defer cleanup()
 	if err != nil {
@@ -383,7 +418,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		return
 	}
 	spec := adapter.Spec{
-		RunID: run.RunID, Model: run.Model, Workdir: workdir,
+		RunID: run.RunID, Model: run.Model, Workdir: prep.Dir,
 		SessionID: run.Session.ID, NativeSessionID: native, Brief: run.Brief,
 		Env: env, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
 	}
@@ -405,9 +440,9 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	a.mu.Unlock()
 	// Running only once the workdir exists and the harness is up (§2).
 	e.setState(bg, c, v1.RunRunning)
-	log.Info("run started", "harness", run.Harness, "model", run.Model, "workdir", workdir)
+	log.Info("run started", "harness", run.Harness, "model", run.Model, "workdir", prep.Dir)
 
-	w := e.stream(bg, c, a, turn, cancel, native, started)
+	w := e.stream(bg, c, a, turn, cancel, native, started, lastSeq)
 	out := turn.Wait()
 	if !w.stopAt.IsZero() {
 		w.latency = latency(w.stopAt)
@@ -468,8 +503,8 @@ type watch struct {
 // ladder: interrupt, which keeps the session resumable; SIGTERM to the
 // process group Grace later; SIGKILL TermGrace after that. Events keep being
 // spooled all the way down, so what the harness says as it stops is kept.
-func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.Turn, kill context.CancelFunc, native string, started time.Time) watch {
-	w := watch{firstEventMS: -1, native: native}
+func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.Turn, kill context.CancelFunc, native string, started time.Time, lastSeq int64) watch {
+	w := watch{firstEventMS: -1, native: native, lastSeq: lastSeq}
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	idleFor := e.inactivity(c.Run)
 	idle := time.NewTimer(idleFor)
@@ -762,9 +797,34 @@ func (e *Exec) inactivity(run v1.Run) time.Duration {
 	return d
 }
 
+// prepare builds the run's workdir from its sources (internal/workdir), with
+// what it does spooled as the run's first events. A cancel from the hub, or
+// the runner stopping, ends it early: a clone or a setup hook can take
+// minutes.
+func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, lastSeq *int64) (*workdir.Prepared, error) {
+	bg := context.WithoutCancel(ctx)
+	pctx, stop := context.WithCancel(ctx)
+	defer stop()
+	go func() {
+		select {
+		case <-a.cancelled:
+			stop()
+		case <-pctx.Done():
+		}
+	}()
+	return e.Workdirs.Prepare(pctx, workdir.Request{
+		Dir: dir, Connection: c.Connection, Session: c.Run.Session.ID, Sources: c.Run.Sources,
+		Emit: func(ev v1.Event) {
+			if e.spool(bg, c, &ev, *lastSeq+1) {
+				*lastSeq = ev.Seq
+				e.report(c.Connection)
+			}
+		},
+	})
+}
+
 // workdir returns the session's workdir, creating it on first use, and the
-// session's native id. E2 workdirs are empty directories; sources and the
-// setup hook are E4.
+// session's native id.
 func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native string, err error) {
 	sess, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
 	if err != nil {

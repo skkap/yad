@@ -64,7 +64,7 @@ func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-const submitUsage = "usage: yad hub submit --harness h --model m [--context text | --context-file f] [--session id | --new-session id] [--run-id id] [--watch] <instruction | ->"
+const submitUsage = "usage: yad hub submit --harness h --model m [--context text | --context-file f] [--session id | --new-session id] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
 
 // cmdHubSubmit queues a run and prints its id — alone on stdout, so a script
 // can capture it — or, with --watch, follows it to its end.
@@ -79,6 +79,10 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 	newSession := fs.String("new-session", "", "start a session with this id (default: a new one with a generated id)")
 	runID := fs.String("run-id", "", "the run's id, to make a retried submit safe (default: generated)")
 	watch := fs.Bool("watch", false, "follow the run until it ends, as `yad hub watch` does")
+	gitURL := fs.String("git", "", "a repository the run works in, checked out as a worktree on the runner")
+	base := fs.String("base", "", "with --git: where a new branch is cut from (default: the repository's default branch)")
+	branch := fs.String("branch", "", "with --git: the branch the run works on (default: one named after the session)")
+	path := fs.String("path", "", "a directory on the runner's machine the run works in, in place — the runner's owner must allow it")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return err
@@ -91,6 +95,12 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 	}
 	if *contextText != "" && *contextFile != "" {
 		return errors.New("pass --context or --context-file, not both")
+	}
+	if *gitURL != "" && *path != "" {
+		return errors.New("--git and --path each name where the run works — pass one of them")
+	}
+	if *gitURL == "" && (*base != "" || *branch != "") {
+		return errors.New("--base and --branch belong to a --git repository — name it with --git")
 	}
 	instruction := pos[0]
 	if instruction == "-" {
@@ -112,6 +122,12 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 		brief.Context = string(b)
 	}
 	req := hubapi.SubmitRequest{RunID: *runID, Harness: *harness, Model: *model, Brief: brief}
+	switch {
+	case *gitURL != "":
+		req.Sources = []v1.Source{{Git: &v1.GitSource{URL: *gitURL, Base: *base, Branch: *branch}}}
+	case *path != "":
+		req.Sources = []v1.Source{{Path: *path}}
+	}
 	switch {
 	case *session != "":
 		req.Session = &hubapi.SessionChoice{ID: *session}

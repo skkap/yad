@@ -597,6 +597,23 @@ func (q *Queries) RunsWithUnackedEvents(ctx context.Context, connection string) 
 	return items, nil
 }
 
+const sessionSlot = `-- name: SessionSlot :one
+SELECT slot FROM slots WHERE repo = ? AND connection = ? AND session_id = ?
+`
+
+type SessionSlotParams struct {
+	Repo       string
+	Connection string
+	SessionID  string
+}
+
+func (q *Queries) SessionSlot(ctx context.Context, arg SessionSlotParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, sessionSlot, arg.Repo, arg.Connection, arg.SessionID)
+	var slot int64
+	err := row.Scan(&slot)
+	return slot, err
+}
+
 const setAccountLimit = `-- name: SetAccountLimit :exec
 INSERT INTO accounts (harness, label, limited_until) VALUES (?, ?, ?)
 ON CONFLICT (harness, label) DO UPDATE SET limited_until = excluded.limited_until

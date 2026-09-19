@@ -1,0 +1,94 @@
+//go:build unix
+
+package workdir
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/skkap/yad/internal/supervise"
+)
+
+// noPrompt is the environment every git, and every setup hook, runs with. No
+// one is at the runner to answer a prompt, and a prompt nobody answers holds
+// the run until its timeout: git's own terminal prompt is off, the askpass
+// helpers that would open a dialog are emptied (an empty GIT_ASKPASS also
+// stops git falling back to core.askPass), and Git Credential Manager is told
+// not to ask. With no controlling terminal as well (supervise.Spec.NoTTY),
+// ssh cannot ask for a passphrase or a host key either.
+var noPrompt = []string{
+	"GIT_TERMINAL_PROMPT=0",
+	"GIT_ASKPASS=",
+	"SSH_ASKPASS=",
+	"SSH_ASKPASS_REQUIRE=never",
+	"GCM_INTERACTIVE=never",
+}
+
+// gitEnv adds, for YAD's own git commands only, the transports a source may
+// use — the same ones parseRemote allows, enforced by git too, so no
+// redirect, submodule or helper reaches another. LC_ALL=C keeps the messages
+// a run's error carries in one language.
+var gitEnv = append([]string{"GIT_ALLOW_PROTOCOL=https:ssh:file", "LC_ALL=C"}, noPrompt...)
+
+// gitOutputCap bounds what YAD reads of a git command's output; the commands
+// here print a ref or a path.
+const gitOutputCap = 1 << 20
+
+// git runs one git command through the supervisor, under the owner's timeout,
+// and returns its trimmed stdout. Every argument is YAD's own or has passed
+// source.go's checks; none reaches a shell.
+func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, m.GitTimeout)
+	defer cancel()
+	argv := args
+	if dir != "" {
+		argv = append([]string{"-C", dir}, args...)
+	}
+	p, err := supervise.Start(ctx, supervise.Spec{Path: m.Git, Args: argv, Env: gitEnv, NoTTY: true})
+	if err != nil {
+		return "", fmt.Errorf("git could not be started: %w — is git installed and on the runner's PATH?", err)
+	}
+	out, _ := io.ReadAll(io.LimitReader(p.Stdout(), gitOutputCap))
+	_, _ = io.Copy(io.Discard, p.Stdout())
+	p.Stdout().Close()
+	werr := p.Wait()
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return "", fmt.Errorf("git %s did not finish within %s and was stopped — raise [workdirs] git_timeout if the repository is large", args[0], m.GitTimeout)
+	case ctx.Err() != nil:
+		return "", ctx.Err()
+	case werr != nil:
+		return "", &gitError{verb: args[0], msg: lastLine(p.Stderr()), err: werr}
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// gitError is a git command that ran and failed.
+type gitError struct {
+	verb, msg string
+	err       error
+}
+
+func (e *gitError) Error() string {
+	if e.msg == "" {
+		return fmt.Sprintf("git %s: %v", e.verb, e.err)
+	}
+	return fmt.Sprintf("git %s: %s", e.verb, e.msg)
+}
+
+func (e *gitError) Unwrap() error { return e.err }
+
+// lastLine is the last non-empty line of s: git's reason, after its progress
+// and hints.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return ""
+}

@@ -95,6 +95,9 @@ SELECT * FROM accounts WHERE harness = ? ORDER BY label;
 -- name: TakeSlot :exec
 INSERT INTO slots (repo, slot, connection, session_id) VALUES (?, ?, ?, ?);
 
+-- name: SessionSlot :one
+SELECT slot FROM slots WHERE repo = ? AND connection = ? AND session_id = ?;
+
 -- name: SlotsInUse :many
 SELECT slot FROM slots WHERE repo = ? ORDER BY slot;
 
