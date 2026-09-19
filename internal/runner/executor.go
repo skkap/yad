@@ -842,6 +842,25 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 	if err != nil {
 		return nil, err
 	}
+	// A session is bound to its first run's sources — none included — before
+	// anything is made on disk: a runner that dies mid-checkout or mid-hook
+	// must come back to a session that still knows what its workdir holds, so
+	// the next run repairs the worktree and runs the hook again. Sources that
+	// break the owner's rules bind nothing; the run is refused as it is.
+	if record {
+		if err := e.Workdirs.Check(sources, c.Run.Session.ID); err != nil {
+			return nil, err
+		}
+		if sources == nil {
+			sources = []v1.Source{}
+		}
+		body, _ := json.Marshal(sources)
+		if err := e.Store.SetSessionSources(bg, db.SetSessionSourcesParams{
+			Sources: sql.NullString{String: string(body), Valid: true}, Connection: c.Connection, ID: c.Run.Session.ID,
+		}); err != nil {
+			return nil, fmt.Errorf("the session's sources could not be recorded: %w", err)
+		}
+	}
 	pctx, stop := context.WithCancel(ctx)
 	defer stop()
 	go func() {
@@ -851,7 +870,7 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 		case <-pctx.Done():
 		}
 	}()
-	prep, err := e.Workdirs.Prepare(pctx, workdir.Request{
+	return e.Workdirs.Prepare(pctx, workdir.Request{
 		Dir: dir, Connection: c.Connection, Session: c.Run.Session.ID, Sources: sources,
 		Emit: func(ev v1.Event) {
 			if e.spool(bg, c, &ev, *lastSeq+1) {
@@ -860,25 +879,6 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 			}
 		},
 	})
-	// Bound by the session's first run whatever became of it — a setup hook
-	// that failed leaves a worktree the next run must set up again, and a
-	// first run with no sources leaves a conversation in the session's own
-	// directory — unless its sources were refused, which touched nothing.
-	if we, ok := errors.AsType[*workdir.Error](err); record && (!ok || we.Class != workdir.ClassSourceRefused) {
-		if sources == nil {
-			sources = []v1.Source{}
-		}
-		body, _ := json.Marshal(sources)
-		if rerr := e.Store.SetSessionSources(bg, db.SetSessionSourcesParams{
-			Sources: sql.NullString{String: string(body), Valid: true}, Connection: c.Connection, ID: c.Run.Session.ID,
-		}); rerr != nil {
-			if prep != nil {
-				prep.Release()
-			}
-			return nil, errors.Join(err, fmt.Errorf("the session's sources could not be recorded: %w", rerr))
-		}
-	}
-	return prep, err
 }
 
 // sessionSources is what the run's workdir is built from. A session keeps

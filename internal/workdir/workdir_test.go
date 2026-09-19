@@ -835,6 +835,39 @@ func TestPathRecheckedAfterTheWait(t *testing.T) {
 	}
 }
 
+// A path moved away and made again while a run waited is not the directory
+// the run locked; it is refused rather than run in unlocked.
+func TestPathReplacedDuringTheWait(t *testing.T) {
+	f := newFixture(t)
+	project := filepath.Join(f.root, "project")
+	os.MkdirAll(project, 0o755)
+	// b waits with the directory open and its lock asked for, so what it
+	// gets once a lets go is the directory that was there when it asked.
+	holder, _, err := f.prepare("a", v1.Source{Path: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan error, 1)
+	go func() {
+		_, _, err := f.prepare("b", v1.Source{Path: project})
+		got <- err
+	}()
+	time.Sleep(3 * lockPoll)
+	if err := os.Rename(project, project+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	os.Mkdir(project, 0o755)
+	holder.Release()
+	select {
+	case err := <-got:
+		if class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "replaced") {
+			t.Errorf("a path replaced during the wait: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the waiting run never finished")
+	}
+}
+
 // A tag on a commit no branch reaches is still a base.
 func TestTagOffEveryBranch(t *testing.T) {
 	f := newFixture(t)

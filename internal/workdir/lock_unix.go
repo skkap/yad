@@ -30,7 +30,10 @@ const lockPoll = 200 * time.Millisecond
 // hold what the other waits for. The locks are on the directories
 // themselves: every profile and user contends for the same ones, and nothing
 // is written into the owner's tree. The paths are resolved and do not nest.
-func lockPaths(ctx context.Context, paths []string, emit func(v1.Event)) (func(), error) {
+//
+// held maps each source to the directory it locked, for the caller to confirm
+// it is still the one at that path.
+func lockPaths(ctx context.Context, paths []string, emit func(v1.Event)) (release func(), held map[string]*os.File, err error) {
 	exclusive := map[string]bool{}
 	for _, p := range paths {
 		exclusive[p] = true
@@ -51,12 +54,13 @@ func lockPaths(ctx context.Context, paths []string, emit func(v1.Event)) (func()
 	}
 	slices.Sort(dirs)
 
-	var held []*os.File
-	release := func() {
-		for _, f := range held {
+	var open []*os.File
+	held = map[string]*os.File{}
+	release = func() {
+		for _, f := range open {
 			f.Close()
 		}
-		held = nil
+		open = nil
 	}
 	waited := false
 	for _, d := range dirs {
@@ -64,7 +68,7 @@ func lockPaths(ctx context.Context, paths []string, emit func(v1.Event)) (func()
 		if err != nil {
 			if exclusive[d] {
 				release()
-				return nil, &Error{Class: ClassSourceFailed, Msg: "path lock: " + err.Error()}
+				return nil, nil, &Error{Class: ClassSourceFailed, Msg: "path lock: " + err.Error()}
 			}
 			// An ancestor this user cannot open is one no run of this
 			// user's can name as a source either.
@@ -79,10 +83,13 @@ func lockPaths(ctx context.Context, paths []string, emit func(v1.Event)) (func()
 			if err != nil {
 				f.Close()
 				release()
-				return nil, &Error{Class: ClassSourceFailed, Msg: "path lock: " + err.Error()}
+				return nil, nil, &Error{Class: ClassSourceFailed, Msg: "path lock: " + err.Error()}
 			}
 			if ok {
-				held = append(held, f)
+				open = append(open, f)
+				if exclusive[d] {
+					held[d] = f
+				}
 				break
 			}
 			if !waited {
@@ -93,12 +100,12 @@ func lockPaths(ctx context.Context, paths []string, emit func(v1.Event)) (func()
 			case <-ctx.Done():
 				f.Close()
 				release()
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
 			case <-time.After(lockPoll):
 			}
 		}
 	}
-	return release, nil
+	return release, held, nil
 }
 
 // tryLock takes a flock without waiting. flock belongs to the open file, so

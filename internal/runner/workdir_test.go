@@ -208,6 +208,11 @@ func TestCancelWhilePreparing(t *testing.T) {
 	if st := localRun(t, e, "a").State; st != string(v1.RunPreparing) {
 		t.Errorf("state while the hook runs = %s, want preparing", st)
 	}
+	// Bound before anything was made on disk: a runner that died here would
+	// come back to a session that knows its sources.
+	if src := session(t, e, "s1").Sources; !src.Valid || !strings.Contains(src.String, "acme.git") {
+		t.Errorf("the session's sources while its first run is still preparing: %+v", src)
+	}
 	begin := time.Now()
 	x.Control(context.Background(), "hub", v1.Control{Kind: v1.ControlCancel, RunID: "a"})
 	x.Wait()

@@ -71,8 +71,10 @@ branch when none is named. A run that names no branch works on
 `yad/<connection>/<session>`. A session that continues finds its worktree as it left it —
 the uncommitted work in it is the session's — and nothing is fetched.
 **A session keeps its sources.** The sources its first run named — none
-included, and whether or not that run got as far as its harness — are recorded
-with the session (`sessions.sources`), unless they were refused. A continuing
+included — are recorded with the session (`sessions.sources`) once they pass
+these rules and before anything is made on disk, so a runner that dies
+mid-checkout or mid-hook comes back to a session that knows them; sources that
+are refused bind nothing. A continuing
 run that names none is prepared from them — a path source locked again, the
 harness started where the conversation lives, a setup hook that failed run
 again — and one naming others is refused with `source_refused`. A
@@ -90,8 +92,9 @@ into the owner's tree — exclusive on the source and shared on every directory
 above it, so a run on `/src` and one on `/src/app` wait for each other while
 `/src/app` and `/src/lib` run side by side. A run's own path sources may not
 nest, and each is resolved and checked against the roots again once its locks
-are held, since the run holding a directory above it could have swapped it for
-a link out of the roots while this one waited. Several sources lie side by side under the
+are held — and confirmed to be the directory that was locked — since the run
+holding it or a directory above it could have swapped it for a link out of the
+roots, or for another directory, while this one waited. Several sources lie side by side under the
 workdir, a path source as a symlink to where it lives; one repository twice in
 a run is refused, since both would take the session's one slot for it.
 

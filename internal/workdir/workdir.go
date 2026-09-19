@@ -159,18 +159,22 @@ func (m *Manager) Prepare(ctx context.Context, req Request) (*Prepared, error) {
 		}
 	}
 	if len(paths) > 0 {
-		unlock, err := lockPaths(ctx, paths, req.Emit)
+		unlock, held, err := lockPaths(ctx, paths, req.Emit)
 		if err != nil {
 			return nil, err
 		}
 		p.locks = append(p.locks, unlock)
 		// Checked again now they are held: while this run waited, the run
 		// holding a directory above one could have made it a symlink out of
-		// the roots. Held, nobody else may change them.
+		// the roots, or moved it away and made another in its place — then
+		// the lock is on the one moved away. Held, nobody else may change them.
 		for i, path := range paths {
 			again, err := inRoots(fmt.Sprintf("path source %d", i), path, m.Roots)
 			if err == nil && again != path {
 				err = fmt.Errorf("path source %s changed while this run waited for it: it now resolves to %s", path, again)
+			}
+			if err == nil && !sameDir(held[path], again) {
+				err = fmt.Errorf("path source %s was replaced while this run waited for it; send the run again", path)
 			}
 			if err != nil {
 				return nil, &Error{Class: ClassSourceRefused, Msg: err.Error()}
@@ -194,6 +198,17 @@ func (m *Manager) Prepare(ctx context.Context, req Request) (*Prepared, error) {
 	}
 	done = true
 	return p, nil
+}
+
+// Check applies Prepare's rules to a run's sources without touching the
+// disk, so a caller can record them before anything is made: an error is a
+// refusal, with ClassSourceRefused.
+func (m *Manager) Check(sources []v1.Source, session string) error {
+	m.init()
+	if _, err := m.plan(Request{Session: session, Sources: sources}); err != nil {
+		return &Error{Class: ClassSourceRefused, Msg: err.Error()}
+	}
+	return nil
 }
 
 // plan checks every source before anything touches the disk, so a run with
@@ -502,6 +517,16 @@ func isHex(s string) bool {
 		return false
 	}
 	return strings.Trim(s, "0123456789abcdef") == ""
+}
+
+// sameDir reports whether the open directory f is still the one at path.
+func sameDir(f *os.File, path string) bool {
+	if f == nil {
+		return false
+	}
+	a, err1 := f.Stat()
+	b, err2 := os.Stat(path)
+	return err1 == nil && err2 == nil && os.SameFile(a, b)
 }
 
 // samePath compares two paths as the filesystem resolves them: a temporary
