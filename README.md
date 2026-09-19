@@ -55,6 +55,41 @@ no free capacity and claims nothing, and the events, result and deregister
 calls still answer `not_implemented`. The build order is `ARCHITECTURE.md §9`;
 the epics and tasks are in Zumino, project `yad/dev`.
 
+## Install
+
+The repository is private, so there is no URL to download from without a token
+— for the binaries or for the install script. `gh` does the fetching, and the
+GitHub login you already have is what grants access:
+
+```bash
+gh api -H "Accept: application/vnd.github.raw" \
+  repos/skkap/yad/contents/scripts/install.sh | sh
+```
+
+It puts `yad` in `~/.local/bin`, checks the release's SHA-256 before writing
+anything, and tells you if that directory is not on your `PATH`. Then
+`yad doctor`. `YAD_VERSION` pins a release and `YAD_INSTALL_DIR` moves where it
+lands.
+
+Later, on your command and never on its own:
+
+```bash
+yad upgrade --check   # what the newest release is; changes nothing
+yad upgrade           # fetch it, verify its checksum, then replace this binary
+```
+
+`yad upgrade` downloads to a temporary directory beside the installed binary,
+checks its SHA-256 against the release's `checksums.txt`, and only then renames
+it into place — so an upgrade that fails at any step leaves a working `yad`. It
+restarts nothing: a runner already running holds the binary it started from
+until you restart it, and `yad upgrade` says so when it finds one. Nothing in
+YAD updates itself on a schedule or on a hub's say-so
+([0018](docs/decisions/0018-no-self-update-in-v1.md)).
+
+Releases are built by CI on a `v*` tag: linux and darwin × amd64 and arm64,
+`CGO_ENABLED=0`, with a `checksums.txt` you can check by hand with
+`sha256sum -c`.
+
 ## Run it safely
 
 A runner auto-approves everything its harness does — nobody is there to answer a
@@ -96,7 +131,7 @@ is yours to run. Why it is shaped this way: [0028](docs/decisions/0028-a-runner-
 ```bash
 make check      # lint, test, build, generated-file drift, cross-compile — see CHECKS.md
 make build      # ./bin/yad
-make install    # ~/.local/bin/yad
+make install    # ~/.local/bin/yad, from this checkout rather than a release
 make generate   # sqlc and the OpenAPI document
 ```
 

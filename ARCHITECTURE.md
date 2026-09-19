@@ -80,6 +80,7 @@ internal/hubclient       the runner side of the protocol
 internal/hubapiclient    the caller side of yad hub's service API
 internal/hub             `yad hub`: huma server, store, submit/watch API
 internal/control         the Unix control socket, server and client
+internal/upgrade         `yad upgrade`: releases fetched with gh, checksum, atomic replace
 internal/conformance     the protocol conformance suite, run against any hub
 ```
 
@@ -631,6 +632,8 @@ yad hub token create [--ttl 1h] [--runner id]
                                    a one-time registration token; --runner re-registers
                                    that runner, the only way to replace its credential
 yad conformance <url>              check any hub against v1
+yad upgrade [--check] [--force] [--tag v]
+                                   replace this binary with the newest release
 ```
 
 `yad daemon start` backgrounds itself — it re-executes `yad daemon start
@@ -709,6 +712,12 @@ line here is a reviewed change.
   or `codex`, the built binary and `yad hub serve` (`scripts/smoke.sh
   <harness>`; a few cents of haiku or gpt-5.6-luna, `SMOKE_MODEL` to change
   it).
+- **No release is downloaded.** `internal/upgrade` fakes the release source
+  outright, and reads what the installed binary held *at the moment the
+  download ran* to prove nothing was replaced before the checksum was checked.
+  `gh` itself, and `scripts/install.sh` around it, are tested against a `gh`
+  that is a shell script on `PATH` — which proves the argv, the checksum gate
+  and where the binary lands, and proves nothing about a real GitHub release.
 - Table-driven, `t.Setenv`, `t.TempDir`, no assertion library; `-race` always.
 
 ## §8 Security

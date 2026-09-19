@@ -1,0 +1,38 @@
+name: Release
+
+# A pushed tag is the only trigger. Decision 0018 keeps updating on the owner's
+# command, and that starts here: nothing publishes a release except someone
+# tagging a commit.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # gh release create
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The Makefile stamps the version with `git describe`, which needs
+          # the tags: a shallow clone would ship a binary calling itself "dev".
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: sqlc-dev/setup-sqlc@v4
+        with:
+          sqlc-version: '1.31.1'
+      # The same bar as every other push. A tag can sit on a commit CI never
+      # saw, and a release is the one artefact nobody re-checks by hand.
+      - run: make check
+      - run: make dist
+      # sha256sum's own output, so `sha256sum -c checksums.txt` verifies a
+      # download by hand exactly as yad upgrade and scripts/install.sh do.
+      - run: cd dist && sha256sum yad-* > checksums.txt
+      - run: gh release create "$GITHUB_REF_NAME" dist/yad-* dist/checksums.txt --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
