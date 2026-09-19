@@ -135,43 +135,62 @@ func Ensure(data, harness, label string) (string, error) {
 // A real directory already sitting there is never deleted: it is a harness's
 // own transcripts, written before this home was linked, and removing it would
 // throw away conversations YAD cannot rebuild. The owner is told to move it.
+//
+// Several runs of one harness prepare the same home at once — capacity is a
+// shared pool and nothing reserves an account — so every step below can lose a
+// race to another run doing exactly the same thing. Rather than enumerate the
+// error each loser sees, which differs by platform and by step (macOS reports
+// EPERM, not ENOENT, for unlink on a directory another run has already
+// replaced), the work is retried and the goal state is what decides: if the
+// link is already what it should be, whoever made it did this function's job.
 func link(from, to string) error {
-	switch fi, err := os.Lstat(from); {
-	case errors.Is(err, os.ErrNotExist):
-	case err != nil:
-		return err
-	case fi.Mode()&os.ModeSymlink != 0:
-		if at, err := os.Readlink(from); err == nil && at == to {
-			return nil
-		}
-		if err := os.Remove(from); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	default:
-		entries, err := os.ReadDir(from)
-		if err != nil {
-			return err
-		}
-		if len(entries) > 0 {
-			return fmt.Errorf("%s is a directory of transcripts, not a link to %s — move it aside (its sessions can be copied into %s) and run this again", from, to, to)
-		}
-		if err := os.Remove(from); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	// Two runs of one harness prepare the same home at once — capacity is a
-	// shared pool and nothing reserves an account — so both can find no link
-	// and both call Symlink. The loser gets ErrExist for the link the winner
-	// just made, which is the state this function was asked to reach.
-	if err := os.Symlink(to, from); errors.Is(err, os.ErrExist) {
+	var err error
+	for range linkAttempts {
 		if at, rerr := os.Readlink(from); rerr == nil && at == to {
 			return nil
 		}
-		return err
-	} else if err != nil {
-		return err
+		var keep bool
+		if keep, err = linkOnce(from, to); err == nil || keep {
+			return err
+		}
 	}
-	return nil
+	return err
+}
+
+// linkAttempts bounds the retry. Each losing step is one other run getting
+// there first, and a home is prepared by at most the runner's capacity at
+// once, so a handful is plenty; the bound is here so a genuine failure ends
+// as an error rather than a spin.
+const linkAttempts = 5
+
+// linkOnce makes one attempt. keep is true for a failure retrying cannot
+// change — a directory of real transcripts in the way — so the caller stops
+// and reports it rather than trying again.
+func linkOnce(from, to string) (keep bool, err error) {
+	switch fi, err := os.Lstat(from); {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return false, err
+	case fi.Mode()&os.ModeSymlink != 0:
+		if err := os.Remove(from); err != nil {
+			return false, err
+		}
+	default:
+		entries, err := os.ReadDir(from)
+		if errors.Is(err, os.ErrNotExist) {
+			break // another run removed it; that is where this was heading
+		}
+		if err != nil {
+			return false, err
+		}
+		if len(entries) > 0 {
+			return true, fmt.Errorf("%s is a directory of transcripts, not a link to %s — move it aside (its sessions can be copied into %s) and run this again", from, to, to)
+		}
+		if err := os.Remove(from); err != nil {
+			return false, err
+		}
+	}
+	return false, os.Symlink(to, from)
 }
 
 // Remove deletes an account's harness home, and nothing else.
@@ -206,11 +225,15 @@ func checkNames(harness, label string) error {
 }
 
 // Load is every account the owner configured, per harness in the owner's
-// order, each with the state the store holds for it. A nil q is a runner with
-// no state database yet, which has no states to hold.
+// order, with its state. A nil q is a runner with no state database yet,
+// which has no states to hold.
 //
-// An account with no row is free: a label added to config.toml by hand is
-// usable until something says otherwise, and absence is data.
+// The rule, stated once here because several places used to state it
+// differently: an account is free only when its home is on disk and nothing
+// says otherwise. A home that is not there is needs_login whatever the store
+// holds — a directory that does not exist cannot hold a login — so a label
+// added to config.toml by hand is not usable until `yad account add` has made
+// its home and run the login in it.
 func Load(ctx context.Context, q *db.Queries, data string, cfg config.Config) ([]Account, error) {
 	var rows []db.Account
 	if q != nil {

@@ -4,9 +4,10 @@
 -- owner never finished — and needs-login has to be skipped for claiming and
 -- reported to every hub, so it has to be a fact of its own.
 --
--- Default 'free': a row written by an older yad, and a label the owner adds to
--- config.toml by hand without running `yad account add`, are both usable until
--- something says otherwise. Absence is data — an account with no row is free.
+-- Default 'free': a row written by an older yad says nothing against the
+-- account. It is not the whole answer on its own — internal/account.Load reads
+-- a missing harness home as needs_login whatever this column says, since a
+-- directory that does not exist cannot hold a login.
 --
 -- limited_until stays where it is and stays DEV-27's to write; nothing here
 -- sets 'limited'.

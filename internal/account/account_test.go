@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -329,5 +330,79 @@ func TestPathElementsAreGuarded(t *testing.T) {
 		if _, err := os.Stat(outside); err != nil {
 			t.Errorf("Remove(%q, %q) deleted outside the data directory: %v", c.harness, c.label, err)
 		}
+	}
+}
+
+// Ensure is called by every run that takes an account, capacity is a shared
+// pool, and nothing reserves an account — so several runs of one harness can
+// prepare the same home at once. The tolerance in link() exists for that and
+// had no evidence it worked.
+//
+// The reachable window is an existing home whose link is missing or points
+// somewhere else: the data directory moved, or the link was removed outside
+// YAD. A run refused because two of them raced would fail for a reason that
+// has nothing to do with the run.
+func TestConcurrentEnsureOnOneHome(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		setup func(t *testing.T, data, home string)
+	}{
+		{"a home with no link yet", func(t *testing.T, data, home string) {
+			if err := os.MkdirAll(home, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"an empty real directory where the link belongs", func(t *testing.T, data, home string) {
+			// Every racer takes the default branch: ReadDir, Remove, Symlink.
+			// The loser of each step must not fail its run.
+			if err := os.MkdirAll(filepath.Join(home, "projects"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a link pointing somewhere else", func(t *testing.T, data, home string) {
+			if err := os.MkdirAll(home, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			elsewhere := filepath.Join(data, "moved")
+			if err := os.MkdirAll(elsewhere, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(elsewhere, filepath.Join(home, "projects")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			data := t.TempDir()
+			c.setup(t, data, HomeDir(data, "claude", "work"))
+
+			const racers = 8
+			var wg sync.WaitGroup
+			errs := make([]error, racers)
+			start := make(chan struct{})
+			for i := range racers {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start // let them collide rather than run in turn
+					_, errs[i] = Ensure(data, "claude", "work")
+				}()
+			}
+			close(start)
+			wg.Wait()
+
+			for i, err := range errs {
+				if err != nil {
+					t.Errorf("concurrent Ensure %d failed, which would refuse a run: %v", i, err)
+				}
+			}
+			at, err := os.Readlink(filepath.Join(HomeDir(data, "claude", "work"), "projects"))
+			if err != nil {
+				t.Fatalf("no transcript link after the race: %v", err)
+			}
+			if want := TranscriptDir(data, "claude"); at != want {
+				t.Errorf("link points at %s, want the shared %s", at, want)
+			}
+		})
 	}
 }

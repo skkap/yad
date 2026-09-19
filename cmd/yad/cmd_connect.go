@@ -43,7 +43,12 @@ func cmdConnect(ctx context.Context, g global, args []string, w io.Writer) error
 		}
 		tok = strings.TrimSpace(line)
 	}
-	conn, res, err := runner.Connect(ctx, g.paths, url, tok, *name)
+	conn, res, notes, err := runner.Connect(ctx, g.paths, url, tok, *name)
+	// Notes are printed whether or not the registration succeeded: they say
+	// what the document was built without.
+	for _, n := range notes {
+		fmt.Fprintln(w, "note:", n)
+	}
 	if err != nil {
 		return err
 	}

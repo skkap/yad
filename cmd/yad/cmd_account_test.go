@@ -292,11 +292,16 @@ func TestRecordedStateIsWhatTheDocumentReports(t *testing.T) {
 // handed to os.RemoveAll.
 func TestAccountRemoveRefusesAHarnessThatWalksOutOfTheDataDirectory(t *testing.T) {
 	p := accountEnv(t)
-	outside := filepath.Join(p.Data, "keep-me")
-	if err := os.MkdirAll(outside, 0o700); err != nil {
+	// The witness sits exactly where the escaping argument resolves —
+	// <data>/accounts/../../escapee/work — so the assertion below fails if the
+	// guard is removed. A witness anywhere else survives either way, which
+	// proves nothing.
+	const escape = "../../escapee"
+	target := account.HomeDir(p.Data, escape, "work")
+	if err := os.MkdirAll(target, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"../../../tmp", "..", "Claude"} {
+	for _, id := range []string{escape, "../../../tmp", "..", "Claude"} {
 		code, _, errs := yadIn(t, "account", "remove", id, "work", "--yes")
 		if code == 0 {
 			t.Errorf("harness %q was accepted", id)
@@ -305,14 +310,16 @@ func TestAccountRemoveRefusesAHarnessThatWalksOutOfTheDataDirectory(t *testing.T
 			t.Errorf("harness %q: refusal does not say what is wrong: %q", id, errs)
 		}
 	}
-	if _, err := os.Stat(outside); err != nil {
-		t.Errorf("a refused remove deleted something anyway: %v", err)
+	if _, err := os.Stat(target); err != nil {
+		t.Errorf("a refused remove deleted %s, which is outside the data directory: %v", target, err)
 	}
 }
 
-// The state a daemon already running cannot see: both commands say so, as
-// `yad connect` does for a connection it just wrote.
-func TestAccountAddAndRemoveNameTheDaemonRestart(t *testing.T) {
+// The state a daemon already running cannot see. Only remove is driven here:
+// `yad account add` returns early unless it finds a terminal, so its own copy
+// of this sentence is pinned by TestBothAccountCommandsShareTheRestartNotice
+// instead of by running the command.
+func TestAccountRemoveNamesTheDaemonRestart(t *testing.T) {
 	p := accountEnv(t)
 	if _, err := account.Ensure(p.Data, "claude", "work"); err != nil {
 		t.Fatal(err)
@@ -323,5 +330,24 @@ func TestAccountAddAndRemoveNameTheDaemonRestart(t *testing.T) {
 	}
 	if !strings.Contains(out, "yad daemon restart") {
 		t.Errorf("remove does not mention the restart a running runner needs:\n%s", out)
+	}
+}
+
+// add's restart line cannot be reached from a test — the command refuses
+// without a terminal — so both commands print the same constant and this pins
+// that they do. Deleting or rewording either one fails here.
+func TestBothAccountCommandsShareTheRestartNotice(t *testing.T) {
+	if !strings.Contains(daemonRestartNotice, "yad daemon restart") {
+		t.Fatalf("the shared notice stopped naming the command: %q", daemonRestartNotice)
+	}
+	src, err := os.ReadFile("cmd_account.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two prints: the success branch of add, and the end of remove. Counting
+	// the print rather than the identifier, so the doc comment above the
+	// constant does not make this pass on its own.
+	if n := strings.Count(string(src), "fmt.Fprintln(w, daemonRestartNotice)"); n != 2 {
+		t.Errorf("the notice is printed %d times, want 2 (add's success branch and remove) — one command stopped printing it", n)
 	}
 }

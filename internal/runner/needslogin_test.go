@@ -193,22 +193,32 @@ func TestASuccessfulRunLeavesTheAccountAlone(t *testing.T) {
 	}
 }
 
+// health reads account state through account.Load, the same call a claim
+// makes, so what a hub is told and what a run would do cannot disagree. These
+// tests drive that path rather than hand-setting states on the document.
+func healthLoop(t *testing.T, e *env, labels ...string) *Loop {
+	t.Helper()
+	l := e.loop(t, 1)
+	l.Data = e.paths.Data
+	l.Config = accountConfig(labels...)
+	return l
+}
+
 // Every hub hears which accounts need login, by label, in the health of every
-// sync — that is how an owner finds out from the hub's side that a runner is
+// sync — that is how an owner finds out from the hub's side why a runner is
 // not claiming.
 func TestHealthReportsNeedsLoginWithItsLabel(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
+	for _, label := range []string{"personal", "work"} {
+		if _, err := account.Ensure(e.paths.Data, "claude", label); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountNeedsLogin, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	l := e.loop(t, 1)
-	doc := l.Capabilities()
-	doc.Harnesses[0].Accounts = []v1.AccountReport{
-		{Label: "personal", State: v1.AccountFree},
-		{Label: "work", State: v1.AccountFree},
-	}
-	l.Capabilities = func() v1.Capabilities { return doc }
+	l := healthLoop(t, e, "personal", "work")
 
 	h := l.health(ctx, l.Pool.Reserve())
 	if len(h.Harnesses) != 1 || h.Harnesses[0].ID != "claude" {
@@ -221,11 +231,10 @@ func TestHealthReportsNeedsLoginWithItsLabel(t *testing.T) {
 	if got["work"] != v1.AccountNeedsLogin {
 		t.Errorf("health says work is %q, want needs_login", got["work"])
 	}
-	// The state the store has never heard of is free, not missing.
+	// The state the store has never heard of, whose home is on disk, is free.
 	if got["personal"] != v1.AccountFree {
 		t.Errorf("health says personal is %q, want free", got["personal"])
 	}
-	// One account still free means the harness is still ready.
 	if !h.Harnesses[0].Ready {
 		t.Error("a harness with one free account is reported not ready")
 	}
@@ -239,18 +248,51 @@ func TestHealthReportsNeedsLoginWithItsLabel(t *testing.T) {
 	}
 }
 
+// The contradiction round 2 found: an account whose home is gone read as
+// needs_login everywhere that went through account.Load — the capability
+// document, `yad account list`, the claim — while health rebuilt the state
+// itself and called the same label free and ready in the same sync. A hub
+// routing on health kept offering runs that the claim then refused.
+func TestHealthReportsAHomeThatIsGoneAsNeedsLogin(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	// Exactly what `yad account remove` leaves behind for a daemon still
+	// holding the config it started with: label configured, home deleted,
+	// and no row in the store.
+	l := healthLoop(t, e, "work")
+
+	h := l.health(ctx, l.Pool.Reserve())
+	if len(h.Harnesses) != 1 || len(h.Harnesses[0].Accounts) != 1 {
+		t.Fatalf("health harnesses = %+v", h.Harnesses)
+	}
+	if got := h.Harnesses[0].Accounts[0].State; got != v1.AccountNeedsLogin {
+		t.Errorf("health says the account is %q; its home is not on disk", got)
+	}
+	if h.Harnesses[0].Ready {
+		t.Error("a harness whose only account has no home is reported ready")
+	}
+	// And health agrees with what a run would actually do.
+	accounts, err := account.Load(ctx, e.store.Queries, e.paths.Data, l.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := account.First(accounts, "claude"); ok {
+		t.Error("health and the claim disagree: a run would have taken the account")
+	}
+}
+
 // Every account needing login makes the harness not ready, and the reason is
 // there by label. Declining to claim on it is DEV-28's.
 func TestAHarnessWhoseAccountsAllNeedLoginIsNotReady(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
+	if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
 	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountNeedsLogin, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	l := e.loop(t, 1)
-	doc := l.Capabilities()
-	doc.Harnesses[0].Accounts = []v1.AccountReport{{Label: "work", State: v1.AccountFree}}
-	l.Capabilities = func() v1.Capabilities { return doc }
+	l := healthLoop(t, e, "work")
 
 	h := l.health(ctx, l.Pool.Reserve())
 	if len(h.Harnesses) != 1 || h.Harnesses[0].Ready {
@@ -262,7 +304,7 @@ func TestAHarnessWhoseAccountsAllNeedLoginIsNotReady(t *testing.T) {
 // none configured is a state rather than a failure.
 func TestAHarnessWithNoAccountsIsReady(t *testing.T) {
 	e := newEnv(t)
-	l := e.loop(t, 1)
+	l := healthLoop(t, e)
 	h := l.health(context.Background(), l.Pool.Reserve())
 	if len(h.Harnesses) != 1 || !h.Harnesses[0].Ready {
 		t.Fatalf("harness health = %+v, want ready", h.Harnesses)
@@ -272,32 +314,18 @@ func TestAHarnessWithNoAccountsIsReady(t *testing.T) {
 	}
 }
 
-// A login check that cannot answer leaves the account exactly as it was.
-// Absence is data, and an unanswered question is not a "no": parking a working
-// account because `claude auth status` is missing from an older build would
-// stop the runner claiming for a reason that was never established.
-func TestALoginCheckThatCannotAnswerLeavesTheStateAlone(t *testing.T) {
+// Health reports what the runner can drive, by the same predicate a claim
+// uses. A harness on PATH whose version probe failed is present and still
+// unusable, and a hub routing on health must not be told it is ready.
+func TestHealthLeavesOutAHarnessTheRunnerCannotDrive(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
-	if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
-		t.Fatal(err)
-	}
-	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountFree, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	l := e.loop(t, 1)
-	e.enqueue(t, testRun("a", "s1"))
-	x, logged := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
-		Outcome: adapter.Outcome{State: v1.RunFailed, Error: &v1.RunError{Class: adapter.ClassHarness, Message: "it failed"}},
-	}))
-	fakeClaudeBinary(t, x, "broken")
-	claimAndRun(t, l, x)
+	l := healthLoop(t, e)
+	doc := l.Capabilities()
+	doc.Harnesses[0].Error = "`claude --version` printed nothing this runner could parse"
+	l.Capabilities = func() v1.Capabilities { return doc }
 
-	if got := accountState(t, e, "work"); got != v1.AccountFree {
-		t.Errorf("an unanswered login check moved the account to %q", got)
-	}
-	// It is not silent about it either: the owner has to be able to find out.
-	if !strings.Contains(logged.String(), "could not check whether the account is still logged in") {
-		t.Errorf("nothing was logged about the check failing:\n%s", logged.String())
+	h := l.health(context.Background(), l.Pool.Reserve())
+	if len(h.Harnesses) != 0 {
+		t.Errorf("health reports %+v for a harness the runner would refuse a run for", h.Harnesses)
 	}
 }

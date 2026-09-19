@@ -499,8 +499,11 @@ for `codex`); the suite never runs a real harness.
   (DOMAIN.md). It travels to every hub by label and state, in the capability
   document and in every sync's health; the home and everything the harness
   wrote in it never leave the machine.
-- **Needs login**: entered when a turn fails for a reason the harness does not
-  explain and the harness's own login check then says the home has no login —
+- **Needs login**: entered three ways — a configured label whose harness home
+  is not on disk, which is what `yad account remove` looks like to a daemon
+  still holding the config it started with; a `yad account add` whose login the
+  owner did not finish; and a turn that fails for a reason the harness does not
+  explain when the harness's own login check then says the home has no login —
   never by reading the failure's wording, because Claude reports a missing
   login and a bad model identically, both inside an object that says
   `subtype: "success"`. A needs-login account is skipped for runs exactly as a

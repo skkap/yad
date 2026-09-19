@@ -70,7 +70,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "doctor":
 		cmdErr = cmdDoctor(ctx, g, rest, stdout)
 	case "harnesses":
-		cmdErr = cmdHarnesses(ctx, g, rest, stdout)
+		cmdErr = cmdHarnesses(ctx, g, rest, stdout, stderr)
 	case "daemon":
 		cmdErr = cmdDaemon(ctx, g, rest, stdout)
 	case "hub":

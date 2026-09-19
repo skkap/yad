@@ -21,6 +21,13 @@ import (
 
 const accountUsage = "usage: yad account add <harness> <label> | list [--json] | remove <harness> <label> [--yes]"
 
+// daemonRestartNotice is printed by both commands that write config.toml. A
+// running runner holds the config it started with, so neither an added nor a
+// removed account reaches it until it restarts — the same thing `yad connect`
+// says about a connection it has just written. One constant because add's copy
+// cannot be exercised from a test: the command refuses without a terminal.
+const daemonRestartNotice = "A runner already running holds the config it started with — `yad daemon restart` for it to pick this up."
+
 func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(accountUsage)
@@ -108,7 +115,7 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	}
 	if in {
 		fmt.Fprintf(w, "\n%s account %q is free and will take runs.\n", id, label)
-		fmt.Fprintln(w, "A runner already running holds the config it started with — `yad daemon restart` to pick this up.")
+		fmt.Fprintln(w, daemonRestartNotice)
 		return nil
 	}
 	// Not an error in the state model — the account exists and is reported —
@@ -250,7 +257,7 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 	// stays in its reports until it restarts. It will not use the account —
 	// a home that is not on disk reads as needs-login, so runs skip it — but
 	// saying nothing here makes the line above look like the whole story.
-	fmt.Fprintln(w, "A runner already running holds the config it started with — `yad daemon restart` to drop the label from its reports.")
+	fmt.Fprintln(w, daemonRestartNotice)
 	return nil
 }
 
@@ -285,8 +292,32 @@ func addToConfig(p config.Paths, cfg config.Config, id, label string) error {
 	return config.Save(p, cfg)
 }
 
+// openForAccountWrite opens the runner's state database for the one row these
+// commands own.
+//
+// store.Open migrates unconditionally, and the database is the daemon's: a CLI
+// newer than the daemon must not change the schema under it (store.go, and
+// decision 0035 for why `yad sessions close` goes through the socket rather
+// than writing its row here). OpenReadOnly is the only thing that refuses a
+// skewed database, so its check is made first and its message — which names
+// `yad daemon restart` — is what the owner gets.
+//
+// Routing this write through the control socket, as a session close is routed,
+// is the fuller answer and belongs with the daemon work rather than here.
+func openForAccountWrite(ctx context.Context, p config.Paths) (*store.Store, error) {
+	switch ro, err := store.OpenReadOnly(ctx, p.StateDB()); {
+	case errors.Is(err, store.ErrNoState):
+		// No database yet: nothing to migrate under anyone.
+	case err != nil:
+		return nil, err
+	default:
+		ro.Close()
+	}
+	return store.Open(ctx, p.StateDB())
+}
+
 func recordState(ctx context.Context, p config.Paths, id, label string, state v1.AccountState) error {
-	st, err := store.Open(ctx, p.StateDB())
+	st, err := openForAccountWrite(ctx, p)
 	if err != nil {
 		return err
 	}
@@ -300,7 +331,7 @@ func forgetState(ctx context.Context, p config.Paths, id, label string) error {
 	if _, err := os.Stat(p.StateDB()); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	st, err := store.Open(ctx, p.StateDB())
+	st, err := openForAccountWrite(ctx, p)
 	if err != nil {
 		return err
 	}

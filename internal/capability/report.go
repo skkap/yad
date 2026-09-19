@@ -94,8 +94,10 @@ func Detect(ctx context.Context) []harness.Detected {
 // by label and state. Only the fields a hub may see survive the translation:
 // an account's home, and everything the harness wrote inside it, do not.
 //
-// An account the owner configured but the store has never seen is reported
-// free, so a label added to config.toml by hand works without a store write.
+// An account the store has never seen is reported free when its home is on
+// disk and needs_login when it is not (account.Load owns that rule), so no
+// store write is needed to report an account correctly. The nil-accounts
+// fallback below cannot check either and reports the configured labels free.
 func Harnesses(found []harness.Detected, cfg config.Config, accounts []account.Account) []v1.HarnessReport {
 	out := make([]v1.HarnessReport, 0, len(found))
 	for _, d := range found {

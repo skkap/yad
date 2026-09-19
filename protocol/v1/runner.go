@@ -47,10 +47,11 @@ const (
 	AccountFree AccountState = "free"
 	// AccountLimited is at a usage limit until LimitedUntil.
 	AccountLimited AccountState = "limited"
-	// AccountNeedsLogin has a harness home but no working login in it: the
-	// owner has to run `yad account add` at the machine. Skipped for claiming
-	// exactly as a limited account is, and never an error that stops a runner
-	// registering.
+	// AccountNeedsLogin cannot run a turn until the owner logs it in again:
+	// its harness home holds no working login, or the home is not there at
+	// all. The owner runs `yad account add` at the machine. Skipped for
+	// claiming exactly as a limited account is, and never an error that stops
+	// a runner registering.
 	AccountNeedsLogin AccountState = "needs_login"
 )
 
