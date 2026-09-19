@@ -90,8 +90,10 @@ func child(mode string) {
 			f.Close()
 		}
 		pgid, _ := syscall.Getpgid(0)
-		sid, _ := syscall.Getsid(0)
-		fmt.Println(tty, pgid == os.Getpid(), sid == os.Getpid())
+		// syscall has Getsid on darwin only; the raw call is on every unix
+		// the runner builds for.
+		sid, _, _ := syscall.RawSyscall(syscall.SYS_GETSID, 0, 0, 0)
+		fmt.Println(tty, pgid == os.Getpid(), int(sid) == os.Getpid())
 	case "both":
 		fmt.Println("out")
 		os.Stderr.WriteString("err\n")
