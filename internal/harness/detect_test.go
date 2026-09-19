@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 func TestParseVersion(t *testing.T) {
@@ -471,5 +473,82 @@ func TestHarnessOutputIsNeverQuotedInTheReport(t *testing.T) {
 	}
 	if !strings.Contains(d.Error, "run it on this machine") {
 		t.Errorf("Error = %q, want the next action", d.Error)
+	}
+}
+
+// The rule the report rests on, tested where it is decidable. The race it
+// exists for is supervise.Run's select between the deadline, the leader's exit
+// and the pipe's EOF — all three ready at once once the deadline's kill lands,
+// and Go picks among ready cases at random — so no arrangement of a child makes
+// the *outcome* deterministic. The rule is deterministic, and this is it.
+func TestProbeTimedOutIsTheDeadlinesCall(t *testing.T) {
+	killed := errors.New("signal: killed")
+	for _, tc := range []struct {
+		name   string
+		out    supervise.Capture
+		runErr error
+		ctxErr error
+		want   bool
+	}{
+		{name: "the supervisor said so", out: supervise.Capture{TimedOut: true}, want: true},
+		// The racy shape: the deadline fired, its kill ended the child, and the
+		// supervisor happened to see the exit first.
+		{name: "killed by the deadline, reported as an exit", out: supervise.Capture{Err: killed},
+			ctxErr: context.DeadlineExceeded, want: true},
+		{name: "the parent gave up", out: supervise.Capture{Err: killed},
+			ctxErr: context.Canceled, want: true},
+		{name: "could not start, and the deadline had gone", runErr: errors.New("start: fork/exec"),
+			ctxErr: context.DeadlineExceeded, want: true},
+		// A real exit status with time still on the clock is not a timeout, and
+		// an answer that landed just inside the deadline keeps it.
+		{name: "exited non-zero in time", out: supervise.Capture{Err: errors.New("exit status 3")}, want: false},
+		{name: "answered, and the deadline went a moment later",
+			out: supervise.Capture{Stdout: []byte("codex-cli 1.0\n")}, ctxErr: context.DeadlineExceeded, want: false},
+		{name: "could not start, in time", runErr: errors.New("start: fork/exec"), want: false},
+		{name: "answered in time", out: supervise.Capture{Stdout: []byte("codex-cli 1.0\n")}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ProbeTimedOut(tc.out, tc.runErr, tc.ctxErr); got != tc.want {
+				t.Errorf("ProbeTimedOut(%+v, %v, %v) = %v, want %v", tc.out, tc.runErr, tc.ctxErr, got, tc.want)
+			}
+		})
+	}
+}
+
+// And end to end. supervise.Run decides TimedOut in a select between the
+// deadline, the leader's exit and the pipe's EOF, so a child that reaches EOF
+// first settles that select before the deadline exists: Run then blocks in
+// Wait, the deadline kills the child there, and the capture comes back with a
+// kill for an error and TimedOut false. That is the CI failure's shape, made to
+// happen on purpose rather than waited for (DEV-69).
+func TestATimedOutProbeIsNeverReportedAsAnExit(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		// Closing stdout is what makes this deterministic — a wrapper that
+		// redirects and then waits on something does it for real.
+		{"closes stdout, then hangs", "#!/bin/sh\nexec 1>&-\nsleep 60\n"},
+		// Holding it is the ordinary hang, where the same three cases are ready
+		// at once and the choice among them is random: green here on an idle
+		// machine, red on a loaded one, which is how CI found this.
+		{"hangs holding stdout", "#!/bin/sh\nsleep 60\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := filepath.Join(dir, "codex")
+			if err := os.WriteFile(script, []byte(tc.body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("YAD_CODEX_PATH", script)
+			old := versionTimeout
+			// Short, because every run waits it out; all the case needs is that
+			// the deadline arrive while the child is still there.
+			versionTimeout = 250 * time.Millisecond
+			t.Cleanup(func() { versionTimeout = old })
+
+			h, _ := Lookup("codex")
+			d := detectOne(context.Background(), h)
+			if !strings.Contains(d.Error, "no answer to `codex --version`") {
+				t.Errorf("Error = %q, want the timeout rather than the child's fate", d.Error)
+			}
+		})
 	}
 }

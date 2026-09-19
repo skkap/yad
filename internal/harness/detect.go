@@ -102,10 +102,10 @@ func detectOne(ctx context.Context, h Harness) Detected {
 	defer cancel()
 	out, err := supervise.Run(ctx, supervise.Spec{Path: path, Args: h.VersionArgs}, versionOutputCap)
 	switch {
+	case ProbeTimedOut(out, err, ctx.Err()):
+		d.Error = noAnswer(h)
 	case err != nil:
 		d.Error = wontStart(h, fromEnv)
-	case out.TimedOut:
-		d.Error = noAnswer(h)
 	case out.Err != nil:
 		d.Error = wontAnswer(h)
 	default:
@@ -135,6 +135,23 @@ func wontStart(h Harness, fromEnv bool) string {
 		return fmt.Sprintf("%s does not name a %s this runner can start — point it at an executable %s, or unset it and let PATH decide", h.EnvPath, h.Binary, h.Binary)
 	}
 	return fmt.Sprintf("the %s on PATH will not start — run `%s %s` on this machine to see what stops it", h.Binary, h.Binary, strings.Join(h.VersionArgs, " "))
+}
+
+// ProbeTimedOut says the probe ran out of time, whoever the child's own fate
+// blamed. The deadline ending kills the process group, so the leader's exit
+// error and the deadline become ready together and supervise.Run picks between
+// them at random — a probe that hung would be reported as an ordinary non-zero
+// exit on some runs and not others, which is what made two packages' timeout
+// tests fail under CI load (DEV-69). The deadline is the fact here: the kill is
+// its consequence, not a result of its own.
+//
+// Only a failure is reclassified. A probe that got its answer out before the
+// deadline keeps it, however close the two were.
+//
+// internal/hostool calls this for the same reason it calls ParseVersion: the
+// rule is the supervisor's, and having it twice is how the two packages drift.
+func ProbeTimedOut(out supervise.Capture, runErr, ctxErr error) bool {
+	return out.TimedOut || ctxErr != nil && (runErr != nil || out.Err != nil)
 }
 
 // noAnswer is a probe the harness never came back from. It names the command
