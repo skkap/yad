@@ -25,6 +25,15 @@ func first(id string, free int) v1.SyncRequest {
 	return r
 }
 
+// stale is the first sync of a runner old enough to advertise no feature at
+// all: what a hub must not send a drain, a close_session, a steer or an
+// interrupt to, and what a version floor is there to turn away.
+func stale(id string, free int) v1.SyncRequest {
+	r := first(id, free)
+	r.Capabilities.ProtocolFeatures = nil
+	return r
+}
+
 func claimed(ids ...string) []v1.HeldRun {
 	var out []v1.HeldRun
 	for _, id := range ids {

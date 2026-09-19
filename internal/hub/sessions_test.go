@@ -30,7 +30,7 @@ func TestCloseABoundSession(t *testing.T) {
 	f := newFixture(t)
 	tok := f.admin(t, "cli")
 	old := f.register(t, "old")
-	f.mustSync(t, "old", old, first("old", 1))
+	f.mustSync(t, "old", old, stale("old", 1))
 	f.enqueue(t, run("o1", "on-old"))
 	f.mustSync(t, "old", old, req("old", 1))
 	f.mustSync(t, "old", old, req("old", 1, claimed("o1")...))

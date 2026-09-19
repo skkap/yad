@@ -102,6 +102,8 @@ type env struct {
 	store    *store.Store
 	exec     *executor
 	clock    *fakeClock
+	// cred is the last runner credential registered through loop.
+	cred string
 	// skew moves the hub's clock ahead of the real one, so a lease can lapse
 	// without a sleep.
 	skew atomic.Int64
@@ -147,12 +149,20 @@ func (e *env) token(t *testing.T, forRunner ...string) string {
 // loop registers a runner with the hub directly and returns a loop for it.
 func (e *env) loop(t *testing.T, capacity int) *Loop {
 	t.Helper()
+	return e.loopVersion(t, capacity, "dev")
+}
+
+// loopVersion is loop for a runner reporting a release version rather than an
+// unstamped build, which is what a hub's version floor is judged against.
+func (e *env) loopVersion(t *testing.T, capacity int, version string) *Loop {
+	t.Helper()
 	ctx := context.Background()
 	id, err := e.paths.RunnerID()
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := drivableDoc(id, capacity)
+	doc.YadVersion = version
 	anon, err := hubclient.New(e.url, "")
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +171,7 @@ func (e *env) loop(t *testing.T, capacity int) *Loop {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.cred = res.RunnerCredential
 	c, err := hubclient.New(e.url, res.RunnerCredential)
 	if err != nil {
 		t.Fatal(err)

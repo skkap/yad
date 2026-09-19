@@ -48,7 +48,8 @@ func (h *Hub) registerControls(api huma.API) {
 		Summary: "Interrupt a run's turn",
 		Description: "Ends the harness's current turn and keeps its session, so the next run in the session resumes it; the run " +
 			"ends cancelled unless the turn finished first. Delivered at the runner's next sync. Unlike a cancel it asks only: " +
-			"a harness that ignores it keeps going. A run that has not started is 409 — cancel it instead.",
+			"a harness that ignores it keeps going. A run that has not started is 409 — cancel it instead. So is a run held by a " +
+			"runner that does not advertise the interrupt feature: it would ignore the control, and nothing acknowledges one.",
 		Security: adminSecurity, Errors: []int{401, 404, 409},
 	}, func(ctx context.Context, in *runInput) (*runOutput, error) {
 		return h.control(ctx, in.Run, v1.ControlInterrupt, "")
@@ -59,7 +60,8 @@ func (h *Hub) registerControls(api huma.API) {
 		Summary: "Add input to a running turn",
 		Description: "Delivered once, at the runner's next sync. The harness reads it at its next tool boundary, or answers it " +
 			"after the turn in the same run. A steer the harness would not take appears in the run's events as an error with " +
-			"class steer_failed. A run that has not started is 409: put the text in the brief of a new run instead.",
+			"class steer_failed. A run that has not started is 409: put the text in the brief of a new run instead. So is a run " +
+			"held by a runner that does not advertise the steer feature: it would ignore the control, and the text would be lost.",
 		Security: adminSecurity, Errors: []int{400, 401, 404, 409},
 	}, func(ctx context.Context, in *steerInput) (*runOutput, error) {
 		return h.control(ctx, in.Run, v1.ControlSteer, in.Body.Text)
@@ -97,6 +99,15 @@ func (h *Hub) control(ctx context.Context, runID string, kind v1.ControlKind, te
 				fmt.Sprintf("run %s has already ended %s", run.ID, run.State),
 				"nothing to do: a finished run stays as it ended")
 		default:
+			if feature, alternative := controlFeature(kind); feature != "" && run.RunnerID.Valid {
+				holder, err := q.GetRunner(ctx, run.RunnerID.String)
+				if err != nil {
+					return err
+				}
+				if err := refuseUnadvertised(holder, kind, feature, alternative); err != nil {
+					return err
+				}
+			}
 			if err := queue(ctx, q, run.ID, kind, text, now); err != nil {
 				return err
 			}
@@ -139,7 +150,14 @@ func queue(ctx context.Context, q *db.Queries, runID string, kind v1.ControlKind
 // nothing acknowledges a control and a lost response must not lose one; the
 // runner acts on the first. A steer goes out once and is gone: sent twice, the
 // harness would read it twice.
-func deliver(ctx context.Context, q *db.Queries, runID string) ([]v1.Control, error) {
+//
+// doc is what this sync says the runner acts on, which the control was queued
+// against but need no longer match — a runner restarted under an older binary
+// keeps its credential. One it would now ignore stays queued rather than being
+// spent on it: a steer held back can still reach the runner it was meant for,
+// while a steer deleted here is gone and its caller was told it landed. The
+// same holds when described is false and doc is known to be out of date.
+func deliver(ctx context.Context, q *db.Queries, runID string, doc v1.Capabilities, described bool) ([]v1.Control, error) {
 	rows, err := q.ControlsFor(ctx, runID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
@@ -147,7 +165,11 @@ func deliver(ctx context.Context, q *db.Queries, runID string) ([]v1.Control, er
 	out := make([]v1.Control, 0, len(rows))
 	var lastSteer int64
 	for _, r := range rows {
-		out = append(out, v1.Control{Kind: v1.ControlKind(r.Kind), RunID: runID, Text: r.Text})
+		kind := v1.ControlKind(r.Kind)
+		if feature, _ := controlFeature(kind); feature != "" && !(described && advertises(doc, feature)) {
+			continue
+		}
+		out = append(out, v1.Control{Kind: kind, RunID: runID, Text: r.Text})
 		if r.Kind == string(v1.ControlSteer) {
 			lastSteer = r.ID
 		}

@@ -27,7 +27,7 @@ func TestDrainRunner(t *testing.T) {
 	f := newFixture(t)
 	tok := f.admin(t, "cli")
 	old := f.register(t, "old")
-	f.mustSync(t, "old", old, first("old", 1))
+	f.mustSync(t, "old", old, stale("old", 1))
 	cred := f.register(t, "r1")
 	withDrain := first("r1", 2)
 	withDrain.Capabilities.ProtocolFeatures = []string{capability.FeatureDrain}

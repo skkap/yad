@@ -706,7 +706,7 @@ paths:
       summary: Long-poll a run's events
   /runs/{run}/interrupt:
     post:
-      description: "Ends the harness's current turn and keeps its session, so the next run in the session resumes it; the run ends cancelled unless the turn finished first. Delivered at the runner's next sync. Unlike a cancel it asks only: a harness that ignores it keeps going. A run that has not started is 409 — cancel it instead."
+      description: "Ends the harness's current turn and keeps its session, so the next run in the session resumes it; the run ends cancelled unless the turn finished first. Delivered at the runner's next sync. Unlike a cancel it asks only: a harness that ignores it keeps going. A run that has not started is 409 — cancel it instead. So is a run held by a runner that does not advertise the interrupt feature: it would ignore the control, and nothing acknowledges one."
       operationId: interruptRun
       parameters:
         - description: The run id.
@@ -758,7 +758,7 @@ paths:
       summary: Interrupt a run's turn
   /runs/{run}/steer:
     post:
-      description: "Delivered once, at the runner's next sync. The harness reads it at its next tool boundary, or answers it after the turn in the same run. A steer the harness would not take appears in the run's events as an error with class steer_failed. A run that has not started is 409: put the text in the brief of a new run instead."
+      description: "Delivered once, at the runner's next sync. The harness reads it at its next tool boundary, or answers it after the turn in the same run. A steer the harness would not take appears in the run's events as an error with class steer_failed. A run that has not started is 409: put the text in the brief of a new run instead. So is a run held by a runner that does not advertise the steer feature: it would ignore the control, and the text would be lost."
       operationId: steerRun
       parameters:
         - description: The run id.
