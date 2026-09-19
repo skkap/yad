@@ -9,6 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // loginArgs runs the harness's own login. YAD passes the home and nothing
@@ -42,6 +45,21 @@ var statusArgs = map[string][]string{
 // "logged out". An ambiguous signal must not be what parks an account.
 const codexLoggedOut = "Not logged in"
 
+// statusTimeout caps one login check. It reads a file in the home and prints a
+// line, so a second is already generous; the bound is here because this runs
+// on a run's completion path and a harness that hangs must not hold the run's
+// result behind it.
+const statusTimeout = 10 * time.Second
+
+// statusDrain is how long the reader gets once the leader has exited: what it
+// printed is already in the pipe.
+const statusDrain = 250 * time.Millisecond
+
+// statusOutputCap bounds what a login check may print. The answer is one line
+// or a small JSON object; a harness that decides to print its whole log must
+// not be read into memory unbounded.
+const statusOutputCap = 64 << 10
+
 // CanLogIn says whether `yad account add` knows how to log this harness in.
 func CanLogIn(harness string) bool {
 	_, ok := loginArgs[harness]
@@ -60,10 +78,17 @@ func Login(ctx context.Context, harness, binary, home string, in io.Reader, out,
 		return fmt.Errorf("yad does not know how to log %s in — log in with %s's own command inside %s, then run `yad account list` to see it", harness, harness, home)
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
-	// Appended last, and os/exec keeps the last of a repeated name: an owner
-	// whose own shell exports CLAUDE_CONFIG_DIR still logs in to the account's
-	// home and not to theirs.
-	cmd.Env = append(os.Environ(), Env(harness, home)...)
+	// Scrubbed as a run's child is (supervise.Scrub), then the home appended
+	// last — os/exec keeps the last of a repeated name, so an owner whose own
+	// shell exports CLAUDE_CONFIG_DIR still logs in to the account's home and
+	// not to theirs.
+	//
+	// The scrub matters beyond tidiness: a login that inherited CLAUDECODE
+	// from the session the owner typed the command in believes it is nested
+	// inside another Claude Code, and one that inherited ANTHROPIC_API_KEY
+	// would not be logging the subscription in at all. The child a run gets
+	// sees neither, so neither does this.
+	cmd.Env = append(supervise.Scrub(os.Environ(), nil), Env(harness, home)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, errw
 	// Codex refuses to start outside a directory it trusts (DEV-24), and the
 	// home is one it made itself, so the login runs there rather than in
@@ -83,10 +108,48 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("yad cannot check %s's login state — `yad account list` shows the home, and %s's own command says whether it is logged in", harness, harness)
 	}
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Env = append(os.Environ(), Env(harness, home)...)
-	cmd.Dir = home
-	stdout, err := cmd.Output()
+	// Through supervise, as every other harness child is, for two reasons
+	// beyond consistency. It scrubs the environment the same way a run's
+	// child is scrubbed — otherwise this check could answer "logged in" on
+	// the strength of an ANTHROPIC_API_KEY in the daemon's environment that
+	// the run itself is denied, leaving a useless account marked free while
+	// every run on it failed. And it puts the child in its own process group
+	// with a bounded read: this runs on the run-completion path under a
+	// context nothing cancels, so a harness that hangs holding its stdout
+	// would hold the run's result behind it for ever.
+	ctx, cancel := context.WithTimeout(ctx, statusTimeout)
+	defer cancel()
+	proc, err := supervise.Start(ctx, supervise.Spec{Path: binary, Args: args, Dir: home, Env: Env(harness, home)})
+	if err != nil {
+		return false, fmt.Errorf("could not ask %s whether %s holds a login: %w", harness, home, err)
+	}
+	// The leader's own fate decides rather than EOF: a descendant that left
+	// the group holding the pipe would never let the read finish
+	// (internal/harness/detect.go makes the same argument for --version).
+	read := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(io.LimitReader(proc.Stdout(), statusOutputCap))
+		read <- b
+	}()
+	var stdout []byte
+	select {
+	case stdout = <-read:
+	case <-proc.Done():
+	case <-ctx.Done():
+	}
+	if stdout == nil {
+		drain := time.NewTimer(statusDrain)
+		select {
+		case stdout = <-read:
+		case <-drain.C:
+		}
+		drain.Stop()
+	}
+	proc.Stdout().Close()
+	if stdout == nil {
+		stdout = <-read // ReadAll returns what it read before the close
+	}
+	err = proc.Wait()
 
 	switch harness {
 	case "codex":

@@ -64,8 +64,15 @@ func AccountStates() []AccountState {
 // when a limit lasts. A label is not a secret and a credential is — nothing
 // else from an account's home is reportable, and none of it appears here.
 type AccountReport struct {
-	Label        string       `json:"label"`
-	State        AccountState `json:"state" enum:"free,limited,needs_login"`
+	Label string `json:"label"`
+	// omitempty keeps state out of the schema's required list. Every runner
+	// that has this field always sets it — Report substitutes free for an
+	// empty one — so the wire is unchanged; what it buys is that a runner
+	// from before this field still validates against a hub generated after
+	// it. Hubs update centrally and runners sit on other people's machines,
+	// so that is the direction that matters, and §2's rule is that a field
+	// added within v1 never breaks an older runner.
+	State        AccountState `json:"state,omitempty" enum:"free,limited,needs_login"`
 	LimitedUntil *time.Time   `json:"limited_until,omitempty"`
 }
 

@@ -11,15 +11,18 @@ import (
 )
 
 // The test binary doubles as the harness. Re-executed with
-// YAD_ACCOUNT_TEST_HARNESS set, it answers `auth login`/`auth status` as claude
+// ACCOUNT_TEST_HARNESS set — deliberately not YAD_-prefixed, because the
+// login check scrubs the environment exactly as a run's child does and
+// supervise.Scrub removes YAD_*, which would leave the re-executed binary
+// running the test suite again instead of playing the harness — it answers `auth login`/`auth status` as claude
 // does and `login`/`login status` as codex does, keeping its "credential" in
 // the home it was pointed at — which is the whole of what these tests are
 // about: that the home YAD passes is the home the harness reads and writes.
 //
-// YAD_ACCOUNT_TEST_LOGIN_FAILS makes the login exit non-zero having written
+// ACCOUNT_TEST_LOGIN_FAILS makes the login exit non-zero having written
 // nothing, which is the owner walking away from it.
 func TestMain(m *testing.M) {
-	if h := os.Getenv("YAD_ACCOUNT_TEST_HARNESS"); h != "" {
+	if h := os.Getenv("ACCOUNT_TEST_HARNESS"); h != "" {
 		os.Exit(fakeHarness(h, os.Args[1:]))
 	}
 	os.Exit(m.Run())
@@ -45,7 +48,7 @@ func fakeHarness(id string, args []string) int {
 	}
 	switch cmd {
 	case "auth login", "login":
-		if os.Getenv("YAD_ACCOUNT_TEST_LOGIN_FAILS") != "" {
+		if os.Getenv("ACCOUNT_TEST_LOGIN_FAILS") != "" {
 			fmt.Fprintln(os.Stderr, "login cancelled")
 			return 1
 		}
@@ -55,7 +58,7 @@ func fakeHarness(id string, args []string) int {
 		os.WriteFile(filepath.Join(home, credentialFile), []byte(`{"token":"sk-not-a-real-token"}`), 0o600)
 		return 0
 	case "auth status":
-		if os.Getenv("YAD_ACCOUNT_TEST_BAD_STATUS") != "" {
+		if os.Getenv("ACCOUNT_TEST_BAD_STATUS") != "" {
 			// A claude whose status stopped being JSON.
 			fmt.Println("Logged in as owner@example.com")
 			return 0
@@ -71,7 +74,7 @@ func fakeHarness(id string, args []string) int {
 	case "login status":
 		// codex exits 1 both for a missing login and for a home it could not
 		// read; only what it printed tells the two apart.
-		if os.Getenv("YAD_ACCOUNT_TEST_BROKEN_HOME") != "" {
+		if os.Getenv("ACCOUNT_TEST_BROKEN_HOME") != "" {
 			fmt.Println("Error loading configuration: " + home + "/config.toml:1:5: key with no value")
 			return 1
 		}
@@ -89,7 +92,7 @@ func fakeHarness(id string, args []string) int {
 // self is this test binary, standing in for the harness.
 func self(t *testing.T, id string) string {
 	t.Helper()
-	t.Setenv("YAD_ACCOUNT_TEST_HARNESS", id)
+	t.Setenv("ACCOUNT_TEST_HARNESS", id)
 	// Without this each re-executed child sleeps a second at exit under -race.
 	t.Setenv("GORACE", "atexit_sleep_ms=0")
 	bin, err := os.Executable()
@@ -136,7 +139,7 @@ func TestLoginAndItsCheck(t *testing.T) {
 // state to report, not a success.
 func TestAbandonedLoginLeavesTheHomeWithoutOne(t *testing.T) {
 	bin := self(t, "claude")
-	t.Setenv("YAD_ACCOUNT_TEST_LOGIN_FAILS", "1")
+	t.Setenv("ACCOUNT_TEST_LOGIN_FAILS", "1")
 	data := t.TempDir()
 	home, err := Ensure(data, "claude", "work")
 	if err != nil {
@@ -211,7 +214,7 @@ func TestLoginKeepsNothingItPrinted(t *testing.T) {
 
 	t.Run("a login that failed", func(t *testing.T) {
 		bin := self(t, "claude")
-		t.Setenv("YAD_ACCOUNT_TEST_LOGIN_FAILS", "1")
+		t.Setenv("ACCOUNT_TEST_LOGIN_FAILS", "1")
 		home, err := Ensure(t.TempDir(), "claude", "work")
 		if err != nil {
 			t.Fatal(err)
@@ -248,7 +251,7 @@ func TestUnknownHarnessSaysWhatToDoInstead(t *testing.T) {
 func TestALoginCheckThatCannotAnswerIsAnError(t *testing.T) {
 	t.Run("codex cannot read the home", func(t *testing.T) {
 		bin := self(t, "codex")
-		t.Setenv("YAD_ACCOUNT_TEST_BROKEN_HOME", "1")
+		t.Setenv("ACCOUNT_TEST_BROKEN_HOME", "1")
 		data := t.TempDir()
 		home, err := Ensure(data, "codex", "work")
 		if err != nil {
@@ -282,7 +285,7 @@ func TestALoginCheckThatCannotAnswerIsAnError(t *testing.T) {
 
 	t.Run("claude stops answering in json", func(t *testing.T) {
 		bin := self(t, "claude")
-		t.Setenv("YAD_ACCOUNT_TEST_BAD_STATUS", "1")
+		t.Setenv("ACCOUNT_TEST_BAD_STATUS", "1")
 		data := t.TempDir()
 		home, err := Ensure(data, "claude", "work")
 		if err != nil {

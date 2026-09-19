@@ -85,6 +85,12 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	if err := g.paths.Ensure(); err != nil {
 		return err
 	}
+	// Before the home and the login, not after: this command ends by writing
+	// the account's state, and finding out then that it cannot would leave
+	// the owner having completed a login for nothing.
+	if err := checkStateDB(ctx, g.paths); err != nil {
+		return err
+	}
 	home, err := account.Ensure(g.paths.Data, id, label)
 	if err != nil {
 		return err
@@ -110,18 +116,19 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	if in {
 		state = v1.AccountFree
 	}
-	if err := recordState(ctx, g.paths, id, label, state); err != nil {
-		return err
-	}
+	recordErr := recordState(ctx, g.paths, id, label, state)
 	if in {
 		fmt.Fprintf(w, "\n%s account %q is free and will take runs.\n", id, label)
 		fmt.Fprintln(w, daemonRestartNotice)
-		return nil
+		return recordErr
 	}
 	// Not an error in the state model — the account exists and is reported —
 	// but not a success either, and a non-zero exit is how a script finds out.
+	// Said whatever happened to the state write: what the owner has to know
+	// is that the login did not take, and a state error is joined to that
+	// rather than printed in its place.
 	fmt.Fprintf(w, "\n%s account %q needs login: the home exists, it is reported to every hub, and no run will use it.\n", id, label)
-	return fmt.Errorf("the login did not complete — run `yad account add %s %s` again when you can finish it", id, label)
+	return errors.Join(fmt.Errorf("the login did not complete — run `yad account add %s %s` again when you can finish it", id, label), recordErr)
 }
 
 func accountList(ctx context.Context, g global, args []string, w io.Writer) error {
@@ -221,6 +228,12 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 	if err := config.ValidName(label); err != nil {
 		return fmt.Errorf("account label: %w", err)
 	}
+	// Before anything is deleted: this command ends by clearing the account's
+	// state row, and discovering then that it cannot would report a schema
+	// number to an owner whose login is already gone.
+	if err := checkStateDB(ctx, g.paths); err != nil {
+		return err
+	}
 	home := account.HomeDir(g.paths.Data, id, label)
 	if !*yes {
 		if !interactive() {
@@ -249,10 +262,14 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 			}
 		}
 	}
-	if err := forgetState(ctx, g.paths, id, label); err != nil {
-		return err
-	}
+	// The home is gone and the label is out of config.toml, so the removal
+	// happened; a state row nothing reads any more is not worth reporting as
+	// a failure over the top of it. Said, not swallowed.
+	forgetErr := forgetState(ctx, g.paths, id, label)
 	fmt.Fprintf(w, "removed %s account %q; %s is gone and the shared transcripts are untouched\n", id, label, home)
+	if forgetErr != nil {
+		fmt.Fprintf(w, "note: the account's state row could not be cleared (%v) — nothing reads it now that the label is out of config.toml\n", forgetErr)
+	}
 	// A runner already running holds the config it started with, so the label
 	// stays in its reports until it restarts. It will not use the account —
 	// a home that is not on disk reads as needs-login, so runs skip it — but
@@ -290,6 +307,26 @@ func addToConfig(p config.Paths, cfg config.Config, id, label string) error {
 	}
 	cfg.Harness[id] = h
 	return config.Save(p, cfg)
+}
+
+// checkStateDB refuses a state database this binary would migrate, before the
+// command does anything it cannot take back.
+//
+// The same check happens again inside openForAccountWrite, because that is
+// where the open actually is; this one exists for its timing. Run only at the
+// write, it fires after `yad account add` has made the home and walked the
+// owner through an interactive login, or after `yad account remove` has
+// deleted the login and rewritten config.toml — and reports a schema number
+// instead of what just happened.
+func checkStateDB(ctx context.Context, p config.Paths) error {
+	st, err := store.OpenReadOnly(ctx, p.StateDB())
+	if errors.Is(err, store.ErrNoState) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return st.Close()
 }
 
 // openForAccountWrite opens the runner's state database for the one row these

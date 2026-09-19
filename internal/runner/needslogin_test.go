@@ -19,11 +19,11 @@ import (
 )
 
 // The test binary doubles as claude for its login check: re-executed with
-// YAD_RUNNER_TEST_CLAUDE set, `auth status` answers in JSON the way claude
+// RUNNER_TEST_CLAUDE set, `auth status` answers in JSON the way claude
 // does, from the home it was pointed at. Nothing else about claude is faked
 // here — the turn itself is the in-memory adapter.
 func TestMain(m *testing.M) {
-	if os.Getenv("YAD_RUNNER_TEST_CLAUDE") != "" {
+	if os.Getenv("RUNNER_TEST_CLAUDE") != "" {
 		os.Exit(fakeClaudeAuth(os.Args[1:]))
 	}
 	os.Exit(m.Run())
@@ -36,7 +36,7 @@ func fakeClaudeAuth(args []string) int {
 	}
 	// A claude whose login check cannot answer: an older build without the
 	// subcommand, or one whose output shape moved.
-	if os.Getenv("YAD_RUNNER_TEST_CLAUDE") == "broken" {
+	if os.Getenv("RUNNER_TEST_CLAUDE") == "broken" {
 		fmt.Fprintln(os.Stderr, "unknown command: auth")
 		return 1
 	}
@@ -55,7 +55,7 @@ func fakeClaudeBinary(t *testing.T, x *Exec, mode ...string) {
 	if len(mode) > 0 {
 		m = mode[0]
 	}
-	t.Setenv("YAD_RUNNER_TEST_CLAUDE", m)
+	t.Setenv("RUNNER_TEST_CLAUDE", m)
 	// Without this each re-executed child sleeps a second at exit under -race.
 	t.Setenv("GORACE", "atexit_sleep_ms=0")
 	bin, err := os.Executable()
@@ -327,5 +327,39 @@ func TestHealthLeavesOutAHarnessTheRunnerCannotDrive(t *testing.T) {
 	h := l.health(context.Background(), l.Pool.Reserve())
 	if len(h.Harnesses) != 0 {
 		t.Errorf("health reports %+v for a harness the runner would refuse a run for", h.Harnesses)
+	}
+}
+
+// An unanswered login check leaves the account exactly as it was — one of the
+// invariants the change is correct only if it holds, and the direction the
+// login check's own comments argue for at length.
+//
+// Deleted by accident in round 2, which replaced the tail of this file rather
+// than appending to it, and restored here: without it, inverting checkLogin's
+// error branch leaves the whole suite green while an older claude with no
+// `auth status` subcommand parks every account it touches.
+func TestALoginCheckThatCannotAnswerLeavesTheStateAlone(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountFree, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, logged := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunFailed, Error: &v1.RunError{Class: adapter.ClassHarness, Message: "it failed"}},
+	}))
+	fakeClaudeBinary(t, x, "broken")
+	claimAndRun(t, l, x)
+
+	if got := accountState(t, e, "work"); got != v1.AccountFree {
+		t.Errorf("an unanswered login check moved the account to %q", got)
+	}
+	// And it is not silent about it: the owner has to be able to find out.
+	if !strings.Contains(logged.String(), "could not check whether the account is still logged in") {
+		t.Errorf("nothing was logged about the check failing:\n%s", logged.String())
 	}
 }

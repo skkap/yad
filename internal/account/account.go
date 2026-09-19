@@ -163,6 +163,11 @@ func link(from, to string) error {
 // as an error rather than a spin.
 const linkAttempts = 5
 
+// errRacedWhileLinking says another run changed the path mid-step. It is never
+// returned to a caller: link retries, and the goal-state check at the top of
+// the next attempt is what ends it.
+var errRacedWhileLinking = errors.New("another run is preparing this home")
+
 // linkOnce makes one attempt. keep is true for a failure retrying cannot
 // change — a directory of real transcripts in the way — so the caller stops
 // and reports it rather than trying again.
@@ -172,6 +177,9 @@ func linkOnce(from, to string) (keep bool, err error) {
 	case err != nil:
 		return false, err
 	case fi.Mode()&os.ModeSymlink != 0:
+		if at, err := os.Readlink(from); err == nil && at == to {
+			return false, nil // already what this function exists to make
+		}
 		if err := os.Remove(from); err != nil {
 			return false, err
 		}
@@ -184,6 +192,15 @@ func linkOnce(from, to string) (keep bool, err error) {
 			return false, err
 		}
 		if len(entries) > 0 {
+			// ReadDir follows a symlink, and another run of the same harness
+			// may have replaced the directory with the link in the moment
+			// since the Lstat above — in which case what was just read is the
+			// shared transcript directory, not transcripts in the way. Only a
+			// path that is still a real directory earns the refusal, which is
+			// the one error here that does not get retried.
+			if fi, err := os.Lstat(from); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+				return false, errRacedWhileLinking
+			}
 			return true, fmt.Errorf("%s is a directory of transcripts, not a link to %s — move it aside (its sessions can be copied into %s) and run this again", from, to, to)
 		}
 		if err := os.Remove(from); err != nil {
@@ -230,8 +247,8 @@ func checkNames(harness, label string) error {
 //
 // The rule, stated once here because several places used to state it
 // differently: an account is free only when its home is on disk and nothing
-// says otherwise. A home that is not there is needs_login whatever the store
-// holds — a directory that does not exist cannot hold a login — so a label
+// says otherwise. A home that is not there is needs_login rather than free —
+// a directory that does not exist cannot hold a login — so a label
 // added to config.toml by hand is not usable until `yad account add` has made
 // its home and run the login in it.
 func Load(ctx context.Context, q *db.Queries, data string, cfg config.Config) ([]Account, error) {
@@ -265,12 +282,17 @@ func Load(ctx context.Context, q *db.Queries, data string, cfg config.Config) ([
 					a.UpdatedAt = time.UnixMilli(r.UpdatedAt).UTC()
 				}
 			}
-			// A home that is not on disk cannot hold a login, so the account
-			// needs one whatever the store last recorded. This is what a label
-			// left in config.toml after `yad account remove` looks like to a
-			// daemon still holding the config it started with: without it the
-			// account reads free, a run rebuilds the empty home the owner just
-			// deleted, and the turn fails against a logged-out harness.
+			// A home that is not on disk cannot hold a login, so an account
+			// the store calls free does not get to be free. This is what a
+			// label left in config.toml after `yad account remove` looks like
+			// to a daemon still holding the config it started with: without
+			// it the account reads free, a run rebuilds the empty home the
+			// owner just deleted, and the turn fails against a logged-out
+			// harness.
+			//
+			// Only free is downgraded. A limited account is already unusable
+			// and its reset time is DEV-27's to keep; overwriting it here
+			// would lose when it comes back.
 			if a.State == v1.AccountFree {
 				if _, err := os.Stat(a.Home); errors.Is(err, os.ErrNotExist) {
 					a.State = v1.AccountNeedsLogin
@@ -332,9 +354,9 @@ func SetState(ctx context.Context, q *db.Queries, harness, label string, state v
 // again: for the capability document and the CLI, which need account states
 // without owning the runner's store.
 //
-// A profile with no state database yet has no states, and every account the
-// owner configured is free — the same answer a runner that has never limited
-// anything would give.
+// A profile with no state database yet has no states, so every account the
+// owner configured is read by the same rule as any other: free when its home
+// is on disk, needs_login when it is not.
 func Read(ctx context.Context, paths config.Paths, cfg config.Config) ([]Account, error) {
 	st, err := store.OpenReadOnly(ctx, paths.StateDB())
 	if errors.Is(err, store.ErrNoState) {

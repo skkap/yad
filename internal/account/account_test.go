@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -310,15 +311,26 @@ func TestAnAccountWhoseHomeIsGoneNeedsLogin(t *testing.T) {
 // filepath.Join cleans ".." and the result is outside <data>/accounts/.
 func TestPathElementsAreGuarded(t *testing.T) {
 	for _, c := range []struct{ harness, label string }{
-		{"../../etc", "work"},
-		{"claude", "../../etc"},
+		{"../../escapee", "work"},
+		{"claude", "../../escapee"},
 		{"Claude", "work"},
 		{"", "work"},
 		{"claude", ""},
 	} {
-		data := t.TempDir()
-		outside := filepath.Join(data, "outside")
-		if err := os.MkdirAll(outside, 0o700); err != nil {
+		// The data directory sits inside a directory this test owns, so a
+		// witness at the path the argument actually resolves to is still
+		// cleaned up — and a witness at any other path would survive whether
+		// or not the guard is there, which proves nothing.
+		root := t.TempDir()
+		data := filepath.Join(root, "one", "two")
+		if err := os.MkdirAll(data, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		target := HomeDir(data, c.harness, c.label)
+		if !strings.HasPrefix(target, root+string(filepath.Separator)) {
+			t.Fatalf("the witness %s is outside the directory this test owns (%s)", target, root)
+		}
+		if err := os.MkdirAll(target, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if err := Remove(data, c.harness, c.label); err == nil {
@@ -327,8 +339,8 @@ func TestPathElementsAreGuarded(t *testing.T) {
 		if _, err := Ensure(data, c.harness, c.label); err == nil {
 			t.Errorf("Ensure(%q, %q) was accepted", c.harness, c.label)
 		}
-		if _, err := os.Stat(outside); err != nil {
-			t.Errorf("Remove(%q, %q) deleted outside the data directory: %v", c.harness, c.label, err)
+		if _, err := os.Stat(target); err != nil {
+			t.Errorf("Remove(%q, %q) deleted %s: %v", c.harness, c.label, target, err)
 		}
 	}
 }

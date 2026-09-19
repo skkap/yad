@@ -291,13 +291,29 @@ func TestRecordedStateIsWhatTheDocumentReports(t *testing.T) {
 // "..", so an unchecked harness id resolved outside <data>/accounts/ and was
 // handed to os.RemoveAll.
 func TestAccountRemoveRefusesAHarnessThatWalksOutOfTheDataDirectory(t *testing.T) {
-	p := accountEnv(t)
+	// The data directory sits two levels inside a directory this test owns,
+	// so the escaping argument resolves back inside it: a witness written to
+	// the real parent of a temp directory would outlive the test and pollute
+	// whatever else is there.
+	root := t.TempDir()
+	data := filepath.Join(root, "one", "two")
+	if err := os.MkdirAll(data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAD_CONFIG_DIR", t.TempDir())
+	t.Setenv("YAD_DATA_DIR", data)
+	t.Setenv("PATH", t.TempDir())
+	p := config.Paths{Profile: config.DefaultProfile, Config: os.Getenv("YAD_CONFIG_DIR"), Data: data}
+
 	// The witness sits exactly where the escaping argument resolves —
-	// <data>/accounts/../../escapee/work — so the assertion below fails if the
-	// guard is removed. A witness anywhere else survives either way, which
-	// proves nothing.
-	const escape = "../../escapee"
+	// <data>/accounts/../../../escapee/work, which is <root>/escapee/work — so
+	// the assertion below fails if the guard is removed. A witness anywhere
+	// else survives either way, which proves nothing.
+	const escape = "../../../escapee"
 	target := account.HomeDir(p.Data, escape, "work")
+	if !strings.HasPrefix(target, root+string(filepath.Separator)) {
+		t.Fatalf("the witness %s is outside the directory this test owns (%s)", target, root)
+	}
 	if err := os.MkdirAll(target, 0o700); err != nil {
 		t.Fatal(err)
 	}
