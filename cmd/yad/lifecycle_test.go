@@ -55,7 +55,7 @@ func newLifecycle(t *testing.T) *lifecycle {
 	t.Helper()
 	t.Setenv("YAD_CONFIG_DIR", shortDir(t))
 	t.Setenv("YAD_DATA_DIR", shortDir(t))
-	t.Setenv("PATH", t.TempDir())
+	noTools(t)
 	t.Setenv("YAD_PROFILE", "")
 	t.Setenv(beYad, "yad")
 	p, err := config.Resolve("")

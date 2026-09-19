@@ -62,11 +62,14 @@ type HostTool struct {
 	// its repositories from one that cannot. Never who it is signed in as: an
 	// account name is the machine owner's, not the hub's.
 	LoginHosts []string `json:"login_hosts,omitempty" doc:"Every host the tool is signed in to, such as github.com or a GitHub Enterprise hostname; a gh signed in to two reports both. Never the account it is signed in as."`
-	// Error is what is wrong with a tool that is installed: a probe that timed
-	// out, a binary that would not run, a Docker daemon that is not answering.
-	// It carries the next action, and it never stops a runner registering —
-	// absence and breakage are both facts a hub routes around.
-	Error string `json:"error,omitempty" doc:"What is wrong with a tool that is installed: a probe that timed out, a binary that would not run, a Docker daemon that is not answering. Carries the next action. A runner with one still registers."`
+	// Error is what is wrong with this tool on the runner: a path configured
+	// for it that names nothing, a probe that timed out, a binary that would
+	// not run, a Docker daemon that is not answering. It carries the next
+	// action, and it never stops a runner registering — absence and breakage
+	// are both facts a hub routes around. It can accompany present: false: a
+	// tool the owner configured a path for, which is not there, is both absent
+	// and worth explaining.
+	Error string `json:"error,omitempty" doc:"What is wrong with this tool on the runner: a path configured for it that names nothing, a probe that timed out, a binary that would not run, a Docker daemon that is not answering. May accompany present: false, when a configured path names nothing. Carries the next action. A runner with one still registers."`
 }
 
 // Capacity is how many runs a runner executes at once: one pool, with the

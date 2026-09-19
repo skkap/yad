@@ -21,7 +21,7 @@ type profile struct {
 }
 
 func newProfile(t *testing.T) *profile {
-	t.Setenv("PATH", t.TempDir())
+	noTools(t)
 	p := &profile{t: t, config: t.TempDir(), data: shortDir(t)}
 	return p
 }

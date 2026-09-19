@@ -19,10 +19,12 @@ type Detected struct {
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
 	Present bool   `json:"present"`
-	// Error is what went wrong with a tool that is installed: a probe that
-	// timed out, a binary that would not run, a Docker daemon that does not
-	// answer. It is a fact about the machine, never a failure of detection, and
-	// it carries the next action wherever there is one.
+	// Error is what went wrong with this tool: a path override that names
+	// nothing, a probe that timed out, a binary that would not run, a Docker
+	// daemon that does not answer. It is a fact about the machine, never a
+	// failure of detection, and it carries the next action wherever there is
+	// one. The first of those comes with Present false — the tool is not
+	// there, and the owner still needs to hear why.
 	Error string `json:"error,omitempty"`
 	// LoggedIn is nil for a tool with no notion of a login, and nil too when
 	// the tool has one and the probe could not find out — Error says why.
