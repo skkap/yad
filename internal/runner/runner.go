@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -32,6 +33,9 @@ type Options struct {
 	Log   *slog.Logger
 	// Monitor, when set, is kept current for the control socket.
 	Monitor *Monitor
+	// Reclaim undoes what preparing a session's workdir left outside it,
+	// when the session is collected; nil frees its WT_SLOTs alone.
+	Reclaim func(ctx context.Context, connection, session, dir string) error
 }
 
 // Serve syncs every configured connection, all of them drawing on one
@@ -64,15 +68,16 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	defer st.Close()
 	pool := NewPool(o.Capabilities().Capacity)
-	o.Monitor.attach(pool, st)
+	sessions := &Collector{
+		Store: st, Workdirs: filepath.Join(o.Paths.Data, "workdirs"),
+		IdleTTL: o.Config.Sessions.IdleTTL.Duration, DiskFloor: int64(o.Config.Sessions.DiskFloor),
+		Reclaim: o.Reclaim, Log: o.Log,
+	}
+	o.Monitor.attach(pool, st, sessions)
 	// Runs before the store closes: a status read after it would fail.
-	defer o.Monitor.attach(nil, nil)
+	defer o.Monitor.attach(nil, nil, nil)
 
-	o.Monitor.attach(pool, st)
-	// Runs before the store closes: a status read after it would fail.
-	defer o.Monitor.attach(nil, nil)
-
-	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, log: o.Log, monitor: o.Monitor, reporters: map[string]*Reporter{}}
+	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{}}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -82,6 +87,7 @@ func Serve(ctx context.Context, o Options) error {
 				r.Wake()
 			}
 		},
+		Ended: sessions.Wake,
 	}
 	var executor Executor
 	if o.Adapters != nil {
@@ -104,7 +110,7 @@ func Serve(ctx context.Context, o Options) error {
 		sv.loops = append(sv.loops, &Loop{
 			Connection: conn.Name, RunnerID: o.RunnerID, Hub: client, Store: st, Pool: pool,
 			Capabilities: o.Capabilities, Executor: executor, Drain: o.Drain,
-			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor,
+			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
 		})
 	}
 	return sv.run(ctx)
@@ -117,6 +123,7 @@ type server struct {
 	wait      time.Duration
 	store     *store.Store
 	exec      *Exec
+	sessions  *Collector
 	loops     []*Loop
 	reporters map[string]*Reporter
 	log       *slog.Logger
@@ -151,6 +158,14 @@ func (s *server) run(ctx context.Context) error {
 		loops = append(loops, l)
 	}
 	s.loops = loops
+	// Collection starts once the runs a previous process held are settled,
+	// and ends with the loops: the store closes when Serve returns.
+	collected := make(chan struct{})
+	go func() {
+		defer close(collected)
+		s.sessions.Run(lctx)
+	}()
+	defer func() { stopLoops(); <-collected }()
 	var wg sync.WaitGroup
 	ended := make([]chan struct{}, len(s.loops))
 	for i, l := range s.loops {

@@ -49,6 +49,42 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) error 
 	return err
 }
 
+const closeSession = `-- name: CloseSession :execrows
+UPDATE sessions SET state = ?1, close_reason = ?2, closed_at = ?3,
+  close_requested_at = NULL
+WHERE sessions.connection = ?4 AND sessions.id = ?5 AND sessions.state = 'open'
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id
+    AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
+`
+
+type CloseSessionParams struct {
+	State      string
+	Reason     sql.NullString
+	Now        sql.NullInt64
+	Connection string
+	ID         string
+}
+
+// Workdir collection (decision 0035). A run held (claimed, preparing,
+// running, or waiting on a usage limit or its start time) keeps its session
+// open whatever else is true: its workdir is in use. The close is one
+// statement, so a claim cannot slip a run into the session between the check
+// and the write; it answers 0 rows when a run is held or the session is not
+// open.
+func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, closeSession,
+		arg.State,
+		arg.Reason,
+		arg.Now,
+		arg.Connection,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countOpenSessions = `-- name: CountOpenSessions :one
 SELECT count(*) FROM sessions WHERE state = 'open'
 `
@@ -265,7 +301,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at FROM sessions WHERE connection = ? AND id = ?
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE connection = ? AND id = ?
 `
 
 type GetSessionParams struct {
@@ -286,6 +322,11 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session
 		&i.State,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.CloseReason,
+		&i.CloseRequestedAt,
+		&i.ClosedAt,
+		&i.ReclaimedAt,
+		&i.ReportedAt,
 	)
 	return i, err
 }
@@ -304,6 +345,76 @@ func (q *Queries) HasUnackedEvents(ctx context.Context, arg HasUnackedEventsPara
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const heldRunInSession = `-- name: HeldRunInSession :one
+SELECT CAST(COALESCE((SELECT r.id FROM runs r WHERE r.connection = ?1 AND r.session_id = ?2
+  AND r.state IN ('claimed', 'preparing', 'running', 'waiting')), '') AS TEXT)
+`
+
+type HeldRunInSessionParams struct {
+	Connection string
+	ID         string
+}
+
+func (q *Queries) HeldRunInSession(ctx context.Context, arg HeldRunInSessionParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, heldRunInSession, arg.Connection, arg.ID)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const idleSessions = `-- name: IdleSessions :many
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < ?1
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
+    AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
+ORDER BY s.last_used_at, s.connection, s.id
+LIMIT ?2
+`
+
+type IdleSessionsParams struct {
+	IdleSince int64
+	Max       int64
+}
+
+// Open sessions nothing has run in since before idle_since, longest idle
+// first: the idle TTL's and disk pressure's candidates.
+func (q *Queries) IdleSessions(ctx context.Context, arg IdleSessionsParams) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, idleSessions, arg.IdleSince, arg.Max)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.Connection,
+			&i.ID,
+			&i.Harness,
+			&i.NativeID,
+			&i.Account,
+			&i.Workdir,
+			&i.State,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.CloseReason,
+			&i.CloseRequestedAt,
+			&i.ClosedAt,
+			&i.ReclaimedAt,
+			&i.ReportedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lastEventSeq = `-- name: LastEventSeq :one
@@ -435,43 +546,6 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 	return items, nil
 }
 
-const listIdleSessions = `-- name: ListIdleSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at FROM sessions WHERE state = 'open' AND last_used_at < ? ORDER BY last_used_at
-`
-
-func (q *Queries) ListIdleSessions(ctx context.Context, lastUsedAt int64) ([]Session, error) {
-	rows, err := q.db.QueryContext(ctx, listIdleSessions, lastUsedAt)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Session{}
-	for rows.Next() {
-		var i Session
-		if err := rows.Scan(
-			&i.Connection,
-			&i.ID,
-			&i.Harness,
-			&i.NativeID,
-			&i.Account,
-			&i.Workdir,
-			&i.State,
-			&i.CreatedAt,
-			&i.LastUsedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listReportingRuns = `-- name: ListReportingRuns :many
 SELECT r.connection, r.id, r.session_id, r.harness, r.model, r.state, r.spec, r.account, r.resumes_at, r.reason, r.created_at, r.updated_at FROM runs r JOIN outbox o ON o.connection = r.connection AND o.run_id = r.id
 WHERE r.connection = ? ORDER BY r.created_at
@@ -518,6 +592,7 @@ func (q *Queries) ListReportingRuns(ctx context.Context, connection string) ([]R
 
 const listSessions = `-- name: ListSessions :many
 SELECT s.connection, s.id, s.harness, s.native_id, s.workdir, s.state, s.created_at, s.last_used_at,
+  s.close_reason, s.close_requested_at, s.closed_at, s.reclaimed_at, s.reported_at,
   CAST(COALESCE((SELECT r.id FROM runs r
     WHERE r.connection = s.connection AND r.session_id = s.id
       AND r.state IN ('claimed', 'preparing', 'running', 'waiting')), '') AS TEXT) AS live_run,
@@ -527,16 +602,21 @@ ORDER BY s.last_used_at DESC, s.connection, s.id
 `
 
 type ListSessionsRow struct {
-	Connection string
-	ID         string
-	Harness    string
-	NativeID   sql.NullString
-	Workdir    string
-	State      string
-	CreatedAt  int64
-	LastUsedAt int64
-	LiveRun    string
-	Runs       int64
+	Connection       string
+	ID               string
+	Harness          string
+	NativeID         sql.NullString
+	Workdir          string
+	State            string
+	CreatedAt        int64
+	LastUsedAt       int64
+	CloseReason      sql.NullString
+	CloseRequestedAt sql.NullInt64
+	ClosedAt         sql.NullInt64
+	ReclaimedAt      sql.NullInt64
+	ReportedAt       sql.NullInt64
+	LiveRun          string
+	Runs             int64
 }
 
 // What `yad sessions` lists: every session, most recently used first, with
@@ -559,6 +639,11 @@ func (q *Queries) ListSessions(ctx context.Context) ([]ListSessionsRow, error) {
 			&i.State,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.CloseReason,
+			&i.CloseRequestedAt,
+			&i.ClosedAt,
+			&i.ReclaimedAt,
+			&i.ReportedAt,
 			&i.LiveRun,
 			&i.Runs,
 		); err != nil {
@@ -608,6 +693,31 @@ func (q *Queries) PutOutbox(ctx context.Context, arg PutOutboxParams) error {
 	return err
 }
 
+const requestSessionClose = `-- name: RequestSessionClose :exec
+UPDATE sessions SET close_requested_at = COALESCE(close_requested_at, ?1),
+  close_reason = COALESCE(close_reason, ?2)
+WHERE connection = ?3 AND id = ?4 AND state = 'open'
+`
+
+type RequestSessionCloseParams struct {
+	Now        sql.NullInt64
+	Reason     sql.NullString
+	Connection string
+	ID         string
+}
+
+// The first reason asked for stands: a hub's close repeated on every sync
+// must not turn the owner's into the hub's.
+func (q *Queries) RequestSessionClose(ctx context.Context, arg RequestSessionCloseParams) error {
+	_, err := q.db.ExecContext(ctx, requestSessionClose,
+		arg.Now,
+		arg.Reason,
+		arg.Connection,
+		arg.ID,
+	)
+	return err
+}
+
 const retryOutbox = `-- name: RetryOutbox :exec
 UPDATE outbox SET attempts = attempts + 1, next_attempt_at = ?, last_error = ? WHERE connection = ? AND run_id = ?
 `
@@ -646,6 +756,51 @@ func (q *Queries) RunsWithUnackedEvents(ctx context.Context, connection string) 
 			return nil, err
 		}
 		items = append(items, run_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sessionsCloseRequested = `-- name: SessionsCloseRequested :many
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions s WHERE s.state = 'open' AND s.close_requested_at IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
+    AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
+ORDER BY s.close_requested_at
+`
+
+func (q *Queries) SessionsCloseRequested(ctx context.Context) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, sessionsCloseRequested)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.Connection,
+			&i.ID,
+			&i.Harness,
+			&i.NativeID,
+			&i.Account,
+			&i.Workdir,
+			&i.State,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.CloseReason,
+			&i.CloseRequestedAt,
+			&i.ClosedAt,
+			&i.ReclaimedAt,
+			&i.ReportedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -739,6 +894,36 @@ func (q *Queries) SetSessionNativeID(ctx context.Context, arg SetSessionNativeID
 	return err
 }
 
+const setSessionReclaimed = `-- name: SetSessionReclaimed :exec
+UPDATE sessions SET reclaimed_at = ? WHERE connection = ? AND id = ?
+`
+
+type SetSessionReclaimedParams struct {
+	ReclaimedAt sql.NullInt64
+	Connection  string
+	ID          string
+}
+
+func (q *Queries) SetSessionReclaimed(ctx context.Context, arg SetSessionReclaimedParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionReclaimed, arg.ReclaimedAt, arg.Connection, arg.ID)
+	return err
+}
+
+const setSessionReported = `-- name: SetSessionReported :exec
+UPDATE sessions SET reported_at = ? WHERE connection = ? AND id = ? AND reported_at IS NULL
+`
+
+type SetSessionReportedParams struct {
+	ReportedAt sql.NullInt64
+	Connection string
+	ID         string
+}
+
+func (q *Queries) SetSessionReported(ctx context.Context, arg SetSessionReportedParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionReported, arg.ReportedAt, arg.Connection, arg.ID)
+	return err
+}
+
 const setSessionState = `-- name: SetSessionState :exec
 UPDATE sessions SET state = ?, last_used_at = ? WHERE connection = ? AND id = ?
 `
@@ -819,6 +1004,21 @@ func (q *Queries) SpoolDepth(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const stampUnknownLastUsed = `-- name: StampUnknownLastUsed :execrows
+UPDATE sessions SET last_used_at = ?1 WHERE state = 'open' AND last_used_at <= 0
+`
+
+// A last-used stamp that is missing is unknown, never ancient: the idle TTL
+// starts from when collection first saw the session. Multica's collector
+// read a missing stamp as the epoch and reclaimed everything at once.
+func (q *Queries) StampUnknownLastUsed(ctx context.Context, now int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, stampUnknownLastUsed, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const takeSlot = `-- name: TakeSlot :exec
 INSERT INTO slots (repo, slot, connection, session_id) VALUES (?, ?, ?, ?)
 `
@@ -882,6 +1082,96 @@ func (q *Queries) UnackedEvents(ctx context.Context, arg UnackedEventsParams) ([
 	for rows.Next() {
 		var i UnackedEventsRow
 		if err := rows.Scan(&i.Seq, &i.Body); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unreclaimedSessions = `-- name: UnreclaimedSessions :many
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE state != 'open' AND reclaimed_at IS NULL ORDER BY closed_at
+`
+
+func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, unreclaimedSessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.Connection,
+			&i.ID,
+			&i.Harness,
+			&i.NativeID,
+			&i.Account,
+			&i.Workdir,
+			&i.State,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.CloseReason,
+			&i.CloseRequestedAt,
+			&i.ClosedAt,
+			&i.ReclaimedAt,
+			&i.ReportedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unreportedClosedSessions = `-- name: UnreportedClosedSessions :many
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE connection = ?1 AND state != 'open' AND reported_at IS NULL
+ORDER BY closed_at, id LIMIT ?2
+`
+
+type UnreportedClosedSessionsParams struct {
+	Connection string
+	Max        int64
+}
+
+func (q *Queries) UnreportedClosedSessions(ctx context.Context, arg UnreportedClosedSessionsParams) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, unreportedClosedSessions, arg.Connection, arg.Max)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.Connection,
+			&i.ID,
+			&i.Harness,
+			&i.NativeID,
+			&i.Account,
+			&i.Workdir,
+			&i.State,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.CloseReason,
+			&i.CloseRequestedAt,
+			&i.ClosedAt,
+			&i.ReclaimedAt,
+			&i.ReportedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

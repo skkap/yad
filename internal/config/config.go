@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -47,9 +50,17 @@ type Connection struct {
 	Cap  int    `toml:"cap,omitempty"`
 }
 
-// SessionsConfig governs reclaiming workdirs (decision 0011).
+// SessionsConfig governs reclaiming workdirs (decisions 0011 and 0035).
 type SessionsConfig struct {
+	// IdleTTL closes a session nothing has run in for this long and reclaims
+	// its workdir. "0s" keeps idle sessions until their hub or the owner
+	// closes them.
 	IdleTTL Duration `toml:"idle_ttl"`
+	// DiskFloor is the free space the runner keeps on the disk under its
+	// workdirs: below it, idle sessions close longest idle first until it is
+	// met or none is left. A session with a run held is never among them.
+	// "0" turns it off.
+	DiskFloor ByteSize `toml:"disk_floor"`
 }
 
 // SuperviseConfig holds the owner's watchdog defaults; a run may lower them.
@@ -78,6 +89,49 @@ func (d *Duration) UnmarshalText(b []byte) error {
 	return nil
 }
 
+// ByteSize is a number of bytes written as "5GiB" or "500MB" in TOML.
+type ByteSize int64
+
+var byteUnits = []struct {
+	suffix string
+	n      int64
+}{
+	// Longest suffixes first, so "GiB" is not read as "B".
+	{"TiB", 1 << 40}, {"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10},
+	{"TB", 1e12}, {"GB", 1e9}, {"MB", 1e6}, {"KB", 1e3}, {"B", 1},
+}
+
+// MarshalText writes the size in the largest unit that holds it exactly.
+func (b ByteSize) MarshalText() ([]byte, error) {
+	if b == 0 {
+		return []byte("0"), nil
+	}
+	best := byteUnits[len(byteUnits)-1]
+	for _, u := range byteUnits {
+		if int64(b)%u.n == 0 && u.n > best.n {
+			best = u
+		}
+	}
+	return []byte(strconv.FormatInt(int64(b)/best.n, 10) + best.suffix), nil
+}
+
+func (b *ByteSize) UnmarshalText(text []byte) error {
+	s := strings.TrimSpace(string(text))
+	mult := int64(1)
+	for _, u := range byteUnits {
+		if strings.HasSuffix(s, u.suffix) {
+			s, mult = strings.TrimSpace(strings.TrimSuffix(s, u.suffix)), u.n
+			break
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 || n > math.MaxInt64/mult {
+		return fmt.Errorf("%q is not a size like \"5GiB\" or \"500MB\"", text)
+	}
+	*b = ByteSize(n * mult)
+	return nil
+}
+
 // Defaults. The inactivity watchdog errs long: Multica's grew from 5 minutes to
 // 2 hours because "force-stopping a healthy run throws away the work".
 //
@@ -89,13 +143,17 @@ const (
 	DefaultIdleTTL    = 14 * 24 * time.Hour
 	DefaultInactivity = 30 * time.Minute
 	DefaultDrainWait  = 30 * time.Minute
+	// Enough headroom for a build or a checkout to finish without the disk
+	// filling under it, and small enough that a laptop with a modest disk is
+	// not always under it: then every idle session would go at every sweep.
+	DefaultDiskFloor = 5 << 30
 )
 
 // Default is the config a new profile starts with.
 func Default() Config {
 	return Config{
 		Capacity:  DefaultCapacity,
-		Sessions:  SessionsConfig{IdleTTL: Duration{DefaultIdleTTL}},
+		Sessions:  SessionsConfig{IdleTTL: Duration{DefaultIdleTTL}, DiskFloor: DefaultDiskFloor},
 		Supervise: SuperviseConfig{Inactivity: Duration{DefaultInactivity}},
 		Drain:     DrainConfig{Wait: Duration{DefaultDrainWait}},
 	}
@@ -158,6 +216,9 @@ func (c Config) Validate() error {
 	}
 	if c.Drain.Wait.Duration < 0 {
 		errs = append(errs, fmt.Errorf("drain.wait must not be negative, got %s — it is how long a drain lets runs finish, like \"30m\"", c.Drain.Wait.Duration))
+	}
+	if c.Sessions.IdleTTL.Duration < 0 {
+		errs = append(errs, fmt.Errorf("sessions.idle_ttl must not be negative, got %s — like \"336h\", or \"0s\" to keep idle sessions", c.Sessions.IdleTTL.Duration))
 	}
 	for id, h := range c.Harness {
 		if h.Cap < 0 {

@@ -27,6 +27,9 @@ type Handler struct {
 	// socket stays up until the process closes it, so `yad status` can
 	// watch the stop happen. What graceful means is the daemon's.
 	Stop func()
+	// CloseSession is the owner's close of one session. It records the
+	// close and returns; the workdir goes afterwards.
+	CloseSession func(ctx context.Context, connection, session string) (SessionClose, error)
 }
 
 // Daemon is one process's hold on its profile: the lock, and the socket.
@@ -167,6 +170,17 @@ func (d *Daemon) answer(ctx context.Context, conn *net.UnixConn, h Handler) {
 			h.Stop()
 		}
 		return
+	case "close_session":
+		if h.CloseSession == nil {
+			res.Error = "this daemon closes no sessions — `yad daemon restart` after an upgrade"
+			break
+		}
+		closed, err := h.CloseSession(ctx, req.Connection, req.Session)
+		if err != nil {
+			res.Error = err.Error()
+			break
+		}
+		res.Closed = &closed
 	default:
 		res.Error = fmt.Sprintf("unknown request %q — the CLI and the daemon are different yad versions; `yad daemon restart` after an upgrade", strings.TrimSpace(req.Op))
 	}

@@ -123,6 +123,29 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			out.Controls = append(out.Controls, controls...)
 		}
 
+		// A close the runner reports is what closes the session here, and
+		// answers the close_session this hub was repeating (decision 0035).
+		for _, c := range req.ClosedSessions {
+			at := c.ClosedAt
+			if at.IsZero() {
+				at = now
+			}
+			if _, err := q.RecordSessionClosed(ctx, db.RecordSessionClosedParams{
+				ClosedAt: sql.NullInt64{Int64: store.Ms(at), Valid: true},
+				Reason:   sql.NullString{String: string(c.Reason), Valid: c.Reason != ""},
+				ID:       c.SessionID, RunnerID: me,
+			}); err != nil {
+				return err
+			}
+		}
+		closing, err := q.SessionsToClose(ctx, me)
+		if err != nil {
+			return err
+		}
+		for _, id := range closing {
+			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlCloseSession, SessionID: id})
+		}
+
 		// Whatever is still offered to this runner was in the last response
 		// and missing from this list: never received. Back in the queue.
 		unlisted, err := q.RunsOfferedTo(ctx, me)

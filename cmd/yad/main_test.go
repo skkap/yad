@@ -136,7 +136,8 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 }
 
 // `yad sessions` on a profile whose runner never ran lists nothing and
-// creates nothing; closing one names the task that brings it.
+// creates nothing; closing one says there is nothing to close, or that the
+// daemon is the one to do it.
 func TestSessionsOnAFreshProfile(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
@@ -146,7 +147,9 @@ func TestSessionsOnAFreshProfile(t *testing.T) {
 	}{
 		{[]string{"sessions"}, 0, "no sessions", ""},
 		{[]string{"sessions", "--json"}, 0, "[]", ""},
-		{[]string{"sessions", "close", "s1"}, 1, "", "DEV-18"},
+		{[]string{"sessions", "close", "s1"}, 1, "", "no session"},
+		{[]string{"sessions", "close"}, 1, "", "usage"},
+		{[]string{"sessions", "close", "--connection", "home", "s1"}, 1, "", "yad daemon start"},
 		{[]string{"sessions", "s1"}, 1, "", "unexpected"},
 	} {
 		code, out, errs := yad(t, tc.args...)

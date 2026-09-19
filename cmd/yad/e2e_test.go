@@ -862,3 +862,86 @@ func TestE2ESessionContinues(t *testing.T) {
 		t.Errorf("result = %+v (%+v)", res, res.Error)
 	}
 }
+
+// Closing, end to end through the commands an operator types: the hub's
+// `yad hub close-session` reaches the runner at its next sync, the workdir
+// goes, the hub hears it and refuses a continuation; and the owner's
+// `yad sessions close` does the same from the runner's side, which the hub
+// hears as closed by the owner.
+func TestE2ESessionsClose(t *testing.T) {
+	m := newMachine(t)
+	d := m.daemon()
+	ctx := context.Background()
+	start := func(runID, sessionID string) string {
+		t.Helper()
+		m.ok("hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku", "--run-id", runID,
+			"--new-session", sessionID, "Use the Read tool to read note.txt, then reply with its contents only.")
+		if code, out, errs := m.watch(runID); code != 0 {
+			t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
+		}
+		var list []session
+		if err := json.Unmarshal([]byte(m.ok("sessions", "--json")), &list); err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range list {
+			if s.ID == sessionID {
+				if _, err := os.Stat(s.Workdir); err != nil {
+					t.Fatalf("session %s has no workdir: %v", sessionID, err)
+				}
+				return s.Workdir
+			}
+		}
+		t.Fatalf("no session %s in %+v", sessionID, list)
+		return ""
+	}
+	closedOnHub := func(sessionID, reason string) {
+		t.Helper()
+		eventually(t, "the hub has "+sessionID+" closed", func() bool {
+			s, err := m.client().Session(ctx, sessionID)
+			return err == nil && s.State == hubapi.SessionClosed && s.CloseReason == reason
+		})
+	}
+	goneFromDisk := func(dir string) {
+		t.Helper()
+		eventually(t, "the workdir "+dir+" is gone", func() bool {
+			_, err := os.Stat(dir)
+			return os.IsNotExist(err)
+		})
+	}
+
+	byHub := start("e2e-close-1", "e2e-by-hub")
+	if out := m.ok("hub", "close-session", "--hub", m.service, "e2e-by-hub"); !strings.Contains(out, "closing") {
+		t.Errorf("hub close-session printed %q", out)
+	}
+	goneFromDisk(byHub)
+	closedOnHub("e2e-by-hub", "closed")
+	code, _, errs := m.p.yad("", "hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku",
+		"--session", "e2e-by-hub", "And now?")
+	if code == 0 || !strings.Contains(errs, "closed") {
+		t.Errorf("a continuation of the closed session: exit %d: %s", code, errs)
+	}
+
+	byOwner := start("e2e-close-2", "e2e-by-owner")
+	if out := m.ok("sessions", "close", "e2e-by-owner"); !strings.Contains(out, "closed") {
+		t.Errorf("sessions close printed %q", out)
+	}
+	goneFromDisk(byOwner)
+	closedOnHub("e2e-by-owner", "closed_by_owner")
+
+	var list []session
+	eventually(t, "yad sessions shows both closed and heard", func() bool {
+		list = nil
+		if err := json.Unmarshal([]byte(m.ok("sessions", "--json")), &list); err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range list {
+			if s.State != "closed" || !s.Reclaimed || !s.HubTold || s.ClosedAt == nil {
+				return false
+			}
+		}
+		return len(list) == 2
+	})
+	if out := m.ok("sessions"); !strings.Contains(out, "closed (closed_by_owner)") || !strings.Contains(out, "(reclaimed)") {
+		t.Errorf("yad sessions:\n%s", out)
+	}
+}

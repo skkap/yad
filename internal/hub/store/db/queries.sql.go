@@ -124,6 +124,24 @@ func (q *Queries) ClearDrain(ctx context.Context, id string) error {
 	return err
 }
 
+const closeUnboundSession = `-- name: CloseUnboundSession :execrows
+UPDATE sessions SET closed_at = ?1, close_reason = 'closed', close_requested_at = NULL
+WHERE id = ?2 AND runner_id IS NULL AND closed_at IS NULL
+`
+
+type CloseUnboundSessionParams struct {
+	Now sql.NullInt64
+	ID  string
+}
+
+func (q *Queries) CloseUnboundSession(ctx context.Context, arg CloseUnboundSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, closeUnboundSession, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const controlsFor = `-- name: ControlsFor :many
 SELECT id, run_id, kind, text, created_at FROM run_controls WHERE run_id = ? ORDER BY id
 `
@@ -531,7 +549,7 @@ func (q *Queries) GetRunnerByCredential(ctx context.Context, credentialHash stri
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, harness, runner_id, created_at FROM sessions WHERE id = ?
+SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason FROM sessions WHERE id = ?
 `
 
 func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
@@ -542,6 +560,9 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.Harness,
 		&i.RunnerID,
 		&i.CreatedAt,
+		&i.CloseRequestedAt,
+		&i.ClosedAt,
+		&i.CloseReason,
 	)
 	return i, err
 }
@@ -713,6 +734,33 @@ func (q *Queries) PutResult(ctx context.Context, arg PutResultParams) (int64, er
 	return result.RowsAffected()
 }
 
+const recordSessionClosed = `-- name: RecordSessionClosed :execrows
+UPDATE sessions SET closed_at = ?1, close_reason = ?2, close_requested_at = NULL
+WHERE id = ?3 AND runner_id = ?4 AND closed_at IS NULL
+`
+
+type RecordSessionClosedParams struct {
+	ClosedAt sql.NullInt64
+	Reason   sql.NullString
+	ID       string
+	RunnerID sql.NullString
+}
+
+// A runner's report closes a session bound to it, once; a repeat changes
+// nothing, and a report about a session bound elsewhere is not applied.
+func (q *Queries) RecordSessionClosed(ctx context.Context, arg RecordSessionClosedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordSessionClosed,
+		arg.ClosedAt,
+		arg.Reason,
+		arg.ID,
+		arg.RunnerID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const recordSync = `-- name: RecordSync :exec
 UPDATE runners SET last_sync_at = ?, health = ?, wants_capabilities = ? WHERE id = ?
 `
@@ -774,6 +822,21 @@ type RequestDrainParams struct {
 
 func (q *Queries) RequestDrain(ctx context.Context, arg RequestDrainParams) error {
 	_, err := q.db.ExecContext(ctx, requestDrain, arg.Now, arg.ID)
+	return err
+}
+
+const requestSessionClose = `-- name: RequestSessionClose :exec
+UPDATE sessions SET close_requested_at = COALESCE(close_requested_at, ?1)
+WHERE id = ?2 AND closed_at IS NULL
+`
+
+type RequestSessionCloseParams struct {
+	Now sql.NullInt64
+	ID  string
+}
+
+func (q *Queries) RequestSessionClose(ctx context.Context, arg RequestSessionCloseParams) error {
+	_, err := q.db.ExecContext(ctx, requestSessionClose, arg.Now, arg.ID)
 	return err
 }
 
@@ -860,6 +923,33 @@ func (q *Queries) RunsOfferedTo(ctx context.Context, runnerID sql.NullString) ([
 	return items, nil
 }
 
+const sessionsToClose = `-- name: SessionsToClose :many
+SELECT id FROM sessions WHERE runner_id = ? AND close_requested_at IS NOT NULL AND closed_at IS NULL ORDER BY id
+`
+
+func (q *Queries) SessionsToClose(ctx context.Context, runnerID sql.NullString) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, sessionsToClose, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setCapabilities = `-- name: SetCapabilities :exec
 UPDATE runners SET capabilities = ?, fingerprint = ?, wants_capabilities = 0 WHERE id = ?
 `
@@ -887,6 +977,33 @@ type SetEventsThroughParams struct {
 func (q *Queries) SetEventsThrough(ctx context.Context, arg SetEventsThroughParams) error {
 	_, err := q.db.ExecContext(ctx, setEventsThrough, arg.EventsThrough, arg.ID)
 	return err
+}
+
+const unstartedRunsInSession = `-- name: UnstartedRunsInSession :many
+SELECT id FROM runs WHERE session_id = ? AND state IN ('queued', 'offered') ORDER BY created_at, id
+`
+
+func (q *Queries) UnstartedRunsInSession(ctx context.Context, sessionID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, unstartedRunsInSession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertRunner = `-- name: UpsertRunner :exec

@@ -168,6 +168,10 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				return statusOf(ctx, g.paths, cfg, current(), started, monitor, recent)
 			},
 			Stop: gracefulStop(log, drain),
+			CloseSession: func(ctx context.Context, conn, id string) (control.SessionClose, error) {
+				res, err := monitor.CloseSession(ctx, conn, id)
+				return control.SessionClose{Outcome: res.Outcome, Reason: string(res.Reason), LiveRun: res.LiveRun}, err
+			},
 		})
 	}()
 	defer func() {

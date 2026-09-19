@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	v1 "github.com/skkap/yad/protocol/v1"
+
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 )
@@ -14,11 +16,12 @@ import (
 // and last error, the capacity pool, and what the store holds. Serve fills it;
 // the control socket reads it. A nil Monitor records nothing.
 type Monitor struct {
-	mu    sync.Mutex
-	conns map[string]ConnectionState
-	pool  *Pool
-	store *store.Store
-	ready bool
+	mu       sync.Mutex
+	conns    map[string]ConnectionState
+	pool     *Pool
+	store    *store.Store
+	sessions *Collector
+	ready    bool
 }
 
 // Connection states.
@@ -40,13 +43,30 @@ type ConnectionState struct {
 // NewMonitor returns an empty monitor.
 func NewMonitor() *Monitor { return &Monitor{conns: map[string]ConnectionState{}} }
 
-func (m *Monitor) attach(p *Pool, st *store.Store) {
+func (m *Monitor) attach(p *Pool, st *store.Store, sessions *Collector) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.pool, m.store = p, st
+	m.pool, m.store, m.sessions = p, st, sessions
+}
+
+// ErrNoSessions is a close asked of a runner with no store open: no
+// connection configured, or not yet started.
+var ErrNoSessions = errors.New("the runner holds no sessions yet — it has no hub connected, or is still starting; try again in a moment")
+
+// CloseSession is the owner's `yad sessions close`: the session closes now,
+// or once the run held in it ends, and its hub hears it was closed by the
+// owner.
+func (m *Monitor) CloseSession(ctx context.Context, connection, id string) (CloseResult, error) {
+	m.mu.Lock()
+	sessions := m.sessions
+	m.mu.Unlock()
+	if sessions == nil {
+		return CloseResult{}, ErrNoSessions
+	}
+	return sessions.Close(ctx, connection, id, v1.SessionClosedByOwner)
 }
 
 func (m *Monitor) markReady() {

@@ -179,3 +179,23 @@ UPDATE runners SET drain_requested_at = COALESCE(drain_requested_at, sqlc.arg(no
 
 -- name: ClearDrain :exec
 UPDATE runners SET drain_requested_at = NULL WHERE id = ?;
+
+-- name: RequestSessionClose :exec
+UPDATE sessions SET close_requested_at = COALESCE(close_requested_at, sqlc.arg(now))
+WHERE id = sqlc.arg(id) AND closed_at IS NULL;
+
+-- A runner's report closes a session bound to it, once; a repeat changes
+-- nothing, and a report about a session bound elsewhere is not applied.
+-- name: RecordSessionClosed :execrows
+UPDATE sessions SET closed_at = sqlc.arg(closed_at), close_reason = sqlc.arg(reason), close_requested_at = NULL
+WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id) AND closed_at IS NULL;
+
+-- name: CloseUnboundSession :execrows
+UPDATE sessions SET closed_at = sqlc.arg(now), close_reason = 'closed', close_requested_at = NULL
+WHERE id = sqlc.arg(id) AND runner_id IS NULL AND closed_at IS NULL;
+
+-- name: SessionsToClose :many
+SELECT id FROM sessions WHERE runner_id = ? AND close_requested_at IS NOT NULL AND closed_at IS NULL ORDER BY id;
+
+-- name: UnstartedRunsInSession :many
+SELECT id FROM runs WHERE session_id = ? AND state IN ('queued', 'offered') ORDER BY created_at, id;

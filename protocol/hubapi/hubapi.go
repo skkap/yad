@@ -124,6 +124,36 @@ type Runner struct {
 	DrainRequestedAt *time.Time `json:"drain_requested_at,omitempty"`
 }
 
+// Session is a session as a service sees it.
+type Session struct {
+	SessionID string `json:"session_id"`
+	Harness   string `json:"harness"`
+	// RunnerID is the runner the session is bound to — the one that claimed
+	// its first run, and the only one that can continue it. Absent until then.
+	RunnerID string       `json:"runner_id,omitempty"`
+	State    SessionState `json:"state" enum:"open,closing,closed"`
+	// CloseRequestedAt is when a close was asked for, until the runner says
+	// it is done; the runner hears it at its next sync.
+	CloseRequestedAt *time.Time `json:"close_requested_at,omitempty"`
+	ClosedAt         *time.Time `json:"closed_at,omitempty"`
+	// CloseReason is why it closed: closed (asked for here), closed_by_owner
+	// (on the runner's machine), expired (idle past the owner's TTL) or
+	// disk_pressure — protocol/v1's SessionCloseReason.
+	CloseReason string    `json:"close_reason,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// SessionState is where a session is: open takes runs; closing has a close
+// asked for that its runner has not yet done; closed takes no new run, and
+// its workdir is gone or going on its runner.
+type SessionState string
+
+const (
+	SessionOpen    SessionState = "open"
+	SessionClosing SessionState = "closing"
+	SessionClosed  SessionState = "closed"
+)
+
 // SteerRequest is input for a running turn.
 type SteerRequest struct {
 	Text string `json:"text" minLength:"1" maxLength:"65536" doc:"What to tell the harness, as a user message."`

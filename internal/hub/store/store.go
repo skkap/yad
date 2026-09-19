@@ -68,6 +68,7 @@ var (
 	ErrSessionExists  = errors.New("the session already exists")
 	ErrNoSession      = errors.New("the hub has no such session")
 	ErrSessionHarness = errors.New("the session belongs to another harness")
+	ErrSessionClosed  = errors.New("the session is closed")
 )
 
 // EnqueueRun puts a run in the queue. A run in a new session creates it; a
@@ -104,6 +105,10 @@ func (s *Store) EnqueueRun(ctx context.Context, run v1.Run, now time.Time) error
 			}
 		case err != nil:
 			return err
+		case sess.ClosedAt.Valid:
+			return fmt.Errorf("run %q: session %q was closed (%s): %w", run.RunID, run.Session.ID, sess.CloseReason.String, ErrSessionClosed)
+		case sess.CloseRequestedAt.Valid:
+			return fmt.Errorf("run %q: session %q is closing: %w", run.RunID, run.Session.ID, ErrSessionClosed)
 		case sess.Harness != run.Harness:
 			// A Codex run cannot resume a Claude conversation.
 			return fmt.Errorf("run %q: session %q is a %s session, not %s: %w", run.RunID, run.Session.ID, sess.Harness, run.Harness, ErrSessionHarness)

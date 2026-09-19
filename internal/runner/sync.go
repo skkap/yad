@@ -37,6 +37,10 @@ const (
 	// it the leases on every run this runner holds.
 	refusalsPerSync = 8
 	refusalBudget   = 10 * time.Second
+	// closedPerSync bounds the closed sessions one sync reports; the rest go
+	// in the syncs after it. A sweep after a long absence may expire
+	// hundreds at once, and one sync's body should stay small.
+	closedPerSync = 64
 )
 
 // Executor runs claimed runs; Exec is the real one. The contract with the sync
@@ -110,6 +114,10 @@ type Loop struct {
 	Log  *slog.Logger
 	// Monitor, when set, hears how every sync went.
 	Monitor *Monitor
+	// Sessions closes sessions for the hub's close_session control and
+	// measures the disk for health. Nil ignores the control, and the hub
+	// hears of no close.
+	Sessions *Collector
 
 	sentFingerprint string
 	wantDocument    bool
@@ -128,6 +136,11 @@ type Loop struct {
 	quiescedOnce sync.Once
 	// recovered is set once the runs a previous process held are settled.
 	recovered bool
+	// echoes are closes the store will not report again — a session this
+	// runner never held, or one reported before — that the hub asked about
+	// since: it is told once more, so it stops asking. Kept in memory: the
+	// hub repeats close_session until it hears, so a lost one comes back.
+	echoes map[string]v1.ClosedSession
 }
 
 type pendingRun struct {
@@ -142,6 +155,7 @@ func (l *Loop) init() {
 	if l.pending == nil {
 		l.pending = map[string]pendingRun{}
 		l.refused = map[string]v1.Result{}
+		l.echoes = map[string]v1.ClosedSession{}
 		l.quiesced = make(chan struct{})
 	}
 	if l.Clock == nil {
@@ -256,6 +270,11 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	if l.wantDocument || fp != l.sentFingerprint {
 		req.Capabilities = &doc
 	}
+	closed, err := l.closedSessions(ctx)
+	if err != nil {
+		return v1.SyncResponse{}, err
+	}
+	req.ClosedSessions = closed
 	listed := map[string]bool{}
 	for _, r := range held {
 		listed[r.ID] = true
@@ -283,6 +302,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	if req.Capabilities != nil {
 		l.sentFingerprint, l.wantDocument = fp, false
 	}
+	l.reported(ctx, closed)
 
 	for _, c := range out.Controls {
 		switch {
@@ -297,6 +317,8 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 			}
 		case c.Kind == v1.ControlCancel && l.isPending(c.RunID):
 			l.withdraw(ctx, c.RunID)
+		case c.Kind == v1.ControlCloseSession:
+			l.closeSession(ctx, c.SessionID)
 		case l.Executor != nil:
 			l.Executor.Control(ctx, l.Connection, c)
 		}
@@ -376,6 +398,11 @@ func (l *Loop) claim(ctx context.Context, run v1.Run, doc v1.Capabilities, res *
 			l.refuse(run.RunID, string(r))
 			return
 		}
+		var gone sessionGone
+		if errors.As(err, &gone) {
+			l.refuseAs(run.RunID, ClassSessionClosed, string(gone))
+			return
+		}
 		l.Log.Error("claim not recorded; leaving it for the hub to offer again", "connection", l.Connection, "run", run.RunID, "err", err)
 		return
 	}
@@ -386,6 +413,11 @@ func (l *Loop) claim(ctx context.Context, run v1.Run, doc v1.Capabilities, res *
 type refused string
 
 func (r refused) Error() string { return string(r) }
+
+// sessionGone is a run in a session this runner has closed, or is closing.
+type sessionGone string
+
+func (g sessionGone) Error() string { return string(g) }
 
 // record writes the claim: the session when the run opens one, and the run as
 // claimed, without its grants — grants never touch this machine's disk. It
@@ -407,7 +439,9 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 		case err == nil && sess.Harness != run.Harness:
 			return refused(fmt.Sprintf("session %s is a %s session, not %s", run.Session.ID, sess.Harness, run.Harness))
 		case err == nil && sess.State != "open":
-			return refused(fmt.Sprintf("session %s is %s on this runner and cannot be resumed", run.Session.ID, sess.State))
+			return sessionGone(fmt.Sprintf("session %s was closed on this runner (%s) and its workdir reclaimed; start a new session", run.Session.ID, sess.CloseReason.String))
+		case err == nil && sess.CloseRequestedAt.Valid:
+			return sessionGone(fmt.Sprintf("session %s is closing on this runner (%s) once its run ends; start a new session", run.Session.ID, sess.CloseReason.String))
 		case errors.Is(err, sql.ErrNoRows) && !run.Session.New:
 			return refused(fmt.Sprintf("this runner does not hold session %s — sessions resume only on the runner that has them", run.Session.ID))
 		case errors.Is(err, sql.ErrNoRows):
@@ -454,15 +488,17 @@ func refusal(run v1.Run, doc v1.Capabilities) string {
 	return ""
 }
 
-func (l *Loop) refuse(runID, reason string) {
-	l.Log.Warn("refused a run", "connection", l.Connection, "run", runID, "reason", reason)
+func (l *Loop) refuse(runID, reason string) { l.refuseAs(runID, ClassRefused, reason) }
+
+func (l *Loop) refuseAs(runID, class, reason string) {
+	l.Log.Warn("refused a run", "connection", l.Connection, "run", runID, "class", class, "reason", reason)
 	if len(l.refused) >= maxRefusals {
 		for id := range l.refused {
 			delete(l.refused, id)
 			break
 		}
 	}
-	l.refused[runID] = v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: ClassRefused, Message: reason}}
+	l.refused[runID] = v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: class, Message: reason}}
 }
 
 // sendRefusals reports each refused run as failed, so the hub stops offering
@@ -507,6 +543,8 @@ func (l *Loop) withdraw(ctx context.Context, runID string) {
 	if err != nil {
 		l.Log.Error("withdrawn run not removed", "connection", l.Connection, "run", runID, "err", err)
 	}
+	// A close may have been waiting on the claim.
+	l.Sessions.Wake()
 }
 
 // Recover settles runs a previous process held (decision 0030). No
@@ -610,7 +648,7 @@ func (l *Loop) withdrawOrphan(ctx context.Context, r db.Run) (bool, error) {
 }
 
 func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
-	h := v1.Health{FreeCapacity: res.Free()}
+	h := v1.Health{FreeCapacity: res.Free(), DiskFreeBytes: l.Sessions.FreeBytes()}
 	// Depths are best effort: a health report is not worth failing a sync.
 	if n, err := l.Store.SpoolDepth(ctx); err == nil {
 		h.SpoolDepth = int(n)
@@ -651,4 +689,66 @@ func backoff(failures int) time.Duration {
 // lockstep for the rest of the day.
 func (l *Loop) jitter(d time.Duration) time.Duration {
 	return time.Duration(float64(d) * (1 - jitterFraction + 2*jitterFraction*l.Rand()))
+}
+
+// closeSession acts on the hub's close_session. A close that waits on a run
+// is reported once it happens; one the store will not report again is echoed.
+func (l *Loop) closeSession(ctx context.Context, id string) {
+	if id == "" {
+		l.Log.Warn("the hub sent close_session without a session id; ignored", "connection", l.Connection)
+		return
+	}
+	if l.Sessions == nil {
+		l.Log.Warn("the hub asked to close a session, and nothing here can", "connection", l.Connection, "session", id)
+		return
+	}
+	res, err := l.Sessions.Close(ctx, l.Connection, id, v1.SessionClosed)
+	if err != nil {
+		l.Log.Error("session not closed; the hub asks again at the next sync", "connection", l.Connection, "session", id, "err", err)
+		return
+	}
+	switch res.Outcome {
+	case CloseUnknown:
+		// Nothing to reclaim, and the hub can stop asking: a session this
+		// runner does not hold is as closed as one it reclaimed.
+		l.echoes[id] = v1.ClosedSession{SessionID: id, Reason: v1.SessionClosed, ClosedAt: l.Clock.Now().UTC()}
+	case CloseAlready:
+		l.echoes[id] = v1.ClosedSession{SessionID: id, Reason: res.Reason, ClosedAt: res.ClosedAt}
+	}
+}
+
+// closedSessions is what this sync reports closed: what the store has not
+// yet had acknowledged, then the echoes, up to closedPerSync.
+func (l *Loop) closedSessions(ctx context.Context) ([]v1.ClosedSession, error) {
+	rows, err := l.Store.UnreportedClosedSessions(ctx, db.UnreportedClosedSessionsParams{Connection: l.Connection, Max: closedPerSync})
+	if err != nil {
+		return nil, err
+	}
+	var out []v1.ClosedSession
+	seen := map[string]bool{}
+	for _, r := range rows {
+		seen[r.ID] = true
+		out = append(out, v1.ClosedSession{SessionID: r.ID, Reason: v1.SessionCloseReason(r.CloseReason.String), ClosedAt: msTime(r.ClosedAt.Int64)})
+	}
+	for id, e := range l.echoes {
+		if len(out) >= closedPerSync {
+			break
+		}
+		if !seen[id] {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// reported records that the hub answered a sync carrying these closes.
+func (l *Loop) reported(ctx context.Context, closed []v1.ClosedSession) {
+	now := sql.NullInt64{Int64: l.Clock.Now().UnixMilli(), Valid: true}
+	for _, c := range closed {
+		delete(l.echoes, c.SessionID)
+		if err := l.Store.SetSessionReported(ctx, db.SetSessionReportedParams{ReportedAt: now, Connection: l.Connection, ID: c.SessionID}); err != nil {
+			// Reported again at the next sync, which a hub takes as the same news.
+			l.Log.Error("a close the hub heard is not recorded as heard", "connection", l.Connection, "session", c.SessionID, "err", err)
+		}
+	}
 }

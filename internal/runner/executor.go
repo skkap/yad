@@ -52,6 +52,10 @@ const (
 	// drain ran out of time, or its owner asked twice (decision 0029). The
 	// state is cancelled; the class says it was not the hub's doing.
 	ClassRunnerStopping = "runner_stopping"
+	// ClassSessionClosed — the run names a session this runner has closed,
+	// or is closing, and whose workdir is or will be gone (decision 0035).
+	// The hub starts a new session.
+	ClassSessionClosed = "session_closed"
 	// ClassRunnerRestarted — the run's process ended with a runner that
 	// stopped without finishing it; the next start reports it lost
 	// (decision 0030).
@@ -106,6 +110,10 @@ type Exec struct {
 	// Report wakes a connection's reporter, so a result or a full batch goes
 	// out now rather than at the next tick. Nil is fine: the tick finds it.
 	Report func(connection string)
+	// Ended hears that a run's terminal state is in the store: a close of
+	// its session may have been waiting on it. Nil is fine: the collector's
+	// next sweep finds it.
+	Ended func()
 	// Grace is how long a harness gets to end its turn once interrupted —
 	// by a cancel or a watchdog — before its process group gets SIGTERM, and
 	// TermGrace how long after that before SIGKILL. Zero is the cancel
@@ -317,8 +325,6 @@ func (e *Exec) Control(_ context.Context, connection string, c v1.Control) {
 		default:
 			log.Warn("too many controls are waiting for this run; this one is dropped")
 		}
-	case v1.ControlCloseSession:
-		e.Log.Warn("the hub sent a control this runner does not act on yet (epic E4)", "connection", connection, "kind", c.Kind)
 	}
 }
 
@@ -760,6 +766,9 @@ func (e *Exec) finish(ctx context.Context, c Claim, res v1.Result) {
 	}
 	log.Info("run finished", "state", res.State, "last_seq", res.LastSeq)
 	e.report(c.Connection)
+	if e.Ended != nil {
+		e.Ended()
+	}
 }
 
 func (e *Exec) setState(ctx context.Context, c Claim, s v1.RunState) {
