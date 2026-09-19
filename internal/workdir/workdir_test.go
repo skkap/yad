@@ -740,6 +740,19 @@ func TestTagsFollowTheRemote(t *testing.T) {
 	if read(t, filepath.Join(p.Dir, "README")) != "two" {
 		t.Error("the moved tag still names its old commit")
 	}
+	// A tag a harness made in its worktree is its own: no fetch moves or
+	// prunes it, and a local tag named like the remote's does not shadow it.
+	sh(t, p.Dir, "git", "tag", "scratch")
+	sh(t, p.Dir, "git", "tag", "-f", "rel", "HEAD~1")
+	if _, _, err := f.prepare("s4", gitSource(o.bare, "rel", "b4")); err != nil {
+		t.Fatal(err)
+	}
+	if got := sh(t, p.Dir, "git", "tag", "--list", "scratch"); got != "scratch" {
+		t.Errorf("a fetch removed the harness's tag: %q", got)
+	}
+	if local, remote := sh(t, p.Dir, "git", "rev-parse", "rel"), sh(t, o.work, "git", "rev-parse", "rel"); local == remote {
+		t.Error("a fetch overwrote the harness's own tag with the remote's")
+	}
 	sh(t, o.work, "git", "push", "--quiet", "origin", "--delete", "rel")
 	if _, _, err := f.prepare("s3", gitSource(o.bare, "rel", "b3")); class(err) != ClassSourceFailed || !strings.Contains(err.Error(), `base "rel"`) {
 		t.Errorf("a deleted tag: %v", err)

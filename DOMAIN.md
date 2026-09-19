@@ -165,7 +165,8 @@ _Avoid_: prompt, for the whole thing — the prompt is only the instruction
 a question or uses host tools has none.
 _Rules_: A source is hub input. It reaches the network over https or ssh with
 the machine's own credentials, and the machine itself only inside the roots the
-owner allows — none by default.
+owner allows — none by default. A session keeps the sources its workdir was
+built from; a run continuing it names the same ones or none.
 _See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), `internal/workdir`
 
 **Workdir** — the directory a session's runs execute in. Owned by the session,

@@ -371,11 +371,12 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 // clone --bare: a bare clone maps the remote's branches onto its own, where
 // a fetch would move a branch a session has checked out underneath it.
 func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
-	// --prune with the tags in a refspec of their own, forced: a tag the
-	// remote moved is moved here rather than refusing the whole fetch, and one
-	// it deleted is deleted, so no base resolves to a commit the remote no
-	// longer names. Tags are fetched outright, not followed: a base may be a
-	// tag no branch reaches.
+	// The remote's tags are copied, forced and pruned, into a namespace of
+	// YAD's own that only resolves a base: a tag the remote moved is moved
+	// there rather than refusing the fetch, one it deleted is gone, and a tag
+	// no branch reaches is there too. refs/tags is left to git's own
+	// following, which never forces or prunes, because every worktree of the
+	// cache shares it and a harness may tag its own work there.
 	fetch := []string{"fetch", "--quiet", "--prune", "--no-recurse-submodules", "origin"}
 	if _, err := os.Stat(cache); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(cache), 0o700); err != nil {
@@ -392,7 +393,7 @@ func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
 			{"init", "--quiet", "--bare"},
 			{"config", "remote.origin.url", r.url},
 			{"config", "--add", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"},
-			{"config", "--add", "remote.origin.fetch", "+refs/tags/*:refs/tags/*"},
+			{"config", "--add", "remote.origin.fetch", "+refs/tags/*:" + remoteTags + "*"},
 			// origin/HEAD follows the remote's default branch on every fetch
 			// (git 2.48 and later; an older git ignores the setting, and base
 			// asks the remote when origin/HEAD is missing).
@@ -417,6 +418,10 @@ func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
 	}
 	return nil
 }
+
+// remoteTags is where the cache keeps the remote's tags, as the remote has
+// them now. Outside refs/tags, so a fetch never touches a tag a harness made.
+const remoteTags = "refs/yad/origin-tags/"
 
 // checkedOut marks a worktree whose add finished, in the worktree's own git
 // directory. Without it, a worktree is one an add left half made.
@@ -448,7 +453,7 @@ func (m *Manager) addArgs(ctx context.Context, cache string, it item) (args []st
 	if err != nil {
 		return nil, "", err
 	}
-	from = strings.TrimPrefix(strings.TrimPrefix(base, "refs/remotes/"), "refs/tags/")
+	from = strings.TrimPrefix(strings.TrimPrefix(base, "refs/remotes/"), remoteTags)
 	return []string{"worktree", "add", "--quiet", "--no-track", "-b", it.branch, "--", it.dest, base}, from, nil
 }
 
@@ -467,7 +472,7 @@ func (m *Manager) base(ctx context.Context, cache string, it item, has func(stri
 		}
 		return "refs/remotes/origin/HEAD", nil
 	}
-	for _, ref := range []string{"refs/remotes/origin/" + it.base, "refs/tags/" + it.base} {
+	for _, ref := range []string{"refs/remotes/origin/" + it.base, remoteTags + it.base} {
 		if has(ref) {
 			return ref, nil
 		}

@@ -299,3 +299,45 @@ func TestAContinuedSessionReusesItsWorktree(t *testing.T) {
 		t.Errorf("the second run said: %s", got)
 	}
 }
+
+// A session keeps the sources its workdir was built from: a continuing run
+// that names none runs in the same path, locked again, and one naming others
+// is refused.
+func TestASessionKeepsItsSources(t *testing.T) {
+	e := newEnv(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, "project")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real, _ := filepath.EvalSymlinks(dir)
+	other := filepath.Join(root, "other")
+	os.MkdirAll(other, 0o755)
+	l := e.loop(t, 1)
+	h := fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}})
+	x := e.sourcedExec(root, h)
+
+	first := testRun("a", "s1")
+	first.Sources = []v1.Source{{Path: dir}}
+	runOne(t, e, l, x, first)
+	runOne(t, e, l, x, continued("b", "s1"))
+	if len(h.Starts) != 2 || h.Starts[1].Workdir != real {
+		t.Fatalf("a continuation naming no sources started in %v; want the session's path %s", h.Starts, real)
+	}
+
+	changed := continued("c", "s1")
+	changed.Sources = []v1.Source{{Path: other}}
+	runOne(t, e, l, x, changed)
+	if r := hubResult(t, e, "c"); r.State != v1.RunFailed || r.Error == nil || r.Error.Class != workdir.ClassSourceRefused {
+		t.Errorf("a continuation naming other sources: %+v", r)
+	}
+	if len(h.Starts) != 2 {
+		t.Error("the harness started for a run whose sources were refused")
+	}
+	same := continued("d", "s1")
+	same.Sources = []v1.Source{{Path: dir}}
+	runOne(t, e, l, x, same)
+	if len(h.Starts) != 3 || h.Starts[2].Workdir != real {
+		t.Errorf("a continuation naming the same sources: %v", h.Starts)
+	}
+}

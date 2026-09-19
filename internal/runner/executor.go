@@ -838,6 +838,10 @@ func (e *Exec) inactivity(run v1.Run) time.Duration {
 // minutes.
 func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, lastSeq *int64) (*workdir.Prepared, error) {
 	bg := context.WithoutCancel(ctx)
+	sources, record, err := e.sessionSources(bg, c)
+	if err != nil {
+		return nil, err
+	}
 	pctx, stop := context.WithCancel(ctx)
 	defer stop()
 	go func() {
@@ -847,8 +851,8 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 		case <-pctx.Done():
 		}
 	}()
-	return e.Workdirs.Prepare(pctx, workdir.Request{
-		Dir: dir, Connection: c.Connection, Session: c.Run.Session.ID, Sources: c.Run.Sources,
+	prep, err := e.Workdirs.Prepare(pctx, workdir.Request{
+		Dir: dir, Connection: c.Connection, Session: c.Run.Session.ID, Sources: sources,
 		Emit: func(ev v1.Event) {
 			if e.spool(bg, c, &ev, *lastSeq+1) {
 				*lastSeq = ev.Seq
@@ -856,6 +860,45 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 			}
 		},
 	})
+	if err == nil && record {
+		body, _ := json.Marshal(sources)
+		if err := e.Store.SetSessionSources(bg, db.SetSessionSourcesParams{
+			Sources: sql.NullString{String: string(body), Valid: true}, Connection: c.Connection, ID: c.Run.Session.ID,
+		}); err != nil {
+			prep.Release()
+			return nil, fmt.Errorf("the session's sources could not be recorded: %w", err)
+		}
+	}
+	return prep, err
+}
+
+// sessionSources is what the run's workdir is built from. A session keeps
+// the sources its workdir was first built from (decision 0033): a continuing
+// run that names none is prepared from them — a path source locked again and
+// the harness started in it, where the session's conversation lives — and one
+// naming others is refused, since the workdir is already theirs. record says
+// the session has none yet, so these are to be recorded once they are in
+// place.
+func (e *Exec) sessionSources(ctx context.Context, c Claim) (sources []v1.Source, record bool, err error) {
+	sess, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
+	if err != nil {
+		return nil, false, err
+	}
+	if !sess.Sources.Valid {
+		return c.Run.Sources, len(c.Run.Sources) > 0, nil
+	}
+	if err := json.Unmarshal([]byte(sess.Sources.String), &sources); err != nil {
+		return nil, false, fmt.Errorf("the session's recorded sources are unreadable (%v) — start a new session", err)
+	}
+	if len(c.Run.Sources) == 0 {
+		return sources, false, nil
+	}
+	want, _ := json.Marshal(c.Run.Sources)
+	if string(want) != sess.Sources.String {
+		return nil, false, &workdir.Error{Class: workdir.ClassSourceRefused,
+			Msg: "the run names sources other than the ones its session's workdir was built from (" + sess.Sources.String + ") — send the same sources, or none, to continue it; start a new session for others"}
+	}
+	return sources, false, nil
 }
 
 // workdir returns the session's workdir, creating it on first use, and the

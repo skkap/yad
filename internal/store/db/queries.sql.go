@@ -265,7 +265,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at FROM sessions WHERE connection = ? AND id = ?
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources FROM sessions WHERE connection = ? AND id = ?
 `
 
 type GetSessionParams struct {
@@ -286,6 +286,7 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session
 		&i.State,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.Sources,
 	)
 	return i, err
 }
@@ -436,7 +437,7 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 }
 
 const listIdleSessions = `-- name: ListIdleSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at FROM sessions WHERE state = 'open' AND last_used_at < ? ORDER BY last_used_at
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources FROM sessions WHERE state = 'open' AND last_used_at < ? ORDER BY last_used_at
 `
 
 func (q *Queries) ListIdleSessions(ctx context.Context, lastUsedAt int64) ([]Session, error) {
@@ -458,6 +459,7 @@ func (q *Queries) ListIdleSessions(ctx context.Context, lastUsedAt int64) ([]Ses
 			&i.State,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.Sources,
 		); err != nil {
 			return nil, err
 		}
@@ -753,6 +755,21 @@ func (q *Queries) SetSessionNativeID(ctx context.Context, arg SetSessionNativeID
 		arg.Connection,
 		arg.ID,
 	)
+	return err
+}
+
+const setSessionSources = `-- name: SetSessionSources :exec
+UPDATE sessions SET sources = ? WHERE connection = ? AND id = ?
+`
+
+type SetSessionSourcesParams struct {
+	Sources    sql.NullString
+	Connection string
+	ID         string
+}
+
+func (q *Queries) SetSessionSources(ctx context.Context, arg SetSessionSourcesParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionSources, arg.Sources, arg.Connection, arg.ID)
 	return err
 }
 

@@ -51,10 +51,14 @@ waits for a person who is not there.
 **The cache.** One bare repository per URL under `<data>/repos/`, made with
 `init --bare` and an origin whose refspec maps the remote's branches to
 `refs/remotes/origin/*` — not `clone --bare`, which maps them onto its own
-branches, where a fetch would move a branch a session has checked out. Tags
-have a forced refspec of their own under `--prune`, so a tag the remote moved
-or deleted is moved or deleted here too, and `origin/HEAD` follows the
-remote's default branch on every fetch (`followRemoteHEAD`, git 2.48+). A
+branches, where a fetch would move a branch a session has checked out. The
+remote's tags are copied, forced and pruned, into `refs/yad/origin-tags/`,
+which only resolves a base — a tag the remote moved or deleted is moved or
+deleted there, and one no branch reaches is there too — while `refs/tags`,
+which every worktree of the cache shares and a harness may tag its work in, is
+left to git's own following, which never forces or prunes. `origin/HEAD`
+follows the remote's default branch on every fetch (`followRemoteHEAD`, git
+2.48+). A
 first fetch is built aside and renamed in, so a failure leaves nothing half
 made. Every change to a cache — a fetch, a worktree added or removed — holds
 that repository's lock, since git's own lockfiles fail rather than wait; the
@@ -65,7 +69,12 @@ already has it, tracked from the remote when the remote has it, and otherwise
 cut from `base` — a remote branch, a tag or a commit; the remote's default
 branch when none is named. A run that names no branch works on
 `yad/<session>`. A session that continues finds its worktree as it left it —
-the uncommitted work in it is the session's — and nothing is fetched. A
+the uncommitted work in it is the session's — and nothing is fetched.
+**A session keeps its sources.** The sources its workdir was first built from
+are recorded with the session (`sessions.sources`); a continuing run that
+names none is prepared from them — a path source locked again, the harness
+started in it where the conversation lives — and one naming others is refused
+with `source_refused`. A
 worktree whose add never finished (a cancel or a timeout kills git, and git's
 own cleanup does not run under SIGKILL) carries no completion mark in its git
 directory, and is removed and made again rather than worked in.
