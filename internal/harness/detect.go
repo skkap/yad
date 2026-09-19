@@ -18,8 +18,8 @@ type Detected struct {
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
 	Present bool   `json:"present"`
-	// Error is what is wrong with this harness and, where the runner can name
-	// one, what to do about it. It never carries a word the harness printed,
+	// Error is what is wrong with this harness and what to do about it. It
+	// never carries a word the harness printed,
 	// nor the path it was started from: the capability document reaches every
 	// connected hub, and a child's stderr is unbounded text nobody vetted — a
 	// proxy URL with a password in it, a loader error naming the owner's home
@@ -105,7 +105,7 @@ func detectOne(ctx context.Context, h Harness) Detected {
 	case err != nil:
 		d.Error = wontStart(h, fromEnv)
 	case out.TimedOut:
-		d.Error = fmt.Sprintf("no answer to %s within %s", strings.Join(h.VersionArgs, " "), versionTimeout)
+		d.Error = noAnswer(h)
 	case out.Err != nil:
 		d.Error = wontAnswer(h)
 	default:
@@ -135,6 +135,14 @@ func wontStart(h Harness, fromEnv bool) string {
 		return fmt.Sprintf("%s does not name a %s this runner can start — point it at an executable %s, or unset it and let PATH decide", h.EnvPath, h.Binary, h.Binary)
 	}
 	return fmt.Sprintf("the %s on PATH will not start — run `%s %s` on this machine to see what stops it", h.Binary, h.Binary, strings.Join(h.VersionArgs, " "))
+}
+
+// noAnswer is a probe the harness never came back from. It names the command
+// and the wait and nothing else — the same rule as the two above — and gives
+// the action because this is the case where it is worth most: a CLI that hangs
+// on its own version flag has stopped telling its owner anything at all.
+func noAnswer(h Harness) string {
+	return fmt.Sprintf("no answer to `%s %s` within %s — run it on this machine to see what it waits on", h.Binary, strings.Join(h.VersionArgs, " "), versionTimeout)
 }
 
 func wontAnswer(h Harness) string {

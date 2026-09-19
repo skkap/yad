@@ -29,7 +29,7 @@ type HarnessReport struct {
 	Version string `json:"version,omitempty"`
 	// Error is the runner's own words, never the harness's: a child's output
 	// and the path it was started from stay on the machine (DEV-60).
-	Error    string          `json:"error,omitempty" doc:"Why this harness cannot take runs, and, where the runner can name one, the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
+	Error    string          `json:"error,omitempty" doc:"Why this harness cannot take runs, and the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
 	Models   []string        `json:"models,omitempty"`
 	Accounts []AccountReport `json:"accounts,omitempty"`
 	// Warnings are what the runner found wrong with a harness it can still

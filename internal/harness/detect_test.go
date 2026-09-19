@@ -160,6 +160,11 @@ func TestHangingProbeIsBoundedAndLeavesNothing(t *testing.T) {
 	if !strings.Contains(d.Error, "no answer") {
 		t.Errorf("Error = %q, want a timeout report", d.Error)
 	}
+	// The case the action is worth most in: a CLI that hangs on its own version
+	// flag has stopped saying anything, so the report has to.
+	if !strings.Contains(d.Error, "run it on this machine to see what it waits on") {
+		t.Errorf("Error = %q, want the next action", d.Error)
+	}
 	raw, err := os.ReadFile(pidfile)
 	if err != nil {
 		t.Fatalf("grandchild never started: %v", err)
@@ -262,9 +267,9 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 		{name: "exits 3, detached child holds stdout", body: detached + "exit 3\n",
 			wantErr: "`codex --version` exited with an error"},
 		{name: "hangs", body: "sleep 60\n",
-			wantErr: "no answer", waitsItOut: true},
+			wantErr: "no answer to `codex --version`", waitsItOut: true},
 		{name: "hangs, detached child holds stdout", body: detached + "sleep 60\n",
-			wantErr: "no answer", waitsItOut: true, endsAtCancel: true},
+			wantErr: "no answer to `codex --version`", waitsItOut: true, endsAtCancel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
