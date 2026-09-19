@@ -23,7 +23,10 @@ type Run struct {
 	Sources []Source `json:"sources,omitempty"`
 	Grants  []Grant  `json:"grants,omitempty"`
 	// StartAt is a one-shot moment the run must not start before, like an email
-	// API's send_at. There is no recurrence anywhere in the protocol.
+	// API's send_at. There is no recurrence anywhere in the protocol. A hub
+	// offers a run carrying one only to a runner advertising the "start_at"
+	// feature, until the moment has passed: any other runner would start it on
+	// arrival.
 	StartAt      *time.Time `json:"start_at,omitempty"`
 	MaxWaitMS    int64      `json:"max_wait_ms,omitempty"`
 	WallClockMS  int64      `json:"wall_clock_ms,omitempty"`

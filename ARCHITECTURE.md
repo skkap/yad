@@ -253,8 +253,30 @@ state again is acknowledged.
 
 The major version is in the path. Within it, both sides advertise feature
 strings — the runner in its capability document, the hub in its register
-response — and nothing is used that the other side did not advertise. A hub may
-refuse a runner below `min_version` with `version_too_old` and a next action.
+response — and nothing is used that the other side did not advertise: a hub
+sends `drain`, `close_session`, `steer` and `interrupt` only to a runner
+advertising each, and offers a run carrying `start_at` whose moment is still
+ahead only to a runner that will hold it back rather than start it at once —
+once the moment has passed there is nothing to hold, and the run goes to any
+runner, or it would wait for ever on a fleet without the feature. A runner
+whose fingerprint moved without the document it promised is treated as
+advertising neither, until the document it is asked for arrives. `yad hub` advertises no
+`hub_features` of its own — it has nothing beyond the v1 baseline.
+
+A hub may refuse a runner below `min_version` with `version_too_old` and a next
+action. `yad hub serve --min-version 0.4.0` sets that floor: a runner under it
+is refused at register — before its registration token is burned, so the
+upgraded runner can still use it — and at every sync, with the next action
+`yad upgrade`. The floor rides in the register and sync responses as
+`min_version`, so a runner can say what it is being asked for. A runner refused
+mid-run stops syncing, so the runs it holds stop renewing and the sweep records
+them `lost` — raising the floor on a working fleet is a drain first
+([0023](docs/decisions/0023-lost-stands-against-a-late-result.md) makes `lost`
+final, so a result that lands afterwards is refused). Versions are
+compared on the release core alone, because `git describe` writes
+`v0.4.0-4-gabc1234` for a build four commits *after* v0.4.0, which semver would
+sort before it; a version neither side can parse — an unstamped `dev` build, a
+mistyped floor — is never refused.
 
 ### yad hub's service API
 
@@ -270,8 +292,8 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `GET /runs/{run}` | the run's hub-side state (`queued`, `offered`, then the protocol's) and its result; never its grants |
 | `GET /runs/{run}/events?after=N&wait_ms=…` | long poll: events after `N`, the run, and `done` once the stream is complete |
 | `POST /runs/{run}/cancel` | a run no runner started ends `cancelled` here; a held one gets a `cancel` control, and shows `cancel_requested_at` until it ends |
-| `POST /runs/{run}/interrupt` | an `interrupt` control for a held run; 409 before it starts |
-| `POST /runs/{run}/steer` | a `steer` control with `{text}` for a held run, sent once; 409 before it starts |
+| `POST /runs/{run}/interrupt` | an `interrupt` control for a held run; 409 before it starts, and for a runner without the `interrupt` feature |
+| `POST /runs/{run}/steer` | a `steer` control with `{text}` for a held run, sent once; 409 before it starts, and for a runner without the `steer` feature |
 | `POST /runners/{runner}/drain` | a `drain` control, repeated until the runner says it is draining; 409 for a runner without the `drain` feature |
 | `GET /sessions/{session}` | the session: its runner, and `open`, `closing` or `closed` with the reason |
 | `POST /sessions/{session}/close` | a session no runner holds closes here, its unstarted runs cancelled; a held one gets `close_session` until its runner reports it closed; 409 for a runner without the `close_session` feature. A closing or closed session takes no new run |
