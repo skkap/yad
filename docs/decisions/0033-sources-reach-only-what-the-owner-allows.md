@@ -68,13 +68,14 @@ setup hook and the run do not.
 already has it, tracked from the remote when the remote has it, and otherwise
 cut from `base` — a remote branch, a tag or a commit; the remote's default
 branch when none is named. A run that names no branch works on
-`yad/<session>`. A session that continues finds its worktree as it left it —
+`yad/<connection>/<session>`. A session that continues finds its worktree as it left it —
 the uncommitted work in it is the session's — and nothing is fetched.
-**A session keeps its sources.** The sources its workdir was first built from
-are recorded with the session (`sessions.sources`); a continuing run that
-names none is prepared from them — a path source locked again, the harness
-started in it where the conversation lives — and one naming others is refused
-with `source_refused`. A
+**A session keeps its sources.** The sources its first run named — none
+included, and whether or not that run got as far as its harness — are recorded
+with the session (`sessions.sources`), unless they were refused. A continuing
+run that names none is prepared from them — a path source locked again, the
+harness started where the conversation lives, a setup hook that failed run
+again — and one naming others is refused with `source_refused`. A
 worktree whose add never finished (a cancel or a timeout kills git, and git's
 own cleanup does not run under SIGKILL) carries no completion mark in its git
 directory, and is removed and made again rather than worked in.

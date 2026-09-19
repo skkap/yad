@@ -860,32 +860,41 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 			}
 		},
 	})
-	if err == nil && record {
+	// Bound by the session's first run whatever became of it — a setup hook
+	// that failed leaves a worktree the next run must set up again, and a
+	// first run with no sources leaves a conversation in the session's own
+	// directory — unless its sources were refused, which touched nothing.
+	if we, ok := errors.AsType[*workdir.Error](err); record && (!ok || we.Class != workdir.ClassSourceRefused) {
+		if sources == nil {
+			sources = []v1.Source{}
+		}
 		body, _ := json.Marshal(sources)
-		if err := e.Store.SetSessionSources(bg, db.SetSessionSourcesParams{
+		if rerr := e.Store.SetSessionSources(bg, db.SetSessionSourcesParams{
 			Sources: sql.NullString{String: string(body), Valid: true}, Connection: c.Connection, ID: c.Run.Session.ID,
-		}); err != nil {
-			prep.Release()
-			return nil, fmt.Errorf("the session's sources could not be recorded: %w", err)
+		}); rerr != nil {
+			if prep != nil {
+				prep.Release()
+			}
+			return nil, errors.Join(err, fmt.Errorf("the session's sources could not be recorded: %w", rerr))
 		}
 	}
 	return prep, err
 }
 
 // sessionSources is what the run's workdir is built from. A session keeps
-// the sources its workdir was first built from (decision 0033): a continuing
-// run that names none is prepared from them — a path source locked again and
-// the harness started in it, where the session's conversation lives — and one
-// naming others is refused, since the workdir is already theirs. record says
-// the session has none yet, so these are to be recorded once they are in
-// place.
+// the sources its first run named, none included (decision 0033): a
+// continuing run that names none is prepared from them — a path source
+// locked again, the harness started where the session's conversation lives,
+// a setup hook that failed run again — and one naming others is refused,
+// since the workdir is already theirs. record says the session has none
+// recorded yet, so this run's are to be.
 func (e *Exec) sessionSources(ctx context.Context, c Claim) (sources []v1.Source, record bool, err error) {
 	sess, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
 	if err != nil {
 		return nil, false, err
 	}
 	if !sess.Sources.Valid {
-		return c.Run.Sources, len(c.Run.Sources) > 0, nil
+		return c.Run.Sources, true, nil
 	}
 	if err := json.Unmarshal([]byte(sess.Sources.String), &sources); err != nil {
 		return nil, false, fmt.Errorf("the session's recorded sources are unreadable (%v) — start a new session", err)

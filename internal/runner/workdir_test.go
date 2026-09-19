@@ -341,3 +341,43 @@ func TestASessionKeepsItsSources(t *testing.T) {
 		t.Errorf("a continuation naming the same sources: %v", h.Starts)
 	}
 }
+
+// A session is bound to its first run's sources whatever became of that run:
+// a continuation after a failed setup hook runs the hook again in the same
+// worktree, and a session begun with no sources refuses one named later.
+func TestASessionIsBoundByItsFirstRun(t *testing.T) {
+	e := newEnv(t)
+	root := t.TempDir()
+	ready := filepath.Join(t.TempDir(), "ready")
+	bare := gitRepo(t, root, "#!/bin/sh\n[ -e "+ready+" ] || { echo 'not yet' >&2; exit 1; }\ntouch set-up\n")
+	l := e.loop(t, 1)
+	h := fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}})
+	x := e.sourcedExec(root, h)
+
+	first := testRun("a", "s1")
+	first.Sources = []v1.Source{{Git: &v1.GitSource{URL: bare}}}
+	runOne(t, e, l, x, first)
+	if r := hubResult(t, e, "a"); r.Error == nil || r.Error.Class != workdir.ClassSetupFailed {
+		t.Fatalf("first run: %+v", r)
+	}
+	os.WriteFile(ready, nil, 0o600)
+	runOne(t, e, l, x, continued("b", "s1"))
+	if r := hubResult(t, e, "b"); r.State != v1.RunSucceeded {
+		t.Fatalf("the continuation after a failed hook: %+v", r)
+	}
+	dir := session(t, e, "s1").Workdir
+	if _, err := os.Stat(filepath.Join(dir, "set-up")); err != nil || len(h.Starts) != 1 || h.Starts[0].Workdir != dir {
+		t.Errorf("the hook did not run again in the session's worktree before the harness: %v, starts %v", err, h.Starts)
+	}
+
+	runOne(t, e, l, x, testRun("c", "s2"))
+	later := continued("d", "s2")
+	later.Sources = []v1.Source{{Path: root}}
+	runOne(t, e, l, x, later)
+	if r := hubResult(t, e, "d"); r.Error == nil || r.Error.Class != workdir.ClassSourceRefused {
+		t.Errorf("a source named after a session began with none: %+v", r)
+	}
+	if len(h.Starts) != 2 {
+		t.Errorf("%d starts; the refused run must not start the harness", len(h.Starts))
+	}
+}

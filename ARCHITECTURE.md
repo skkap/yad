@@ -401,7 +401,7 @@ harness process. Recording new ones is a manual step, behind a build tag
   hashed otherwise; no hub-chosen id becomes a path. Git sources come from
   a bare cache per repository (`<data>/repos/<name>-<hash>.git`, fetched before
   every checkout) as a worktree on the run's branch — as it stands when it
-  exists, else cut from `base`, else `yad/<session>` from the default branch;
+  exists, else cut from `base`, else `yad/<connection>/<session>` from the default branch;
   a continuing session finds its worktree and branch as it left them, and a
   continuing run that names no sources is prepared from the session's own. One git
   source is the session's workdir itself; one `path` source is used in place,

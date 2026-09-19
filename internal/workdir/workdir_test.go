@@ -280,8 +280,8 @@ func TestGitSource(t *testing.T) {
 	if got := read(t, filepath.Join(p3.Dir, "README")); got != "v2\n" {
 		t.Errorf("README = %q: the cache was not fetched before the checkout", got)
 	}
-	if b := sh(t, p3.Dir, "git", "branch", "--show-current"); b != "yad/s2" {
-		t.Errorf("unnamed branch is %q, want yad/s2", b)
+	if b := sh(t, p3.Dir, "git", "branch", "--show-current"); b != "yad/hub/s2" {
+		t.Errorf("unnamed branch is %q, want yad/hub/s2", b)
 	}
 	caches, _ := filepath.Glob(filepath.Join(f.m.Data, "repos", "*.git"))
 	if len(caches) != 1 {
@@ -781,6 +781,23 @@ func TestDefaultBranchFollowsTheRemote(t *testing.T) {
 	}
 	if read(t, filepath.Join(p.Dir, "README")) != "trunk" {
 		t.Error("the new session was cut from the old default branch")
+	}
+}
+
+// Two hubs may name a session alike; each gets its own branch.
+func TestUnnamedBranchesAreConnectionScoped(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", map[string]string{"README": "x"})
+	for _, conn := range []string{"zumino", "yashiki"} {
+		dir := filepath.Join(f.m.Data, "workdirs", conn, "work")
+		os.MkdirAll(dir, 0o700)
+		p, err := f.m.Prepare(context.Background(), Request{Dir: dir, Connection: conn, Session: "work", Sources: []v1.Source{gitSource(o.bare, "", "")}, Emit: func(v1.Event) {}})
+		if err != nil {
+			t.Fatalf("%s: %v", conn, err)
+		}
+		if b := sh(t, p.Dir, "git", "branch", "--show-current"); b != "yad/"+conn+"/work" {
+			t.Errorf("%s: on %q", conn, b)
+		}
 	}
 }
 

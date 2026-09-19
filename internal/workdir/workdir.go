@@ -214,7 +214,9 @@ func (m *Manager) plan(req Request) ([]item, error) {
 				}
 			}
 			if it.branch == "" {
-				it.branch = "yad/" + safeComponent(req.Session)
+				// Session ids are unique only within a connection, and
+				// every connection shares the cache.
+				it.branch = "yad/" + safeComponent(req.Connection) + "/" + safeComponent(req.Session)
 			} else if err := checkRef("sources["+fmt.Sprint(i)+"].git.branch", it.branch); err != nil {
 				return nil, err
 			}
