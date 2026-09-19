@@ -16,9 +16,11 @@ import (
 	"github.com/skkap/yad/internal/config"
 )
 
-// askTimeout bounds one request when the caller's context has no deadline. A
+// AskTimeout bounds one request when the caller's context has no deadline. A
 // status is a few store reads; a daemon that cannot answer in this is wedged.
-const askTimeout = 5 * time.Second
+// Exported so a caller working to a shorter budget of its own can hold the ask
+// to the smaller of the two rather than sit here past it.
+const AskTimeout = 5 * time.Second
 
 // Holder says whether a daemon holds the profile's lock, and its pid. It is
 // the answer that survives a daemon too wedged to answer on its socket.
@@ -69,7 +71,7 @@ func Send(ctx context.Context, p config.Paths, req Request) (Response, error) {
 	}
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, askTimeout)
+		ctx, cancel = context.WithTimeout(ctx, AskTimeout)
 		defer cancel()
 	}
 	res, err := ask(ctx, sock, req)

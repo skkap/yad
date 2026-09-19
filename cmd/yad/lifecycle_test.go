@@ -217,7 +217,7 @@ func TestStopFallsBackToSignals(t *testing.T) {
 		want       string
 		code       int
 	}{
-		{"SIGTERM ends it", false, nil, "sent it SIGTERM", 0},
+		{"SIGTERM ends it", false, []string{"--timeout", "300ms"}, "sent it SIGTERM", 0},
 		{"ignores SIGTERM, no --force", true, []string{"--timeout", "300ms"}, "yad daemon stop --force", 1},
 		{"ignores SIGTERM, --force kills it", true, []string{"--timeout", "300ms", "--force"}, "killed pid", 0},
 	} {
