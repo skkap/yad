@@ -58,19 +58,39 @@ else
   die "neither sha256sum nor shasum is on this machine, so the download cannot be verified"
 fi
 
+tmp=$(mktemp -d)
+staged="$DIR/.yad.install.$$"
+# A signal handler that does not exit returns to where it interrupted, so the
+# script would clean up and then carry on against the directory it just
+# removed. 130 and 143 are the conventional statuses for the two signals.
+trap 'rm -rf "$tmp" "$staged"' EXIT
+trap 'rm -rf "$tmp" "$staged"; exit 130' INT
+trap 'rm -rf "$tmp" "$staged"; exit 143' TERM
+
+# The directory is made and tested before the download, so an install into a
+# place this account cannot write says so in a second rather than after
+# fetching the whole release — and says it in our words.
+mkdir -p "$DIR" || die "cannot create $DIR — install yad somewhere you own, such as ~/.local/bin"
+[ -w "$DIR" ] ||
+  die "cannot write to $DIR — install yad somewhere you own, such as ~/.local/bin, or re-run with YAD_INSTALL_DIR set"
+
 tag="${YAD_VERSION:-}"
 if [ -z "$tag" ]; then
-  tag=$(gh release view --repo "$REPO" --json tagName --jq .tagName) ||
+  # gh fails the same way for a repository with no releases as for a login
+  # problem, and only one of those is fixed by logging in again.
+  tag=$(gh release view --repo "$REPO" --json tagName --jq .tagName 2>"$tmp/gh.err") || {
+    grep -q "release not found" "$tmp/gh.err" &&
+      die "$REPO has published no release yet — build yad from source with \`make install\`"
     die "could not ask $REPO for its newest release — it is private, so \`gh auth status\` is the first thing to check"
+  }
 fi
 [ -n "$tag" ] || die "$REPO has published no release yet — build yad from source with \`make install\`"
 
-tmp=$(mktemp -d)
-staged="$DIR/.yad.install.$$"
-trap 'rm -rf "$tmp" "$staged"' EXIT INT TERM
-
-gh release download "$tag" --repo "$REPO" --pattern "$asset" --pattern checksums.txt --dir "$tmp" >/dev/null ||
+gh release download "$tag" --repo "$REPO" --pattern "$asset" --pattern checksums.txt --dir "$tmp" 2>"$tmp/gh.err" >/dev/null || {
+  grep -q "release not found" "$tmp/gh.err" &&
+    die "$REPO has no release $tag — leave YAD_VERSION unset to take the newest"
   die "could not download $asset from $tag — $REPO is private, so \`gh auth status\` is the first thing to check"
+}
 
 # gh takes the two --pattern flags as alternatives: it fails only when *all* of
 # them match nothing, so a release carrying the binary and no checksums.txt
@@ -83,7 +103,9 @@ gh release download "$tag" --repo "$REPO" --pattern "$asset" --pattern checksums
   die "release $tag has no checksums.txt to check $asset against — nothing was installed"
 
 # The checksum is checked before anything is written to $DIR: a bad download
-# must leave whatever yad is already installed working.
+# must leave whatever yad is already installed working. One line is pulled out
+# of checksums.txt rather than running a checker over the whole file, which
+# lists all four targets and would fail on the three not downloaded.
 want=$(awk -v a="$asset" '{ n = $2; sub(/^\*/, "", n); if (n == a) print $1 }' "$tmp/checksums.txt")
 [ -n "$want" ] || die "checksums.txt in $tag does not list $asset — nothing was installed"
 got=$(sha256 "$tmp/$asset")
@@ -91,16 +113,15 @@ got=$(sha256 "$tmp/$asset")
 [ "$want" = "$got" ] ||
   die "$asset from $tag does not match its published checksum (got $got, the release says $want) — nothing was installed"
 
-mkdir -p "$DIR"
 had_one=no
-# `[ -e ... ] && had_one=yes` would end the script under `set -e` when the
-# test fails, which is the common case: a first install.
 if [ -e "$DIR/yad" ]; then had_one=yes; fi
 # Staged inside $DIR and renamed, so the last step is one atomic mv within one
-# filesystem: a yad that is running is never a half-written file.
-cp "$tmp/$asset" "$staged"
-chmod 0755 "$staged"
-mv -f "$staged" "$DIR/yad"
+# filesystem: a yad that is running is never a half-written file. Each step
+# carries its own refusal — an install that dies in cp's words gives the
+# operator a temporary path they never chose and no next action.
+cp "$tmp/$asset" "$staged" || die "could not write $staged — nothing was installed"
+chmod 0755 "$staged" || die "could not make $staged executable — nothing was installed"
+mv -f "$staged" "$DIR/yad" || die "could not put $asset in place at $DIR/yad — nothing was installed"
 
 echo "installed $tag as $DIR/yad"
 case ":$PATH:" in

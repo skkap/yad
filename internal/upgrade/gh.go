@@ -55,6 +55,13 @@ func (g GH) Download(ctx context.Context, tag string, assets []string, dir strin
 		args = append(args, "--pattern", a)
 	}
 	_, err := g.run(ctx, args...)
+	// A tag that does not exist fails exactly as a login problem does, and
+	// sending that operator to `gh auth status` costs them the one thing the
+	// message could have told them: check what they typed.
+	var ge *ghError
+	if errors.As(err, &ge) && strings.Contains(ge.stderr, "release not found") {
+		return fmt.Errorf("%s has no release %s — `yad upgrade --check` says what the newest one is", g.repo(), tag)
+	}
 	return err
 }
 

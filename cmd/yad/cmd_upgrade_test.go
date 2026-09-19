@@ -29,10 +29,15 @@ func TestUpgradeRejectsUnknownFlags(t *testing.T) {
 	}
 }
 
+// everyState is each answer Compare can give. A state added without a line of
+// its own falls to the default and says "this build is <tag>", which is the
+// one wrong answer these tests exist to catch.
+var everyState = []upgrade.State{upgrade.Behind, upgrade.Current, upgrade.Ahead, upgrade.Unstamped, upgrade.UnreadableTag}
+
 // Every state names what the owner would type next, because "up to date" with
 // no way to override it is what sends someone to reinstall by hand.
 func TestCheckLineCarriesANextAction(t *testing.T) {
-	for _, state := range []upgrade.State{upgrade.Behind, upgrade.Current, upgrade.Ahead, upgrade.Unknown} {
+	for _, state := range everyState {
 		for _, named := range []bool{false, true} {
 			line := checkLine(state, "v0.4.0", named)
 			if !strings.Contains(line, "yad upgrade") {
@@ -48,8 +53,22 @@ func TestCheckLineCarriesANextAction(t *testing.T) {
 // A tag given with --tag is the release the owner asked about, not the newest
 // one — and the command offered has to install that tag rather than whatever
 // `Latest` would resolve to, which is a different release.
+// A tag that is not a version number is the operator's typo or a repository
+// that tags "latest", and blaming the installed build for it contradicts the
+// `installed  v0.4.0` line printed two lines above.
+func TestCheckLineBlamesTheUnreadableSide(t *testing.T) {
+	if line := checkLine(upgrade.UnreadableTag, "stable", true); strings.Contains(line, "this build carries no release version") {
+		t.Errorf("an unreadable tag says %q, blaming the build for it", line)
+	} else if !strings.Contains(line, `"stable" is not a version number`) {
+		t.Errorf("an unreadable tag says %q, without naming the tag as the problem", line)
+	}
+	if line := checkLine(upgrade.Unstamped, "v0.4.0", false); !strings.Contains(line, "this build carries no release version") {
+		t.Errorf("an unstamped build says %q, without naming the build as the problem", line)
+	}
+}
+
 func TestCheckLineOnANamedTag(t *testing.T) {
-	for _, state := range []upgrade.State{upgrade.Behind, upgrade.Current, upgrade.Ahead, upgrade.Unknown} {
+	for _, state := range everyState {
 		line := checkLine(state, "v0.1.0", true)
 		if strings.Contains(line, "newest release") {
 			t.Errorf("state %v says %q, calling a named tag the newest release", state, line)

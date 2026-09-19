@@ -17,19 +17,23 @@ type Number [3]int
 // component is zero, and anything else is not a version number — "dev", the
 // unstamped default, among them.
 //
-// A bare number is refused on purpose. The Makefile stamps with
-// `git describe --tags --always`, which falls back to a short SHA in a
+// A bare number without the "v" is refused on purpose. The Makefile stamps
+// with `git describe --tags --always`, which falls back to a short SHA in a
 // checkout with no reachable tag — an untagged repository, or a shallow clone
 // — and about one short SHA in thirty is all decimal digits. Read as a version
 // it would be an enormous major, which is worse than unreadable: it makes the
-// build look newer than every release rather than unstamped.
+// build look newer than every release rather than unstamped. The "v" is what
+// tells the two apart, since a hex SHA cannot begin with one — so "v1" is a
+// version and "4886173" is not.
 func ParseNumber(s string) (Number, bool) {
-	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
+	s = strings.TrimSpace(s)
+	tagged := strings.HasPrefix(s, "v")
+	s = strings.TrimPrefix(s, "v")
 	if i := strings.IndexAny(s, "-+"); i >= 0 {
 		s = s[:i]
 	}
 	parts := strings.Split(s, ".")
-	if len(parts) < 2 || len(parts) > 3 {
+	if len(parts) > 3 || (len(parts) < 2 && !tagged) {
 		return Number{}, false
 	}
 	var n Number

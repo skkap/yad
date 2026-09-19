@@ -101,8 +101,13 @@ YAD updates itself on a schedule or on a hub's say-so
 ([0018](docs/decisions/0018-no-self-update-in-v1.md)).
 
 Releases are built by CI on a `v*` tag: linux and darwin × amd64 and arm64,
-`CGO_ENABLED=0`, with a `checksums.txt` you can check by hand with
-`sha256sum -c`.
+`CGO_ENABLED=0`, with a `checksums.txt` covering all four. To check a download
+by hand, pull out the one line for the binary you took — a checker given the
+whole file reports the three you did not download as failures:
+
+```bash
+grep " yad-linux-amd64$" checksums.txt | sha256sum -c -   # or: shasum -a 256 -c -
+```
 
 ## Run it safely
 

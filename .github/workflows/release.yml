@@ -16,8 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          # The Makefile stamps the version with `git describe`, which needs
-          # the tags: a shallow clone would ship a binary calling itself "dev".
+          # The Makefile stamps the version with `git describe --tags
+          # --always`, which needs the tags. Without them it does not fail —
+          # it falls back to a short SHA, so a shallow clone would ship a
+          # plausible-looking binary that no version floor can read.
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
@@ -29,8 +31,9 @@ jobs:
       # saw, and a release is the one artefact nobody re-checks by hand.
       - run: make check
       - run: make dist
-      # sha256sum's own output, so `sha256sum -c checksums.txt` verifies a
-      # download by hand exactly as yad upgrade and scripts/install.sh do.
+      # sha256sum's own output, so one line of it verifies one download by
+      # hand exactly as yad upgrade and scripts/install.sh do — each of those
+      # matches the single asset it took, because the file names all four.
       - run: cd dist && sha256sum yad-* > checksums.txt
       - run: gh release create "$GITHUB_REF_NAME" dist/yad-* dist/checksums.txt --verify-tag --generate-notes
         env:

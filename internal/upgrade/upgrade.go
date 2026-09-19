@@ -78,20 +78,28 @@ const (
 	Current
 	// Ahead: this build is newer than the newest release.
 	Ahead
-	// Unknown: this build is not stamped from a tag, so there is nothing to
-	// compare — `go build ./cmd/yad` without the Makefile's ldflags says "dev".
-	Unknown
+	// Unstamped: this build carries no version number, so there is nothing to
+	// compare it with — `go build ./cmd/yad` without the Makefile's ldflags
+	// says "dev", and a checkout with no reachable tag says a short SHA.
+	Unstamped
+	// UnreadableTag: the release's tag is not a version number. A repository
+	// may tag however it likes, and one that tags "latest" or "nightly" is
+	// nobody's mistake to report as this build's.
+	UnreadableTag
 )
 
-// Compare places the installed version against a release tag.
+// Compare places the installed version against a release tag. The two
+// unreadable cases are kept apart because they send the operator to different
+// places: one is the binary they are running, the other is the tag they typed.
+// The installed side is judged first — it is the one they cannot see.
 func Compare(installed, released string) State {
 	got, ok := buildinfo.ParseNumber(installed)
 	if !ok {
-		return Unknown
+		return Unstamped
 	}
 	want, ok := buildinfo.ParseNumber(released)
 	if !ok {
-		return Unknown
+		return UnreadableTag
 	}
 	switch {
 	case got.Older(want):
@@ -155,11 +163,19 @@ func Apply(ctx context.Context, o Options) (Result, error) {
 	if err := o.Source.Download(ctx, tag, []string{asset, ChecksumsName}, dir); err != nil {
 		return Result{}, err
 	}
+	// gh takes the asset names as alternatives and succeeds when any of them
+	// matches, so a release that published the binaries and no checksums — or
+	// the other way about — arrives here as a successful download. Both are
+	// named as an incomplete release: read as a checksum failure, either one
+	// sends the operator after tampering that never happened.
+	staged := filepath.Join(dir, asset)
+	if _, err := os.Stat(staged); err != nil {
+		return Result{}, fmt.Errorf("release %s did not produce %s — nothing was replaced", tag, asset)
+	}
 	sums, err := os.ReadFile(filepath.Join(dir, ChecksumsName))
 	if err != nil {
-		return Result{}, fmt.Errorf("release %s has no %s to check the download against — nothing was replaced", tag, ChecksumsName)
+		return Result{}, fmt.Errorf("release %s has no %s to check %s against — nothing was replaced", tag, ChecksumsName, asset)
 	}
-	staged := filepath.Join(dir, asset)
 	if err := Verify(staged, sums, asset); err != nil {
 		return Result{}, fmt.Errorf("%w — nothing was replaced; run `yad upgrade` again, and if it says this twice the release %s is bad", err, tag)
 	}

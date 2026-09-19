@@ -29,6 +29,7 @@ import (
 // would hide the day someone puts the gate back.
 const ghStub = `#!/bin/sh
 echo "$@" >>"$GH_LOG"
+if [ -n "$GH_FAIL" ]; then echo "$GH_FAIL" >&2; exit 1; fi
 case "$1 $2" in
   "release view") echo "$FAKE_TAG" ;;
   "release download")
@@ -280,6 +281,55 @@ func TestInstallScriptHonoursAnInstallDir(t *testing.T) {
 	}
 	if !strings.Contains(stdout, dir) {
 		t.Errorf("stdout %q does not say where it installed", stdout)
+	}
+}
+
+// The Go half creates its staging directory before downloading, so an
+// unwritable destination is refused in a second rather than after the whole
+// release has been fetched. The script has to do the same, and refuse in its
+// own words: dying in cp's leaves the operator a temporary path they never
+// chose and no next action.
+func TestInstallScriptRefusesAnUnwritableDirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a 0500 directory anyway")
+	}
+	name := hostAsset(t)
+	bodies := map[string]string{name: "the release binary"}
+	i := newInstall(t, "v0.4.0", map[string]string{name: bodies[name], ChecksumsName: checksums(bodies)})
+	dir := filepath.Join(t.TempDir(), "readonly")
+	if err := os.Mkdir(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	_, stderr, err := i.run("YAD_INSTALL_DIR=" + dir)
+	if err == nil {
+		t.Fatal("install.sh reported success in a directory it cannot write")
+	}
+	if !strings.Contains(stderr, "install:") || !strings.Contains(stderr, dir) {
+		t.Errorf("stderr %q is not the script's own refusal naming the directory", stderr)
+	}
+	if strings.Contains(i.calls(), "release download") {
+		t.Errorf("gh calls were %q — it fetched a release it had nowhere to put", i.calls())
+	}
+}
+
+// gh fails the same way for a repository that has published nothing as for a
+// login problem, and an operator sent to `gh auth login` here debugs a login
+// that works. This is the state skkap/yad is in today.
+func TestInstallScriptSaysWhenThereAreNoReleases(t *testing.T) {
+	i := newInstall(t, "v0.4.0", map[string]string{})
+	i.env = append(i.env, "GH_FAIL=release not found")
+
+	_, stderr, err := i.run()
+	if err == nil {
+		t.Fatal("install.sh invented a release")
+	}
+	if !strings.Contains(stderr, "published no release yet") {
+		t.Errorf("stderr %q, want it to say the repository has no releases", stderr)
+	}
+	if strings.Contains(stderr, "gh auth status") {
+		t.Errorf("stderr %q sends the operator to check a login that is fine", stderr)
 	}
 }
 

@@ -44,14 +44,23 @@ func (f *fakeSource) Download(_ context.Context, tag string, assets []string, di
 	if tag != f.tag {
 		return fmt.Errorf("no release %s", tag)
 	}
+	// gh takes the --pattern flags as alternatives: it writes whichever assets
+	// match and fails only when none of them do. A fake that refuses the
+	// moment one is missing would never let Apply reach its own guards, which
+	// is the case a release published without its checksums lands in.
+	matched := 0
 	for _, a := range assets {
 		b, ok := f.files[a]
 		if !ok {
-			return fmt.Errorf("release %s has no asset %s", tag, a)
+			continue
 		}
+		matched++
 		if err := os.WriteFile(filepath.Join(dir, a), b, 0o644); err != nil {
 			return err
 		}
+	}
+	if matched == 0 {
+		return fmt.Errorf("release %s: no assets match the file pattern", tag)
 	}
 	return nil
 }
@@ -200,8 +209,7 @@ func TestApplyLeavesTheBinaryWhenTheFetchFails(t *testing.T) {
 	}{
 		{"no newest release", func(s *fakeSource) { s.latestErr = errors.New("gh: not logged in") }},
 		{"download refused", func(s *fakeSource) { s.downErr = errors.New("gh: release not found") }},
-		{"no checksums in the release", func(s *fakeSource) { delete(s.files, ChecksumsName) }},
-		{"no binary in the release", func(s *fakeSource) { delete(s.files, asset) }},
+		{"nothing in the release matches at all", func(s *fakeSource) { s.files = map[string][]byte{} }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			target := installed(t, "old yad")
@@ -210,6 +218,49 @@ func TestApplyLeavesTheBinaryWhenTheFetchFails(t *testing.T) {
 
 			if _, err := Apply(context.Background(), opts(src, target, "")); err == nil {
 				t.Fatal("Apply reported success without a release to install")
+			}
+			if got := read(t, target); got != "old yad" {
+				t.Errorf("binary is %q, want the one that was working", got)
+			}
+			if extra := leftovers(t, target); extra != nil {
+				t.Errorf("left %v beside the binary", extra)
+			}
+		})
+	}
+}
+
+// TestApplyRefusesAnIncompleteRelease is the Go half of what round 1 found in
+// the install script: gh treats several --pattern flags as alternatives and
+// exits 0 when only some of them match, so a release that published the
+// binaries and no checksums.txt arrives here as a successful download. The
+// refusal has to name the release as incomplete — read as a checksum failure
+// it sends the operator after tampering that never happened.
+func TestApplyRefusesAnIncompleteRelease(t *testing.T) {
+	for _, c := range []struct {
+		name, missing, want string
+	}{
+		{"no checksums.txt", ChecksumsName, "has no " + ChecksumsName},
+		{"no binary for this machine", asset, "did not produce " + asset},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			target := installed(t, "old yad")
+			src := release(t, "v0.4.0", map[string][]byte{asset: []byte("new yad")})
+			delete(src.files, c.missing)
+
+			_, err := Apply(context.Background(), opts(src, target, ""))
+			if err == nil {
+				t.Fatal("Apply installed from a release that was missing an asset")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error %q, want it to name what the release is missing (%q)", err, c.want)
+			}
+			if !strings.Contains(err.Error(), "nothing was replaced") {
+				t.Errorf("error %q does not tell the operator the binary is intact", err)
+			}
+			// "does not match its published checksum" is the tampering
+			// message; an incomplete release must not borrow it.
+			if strings.Contains(err.Error(), "does not match") {
+				t.Errorf("error %q reads as a tampered download when the release is simply incomplete", err)
 			}
 			if got := read(t, target); got != "old yad" {
 				t.Errorf("binary is %q, want the one that was working", got)
@@ -333,15 +384,24 @@ func TestCompare(t *testing.T) {
 		{"v0.4.0-4-gabc1234", "v0.4.0", Current}, // four commits past the tag, not before it
 		{"v0.5.0", "v0.4.0", Ahead},              // --tag rolling back, or a tag not yet cut
 		{"v1.0.0", "v0.9.9", Ahead},
-		{"dev", "v0.4.0", Unknown}, // a `go build` in someone's checkout
+		{"dev", "v0.4.0", Unstamped}, // a `go build` in someone's checkout
 		// `git describe --tags --always` in a checkout with no reachable tag —
 		// an untagged repository, a shallow clone — stamps a short SHA, and
 		// about one in thirty of those is all decimal digits. Read as a
 		// version it would outrank every release and stop the upgrade.
-		{"4886173", "v0.4.0", Unknown},
-		{"7f2331c", "v0.4.0", Unknown},
-		{"", "v0.4.0", Unknown},
-		{"v0.4.0", "latest", Unknown}, // a tag that is not a version number
+		{"4886173", "v0.4.0", Unstamped},
+		{"7f2331c", "v0.4.0", Unstamped},
+		// The release workflow triggers on `v*`, so `v1` is a tag someone may
+		// cut, and the "v" is what keeps it apart from a short SHA.
+		{"v1", "v0.4.0", Ahead}, // v1 is 1.0.0, which is past 0.4.0
+		{"v0.4.0", "v1", Behind},
+		{"v1", "v2", Behind},
+		{"", "v0.4.0", Unstamped},
+		// The tag is the unreadable side here, and the two are kept apart so
+		// the message blames the one the operator can do something about.
+		{"v0.4.0", "latest", UnreadableTag},
+		{"v0.4.0", "stable", UnreadableTag},
+		{"dev", "latest", Unstamped}, // both unreadable: the build is judged first
 	} {
 		if got := Compare(c.installed, c.released); got != c.want {
 			t.Errorf("Compare(%q, %q) = %v, want %v", c.installed, c.released, got, c.want)

@@ -86,6 +86,23 @@ func TestGHLatestReportsWhatGHSaid(t *testing.T) {
 	}
 }
 
+// The same asymmetry Latest had: gh fails identically for a missing tag and a
+// missing login, and only one of those is fixed by logging in again.
+func TestGHDownloadSaysWhenTheTagIsMissing(t *testing.T) {
+	fakeGH(t, map[string]string{"GH_FAIL": "release not found"})
+
+	err := GH{}.Download(context.Background(), "v9.9.9", []string{"yad-linux-amd64"}, t.TempDir())
+	if err == nil {
+		t.Fatal("Download reported success for a release that is not there")
+	}
+	if !strings.Contains(err.Error(), "has no release v9.9.9") {
+		t.Errorf("error %q, want it to name the tag as the problem", err)
+	}
+	if strings.Contains(err.Error(), "gh auth status") {
+		t.Errorf("error %q sends the operator to check a login that is fine", err)
+	}
+}
+
 func TestGHDownloadAsksForEachAsset(t *testing.T) {
 	log := fakeGH(t, nil)
 	dir := t.TempDir()

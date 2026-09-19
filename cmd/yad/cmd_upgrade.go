@@ -68,8 +68,15 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 		return err
 	}
 	fmt.Fprintf(w, "checked its sha256 against the release and replaced %s with %s\n", res.Path, res.Tag)
+	// control.Holder reads one profile's lock, and every profile on this
+	// machine shares the binary just replaced — so silence here is not "no
+	// runner is running", and an operator told nothing leaves a work runner
+	// serving from the old file for good.
+	restart := "restart it to pick this one up: `yad daemon restart`, or your service manager if it runs as one (`yad service status`)"
 	if pid, running, err := control.Holder(g.paths); err == nil && running {
-		fmt.Fprintf(w, "the runner (pid %d) is still on the old binary — restart it to pick this one up: `yad daemon restart`, or your service manager if it runs as one (`yad service status`)\n", pid)
+		fmt.Fprintf(w, "the runner (pid %d) is still on the old binary — %s\n", pid, restart)
+	} else {
+		fmt.Fprintf(w, "no runner is running under profile %s; one under another profile still holds the old binary — %s\n", g.paths.Profile, restart)
 	}
 	return nil
 }
@@ -93,8 +100,10 @@ func checkLine(state upgrade.State, tag string, named bool) string {
 		return fmt.Sprintf("this build is older than %s — %s replaces it", tag, replace)
 	case upgrade.Ahead:
 		return fmt.Sprintf("this build is newer than %s%s — %s installs it anyway", tag, newest, install)
-	case upgrade.Unknown:
+	case upgrade.Unstamped:
 		return fmt.Sprintf("this build carries no release version (%q), so there is nothing to compare — %s installs %s", buildinfo.Version, install, tag)
+	case upgrade.UnreadableTag:
+		return fmt.Sprintf("%q is not a version number, so there is nothing to compare it with — %s installs it anyway", tag, install)
 	default:
 		return fmt.Sprintf("this build is %s%s — %s fetches it again", tag, newest, install)
 	}
