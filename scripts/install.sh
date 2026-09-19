@@ -16,8 +16,10 @@
 # file is created whether gh ran or not. That is the one failure a chained
 # provisioning script reads as success, and it is the case this file's own
 # "gh is not on PATH" refusal can never reach, since gh is what fetched it.
-# The file is kept rather than deleted: the YAD_VERSION example below re-runs
-# it.
+# The file is kept because the YAD_VERSION example below re-runs it, not as an
+# inspection point — the && runs it the moment the fetch succeeds. To read it
+# first, fetch and run separately and check gh's own exit status, since the
+# redirection creates the file either way.
 #
 # Fetch it with gh rather than curl: a curl carrying `Authorization: Bearer
 # $(gh auth token)` puts the live token in curl's argv, where /proc and ps

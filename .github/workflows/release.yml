@@ -12,6 +12,12 @@ on:
     # A glob cannot say "digits only" — `v1beta` still matches — so this
     # narrows the mistake rather than closing it; `yad upgrade --check` against
     # the new release is what proves a tag is readable.
+    #
+    # Narrower than the parser in the other direction too, on purpose:
+    # ParseNumber reads a bare `0.4.1`, and a tag written that way publishes
+    # nothing. Releases carry the `v` that `git describe` writes and the README
+    # documents, and a trigger that is narrower than its consumer only ever
+    # fails to publish — the reverse publishes something nothing can install.
     tags: ['v[0-9]*']
 
 permissions:

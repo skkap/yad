@@ -165,6 +165,11 @@ func TestRestartNoteOffersACommandOnlyWhereItKnowsTheProfile(t *testing.T) {
 				t.Errorf("note %q, want it to offer %s", note, want)
 			}
 		}
+		// A machine with two runners is where this matters most, and it is the
+		// branch the warning went missing from.
+		if !strings.Contains(note, "any other profile") {
+			t.Errorf("note %q drops the warning about other profiles exactly where a second runner is most likely", note)
+		}
 	})
 
 	t.Run("the lock could not be read", func(t *testing.T) {

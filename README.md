@@ -72,8 +72,13 @@ command's status, so `gh api … | sh` hands `sh` an empty stream and exits 0
 having installed nothing — and so does `gh api … > f` followed by a separate
 `sh f`, because the redirection creates the file whether `gh` succeeds or not
 and `sh` on an empty file exits 0. Joined with `&&`, a `gh` that cannot fetch
-the script fails the whole command. Keeping the file also lets you read what
-you are about to run, and re-run it.
+the script fails the whole command.
+
+The file is kept because the pinning example below re-runs it — not so you can
+read it first: the `&&` runs it as soon as the fetch succeeds. To read it
+before it runs, fetch and run as two separate commands, and check `gh`'s exit
+status yourself, because the redirection creates the file whether `gh`
+succeeded or not.
 
 It puts `yad` in `~/.local/bin`, checks the release's SHA-256 before writing
 anything, and tells you if that directory is not on your `PATH`. Then

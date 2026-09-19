@@ -116,7 +116,12 @@ func restartNote(profile string, pid int, running bool, err error) string {
 		// it is this profile's, which makes the advice the right advice.
 		return fmt.Sprintf("could not tell whether a runner is running under profile %s (%v) — if one is, %s", profile, err, restartAdvice(profile))
 	case running:
-		return fmt.Sprintf("the runner (pid %d) is still on the old binary — %s", pid, restartAdvice(profile))
+		// The other-profiles warning belongs here too: a machine with runners
+		// under two profiles is exactly where an owner restarts the one named
+		// and walks away, leaving the other on the old binary. It went missing
+		// precisely when a local runner was found, which is the case most
+		// likely to have a second one.
+		return fmt.Sprintf("the runner (pid %d) is still on the old binary — %s. A runner under any other profile keeps the old binary too, until it is restarted under that profile", pid, restartAdvice(profile))
 	default:
 		return fmt.Sprintf("no runner is running under profile %s. A runner under any other profile keeps the old binary until it is restarted under that profile", profile)
 	}
