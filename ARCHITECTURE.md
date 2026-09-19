@@ -303,7 +303,9 @@ The instruction is one stream-json `user` frame on stdin, written from its own
 goroutine; stdin stays open for `control_request` (interrupt) and steers until
 the last `result`, and closing it is what lets Claude exit. YAD chooses the
 session id, so nothing has to be scraped; an echoed id that differs means the
-resume silently failed, and the run fails with `session_mismatch`.
+resume silently failed, and the run fails with `session_mismatch`. A resume
+Claude refuses — no transcript for the id — fails with `resume_rejected`
+([0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md)).
 `AskUserQuestion` is disallowed — headless, it returns an empty answer. A steer
 is another `user` frame: Claude reads it at the next tool boundary, or answers
 it as a follow-up turn in the same process; `--replay-user-messages` echoes
@@ -382,24 +384,36 @@ harness process. Recording new ones is a manual step, behind a build tag
 
 - The session store maps `session → (harness, native id, account, workdir,
   last used, state)`. The native id is written the moment it is known, not at the
-  end — a crash must not lose the resume pointer.
-- **One live run per session**, enforced by the store.
-- **Workdir** per session under `<data>/workdirs/<connection>/<session>/` — the
-  session id is the hub's, so it is kept only when it is a plain name and hashed
-  otherwise; no hub-chosen id becomes a path. Git sources come from
+  end — for Claude, at spawn — so a crash does not lose the resume pointer. A run
+  in a session with a native id resumes it; one without starts the harness's
+  conversation fresh. Last used is the end of the session's last run.
+- **A failed resume** ends the run `failed`: `resume_rejected` when the harness
+  has no conversation for the id, `session_mismatch` when it ran another one.
+  Neither moves the pointer or closes the session; the hub decides —
+  [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md).
+- **One live run per session**, enforced by the store. A run continuing a
+  session this runner does not hold, of another harness, or closed, is refused
+  at the claim (`refused`, [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md)).
+- **Workdir** per session under `<data>/workdirs/<connection>/<session>/`, kept
+  across its runs and never deleted by one —
+  [0032](docs/decisions/0032-a-workdir-belongs-to-its-session.md). The session
+  id is the hub's, so it is kept only when it is a plain lower-case name and
+  hashed otherwise; no hub-chosen id becomes a path. Git sources come from
   a bare cache per repository (`<data>/repos/<name>-<hash>.git`, fetched before
   every checkout) as a worktree on the run's branch — as it stands when it
   exists, else cut from `base`, else `yad/<session>` from the default branch;
-  a continuing session finds its worktree as it left it. One git source is the
-  workdir itself; one `path` source is used in place, the harness running in
-  it, under a per-path `flock` held until the run ends; several lie side by
-  side under the workdir. No sources → an empty directory. Hub strings are
-  checked before git sees them, git never prompts, and a local source must
-  resolve inside the owner's `[workdirs] roots` — none configured, none taken
+  a continuing session finds its worktree and branch as it left them. One git
+  source is the session's workdir itself; one `path` source is used in place,
+  the harness running in it, under a per-path `flock` held until the run ends;
+  several lie side by side under the workdir. No sources → an empty directory.
+  Hub strings are checked before git sees them, git never prompts, and a local
+  source must resolve inside the owner's `[workdirs] roots` — none configured,
+  none taken
   ([0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md)).
-  `internal/workdir` does all of it; the executor calls `Prepare` in
-  `preparing`, spools what it reports as the run's first events, and fails
-  the run with `source_refused` or `source_failed`.
+  `internal/workdir` does all of it; the executor calls `Prepare` on the
+  session's directory in `preparing`, spools what it reports as the run's
+  first events, and fails the run with `source_refused`, `source_failed` or
+  `setup_failed`.
 - **Setup hook**: if the worktree has an executable `.worktree/setup`, it runs
   with `WT_ROOT`, `WT_MAIN` (the bare cache), `WT_BRANCH`, `WT_SLUG`, `WT_REPO`
   and `WT_SLOT` — the contract in `~/my/gpi-tools/docs/worktrees/README.md` —
@@ -515,7 +529,9 @@ yad daemon start|stop|restart|status|logs [-f] [-n N]
                                    the runner process
 yad status [--json]                connections, capacity, runs, sessions and recent
                                    errors — via the socket
-yad sessions [close <id>]
+yad sessions [--json]              the sessions held: workdir, runs, last use — read
+                                   from state.db read-only, so the daemon may be down
+yad sessions close <id>            (DEV-18)
 yad account add|list|use|remove
 yad service install|uninstall|status
                                    launchd user agent, systemd user unit (0028)
@@ -591,7 +607,9 @@ line here is a reviewed change.
   `claude`. A run succeeds; the network drops mid-run and every event and the
   result still land; the runner restarts mid-run and the run is reported lost,
   with its events delivered, and the next run resumes its session in the same
-  workdir; a run cancelled or interrupted mid-run ends cancelled, with its
+  workdir; two runs in one session, the second answering from the first's
+  context, then a resume whose transcript is gone failing `resume_rejected`; a
+  run cancelled or interrupted mid-run ends cancelled, with its
   latency measured and no process left; a runner process gets one, two and
   three real stop signals and drains, cancels, or exits; `yad hub drain`
   drains a runner, which exits by itself; a run with a git source — a bare

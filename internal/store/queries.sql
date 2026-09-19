@@ -127,3 +127,19 @@ ORDER BY created_at;
 
 -- name: CountOpenSessions :one
 SELECT count(*) FROM sessions WHERE state = 'open';
+
+-- A session's idle time runs from the end of its last run, not its start: a
+-- run of three hours leaves a session used three hours later than it began.
+-- name: TouchSession :exec
+UPDATE sessions SET last_used_at = ? WHERE connection = ? AND id = ?;
+
+-- What `yad sessions` lists: every session, most recently used first, with
+-- the run live in it, if any.
+-- name: ListSessions :many
+SELECT s.connection, s.id, s.harness, s.native_id, s.workdir, s.state, s.created_at, s.last_used_at,
+  CAST(COALESCE((SELECT r.id FROM runs r
+    WHERE r.connection = s.connection AND r.session_id = s.id
+      AND r.state IN ('claimed', 'preparing', 'running', 'waiting')), '') AS TEXT) AS live_run,
+  CAST((SELECT count(*) FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id) AS INTEGER) AS runs
+FROM sessions s
+ORDER BY s.last_used_at DESC, s.connection, s.id;

@@ -26,7 +26,10 @@ trap cleanup EXIT
 
 # A profile of its own: nothing touches the operator's config, data or hub.
 export YAD_CONFIG_DIR=$work/config YAD_DATA_DIR=$work/data
-mkdir -p "$YAD_CONFIG_DIR" "$YAD_DATA_DIR" "$work/files"
+# Private, as yad makes them itself: the daemon refuses a data directory other
+# users can reach, since its control socket lives there.
+mkdir -m 700 "$YAD_CONFIG_DIR" "$YAD_DATA_DIR"
+mkdir -p "$work/files"
 # The file the run reads carries a fresh nonce, so an answer that contains
 # it came from this run's Read and nowhere else.
 nonce=smoke-$RANDOM$RANDOM
@@ -52,7 +55,8 @@ echo "smoke: yad hub at $hub"
 	{ echo "smoke: registering the runner failed:" >&2; cat "$work/token.err" >&2; exit 1; }
 
 "$yad" daemon start --foreground >"$work/runner.log" 2>&1 &
-pids+=($!)
+daemon=$!
+pids+=("$daemon")
 
 run=$("$yad" hub submit --hub "$hub" --harness claude --model "$model" \
 	"Use the Read tool to read $work/files/note.txt, then reply with its contents only, on one line.")
@@ -70,6 +74,14 @@ while kill -0 "$watch" 2>/dev/null; do
 	if ((SECONDS > deadline)); then
 		echo "smoke: FAILED — no result within ${SMOKE_TIMEOUT:-180}s" >&2
 		kill "$watch"
+	fi
+	# A runner that exited will never claim the run; waiting out the deadline
+	# would only hide why.
+	if ! kill -0 "$daemon" 2>/dev/null; then
+		echo "smoke: FAILED — the runner exited; it said:" >&2
+		cat "$work/runner.log" >&2
+		kill "$watch"
+		exit 1
 	fi
 	sleep 1
 done

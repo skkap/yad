@@ -80,6 +80,12 @@ const (
 	// whose contents replace the recorded answer, as if the recorded Read had
 	// read it there: the harness sees what the workdir holds.
 	fakeClaudeRead = "E2E_CLAUDE_READ"
+	// fakeClaudeTranscripts, when set, is a directory where the fake keeps a
+	// conversation per session id, as claude keeps its transcripts: each
+	// instruction is appended, a --resume with no transcript is refused as
+	// claude refuses it, and the answer names the instructions before it —
+	// which is how a test sees that a run had its session's context.
+	fakeClaudeTranscripts = "E2E_CLAUDE_TRANSCRIPTS"
 	// childYad makes the test binary run as yad.
 	childYad = "E2E_YAD_MAIN"
 )
@@ -101,10 +107,10 @@ func fakeClaude() {
 		os.Stdout.WriteString("2.1.276 (Claude Code)\n")
 		return
 	}
-	session := ""
+	session, resume := "", false
 	for i, a := range args {
 		if (a == "--session-id" || a == "--resume") && i+1 < len(args) {
-			session = args[i+1]
+			session, resume = args[i+1], a == "--resume"
 		}
 	}
 	if f := os.Getenv(fakeClaudePID); f != "" {
@@ -117,6 +123,18 @@ func fakeClaude() {
 			log.Close()
 		}
 	}
+	// Checked before any input is read, as claude checks: a resume with no
+	// transcript fails at once (testdata/…/resume-missing.jsonl) — a result,
+	// and an exit without waiting for input to close.
+	var earlier []byte
+	if dir := os.Getenv(fakeClaudeTranscripts); dir != "" {
+		var err error
+		earlier, err = os.ReadFile(filepath.Join(dir, session))
+		if resume && err != nil {
+			os.Stdout.WriteString(`{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["No conversation found with session ID: ` + session + `"],"session_id":` + strconv.Quote(session) + `}` + "\n")
+			os.Exit(1)
+		}
+	}
 	users, eof := make(chan struct{}, 16), make(chan struct{})
 	interrupts := make(chan string, 16)
 	go func() {
@@ -126,12 +144,16 @@ func fakeClaude() {
 			var f struct {
 				Type      string `json:"type"`
 				RequestID string `json:"request_id"`
+				Message   struct {
+					Content string `json:"content"`
+				} `json:"message"`
 			}
 			if json.Unmarshal(sc.Bytes(), &f) != nil {
 				continue
 			}
 			switch f.Type {
 			case "user":
+				remember(session, f.Message.Content)
 				users <- struct{}{}
 			case "control_request":
 				interrupts <- f.RequestID
@@ -157,6 +179,14 @@ func fakeClaude() {
 	const recorded = "6d684e55-cf7f-4a32-860a-8c92bde94cb0"
 	if session != "" {
 		body = strings.ReplaceAll(body, recorded, session)
+	}
+	if os.Getenv(fakeClaudeTranscripts) != "" {
+		answer := "earlier: nothing"
+		if len(earlier) > 0 {
+			answer = "earlier: " + strings.Join(strings.Split(strings.TrimSpace(string(earlier)), "\n"), " | ")
+		}
+		q, _ := json.Marshal(answer)
+		body = strings.ReplaceAll(body, e2eAnswer, string(q[1:len(q)-1]))
 	}
 	out := bufio.NewWriter(os.Stdout)
 	for _, line := range strings.SplitAfter(body, "\n") {
@@ -196,6 +226,21 @@ func fakeClaude() {
 	case <-eof:
 	case <-time.After(30 * time.Second): // never outlive a broken test by much
 	}
+}
+
+// remember appends an instruction to the session's transcript, when the fake
+// keeps transcripts.
+func remember(session, text string) {
+	dir := os.Getenv(fakeClaudeTranscripts)
+	if dir == "" || session == "" {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, session), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(strings.ReplaceAll(text, "\n", " ") + "\n")
 }
 
 // awaitGate holds the turn at its gate until the test opens it, or until an
@@ -742,5 +787,91 @@ func TestE2EStopMidRun(t *testing.T) {
 			}
 			eventually(t, "the harness process is gone", func() bool { return syscall.Kill(pid, 0) != nil })
 		})
+	}
+}
+
+// A conversation across runs, from the operator's side: a second run
+// submitted with --session continues the first run's session — the harness
+// resumes it and answers with the first run's context, in the same workdir —
+// and `yad sessions` shows it. A transcript that is gone makes the next
+// resume fail as resume_rejected, and the session is still listed for the
+// hub to decide about.
+func TestE2ESessionContinues(t *testing.T) {
+	m := newMachine(t)
+	transcripts := t.TempDir()
+	t.Setenv(fakeClaudeTranscripts, transcripts)
+	argsFile := filepath.Join(t.TempDir(), "claude.args")
+	t.Setenv(fakeClaudeArgs, argsFile)
+	d := m.daemon()
+	submit := func(runID string, session []string, instruction string) {
+		t.Helper()
+		args := append([]string{"hub", "submit", "--hub", m.service, "--harness", "claude", "--model", "haiku", "--run-id", runID}, session...)
+		if out := m.ok(append(args, instruction)...); strings.TrimSpace(out) != runID {
+			t.Fatalf("submit printed %q", out)
+		}
+	}
+	result := func(runID string) *v1.Result {
+		t.Helper()
+		run, err := m.client().Run(context.Background(), runID)
+		if err != nil || run.Result == nil {
+			t.Fatalf("run %s: %+v, %v", runID, run, err)
+		}
+		return run.Result
+	}
+
+	submit("e2e-first", []string{"--new-session", "e2e-talk"}, "The word is plum.")
+	if code, out, errs := m.watch("e2e-first"); code != 0 {
+		t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
+	}
+	if got := result("e2e-first").FinalText; got != "earlier: nothing" {
+		t.Errorf("the first run answered %q; a new session has no earlier turns", got)
+	}
+	submit("e2e-second", []string{"--session", "e2e-talk"}, "Which word was it?")
+	if code, out, errs := m.watch("e2e-second"); code != 0 {
+		t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
+	}
+	if got := result("e2e-second").FinalText; got != "earlier: The word is plum." {
+		t.Errorf("the second run answered %q; it should have had the first run's turn", got)
+	}
+
+	b, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(starts) != 2 {
+		t.Fatalf("the harness started %d times, want 2:\n%s", len(starts), b)
+	}
+	dir0, _, _ := strings.Cut(starts[0], " ")
+	dir1, _, _ := strings.Cut(starts[1], " ")
+	if dir0 != dir1 || !strings.Contains(starts[0], "--session-id ") || !strings.Contains(starts[1], "--resume ") {
+		t.Errorf("starts:\n%s\nwant a new session then a resume, both in one workdir", b)
+	}
+
+	out := m.ok("sessions", "--json")
+	var list []session
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("sessions --json: %v\n%s", err, out)
+	}
+	if len(list) != 1 || list[0].ID != "e2e-talk" || list[0].Connection != "home" || list[0].Runs != 2 ||
+		list[0].LiveRun != "" || list[0].NativeID == "" || list[0].State != "open" {
+		t.Fatalf("sessions = %+v", list)
+	}
+	if wd, _ := filepath.EvalSymlinks(list[0].Workdir); dir0 != list[0].Workdir && dir0 != wd {
+		t.Errorf("the session's workdir is %s; the harness ran in %s", list[0].Workdir, dir0)
+	}
+	if out := m.ok("sessions"); !strings.Contains(out, "e2e-talk") || !strings.Contains(out, list[0].Workdir) {
+		t.Errorf("yad sessions:\n%s", out)
+	}
+
+	if err := os.Remove(filepath.Join(transcripts, list[0].NativeID)); err != nil {
+		t.Fatal(err)
+	}
+	submit("e2e-third", []string{"--session", "e2e-talk"}, "And now?")
+	if code, _, errs := m.watch("e2e-third"); code == 0 || !strings.Contains(errs, "resume_rejected") {
+		t.Fatalf("watch exit %d: %s\ndaemon:\n%s", code, errs, d.out.String())
+	}
+	if res := result("e2e-third"); res.State != v1.RunFailed || res.Error == nil || res.Error.Class != "resume_rejected" {
+		t.Errorf("result = %+v (%+v)", res, res.Error)
 	}
 }

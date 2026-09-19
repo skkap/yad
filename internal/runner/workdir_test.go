@@ -222,3 +222,80 @@ func TestCancelWhilePreparing(t *testing.T) {
 		t.Error("the harness started after the cancel")
 	}
 }
+
+// A continued session runs in the worktree its first run was given, on the
+// same branch, with that run's commit and its uncommitted work in place:
+// nothing is fetched, no second worktree is added, and the setup hook does
+// not run again.
+func TestAContinuedSessionReusesItsWorktree(t *testing.T) {
+	e := newEnv(t)
+	root := t.TempDir()
+	hookRuns := filepath.Join(t.TempDir(), "hook-runs")
+	bare := gitRepo(t, root, "#!/bin/sh\necho run >> "+hookRuns+"\n")
+	l := e.loop(t, 1)
+	src := []v1.Source{{Git: &v1.GitSource{URL: bare, Branch: "work"}}}
+
+	var firstCommit string
+	h := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+		if firstCommit == "" {
+			// The first run's work: one commit, and one file left uncommitted.
+			os.WriteFile(filepath.Join(s.Workdir, "done.txt"), []byte("done"), 0o600)
+			for _, args := range [][]string{{"add", "done.txt"}, {"commit", "--quiet", "-m", "first run"}} {
+				if out, err := exec.Command("git", append([]string{"-C", s.Workdir}, args...)...).CombinedOutput(); err != nil {
+					t.Errorf("git %v: %v %s", args, err, out)
+				}
+			}
+			out, _ := exec.Command("git", "-C", s.Workdir, "rev-parse", "HEAD").Output()
+			firstCommit = strings.TrimSpace(string(out))
+			os.WriteFile(filepath.Join(s.Workdir, "wip.txt"), []byte("wip"), 0o600)
+		}
+		return fake.Script{Events: []v1.Event{{Kind: v1.EventText, Text: "ok"}},
+			Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}}
+	}}
+	x := e.sourcedExec(root, h)
+	first := testRun("a", "s1")
+	first.Sources = src
+	runOne(t, e, l, x, first)
+	second := continued("b", "s1")
+	second.Sources = src
+	runOne(t, e, l, x, second)
+
+	if len(h.Starts) != 2 {
+		t.Fatalf("%d starts", len(h.Starts))
+	}
+	dir := session(t, e, "s1").Workdir
+	if h.Starts[0].Workdir != dir || h.Starts[1].Workdir != dir {
+		t.Errorf("runs started in %s and %s; want both in the session's workdir %s", h.Starts[0].Workdir, h.Starts[1].Workdir, dir)
+	}
+	git := func(args ...string) string {
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if b := git("branch", "--show-current"); b != "work" {
+		t.Errorf("the second run is on %q", b)
+	}
+	if head := git("rev-parse", "HEAD"); head != firstCommit {
+		t.Errorf("HEAD is %s, not the first run's commit %s", head, firstCommit)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "wip.txt")); err != nil || string(b) != "wip" {
+		t.Errorf("the first run's uncommitted work: %q, %v", b, err)
+	}
+	if n := strings.Count(git("worktree", "list", "--porcelain"), "worktree "); n != 2 {
+		t.Errorf("the cache lists %d worktrees; want itself and the session's one", n)
+	}
+	if b, _ := os.ReadFile(hookRuns); string(b) != "run\n" {
+		t.Errorf("the setup hook ran %q times over two runs", b)
+	}
+	var statuses []string
+	for _, ev := range hubEvents(t, e, "b") {
+		if ev.Kind == v1.EventStatus {
+			statuses = append(statuses, ev.Status)
+		}
+	}
+	if got := strings.Join(statuses, "\n"); !strings.Contains(got, "continuing in the session's worktree") || strings.Contains(got, "fetching") {
+		t.Errorf("the second run said: %s", got)
+	}
+}
