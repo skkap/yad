@@ -81,15 +81,17 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		// against a document known to be out of date. v1 says the document
 		// goes with the first sync after a move, so this window opens only for
 		// a runner that did not send it.
-		//
-		// The version floor is judged on the old document all the same: a
-		// runner that could suspend it by moving its fingerprint and sending
-		// nothing would be a floor no hub could hold.
 		described := req.Capabilities != nil || req.Fingerprint == runner.Fingerprint
 		// The document holds the only version a sync knows — a sync request
 		// carries none — so the floor is judged on what this runner last sent,
 		// before anything is recorded: a refused sync renews no lease and
 		// claims no run, and the transaction rolls back to prove it.
+		//
+		// Deliberately unlike the controls above, which wait when `described`
+		// is false: the floor judges a document it knows to be stale rather
+		// than deferring, because a check a runner could suspend by moving its
+		// fingerprint and sending nothing is not a floor. Do not make these
+		// two agree — the asymmetry is the point.
 		var doc v1.Capabilities
 		if err := json.Unmarshal([]byte(docJSON), &doc); err != nil {
 			return fmt.Errorf("stored capability document for %s: %w", runner.ID, err)
