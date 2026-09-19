@@ -618,6 +618,9 @@ func TestStartAtIsHonoured(t *testing.T) {
 // naming the file it could not unlink, so the raw error is the leak — the
 // directory and the reason are what the owner acts on.
 func TestASweepThatFailsNamesNoGrant(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root unlinks through a directory's missing write bit, so the sweep would succeed")
+	}
 	e := newEnv(t)
 	dir := filepath.Join(e.paths.Data, "grants", "hub", "a")
 	if err := os.MkdirAll(dir, 0o700); err != nil {

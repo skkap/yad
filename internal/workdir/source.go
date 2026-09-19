@@ -15,9 +15,12 @@ import (
 	"unicode"
 )
 
-// A source is hub input, and a hub is untrusted (decision 0015). Everything
-// here turns one into something git can be handed as argv — never through a
-// shell — or refuses it. The rules are decision 0033's.
+// A source is hub input, which is data and never an instruction (decision
+// 0038: the owner trusts the hubs it connects). Everything here turns one into
+// something git can be handed as argv — never through a shell — or refuses it.
+// These guards prevent bugs rather than attacks: a URL that reaches a remote
+// helper or an argument that begins with '-' is wrong whoever sent it. The
+// rules are decision 0033's, as 0038 amends them.
 
 // remote is a git source's repository, checked.
 type remote struct {

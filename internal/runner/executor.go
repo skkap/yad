@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -997,8 +998,10 @@ func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native string, err er
 // workdir, and two runs' grant files one directory.
 var safeName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-// pathName turns a hub-chosen id into one path component. A hub is untrusted
-// input: an id like "../../.ssh" must not name a directory. A readable id is
+// pathName turns a hub-chosen id into one path component. Hub input is data
+// (0038): an id like "../../.ssh" must not name a directory, not because the
+// hub is an attacker but because a path built from a string nobody checked is
+// a bug. A readable id is
 // kept; anything else becomes a hash, prefixed with a character readable ids
 // cannot start with, so the two can never collide.
 func pathName(id string) string {
@@ -1027,7 +1030,15 @@ func (e *Exec) grants(c Claim) (env []string, cleanup func(), err error) {
 				}
 				cleanup = func() {
 					if err := os.RemoveAll(dir); err != nil {
-						e.Log.Error("grant files not removed — delete them by hand", "dir", dir, "err", err)
+						// The error names the file it could not unlink,
+						// which is a grant's name; the directory and the
+						// reason are what the owner acts on.
+						reason := error(err)
+						var pe *fs.PathError
+						if errors.As(err, &pe) {
+							reason = pe.Err
+						}
+						e.Log.Error("grant files not removed — delete them by hand", "dir", dir, "err", reason)
 					}
 				}
 			}

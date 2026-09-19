@@ -351,6 +351,21 @@ func TestTheHomeDefaultIsNeverSaved(t *testing.T) {
 	}
 }
 
+// A configured root that is a symlink to "/" is refused for the reason "/"
+// itself is: inRoots resolves its roots, so it reaches every directory.
+func TestValidateRefusesARootThatResolvesToTheFilesystemRoot(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "everything")
+	if err := os.Symlink("/", link); err != nil {
+		t.Fatal(err)
+	}
+	c := Default()
+	c.Workdirs.Roots = []string{link}
+	err := c.Validate()
+	if err == nil || !strings.Contains(err.Error(), "root of the filesystem") {
+		t.Errorf("Validate() = %v, want a refusal naming the filesystem root", err)
+	}
+}
+
 // A home directory that is a symlink to "/" is every directory on the machine,
 // which is what the default must never become. inRoots resolves its roots, so
 // the check here has to resolve too.

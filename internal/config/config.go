@@ -312,8 +312,11 @@ func (c Config) Validate() error {
 	for _, r := range c.Workdirs.Roots {
 		if !filepath.IsAbs(r) {
 			errs = append(errs, fmt.Errorf("workdirs.roots: %q is not an absolute path — write it in full, like \"/home/me/src\"", r))
-		} else if filepath.Clean(r) == "/" {
-			errs = append(errs, errors.New("workdirs.roots: \"/\" would let a hub reach every directory on this machine — name the directories runs may use"))
+		} else if isFilesystemRoot(r) {
+			// Resolved, not just cleaned: inRoots resolves every root before
+			// it compares, so a root that is a link to "/" is "/" — the same
+			// check the home default gets, for the same reason.
+			errs = append(errs, fmt.Errorf("workdirs.roots: %q is the root of the filesystem, which would let a hub reach every directory on this machine — name the directories runs may use", r))
 		}
 	}
 	for _, d := range []struct {
