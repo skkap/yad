@@ -26,6 +26,18 @@ import (
 // shorten it.
 var ghLoginTTL = 5 * time.Minute
 
+// ghLoginStale is how long an answer may go on standing while gh refuses to
+// give a new one.
+//
+// The memory exists to absorb a transient — a closed lid, a VPN reconnecting,
+// a GitHub incident — so that one bad probe does not move the fingerprint for
+// every hub. It must not outlive the thing it remembers: gh reports a revoked
+// token and a host it could not reach with the same state, and the two are
+// told apart only by a message this package will not read, so time is the only
+// honest bound. Past it the runner stops claiming a login nothing has been able
+// to confirm for half an hour, and says so instead.
+var ghLoginStale = 30 * time.Minute
+
 // remembered is the last answer gh gave. A login is machine state that outlives
 // one probe, so it is kept rather than re-derived every tick.
 var remembered struct {
@@ -35,27 +47,23 @@ var remembered struct {
 	hosts []string
 }
 
-func recallGHLogin() (in bool, hosts []string, known, fresh bool) {
+// recallGHLogin returns the last answer gh gave and how old it is. An age
+// rather than a "still good" flag on purpose: it makes every caller say out
+// loud how stale an answer it is willing to serve, where a flag can be dropped
+// without the compiler or the reader noticing.
+func recallGHLogin() (in bool, hosts []string, age time.Duration, known bool) {
 	remembered.Lock()
 	defer remembered.Unlock()
 	if remembered.at.IsZero() {
-		return false, nil, false, false
+		return false, nil, 0, false
 	}
-	return remembered.in, append([]string(nil), remembered.hosts...), true, time.Since(remembered.at) < ghLoginTTL
+	return remembered.in, append([]string(nil), remembered.hosts...), time.Since(remembered.at), true
 }
 
 func rememberGHLogin(in bool, hosts []string) {
 	remembered.Lock()
 	defer remembered.Unlock()
 	remembered.at, remembered.in, remembered.hosts = time.Now(), in, append([]string(nil), hosts...)
-}
-
-// forgetGHLogin drops the remembered answer. Tests call it so one test's gh is
-// not answered from another's.
-func forgetGHLogin() {
-	remembered.Lock()
-	defer remembered.Unlock()
-	remembered.at, remembered.in, remembered.hosts = time.Time{}, false, nil
 }
 
 // ghStatus fills in whether gh is signed in and to which hosts.
@@ -66,17 +74,18 @@ func forgetGHLogin() {
 // and only the hosts and the boolean are read out of it. Being signed out is
 // not an error; it is the answer to the question a hub asked.
 func ghStatus(ctx context.Context, path string, d *Detected) {
-	if in, hosts, known, fresh := recallGHLogin(); known && fresh {
+	if in, hosts, age, known := recallGHLogin(); known && age < ghLoginTTL {
 		d.LoggedIn, d.LoginHosts = &in, hosts
 		return
 	}
 	in, hosts, failure := askGH(ctx, path)
 	if failure != "" {
 		// A link that was down for one probe is not news that the login
-		// changed. The last answer gh gave stands until gh itself replaces it,
-		// which is also what keeps a flaky connection from moving the
-		// capability fingerprint all day.
-		if in, hosts, known, _ := recallGHLogin(); known {
+		// changed, so the last answer stands — but only while it can still be
+		// called a transient. A token revoked this morning must not be
+		// advertised all afternoon because nothing has managed to check it
+		// since.
+		if in, hosts, age, known := recallGHLogin(); known && age < ghLoginStale {
 			d.LoggedIn, d.LoginHosts = &in, hosts
 			return
 		}

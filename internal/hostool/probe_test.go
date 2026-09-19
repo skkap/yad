@@ -115,6 +115,23 @@ func isolate(t *testing.T, envPath, path string) {
 	t.Setenv(envPath, path)
 }
 
+// forgetGHLogin drops the remembered answer, so one test's gh is never
+// answered from another's. ageGHLogin backdates it, which is how a test reaches
+// the staleness limits without waiting for them.
+func forgetGHLogin() {
+	remembered.Lock()
+	defer remembered.Unlock()
+	remembered.at, remembered.in, remembered.hosts = time.Time{}, false, nil
+}
+
+func ageGHLogin(by time.Duration) {
+	remembered.Lock()
+	defer remembered.Unlock()
+	if !remembered.at.IsZero() {
+		remembered.at = remembered.at.Add(-by)
+	}
+}
+
 // probe runs detection and returns the one tool the test set up.
 func probe(t *testing.T, id string) Detected {
 	t.Helper()
@@ -276,6 +293,55 @@ func TestGHLoginIsRememberedBetweenProbes(t *testing.T) {
 	forgetGHLogin()
 	if d := probe(t, "gh"); d.LoggedIn != nil || d.Error == "" {
 		t.Errorf("with nothing remembered = %+v, want no claim and an error", d)
+	}
+}
+
+// Remembering absorbs a transient; it must not outlive the thing it remembers.
+// A token revoked this morning is gh answering `error` — which it also answers
+// for a host it could not reach — so a login nothing has confirmed for half an
+// hour stops being advertised.
+func TestARememberedLoginIsNotServedForever(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		gh   tool
+	}{
+		{"the token was revoked", tool{
+			version: answer{out: ghVersion},
+			asJSON:  answer{out: `{"hosts":{"github.com":[{"state":"error","login":"octocat"}]}}`},
+		}},
+		{"gh cannot be reached at all", tool{
+			version: answer{out: ghVersion},
+			asJSON:  answer{code: 1},
+			plain:   answer{code: 1},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			install(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{out: ghJSON}})
+			if d := probe(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
+				t.Fatalf("first probe: %+v", d)
+			}
+			swap(t, "gh", tc.gh)
+
+			// Just past the point where the answer is asked for again, and
+			// still inside the window a transient is allowed.
+			ageGHLogin(ghLoginTTL + time.Minute)
+			if d := probe(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
+				t.Errorf("while the failure could still be a blip = %+v, want the remembered answer", d)
+			}
+
+			// Past the window. The runner stops claiming what it cannot check.
+			ageGHLogin(ghLoginStale)
+			d := probe(t, "gh")
+			if d.LoggedIn != nil {
+				t.Errorf("LoggedIn = %v, want nothing claimed once the answer is stale", *d.LoggedIn)
+			}
+			if d.LoginHosts != nil {
+				t.Errorf("LoginHosts = %q, want none once the answer is stale", d.LoginHosts)
+			}
+			if d.Error == "" {
+				t.Error("no Error once the answer is stale; a hub is told nothing is known")
+			}
+		})
 	}
 }
 
