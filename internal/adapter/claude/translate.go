@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -111,15 +110,6 @@ type controlResponse struct {
 	RequestID string `json:"request_id"`
 }
 
-// textFlush bounds how long streamed text waits before it becomes an event.
-// Claude sends a delta per few tokens; one event each would be thousands per
-// answer, and one per finished block would leave a long answer invisible — and
-// the inactivity watchdog blind — until it ends.
-const textFlush = time.Second
-
-// textFlushBytes flushes a fast stream sooner, keeping each event small.
-const textFlushBytes = 4 << 10
-
 // translator turns Claude's stream into protocol events and, from the result,
 // an Outcome. It holds no process and does no I/O, so every rule in it is
 // tested line by line against recorded streams.
@@ -128,9 +118,7 @@ type translator struct {
 	now     func() time.Time
 	session string // the id Claude was told to use
 
-	pending      strings.Builder
-	pendingKind  v1.EventKind
-	pendingSince time.Time
+	text adapter.Text
 	// Messages whose text arrived as partial deltas. Their complete `assistant`
 	// frame repeats that text, so it is skipped; a message with no deltas (an
 	// older Claude, a synthetic error message) is emitted whole.
@@ -153,7 +141,10 @@ type translator struct {
 }
 
 func newTranslator(session string, emit func(v1.Event)) *translator {
-	return &translator{emit: emit, now: time.Now, session: session, streamed: map[string]bool{}}
+	t := &translator{emit: emit, now: time.Now, session: session, streamed: map[string]bool{}}
+	// Through t.now, which a test replaces after construction.
+	t.text = adapter.Text{Emit: emit, Now: func() time.Time { return t.now() }}
+	return t
 }
 
 // reaction is what the turn must do about a line besides emitting its events.
@@ -303,7 +294,7 @@ func (t *translator) assistant(f *frame) {
 				t.emit(v1.Event{At: t.now(), Kind: v1.EventThinking, Text: b.Thinking})
 			}
 		case "tool_use", "server_tool_use":
-			in, cut := capText(string(b.Input))
+			in, cut := adapter.CapTool(string(b.Input))
 			t.emit(v1.Event{At: t.now(), Kind: v1.EventToolCall, Tool: &v1.ToolEvent{ID: b.ID, Name: b.Name, Input: in, Truncated: cut}})
 		}
 	}
@@ -322,7 +313,7 @@ func (t *translator) toolResults(f *frame) {
 		if b.Type != "tool_result" {
 			continue
 		}
-		out, cut := capText(toolOutput(b.Content))
+		out, cut := adapter.CapTool(toolOutput(b.Content))
 		t.emit(v1.Event{At: t.now(), Kind: v1.EventToolResult, Tool: &v1.ToolEvent{ID: b.ToolUseID, Output: out, Truncated: cut}})
 	}
 }
@@ -376,50 +367,11 @@ func toolOutput(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-// capText holds a tool payload to MaxToolOutputBytes without splitting a rune.
-func capText(s string) (string, bool) {
-	if len(s) <= v1.MaxToolOutputBytes {
-		return s, false
-	}
-	cut := v1.MaxToolOutputBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut], true
-}
+func (t *translator) add(kind v1.EventKind, s string) { t.text.Add(kind, s) }
 
-func (t *translator) add(kind v1.EventKind, s string) {
-	if s == "" {
-		return
-	}
-	if t.pending.Len() > 0 && t.pendingKind != kind {
-		t.flush()
-	}
-	if t.pending.Len() == 0 {
-		t.pendingKind, t.pendingSince = kind, t.now()
-	}
-	t.pending.WriteString(s)
-	if t.pending.Len() >= textFlushBytes {
-		t.flush()
-	}
-}
+func (t *translator) tick() { t.text.Tick() }
 
-// tick flushes text that has waited textFlush. It runs on a timer, not on the
-// next delta: a Claude that stalls mid-sentence must not hold back what it has
-// already said.
-func (t *translator) tick() {
-	if t.pending.Len() > 0 && t.now().Sub(t.pendingSince) >= textFlush {
-		t.flush()
-	}
-}
-
-func (t *translator) flush() {
-	if t.pending.Len() == 0 {
-		return
-	}
-	t.emit(v1.Event{At: t.now(), Kind: t.pendingKind, Text: t.pending.String()})
-	t.pending.Reset()
-}
+func (t *translator) flush() { t.text.Flush() }
 
 func (t *translator) status(s string) {
 	t.emit(v1.Event{At: t.now(), Kind: v1.EventStatus, Status: s})

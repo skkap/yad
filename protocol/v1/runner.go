@@ -30,6 +30,11 @@ type HarnessReport struct {
 	Error    string          `json:"error,omitempty"`
 	Models   []string        `json:"models,omitempty"`
 	Accounts []AccountReport `json:"accounts,omitempty"`
+	// Warnings are what the runner found wrong with a harness it can still
+	// drive — an installed Codex whose app-server protocol differs from the
+	// one the adapter was built against. A hub may show them or prefer a
+	// runner without; they never make a harness refuse runs, which Error does.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // AccountReport is an account's public face: its label and whether it is at a

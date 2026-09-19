@@ -20,6 +20,9 @@ type Detected struct {
 	Version string `json:"version,omitempty"`
 	Present bool   `json:"present"`
 	Error   string `json:"error,omitempty"`
+	// Warnings are readiness checks beyond the version probe that failed
+	// without making the harness undrivable; capability.Detect fills them.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Ready reports whether a run may target this harness right now: first-class,

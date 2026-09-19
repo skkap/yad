@@ -11,7 +11,6 @@ import (
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
-	"github.com/skkap/yad/internal/harness"
 )
 
 func cmdVersion(w io.Writer) error {
@@ -31,7 +30,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	found := harness.Detect(ctx)
+	found := capability.Detect(ctx)
 	if *asJSON {
 		return writeJSON(w, found)
 	}
@@ -61,6 +60,11 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	for _, d := range found {
+		for _, warn := range d.Warnings {
+			fmt.Fprintf(w, "\nwarning: %s — %s\n", d.Label, warn)
+		}
+	}
 	fmt.Fprintf(w, "\nprofile %s — config %s\n", g.paths.Profile, g.paths.Config)
 	// Each way to reach zero has a different next action, and telling someone
 	// with both CLIs installed to install them is worse than saying nothing.
@@ -72,7 +76,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		fmt.Fprintln(w, "No drivable harness: an installed one failed its version probe — fix the errors above and run this again.")
 		return nil
 	case noAdapter > 0:
-		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — install Claude Code, which has one; Codex arrives in epic E5.")
+		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — install Claude Code or Codex, which have one.")
 		return nil
 	default:
 		fmt.Fprintln(w, "No drivable harness found. Install Claude Code or Codex and run this again.")

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -91,15 +92,15 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 		t.Errorf("empty machine: exit %d:\n%s", code, out)
 	}
 	dir := t.TempDir()
-	codex := dir + "/codex"
-	if err := os.WriteFile(codex, []byte("#!/bin/sh\necho 'codex-cli 0.147.0'\n"), 0o755); err != nil {
+	gemini := dir + "/gemini"
+	if err := os.WriteFile(gemini, []byte("#!/bin/sh\necho '0.9.0'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("YAD_CODEX_PATH", codex)
+	t.Setenv("YAD_GEMINI_PATH", gemini)
 	var o, e bytes.Buffer
 	run(context.Background(), []string{"doctor"}, &o, &e)
-	if !strings.Contains(o.String(), "no adapter in this yad yet") || !strings.Contains(o.String(), "install Claude Code") {
-		t.Errorf("codex installed, no adapter:\n%s", o.String())
+	if !strings.Contains(o.String(), "no adapter in this yad yet") || !strings.Contains(o.String(), "install Claude Code or Codex") {
+		t.Errorf("gemini installed, no adapter:\n%s", o.String())
 	}
 
 	bin := dir + "/claude"
@@ -116,22 +117,61 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 		t.Errorf("claude not reported ready:\n%s", o.String())
 	}
 
-	// A broken Claude beside a working Codex: the fix is the probe error, not
-	// an install.
+	// A broken Claude beside a recognised Gemini: the fix is the probe
+	// error, not an install.
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	o.Reset()
 	run(context.Background(), []string{"doctor"}, &o, &e)
 	if !strings.Contains(o.String(), "failed its version probe") || strings.Contains(o.String(), "install Claude Code") {
-		t.Errorf("claude broken, codex present:\n%s", o.String())
+		t.Errorf("claude broken, gemini present:\n%s", o.String())
 	}
 
-	os.Remove(codex)
+	os.Remove(gemini)
 	o.Reset()
 	run(context.Background(), []string{"doctor"}, &o, &e)
 	if !strings.Contains(o.String(), "failed its version probe") {
 		t.Errorf("claude broken:\n%s", o.String())
+	}
+}
+
+// Codex is first-class: an installed one is ready, and one whose app-server
+// protocol is not the pinned one is still ready, with the drift said as a
+// warning in doctor and in the capability document (decision 0037).
+func TestDoctorReportsCodexProtocolDrift(t *testing.T) {
+	codex := fakeCodexBin(t)
+	t.Setenv("YAD_CODEX_PATH", codex)
+	schema, err := filepath.Abs(codexSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_TEST_SCHEMA", schema)
+	code, out, errs := yad(t, "doctor")
+	if code != 0 || !regexp.MustCompile(`Codex +ready +codex-cli 0.147.0`).MatchString(out) || strings.Contains(out, "warning:") {
+		t.Fatalf("pinned codex: exit %d:\n%s%s", code, out, errs)
+	}
+
+	drifted := filepath.Join(t.TempDir(), "drifted.json")
+	b, err := os.ReadFile(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Any change to a status a turn can end in is drift.
+	b = bytes.Replace(b, []byte(`"interrupted",`), []byte(`"interrupted","paused",`), 1)
+	if err := os.WriteFile(drifted, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_TEST_SCHEMA", drifted)
+	// Another path, so the check the first doctor remembered is not reused.
+	t.Setenv("YAD_CODEX_PATH", fakeCodexBin(t))
+	code, out, errs = yad(t, "doctor")
+	if code != 0 || !regexp.MustCompile(`Codex +ready`).MatchString(out) || !strings.Contains(out, "warning: Codex — the app-server protocol of codex-cli 0.147.0 differs") {
+		t.Fatalf("drifted codex: exit %d:\n%s%s", code, out, errs)
+	}
+	code, out, errs = yad(t, "harnesses")
+	if code != 0 || !strings.Contains(out, `"warnings": [`) || !strings.Contains(out, "differs from the one this yad was built against") {
+		t.Fatalf("harnesses: exit %d:\n%s%s", code, out, errs)
 	}
 }
 

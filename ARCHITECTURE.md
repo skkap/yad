@@ -332,18 +332,41 @@ run before spawning, with the way out. Only the owner declares the sandbox, in
 the runner's own environment: YAD never sets `IS_SANDBOX`, and strips it from a
 run's environment, which carries the hub's grants.
 
-**Codex** — `codex app-server --listen stdio://`: `initialize` → `initialized` →
-`thread/start` or `thread/resume` → `turn/start`; `turn/interrupt`, `turn/steer`;
-approvals answered from the owner's configured policy. The thread id is the
-native session id, captured from `thread/started`. Messages are filtered by
-thread id — Codex multiplexes subagent threads on one pipe. Validated against
-the schema `generate-json-schema` emits for the installed version.
+**Codex** — [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md):
+`codex app-server --listen stdio://`, JSON-RPC over stdin and stdout
+(`internal/adapter/codex/rpc.go`): `initialize` → `initialized` →
+`thread/start`, or `thread/resume` with the stored thread id → one `turn/start`
+with the instruction; the brief's context is the thread's
+`developerInstructions`. Each of those is answered within 30 s. The thread id is
+the native session id, exposed the moment `thread/start` answers. Codex writes
+subagents' threads to the same pipe and a resume replays the thread's history,
+so only notifications naming the run's thread and, once it has started, the
+run's own turn are read. Only `turn/completed` decides the run; a steer is
+`turn/steer` into the same turn, an interrupt `turn/interrupt`; once the turn is
+over input closes and the app-server gets 2 s to exit. A resume Codex has no
+rollout for fails with `resume_rejected`, and one that resumes another thread
+with `session_mismatch`. The rest is
+[0037](docs/decisions/0037-a-codex-run-is-its-own-turn-and-its-protocol-is-pinned.md).
+
+The approval policy and sandbox are the owner's `approval` and `sandbox`, sent
+with every `thread/start` and `thread/resume`, and `never` and
+`danger-full-access` when unset — unattended, and the owner's machine is the
+boundary, as for Claude. A request for approval that still arrives is declined
+([0036](docs/decisions/0036-codex-runs-unsandboxed-and-never-asks-unless-the-owner-says.md)).
+
+The app-server is marked experimental and Codex ships weekly, so the protocol is
+pinned: the adapter's slice of `codex app-server generate-json-schema` is hashed
+per recorded version, and an installed codex whose slice differs is still
+driven, with a warning on the harness in the capability document and in
+`yad doctor`.
 
 **Fixtures.** Every adapter test replays recorded JSONL named by harness version
-(`internal/adapter/claude/testdata/claude-2.1.276/*.jsonl`) through a fake
-harness process. Recording new ones is a manual step, behind a build tag
-(`YAD_REAL_HARNESS=1 go test -tags realharness -run TestRecord
-./internal/adapter/claude/`); the suite never runs a real harness.
+(`internal/adapter/claude/testdata/claude-2.1.276/*.jsonl`,
+`internal/adapter/codex/testdata/codex-0.147.0/*.jsonl` — both directions of
+the conversation, ours wrapped as `{">": …}`) through a fake harness process.
+Recording new ones is a manual step, behind a build tag (`YAD_REAL_HARNESS=1 go
+test -tags realharness -run TestRecord ./internal/adapter/claude/`, and the same
+for `codex`); the suite never runs a real harness.
 
 ### Supervisor
 
@@ -503,7 +526,7 @@ cap             = 3
 accounts        = ["personal", "family"] # failover order
 
 [harness.codex]
-sandbox  = "danger-full-access"
+sandbox  = "danger-full-access"   # the owner's call — 0036; this and never are the defaults when unset
 approval = "never"
 cap      = 2
 accounts = ["personal"]
@@ -626,7 +649,9 @@ line here is a reviewed change.
   oversized lines, orphaned grandchildren — is tested by re-executing the test
   binary as the child (`SUPERVISE_TEST_CHILD=<mode>`). The Claude adapter's
   tests re-execute it as a fake `claude` that plays a recorded stream and reads
-  stdin as Claude does (`CLAUDE_TEST_FIXTURE=<file>`).
+  stdin as Claude does (`CLAUDE_TEST_FIXTURE=<file>`); the Codex adapter's, as
+  a fake `codex app-server` that answers each request the recording answered
+  (`internal/adapter/codex/codextest`, `CODEX_TEST_FIXTURE=<file>`).
   Re-executed children set `GORACE=atexit_sleep_ms=0`, or each costs a second.
 - **The runner is tested against `yad hub`**, in process, on a random port. The
   conformance suite is the same tests pointed at a URL.
@@ -643,7 +668,10 @@ line here is a reviewed change.
   three real stop signals and drains, cancels, or exits; `yad hub drain`
   drains a runner, which exits by itself; a run with a git source — a bare
   repository on disk inside the owner's root — is checked out, its setup hook
-  writes a file, and the harness answers with what it read there.
+  writes a file, and the harness answers with what it read there. Codex has
+  one of its own (`e2e_codex_test.go`), the test binary started as `codex`: a
+  run in a new session pins Codex's thread, the next resumes it, a lost
+  rollout fails `resume_rejected`, and an interrupt ends a run cancelled.
   `internal/workdir`'s tests use local bare repositories, and a loopback TLS
   server for a remote that asks for a password or never answers.
 - **Real harnesses** only behind `//go:build realharness` and
