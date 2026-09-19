@@ -29,7 +29,7 @@ import (
 // method, an answer to one of Codex's requests by being an answer. Its own
 // answers carry the ids the adapter actually used. A resume's thread id is
 // rewritten to the one the adapter asked for, as Codex would have used it,
-// unless CODEX_TEST_KEEP_THREAD is set.
+// unless CODEX_TEST_KEEP_THREAD is set (and threads are not kept, below).
 //
 // CODEX_TEST_HOLD names a file the fake waits for before it writes anything;
 // CODEX_TEST_WAIT is how long it waits for each message it expects (10s).
@@ -39,7 +39,32 @@ import (
 // once with something on stderr; "exit" exits 0 at once; "linger" ignores
 // the closed input and SIGTERM; "mute" closes its output and then lingers the
 // same way; "silent" reads its input and never writes a line; "deaf" never
-// takes an interrupt, and dies only by signal.
+// takes an interrupt, and dies only by signal or, at a gate, once the gate
+// opens.
+//
+// The rest serve the end-to-end tests in cmd/yad, which drive the whole runner
+// and need the fake to behave as codex does across runs, not only within one:
+//
+//   - CODEX_TEST_THREADS names a directory where the fake keeps a rollout per
+//     thread, as codex keeps them in CODEX_HOME. thread/start mints a new
+//     thread; thread/resume continues one with a rollout and is refused, as
+//     codex refuses it (resume-missing.jsonl), without one; either answers the
+//     fixture's thread request, and KEEP_THREAD has no effect. Each turn's
+//     instruction is appended to its thread's rollout.
+//   - CODEX_TEST_RECALL, with threads kept, makes the answer name what the
+//     thread was asked before this turn ("earlier: a | b"), which is how a
+//     test sees that a run had its session's context.
+//   - CODEX_TEST_READ names a file in the fake's working directory whose
+//     contents replace the recorded answer, as if the recorded command had
+//     read it there.
+//   - CODEX_TEST_GATE names a file the fake waits for, up to a minute, before
+//     the turn completes, with every other event out; CODEX_TEST_AT_GATE is a
+//     file it creates on reaching it. A turn/interrupt at the gate ends the
+//     turn interrupted, as codex does, unless the mode is "deaf".
+//   - CODEX_TEST_PID is a file the fake writes its pid to.
+//   - CODEX_TEST_STARTS is a file the fake appends a line to per thread
+//     request: its working directory, its arguments, and the request with the
+//     thread it named.
 func play() {
 	logf := openLog()
 	defer logf.Close()

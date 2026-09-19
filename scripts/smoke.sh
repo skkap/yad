@@ -58,7 +58,7 @@ export YAD_CONFIG_DIR=$work/config YAD_DATA_DIR=$work/data
 mkdir -m 700 "$YAD_CONFIG_DIR" "$YAD_DATA_DIR"
 mkdir -p "$work/files"
 # The file the run reads carries a fresh nonce, so an answer that contains
-# it came from this run's Read and nowhere else.
+# it came from this run's read of it and nowhere else.
 nonce=smoke-$RANDOM$RANDOM
 printf '%s\n' "$nonce" >"$work/files/note.txt"
 
