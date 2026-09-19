@@ -40,33 +40,46 @@ transcript and when it reads one, and either could change that in a release.
 
 Two homes per harness, each with the transcript directory linked to one shared
 directory — `projects/` for Claude, `sessions/` for Codex. A session was created
-in the first home and resumed from the second.
+in the first home, and the second — which never saw it written — was pointed at
+the same directory and asked to resume it.
 
 - **A home that never created the session finds it.** Both CLIs resolve
-  `resume` before they check the credential, so the lookup was measured against
-  an unauthenticated home: an id present in the shared directory reached the
-  auth gate, an absent one gave `No conversation found with session ID` and
+  `resume` before they check the credential, so the lookup is visible even from
+  a home with no login: an id present in the shared directory reached the auth
+  gate, an absent one gave `No conversation found with session ID` and
   `no rollout found for thread id`.
-- **The transcript is the whole of the session.** Each harness was told a word,
-  then resumed through the shared directory by a different home, and answered
-  with it, on the same native id. The resumed turn appends to the same file, so
-  the shared directory stays the one copy.
+- **That home reconstructs the whole conversation.** Each harness was told a
+  word in the first home. The second was then pointed at a local HTTP endpoint
+  that records the request and refuses it, and asked to resume: Claude sent
+  167 718 bytes and Codex 81 711, both containing the word, on the session's own
+  native id. So the request a foreign home puts on the wire is the real
+  continuation, built from the shared transcript and nothing else. The Claude
+  run did this under a different credential from the one that wrote the
+  transcript — an API key rather than the subscription login — which is as close
+  to a second account as this machine could get.
+- **A resumed turn round-trips.** Resuming through the shared directory against
+  the real provider returned the word on the same native id, and appended to the
+  same file, so the shared directory stays the one copy rather than forking one
+  per account.
 - **The shared directory is the only one that has to be shared.** Codex writes a
   `threads` index in `state_5.sqlite` in `CODEX_HOME`, but it is a cache: a home
   with an empty database scanned the shared `sessions/` and rebuilt its own row.
   Claude's `session-env/<id>/` is empty and resume works without it.
-- **Resume by id ignores the working directory.** Claude scans all of
-  `projects/` rather than the subdirectory its cwd encodes; `codex exec resume`
-  is likewise cwd-agnostic. Only Codex's interactive picker filters by cwd.
+- **Resume by id ignores the working directory.** Measured on both: a session
+  created in one workdir resolved from an unrelated one, so Claude scans all of
+  `projects/` rather than the subdirectory its cwd encodes, and
+  `codex exec resume` behaves the same. Codex's interactive picker does filter
+  by cwd — that one is read from its `--all` flag, not run.
 
-**Not measured: a provider refusing a continuation billed to a second account.**
-No second login existed on the machine, and neither creating one unattended nor
-copying a credential into a test home was acceptable. Tracked as **DEV-58**, so
-the gap stays a task rather than a caveat in a merged document. What the
-transcripts show is that there is nothing for a provider to refuse ownership of:
-neither format carries an account identifier or a server-side conversation
-handle, and both CLIs re-send the whole conversation each turn. That is an
-inference from the transcript shape, not a measurement.
+**Not measured: a provider's server accepting that request under a second
+subscription.** Everything up to the wire is measured; what is left is the
+response. No second login existed on the machine, and neither creating one
+unattended nor copying a credential into a test home was acceptable. Tracked as
+**DEV-58**, so the gap stays a task rather than a caveat in a merged document.
+What the transcripts show is that there is nothing for a provider to refuse
+ownership of: neither format carries an account identifier or a server-side
+conversation handle, and both CLIs re-send the whole conversation each turn.
+That is an inference from the transcript shape, not a measurement.
 
 What a move does cost is the prompt cache, which is scoped to the credential:
 the resumed turn measured here reported 34 596 input tokens against 26 368
