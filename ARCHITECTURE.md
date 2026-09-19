@@ -484,8 +484,12 @@ for `codex`); the suite never runs a real harness.
   harness's own login with that home.
 - Each harness's transcripts live once, in `<data>/transcripts/<harness>/`,
   linked into every account home (`projects/` for Claude, `sessions/` for Codex),
-  so any account can resume any session. **Unverified — the first task of the
-  accounts epic proves or kills it.**
+  so any account can resume any session. Measured on claude 2.1.278 and
+  codex-cli 0.147.0 as far as the wire — a home that never created a session
+  rebuilds the whole continuation from the shared directory; a provider accepting
+  it under a second subscription is the part that stays untested.
+  [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md) carries
+  the steps and the line between the two.
 - **Detection**: Codex publishes `account/rateLimits/updated` with each window's
   use and reset; Claude reports a limit in its result with a reset time.
 - **On a limit**: mark the account limited until its reset → the free account
