@@ -60,6 +60,24 @@ const statusDrain = 250 * time.Millisecond
 // not be read into memory unbounded.
 const statusOutputCap = 64 << 10
 
+// suggest is the command an error tells the owner to run, as a shell would
+// take it.
+//
+// The home variable is part of it. Neither harness derives its home from the
+// working directory, so `codex login status` pasted into a terminal reads the
+// owner's own default home and answers about a different account entirely —
+// which is worse than no suggestion, because it looks like it worked. The
+// path is quoted so a home with a space in it survives the paste.
+func suggest(harness, binary, home string, args []string) string {
+	cmd := binary + " " + strings.Join(args, " ")
+	env := Env(harness, home)
+	if len(env) == 0 {
+		return cmd
+	}
+	name, value, _ := strings.Cut(env[0], "=")
+	return fmt.Sprintf("%s=%q %s", name, value, cmd)
+}
+
 // CanLogIn says whether `yad account add` knows how to log this harness in.
 func CanLogIn(harness string) bool {
 	_, ok := loginArgs[harness]
@@ -158,7 +176,7 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 	// prefix below matches — and the account is parked on the strength of a
 	// timeout. harness.detectOne tracks the same distinction for --version.
 	if ctx.Err() != nil {
-		return false, fmt.Errorf("%s did not answer whether %s holds a login within %s — run `%s %s` there to see what it does", harness, home, statusTimeout, binary, strings.Join(args, " "))
+		return false, fmt.Errorf("%s did not answer whether %s holds a login within %s — run `%s` to see what it does", harness, home, statusTimeout, suggest(harness, binary, home, args))
 	}
 
 	switch harness {
@@ -173,10 +191,10 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 		// Anything else is a question that did not get an answer, and an
 		// unanswered question is not a "no". The message deliberately carries
 		// none of what the command printed.
-		return false, fmt.Errorf("could not read codex's login state for the home %s — run `%s %s` there to see what it says", home, binary, strings.Join(args, " "))
+		return false, fmt.Errorf("could not read codex's login state for the home %s — run `%s` to see what it says", home, suggest(harness, binary, home, args))
 	default:
 		if err != nil {
-			return false, fmt.Errorf("`%s %s` failed in %s: %w", binary, strings.Join(args, " "), home, err)
+			return false, fmt.Errorf("`%s` failed: %w", suggest(harness, binary, home, args), err)
 		}
 		// Only this one field is decoded. A version that stops answering in
 		// JSON is an error rather than a guess: reporting an account free
@@ -186,7 +204,7 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 			LoggedIn *bool `json:"loggedIn"`
 		}
 		if err := json.Unmarshal(stdout, &s); err != nil || s.LoggedIn == nil {
-			return false, fmt.Errorf("could not read %s's login state for the home %s — run `%s %s` there to see what it says", harness, home, binary, strings.Join(args, " "))
+			return false, fmt.Errorf("could not read %s's login state for the home %s — run `%s` to see what it says", harness, home, suggest(harness, binary, home, args))
 		}
 		return *s.LoggedIn, nil
 	}

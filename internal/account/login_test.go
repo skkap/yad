@@ -350,8 +350,11 @@ func TestATimedOutCheckIsNotAnAnswer(t *testing.T) {
 	if in {
 		t.Error("an error answer also said the home was logged in")
 	}
-	// The message names a command the owner can actually run.
-	if strings.Contains(err.Error(), "[") {
-		t.Errorf("the next action prints argv as a Go slice, so it is not runnable: %v", err)
+	// The message names a command the owner can actually run — including the
+	// home variable, without which the paste reads the owner's own default
+	// home and answers about a different account.
+	want := fmt.Sprintf("CODEX_HOME=%q %s login status", home, bin)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the next action is not the command yad ran:\n  want to contain: %s\n  got: %v", want, err)
 	}
 }

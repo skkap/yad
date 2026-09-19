@@ -141,13 +141,14 @@ plain-text 404 or 405.
     min_version? }
 ```
 
-- **Account state**: `free`, `limited` (until `limited_until`) or `needs_login`,
-  and optional — a runner from before the field omits it, and a hub must not
-  refuse one that does. Absent means the runner cannot say.
-  — a home whose login the owner has to finish. A limited account and one that
-  needs login are both skipped for runs; `ready` is whether a harness has a free
-  account, or no accounts at all, in which case it runs on the harness's own
-  login. A harness with no accounts is a state, not a failure.
+- **Account state**: `free`, `limited` (until `limited_until`) or `needs_login`
+  — a home whose login the owner has to finish. The field is optional: a runner
+  from before it omits it, a hub must not refuse one that does, and absent
+  means the runner cannot say rather than that anything is wrong. A limited
+  account and one that needs login are both skipped for runs; `ready` is
+  whether a harness has a free account, or no accounts at all, in which case it
+  runs on the harness's own login. A harness with no accounts is a state, not a
+  failure.
 - **Control kinds**: `cancel`, `interrupt`, `steer`, `close_session`, `drain`,
   `report_capabilities`, `update` (reserved —
   [0018](docs/decisions/0018-no-self-update-in-v1.md)).

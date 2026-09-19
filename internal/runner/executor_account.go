@@ -102,13 +102,13 @@ func (e *Exec) checkLogin(ctx context.Context, a account.Account, binary string,
 	if res.Error == nil || !maybeAuth(res.Error.Class) || !account.CanLogIn(a.Harness) {
 		return
 	}
-	// The deadline bounds the harness subprocess and nothing else. Writing the
-	// state under it too would let a check that answered at 29.9s leave the
-	// account unparked, and the next run would spend the same 30 seconds
-	// asking again.
-	checkCtx, cancel := context.WithTimeout(ctx, loginCheckTimeout)
-	defer cancel()
-	in, err := account.LoggedIn(checkCtx, a.Harness, binary, a.Home)
+	// No deadline here: account.LoggedIn bounds its own subprocess, and more
+	// tightly than this ever did. A second, looser one around it could never
+	// fire, and the comment that justified it reasoned about a case it had
+	// made impossible. The state write below must not be under a deadline
+	// anyway — a check that answered just before one would leave the account
+	// unparked and the next run would ask all over again.
+	in, err := account.LoggedIn(ctx, a.Harness, binary, a.Home)
 	if err != nil {
 		log.Warn("could not check whether the account is still logged in", "err", err)
 		return
@@ -131,11 +131,6 @@ func (e *Exec) checkLogin(ctx context.Context, a account.Account, binary string,
 	}
 	log.Info("the account is logged in again")
 }
-
-// loginCheckTimeout bounds the harness's own login check. It reads a file and
-// prints a line — a second is generous — but a harness that hangs must not
-// hold a finished run's result behind it.
-const loginCheckTimeout = 30 * time.Second
 
 // maybeAuth is the classes that could be a login and could be anything else.
 // The rest say what went wrong themselves: a prompt that does not fit, a usage
