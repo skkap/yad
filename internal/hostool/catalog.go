@@ -4,9 +4,9 @@ import "context"
 
 // Tool is a non-harness executable YAD looks for.
 //
-// None of these fields reaches a hub: how a binary is found and how it is
-// questioned are this machine's business, and Detected is translated into the
-// capability document's HostTool by internal/capability.
+// Only ID reaches a hub. How a binary is found and how it is questioned are
+// this machine's business, and internal/capability translates a Detected into
+// the capability document's HostTool.
 type Tool struct {
 	ID          string // stable; used in the protocol and on the CLI
 	Binary      string

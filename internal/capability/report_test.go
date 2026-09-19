@@ -65,13 +65,20 @@ func TestHostToolReportIsPublicSafe(t *testing.T) {
 	in, out := true, false
 	reps := HostTools([]hostool.Detected{
 		{ID: "git", Path: "/opt/homebrew/bin/git", Present: true, Version: "git version 2.51.0"},
-		{ID: "gh", Path: "/opt/homebrew/bin/gh", Present: true, Version: "gh 2.98.0", LoggedIn: &in, LoginHost: "ghe.example.com"},
+		{ID: "gh", Path: "/opt/homebrew/bin/gh", Present: true, Version: "gh 2.98.0", LoggedIn: &in, LoginHosts: []string{"ghe.example.com", "github.com"}},
 		{ID: "docker", Path: "/usr/local/bin/docker", Present: true, Version: "Docker 29.1.3", Error: "the Docker daemon is not answering — start it"},
 		{ID: "podman", Present: false, LoggedIn: &out},
 	})
 	b, _ := json.Marshal(reps)
 	s := string(b)
-	for _, want := range []string{`"login_host":"ghe.example.com"`, `"logged_in":true`, `"error":"the Docker daemon`} {
+	// Every field the mapping copies, so dropping one from it cannot stay green:
+	// a hub told nothing about a git's version cannot tell one too old for
+	// --filter from a current one.
+	for _, want := range []string{
+		`"id":"git"`, `"present":true`, `"version":"git version 2.51.0"`,
+		`"login_hosts":["ghe.example.com","github.com"]`, `"logged_in":true`,
+		`"error":"the Docker daemon`,
+	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %s: %s", want, s)
 		}

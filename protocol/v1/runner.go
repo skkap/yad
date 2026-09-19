@@ -57,11 +57,11 @@ type HostTool struct {
 	// LoggedIn is nil when the tool has no notion of a login, and nil too when
 	// it has one and the runner could not find out — Error says why.
 	LoggedIn *bool `json:"logged_in,omitempty" doc:"Whether the tool is signed in. Absent for a tool with no login, and for one whose login state the runner could not find out, where error says why."`
-	// LoginHost is the host the tool is signed in to — github.com, or a GitHub
-	// Enterprise hostname — so a hub can tell a runner that can reach its
-	// repositories from one that cannot. Never who it is signed in as: an
+	// LoginHosts are the hosts the tool is signed in to — github.com, a GitHub
+	// Enterprise hostname, or both — so a hub can tell a runner that can reach
+	// its repositories from one that cannot. Never who it is signed in as: an
 	// account name is the machine owner's, not the hub's.
-	LoginHost string `json:"login_host,omitempty" doc:"The host the tool is signed in to, such as github.com or a GitHub Enterprise hostname. Never the account it is signed in as."`
+	LoginHosts []string `json:"login_hosts,omitempty" doc:"Every host the tool is signed in to, such as github.com or a GitHub Enterprise hostname; a gh signed in to two reports both. Never the account it is signed in as."`
 	// Error is what is wrong with a tool that is installed: a probe that timed
 	// out, a binary that would not run, a Docker daemon that is not answering.
 	// It carries the next action, and it never stops a runner registering —

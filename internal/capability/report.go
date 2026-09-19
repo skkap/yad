@@ -124,7 +124,7 @@ func HostTools(found []hostool.Detected) []v1.HostTool {
 	for _, d := range found {
 		out = append(out, v1.HostTool{
 			ID: d.ID, Present: d.Present, Version: d.Version,
-			LoggedIn: d.LoggedIn, LoginHost: d.LoginHost, Error: d.Error,
+			LoggedIn: d.LoggedIn, LoginHosts: d.LoginHosts, Error: d.Error,
 		})
 	}
 	return out

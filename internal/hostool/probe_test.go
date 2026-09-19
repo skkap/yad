@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,22 @@ func install(t *testing.T, id string, f tool) {
 	if !ok {
 		t.Fatalf("no %s in the catalog", id)
 	}
+	isolate(t, entry.EnvPath, writeTool(t, id, f))
+}
+
+// swap re-points a tool at new answers without forgetting what gh already
+// said, which is what the next probe on a running runner looks like.
+func swap(t *testing.T, id string, f tool) {
+	t.Helper()
+	entry, ok := Lookup(id)
+	if !ok {
+		t.Fatalf("no %s in the catalog", id)
+	}
+	t.Setenv(entry.EnvPath, writeTool(t, id, f))
+}
+
+func writeTool(t *testing.T, id string, f tool) string {
+	t.Helper()
 	dir := t.TempDir()
 	for name, a := range map[string]answer{"version": f.version, "json": f.asJSON, "plain": f.plain} {
 		for suffix, body := range map[string]string{".out": a.out, ".err": a.err} {
@@ -64,7 +81,7 @@ func install(t *testing.T, id string, f tool) {
 			}
 		}
 	}
-	// PATH is emptied below, so everything the script runs is named in full.
+	// PATH is emptied by isolate, so everything the script runs is named in full.
 	script := fmt.Sprintf(`#!/bin/sh
 case "$*" in
 "--version") a=%[1]s/version; c=%[2]d ;;
@@ -79,7 +96,7 @@ exit $c
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	isolate(t, entry.EnvPath, path)
+	return path
 }
 
 // isolate empties PATH and points every other host tool at nothing, so a test
@@ -87,6 +104,8 @@ exit $c
 // without — and never probes the real gh, whose auth probe reaches the network.
 func isolate(t *testing.T, envPath, path string) {
 	t.Helper()
+	forgetGHLogin()
+	t.Cleanup(forgetGHLogin)
 	absent := filepath.Join(t.TempDir(), "absent")
 	t.Setenv("PATH", t.TempDir())
 	for _, other := range Catalog() {
@@ -148,52 +167,55 @@ func TestGitIsVersionOnly(t *testing.T) {
 	if !d.Present || d.Version != "git version 2.51.0" || d.Error != "" {
 		t.Errorf("git = %+v", d)
 	}
-	if d.LoggedIn != nil || d.LoginHost != "" {
+	if d.LoggedIn != nil || d.LoginHosts != nil {
 		t.Errorf("git reported a login: %+v", d)
 	}
 }
 
-// gh in each of the states a machine is really found in. The host and the
+// gh in each of the states a machine is really found in. The hosts and the
 // boolean are the whole of the answer.
 func TestGHLoginState(t *testing.T) {
 	ghv := answer{out: ghVersion}
 	noJSON := answer{err: ghNoJSONFlag, code: 1}
 	for _, tc := range []struct {
-		name     string
-		gh       tool
-		wantIn   bool
-		wantHost string
+		name      string
+		gh        tool
+		wantIn    bool
+		wantHosts []string
 	}{
-		{"signed in", tool{ghv, answer{out: ghJSON}, answer{out: ghProse}}, true, "github.com"},
-		{"signed out", tool{ghv, answer{out: `{"hosts":{}}`}, answer{err: ghSignedOut, code: 1}}, false, ""},
+		{"signed in", tool{ghv, answer{out: ghJSON}, answer{out: ghProse}}, true, []string{"github.com"}},
+		{"signed out", tool{ghv, answer{out: `{"hosts":{}}`}, answer{err: ghSignedOut, code: 1}}, false, nil},
 		{
-			"the active host wins",
-			tool{ghv, answer{out: `{"hosts":{"github.com":[{"state":"success","active":false,"login":"octocat"}],` +
+			// `gh auth status --active` gives one entry per host, not one
+			// entry overall, so a developer with a work GHE account and a
+			// personal github.com one has both — and reporting either alone
+			// would route the other's work away from a machine that can do it.
+			"signed in to two hosts",
+			tool{ghv, answer{out: `{"hosts":{"github.com":[{"state":"success","active":true,"login":"octocat"}],` +
 				`"ghe.example.com":[{"state":"success","active":true,"login":"octocat"}]}}`}, answer{}},
-			true, "ghe.example.com",
+			true, []string{"ghe.example.com", "github.com"},
 		},
 		{
-			// Without an active account the answer still has to be the same on
-			// every probe: an unstable host would move the capability
-			// fingerprint four times a minute for no change in the machine.
-			"no active host, first by name",
-			tool{ghv, answer{out: `{"hosts":{"github.com":[{"state":"success","active":false,"login":"octocat"}],` +
-				`"acme.example.com":[{"state":"success","active":false,"login":"octocat"}]}}`}, answer{}},
-			true, "acme.example.com",
+			// One host working answers the question whatever is wrong with the
+			// other.
+			"one host works, one does not",
+			tool{ghv, answer{out: `{"hosts":{"github.com":[{"state":"success","login":"octocat"}],` +
+				`"ghe.example.com":[{"state":"timeout","login":"octocat"}]}}`}, answer{}},
+			true, []string{"github.com"},
 		},
-		{
-			// gh exits non-zero here, and that is not what decides the answer.
-			"a token gh cannot use is not a login",
-			tool{ghv, answer{out: `{"hosts":{"github.com":[{"state":"failure","active":true,"login":"octocat"}]}}`, code: 1}, answer{}},
-			false, "",
-		},
-		{"signed in, gh too old for --json", tool{ghv, noJSON, answer{out: ghProse}}, true, "github.com"},
-		{"signed out, gh too old for --json", tool{ghv, noJSON, answer{err: ghSignedOut, code: 1}}, false, ""},
+		{"signed in, gh too old for --json", tool{ghv, noJSON, answer{out: ghProse}}, true, []string{"github.com"}},
+		{"signed out, gh too old for --json", tool{ghv, noJSON, answer{err: ghSignedOut, code: 1}}, false, nil},
 		{
 			// The wording gh used before its accounts rework.
 			"signed in, older wording",
 			tool{ghv, noJSON, answer{out: "✓ Logged in to ghe.example.com as octocat (oauth_token)\n"}},
-			true, "ghe.example.com",
+			true, []string{"ghe.example.com"},
+		},
+		{
+			"signed in to two hosts, gh too old for --json",
+			tool{ghv, noJSON, answer{out: "github.com\n  ✓ Logged in to github.com account octocat (keyring)\n" +
+				"ghe.example.com\n  ✓ Logged in to ghe.example.com account octocat (keyring)\n"}},
+			true, []string{"ghe.example.com", "github.com"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,17 +224,83 @@ func TestGHLoginState(t *testing.T) {
 			if !d.Present || d.Error != "" {
 				t.Fatalf("gh = %+v", d)
 			}
-			if d.LoggedIn == nil || *d.LoggedIn != tc.wantIn || d.LoginHost != tc.wantHost {
-				t.Errorf("logged in %v host %q, want %v %q", d.LoggedIn, d.LoginHost, tc.wantIn, tc.wantHost)
+			if d.LoggedIn == nil || *d.LoggedIn != tc.wantIn || !slices.Equal(d.LoginHosts, tc.wantHosts) {
+				t.Errorf("logged in %v hosts %q, want %v %q", d.LoggedIn, d.LoginHosts, tc.wantIn, tc.wantHosts)
 			}
 		})
+	}
+}
+
+// A host gh knows of but cannot reach is not a host it is signed out of: the
+// runner did not find out, and says so rather than guessing.
+func TestGHUnreachableHostIsNotAnAnswer(t *testing.T) {
+	// gh's two non-success states. error is not safely "signed out" either: it
+	// covers an expired token and a host gh could not reach alike, and the two
+	// are told apart only by the message beside it, which is not read.
+	for _, state := range []string{"timeout", "error"} {
+		t.Run(state, func(t *testing.T) {
+			install(t, "gh", tool{
+				version: answer{out: ghVersion},
+				asJSON:  answer{out: `{"hosts":{"ghe.example.com":[{"state":"` + state + `","login":"octocat"}]}}`},
+			})
+			d := probe(t, "gh")
+			if d.LoggedIn != nil {
+				t.Errorf("LoggedIn = %v, want nothing claimed", *d.LoggedIn)
+			}
+			if !strings.Contains(d.Error, "could not reach") {
+				t.Errorf("Error = %q, want it to say the host was not reached", d.Error)
+			}
+		})
+	}
+}
+
+// Asking gh is a network call, so the answer is remembered: the probe runs
+// every few seconds and the login changes when somebody signs in or out.
+func TestGHLoginIsRememberedBetweenProbes(t *testing.T) {
+	install(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{out: ghJSON}})
+	if d := probe(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
+		t.Fatalf("first probe: %+v", d)
+	}
+	// The same gh, now unable to answer at all. The remembered answer stands:
+	// a link that was down for one probe is not news that the login changed,
+	// and a flapping document would make every hub re-read it.
+	swap(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{code: 1}, plain: answer{code: 1}})
+	d := probe(t, "gh")
+	if d.LoggedIn == nil || !*d.LoggedIn || !slices.Equal(d.LoginHosts, []string{"github.com"}) {
+		t.Errorf("second probe = %+v, want the remembered answer", d)
+	}
+	if d.Error != "" {
+		t.Errorf("Error = %q, want the remembered answer reported without one", d.Error)
+	}
+	// With nothing remembered, the same silent gh is reported as unknown.
+	forgetGHLogin()
+	if d := probe(t, "gh"); d.LoggedIn != nil || d.Error == "" {
+		t.Errorf("with nothing remembered = %+v, want no claim and an error", d)
+	}
+}
+
+// Remembered is not forever: an owner who signs out is advertised as signed
+// out once the answer is stale, without restarting the runner.
+func TestGHLoginIsAskedAgainWhenStale(t *testing.T) {
+	install(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{out: ghJSON}})
+	if d := probe(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
+		t.Fatalf("first probe: %+v", d)
+	}
+	old := ghLoginTTL
+	ghLoginTTL = -1 // every answer is stale the moment it is given
+	t.Cleanup(func() { ghLoginTTL = old })
+
+	swap(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{out: `{"hosts":{}}`}})
+	d := probe(t, "gh")
+	if d.LoggedIn == nil || *d.LoggedIn || d.LoginHosts != nil {
+		t.Errorf("after signing out = %+v, want the new answer", d)
 	}
 }
 
 // A gh that says nothing at all is not a gh that is signed out: claiming so
 // would route pull-request work away from a machine that may well do it.
 func TestGHSilenceIsNotAnAnswer(t *testing.T) {
-	install(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{code: 1}, plain: answer{code: 1}})
+	swap(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{code: 1}, plain: answer{code: 1}})
 	d := probe(t, "gh")
 	if d.LoggedIn != nil {
 		t.Errorf("LoggedIn = %v, want nothing claimed", *d.LoggedIn)
@@ -233,7 +321,7 @@ func TestGHReportCarriesNothingButTheHost(t *testing.T) {
 		"signed out, json":  {ghv, answer{out: `{"hosts":{}}`}, answer{err: ghSignedOut, code: 1}},
 		"signed out, prose": {ghv, noJSON, answer{err: ghSignedOut, code: 1}},
 		"a token gh cannot use": {ghv,
-			answer{out: `{"hosts":{"github.com":[{"state":"failure","active":true,"login":"octocat"}]}}`, code: 1}, answer{}},
+			answer{out: `{"hosts":{"github.com":[{"state":"error","login":"octocat"}]}}`}, answer{}},
 		"nothing at all": {ghv, answer{code: 1}, answer{code: 1}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -323,8 +411,8 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 		wantErr        string
 		wantVersion    string
 	}{
-		{"git hangs on --version", "git", "/bin/sleep 60\n", "no answer to git --version", ""},
-		{"gh hangs on --version", "gh", "/bin/sleep 60\n", "no answer to gh --version", ""},
+		{"git hangs on --version", "git", "/bin/sleep 60\n", "no answer to `git --version`", ""},
+		{"gh hangs on --version", "gh", "/bin/sleep 60\n", "no answer to `gh --version`", ""},
 		{"gh hangs on auth status", "gh", answersVersion("gh version 2.98.0"), "gh auth status", "gh version 2.98.0"},
 		{"docker hangs on the daemon", "docker", answersVersion("Docker version 29.1.3"), "did not answer", "Docker version 29.1.3"},
 	} {
@@ -356,32 +444,78 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 	}
 }
 
-// A binary that is there but will not run is reported broken, not dropped.
+// A binary that is there but will not run is reported broken, not dropped —
+// and the report says so without quoting the machine it is on.
 func TestBrokenBinaryIsReported(t *testing.T) {
-	isolate(t, "YAD_GIT_PATH", t.TempDir()) // a directory is not an executable
+	dir := t.TempDir() // a directory is not an executable
+	isolate(t, "YAD_GIT_PATH", dir)
 	d := probe(t, "git")
 	if !d.Present || d.Error == "" {
-		t.Errorf("git = %+v, want it present and broken", d)
+		t.Fatalf("git = %+v, want it present and broken", d)
+	}
+	// supervise.Start wraps this as `start <path>: fork/exec <path>: ...`, and
+	// on a Mac that path is under /Users/<name>. DEV-31 says the owner's name
+	// never travels, and HostTools' own comment says never a path.
+	for _, leak := range []string{dir, "fork/exec", "/Users/"} {
+		if strings.Contains(d.Error, leak) {
+			t.Errorf("Error carries %q: %q", leak, d.Error)
+		}
+	}
+	if !strings.Contains(d.Error, "check on this machine") {
+		t.Errorf("Error = %q, want the next action", d.Error)
+	}
+}
+
+// What a tool prints on its way out is unbounded text nobody vetted — a loader
+// error naming a home directory, a proxy URL with a password in it. None of it
+// is forwarded.
+func TestToolOutputIsNeverQuotedInTheReport(t *testing.T) {
+	const secret = "https://user:hunter2@proxy.internal/"
+	install(t, "git", tool{version: answer{err: "fatal: unable to access " + secret + "\n", code: 128}})
+	d := probe(t, "git")
+	if d.Error == "" {
+		t.Fatalf("git = %+v, want the failure reported", d)
+	}
+	for _, leak := range []string{secret, "hunter2", "fatal:", "exit status"} {
+		if strings.Contains(d.Error, leak) {
+			t.Errorf("Error carries %q: %q", leak, d.Error)
+		}
+	}
+	if !strings.Contains(d.Error, "run it on this machine") {
+		t.Errorf("Error = %q, want the next action", d.Error)
 	}
 }
 
 func TestGHFromJSON(t *testing.T) {
 	for _, tc := range []struct {
-		name, raw      string
-		wantHost       string
-		wantIn, wantOK bool
+		name, raw          string
+		wantHosts          []string
+		wantUnsure, wantOK bool
 	}{
-		{"active account", ghJSON, "github.com", true, true},
-		{"no hosts", `{"hosts":{}}`, "", false, true},
-		{"null hosts", `{"hosts":null}`, "", false, false},
-		{"not json", ghNoJSONFlag, "", false, false},
-		{"empty", "", "", false, false},
-		{"failure state only", `{"hosts":{"github.com":[{"state":"failure","active":true}]}}`, "", false, true},
+		{"signed in", ghJSON, []string{"github.com"}, false, true},
+		{"no hosts at all", `{"hosts":{}}`, nil, false, true},
+		{"null hosts", `{"hosts":null}`, nil, false, false},
+		{"not json", ghNoJSONFlag, nil, false, false},
+		{"empty", "", nil, false, false},
+		{"a token gh cannot use", `{"hosts":{"github.com":[{"state":"error"}]}}`, nil, true, true},
+		{"a host gh could not reach in time", `{"hosts":{"ghe.example.com":[{"state":"timeout"}]}}`, nil, true, true},
+		{
+			"one host works, another does not",
+			`{"hosts":{"github.com":[{"state":"success"}],"ghe.example.com":[{"state":"error"}]}}`,
+			[]string{"github.com"}, false, true,
+		},
+		{
+			// Sorted, because a map has no order and an answer that moved
+			// between probes would move the capability fingerprint with it.
+			"two hosts come back sorted",
+			`{"hosts":{"github.com":[{"state":"success"}],"acme.example.com":[{"state":"success"}]}}`,
+			[]string{"acme.example.com", "github.com"}, false, true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			host, in, ok := ghFromJSON([]byte(tc.raw))
-			if host != tc.wantHost || in != tc.wantIn || ok != tc.wantOK {
-				t.Errorf("ghFromJSON = %q, %v, %v; want %q, %v, %v", host, in, ok, tc.wantHost, tc.wantIn, tc.wantOK)
+			hosts, unsure, ok := ghFromJSON([]byte(tc.raw))
+			if !slices.Equal(hosts, tc.wantHosts) || unsure != tc.wantUnsure || ok != tc.wantOK {
+				t.Errorf("ghFromJSON = %q, %v, %v; want %q, %v, %v", hosts, unsure, ok, tc.wantHosts, tc.wantUnsure, tc.wantOK)
 			}
 		})
 	}
@@ -390,18 +524,18 @@ func TestGHFromJSON(t *testing.T) {
 func TestGHFromProse(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw string
-		wantHost  string
-		wantIn    bool
+		want      []string
 	}{
-		{"current wording", ghProse, "github.com", true},
-		{"the wording before gh's accounts rework", "✓ Logged in to ghe.example.com as octocat (oauth_token)", "ghe.example.com", true},
-		{"signed out", ghSignedOut, "", false},
-		{"empty", "", "", false},
+		{"current wording", ghProse, []string{"github.com"}},
+		{"the wording before gh's accounts rework", "✓ Logged in to ghe.example.com as octocat (oauth_token)", []string{"ghe.example.com"}},
+		{"two hosts, sorted", "Logged in to github.com account octocat\nLogged in to acme.example.com account octocat", []string{"acme.example.com", "github.com"}},
+		{"the same host twice", "Logged in to github.com account octocat\nLogged in to github.com account someone-else", []string{"github.com"}},
+		{"signed out", ghSignedOut, nil},
+		{"empty", "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			host, in := ghFromProse(tc.raw)
-			if host != tc.wantHost || in != tc.wantIn {
-				t.Errorf("ghFromProse = %q, %v; want %q, %v", host, in, tc.wantHost, tc.wantIn)
+			if got := ghFromProse(tc.raw); !slices.Equal(got, tc.want) {
+				t.Errorf("ghFromProse = %q, want %q", got, tc.want)
 			}
 		})
 	}

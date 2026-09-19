@@ -18,7 +18,7 @@ func dockerStatus(ctx context.Context, path string, d *Detected) {
 	out, err := run(ctx, path, []string{"version", "--format", "{{.Server.Version}}"}, false)
 	switch {
 	case err != nil:
-		d.Error = err.Error()
+		d.Error = wontRun("docker")
 	case out.TimedOut:
 		d.Error = fmt.Sprintf("the Docker daemon did not answer within %s — %s", probeTimeout, startDocker())
 	case out.Err != nil, len(bytes.TrimSpace(out.Stdout)) == 0:

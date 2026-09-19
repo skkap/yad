@@ -360,9 +360,11 @@ components:
         logged_in:
           description: Whether the tool is signed in. Absent for a tool with no login, and for one whose login state the runner could not find out, where error says why.
           type: boolean
-        login_host:
-          description: The host the tool is signed in to, such as github.com or a GitHub Enterprise hostname. Never the account it is signed in as.
-          type: string
+        login_hosts:
+          description: Every host the tool is signed in to, such as github.com or a GitHub Enterprise hostname; a gh signed in to two reports both. Never the account it is signed in as.
+          items:
+            type: string
+          type: array
         present:
           description: "The binary was found on the runner. Present is not usable: see error and logged_in."
           type: boolean

@@ -27,10 +27,12 @@ type Detected struct {
 	// LoggedIn is nil for a tool with no notion of a login, and nil too when
 	// the tool has one and the probe could not find out — Error says why.
 	LoggedIn *bool `json:"logged_in,omitempty"`
-	// LoginHost is the host the tool is logged in to: github.com, or a GitHub
-	// Enterprise hostname. Who it is logged in *as* is never read, let alone
-	// reported — the capability document is a public surface.
-	LoginHost string `json:"login_host,omitempty"`
+	// LoginHosts are the hosts the tool is signed in to: github.com, a GitHub
+	// Enterprise hostname, or both — a gh signed in to two reports two, since
+	// one of them alone would route work away from a machine that can do it.
+	// Who it is signed in *as* is never read, let alone reported — the
+	// capability document is a public surface.
+	LoginHosts []string `json:"login_hosts,omitempty"`
 }
 
 // probeTimeout caps one probe. Every one of them waits on something that can
@@ -66,16 +68,6 @@ func Detect(ctx context.Context) []Detected {
 	return out
 }
 
-// Locate finds the binary for a host tool the way detection does, so whatever
-// uses it later is the executable the capability document advertised.
-func Locate(id string) (string, bool) {
-	t, ok := Lookup(id)
-	if !ok {
-		return "", false
-	}
-	return locate(t)
-}
-
 func locate(t Tool) (string, bool) {
 	if path := os.Getenv(t.EnvPath); path != "" {
 		return path, true
@@ -96,13 +88,19 @@ func probeOne(ctx context.Context, t Tool) Detected {
 	out, err := run(ctx, path, t.VersionArgs, false)
 	switch {
 	case err != nil:
-		d.Error = err.Error()
+		d.Error = wontRun(t.Binary)
 		return d
 	case out.TimedOut:
-		d.Error = fmt.Sprintf("no answer to %s %s within %s — the tool is installed but not usable until it answers", t.Binary, strings.Join(t.VersionArgs, " "), probeTimeout)
+		d.Error = noAnswer(t.Binary + " " + strings.Join(t.VersionArgs, " "))
 		return d
 	case out.Err != nil:
-		d.Error = strings.TrimSpace(out.Err.Error() + " " + out.Stderr)
+		// Neither the wrapped error nor the child's stderr is quoted. The
+		// error names the binary's absolute path — under /Users/<name> on a
+		// Mac, which is the owner's name DEV-31 says never to send — and a
+		// tool's own stderr is unbounded text nobody vetted. What a hub can
+		// act on is that the tool does not work; what its owner needs is the
+		// next action, and running it by hand tells them more than a tail.
+		d.Error = t.Binary + " " + strings.Join(t.VersionArgs, " ") + " exited with an error — run it on this machine to see why"
 		return d
 	}
 	// The same banner-to-one-line rule the harnesses need: these three disagree
@@ -127,4 +125,15 @@ func run(ctx context.Context, path string, args []string, mergeStderr bool) (sup
 	// and a probe must fail at once rather than wait for a person who is not
 	// there.
 	return supervise.Run(ctx, supervise.Spec{Path: path, Args: args, NoTTY: true, MergeStderr: mergeStderr}, outputCap)
+}
+
+// wontRun and noAnswer are the two things that go wrong with a tool that is
+// installed, said without quoting the tool: what a child printed and the path
+// it printed it from are this machine's business, and the report is public.
+func wontRun(binary string) string {
+	return binary + " is installed but will not run — check on this machine that it is an executable file"
+}
+
+func noAnswer(what string) string {
+	return fmt.Sprintf("no answer to `%s` within %s — the tool is installed but not usable until it answers", what, probeTimeout)
 }
