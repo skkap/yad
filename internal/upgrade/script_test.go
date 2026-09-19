@@ -23,22 +23,42 @@ import (
 // ~/.local/bin. It proves nothing about a fresh Linux VM, a real `gh` login or
 // a real GitHub release.
 
-// ghStub answers the calls the install script makes and records its argv, so a
-// test can say which calls happened. It deliberately does not answer
-// `auth status`: the script must not gate on it, and a stub that answered it
+// ghStub answers the calls the install script makes and records its argv. It
+// *acts* on that argv rather than copying the whole fixture directory: a stub
+// that hands over the right files whatever it was asked for would stay green
+// if the script requested another machine's binary or dropped --repo, which is
+// the failure it exists to catch. It deliberately does not answer
+// `auth status` — the script must not gate on it, and a stub that answered
 // would hide the day someone puts the gate back.
 const ghStub = `#!/bin/sh
 echo "$@" >>"$GH_LOG"
 if [ -n "$GH_FAIL" ]; then echo "$GH_FAIL" >&2; exit 1; fi
+repo=
+for a in "$@"; do
+  if [ "$prev" = "--repo" ]; then repo=$a; fi
+  prev=$a
+done
+[ -n "$repo" ] || { echo "fake gh: $1 $2 without --repo" >&2; exit 1; }
 case "$1 $2" in
   "release view") echo "$FAKE_TAG" ;;
   "release download")
-    dir=
+    dir= ; patterns= ; matched=0
     while [ $# -gt 0 ]; do
-      if [ "$1" = "--dir" ]; then dir=$2; fi
+      case "$1" in
+        --dir) dir=$2 ;;
+        --pattern) patterns="$patterns $2" ;;
+      esac
       shift
     done
-    cp "$FAKE_RELEASE"/* "$dir"/
+    [ -n "$dir" ] || { echo "fake gh: release download without --dir" >&2; exit 1; }
+    for p in $patterns; do
+      if [ -f "$FAKE_RELEASE/$p" ]; then
+        cp "$FAKE_RELEASE/$p" "$dir"/
+        matched=$((matched+1))
+      fi
+    done
+    # gh fails only when none of the patterns match anything.
+    [ "$matched" -gt 0 ] || { echo "release not found: no assets match the file pattern" >&2; exit 1; }
     ;;
   *) echo "fake gh: unexpected: $*" >&2; exit 1 ;;
 esac

@@ -29,6 +29,32 @@ func TestUpgradeRejectsUnknownFlags(t *testing.T) {
 	}
 }
 
+// flag stops parsing at the first positional argument, so `yad upgrade v0.3.1
+// --check` would drop the --check and replace the binary for real — the one
+// command where being ignored costs the operator the binary they are running.
+func TestUpgradeRejectsAPositionalArgument(t *testing.T) {
+	code, _, errs := yad(t, "upgrade", "v0.3.1", "--check")
+	if code != 1 {
+		t.Fatalf("exit %d, want a refusal: %q", code, errs)
+	}
+	if !strings.Contains(errs, "--tag v0.3.1") {
+		t.Errorf("yad upgrade v0.3.1 = %q, want it to name the flag that means it", errs)
+	}
+}
+
+// scripts/install.sh installs a fork with YAD_REPO. An upgrade that ignored it
+// would fetch upstream and replace the fork's binary with it.
+func TestUpgradeFollowsTheRepositoryItWasInstalledFrom(t *testing.T) {
+	t.Setenv("YAD_REPO", "someone/fork")
+	if got := releaseSource().Repo; got != "someone/fork" {
+		t.Errorf("releaseSource().Repo = %q, want the fork the operator installed from", got)
+	}
+	t.Setenv("YAD_REPO", "")
+	if got := releaseSource().Repo; got != "" {
+		t.Errorf("releaseSource().Repo = %q, want empty so upgrade.GH falls back to its default", got)
+	}
+}
+
 // everyState is each answer Compare can give. A state added without a line of
 // its own falls to the default and says "this build is <tag>", which is the
 // one wrong answer these tests exist to catch.

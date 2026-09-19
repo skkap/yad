@@ -73,6 +73,11 @@ trap 'rm -rf "$tmp" "$staged"; exit 143' TERM
 mkdir -p "$DIR" || die "cannot create $DIR — install yad somewhere you own, such as ~/.local/bin"
 [ -w "$DIR" ] ||
   die "cannot write to $DIR — install yad somewhere you own, such as ~/.local/bin, or re-run with YAD_INSTALL_DIR set"
+# `mv file dir/` moves the file *into* a directory and succeeds, so a $DIR/yad
+# that is one would leave the staged file inside it and nothing at the path
+# this script then says it installed to.
+[ -d "$DIR/yad" ] &&
+  die "$DIR/yad is a directory — move it aside, or set YAD_INSTALL_DIR to install somewhere else"
 
 tag="${YAD_VERSION:-}"
 if [ -z "$tag" ]; then
@@ -129,6 +134,9 @@ case ":$PATH:" in
   *) echo "note: $DIR is not on PATH — add it with: export PATH=\"$DIR:\$PATH\"" ;;
 esac
 if [ "$had_one" = yes ]; then
-  echo "note: a runner already running keeps the old binary until it is restarted (\`yad daemon restart\`)"
+  # Under a service manager a clean stop is meant to stay stopped, so
+  # `yad daemon restart` would replace the unit's supervision with a loose
+  # process. Decision 0028 makes re-running install the upgrade path.
+  echo "note: a runner already running keeps the old binary until it is restarted — \`yad service install\` if it runs as a service, otherwise \`yad daemon restart\`"
 fi
 echo "next: yad doctor"

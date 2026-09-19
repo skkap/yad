@@ -92,11 +92,19 @@ yad upgrade               # fetch it, verify its checksum, then replace this bin
 yad upgrade --tag v0.3.1  # that release, newer or older — how a bad one is rolled back
 ```
 
+If you installed from a fork, set `YAD_REPO` for the upgrade too — nothing
+records where the binary came from, so an upgrade without it would replace your
+fork's build with upstream's.
+
 `yad upgrade` downloads to a temporary directory beside the installed binary,
 checks its SHA-256 against the release's `checksums.txt`, and only then renames
 it into place — so an upgrade that fails at any step leaves a working `yad`. It
 restarts nothing: a runner already running holds the binary it started from
-until you restart it, and `yad upgrade` says so when it finds one. Nothing in
+until you restart it, and `yad upgrade` says so. If that runner is a service,
+re-run `yad service install` rather than `yad daemon restart` — install
+replaces the unit and starts it again, where a restart would leave an
+unsupervised process the service manager is no longer watching
+([0028](docs/decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)). Nothing in
 YAD updates itself on a schedule or on a hub's say-so
 ([0018](docs/decisions/0018-no-self-update-in-v1.md)).
 
