@@ -134,3 +134,27 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 		t.Errorf("claude broken:\n%s", o.String())
 	}
 }
+
+// `yad sessions` on a profile whose runner never ran lists nothing and
+// creates nothing; closing one names the task that brings it.
+func TestSessionsOnAFreshProfile(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		code int
+		out  string
+		errs string
+	}{
+		{[]string{"sessions"}, 0, "no sessions", ""},
+		{[]string{"sessions", "--json"}, 0, "[]", ""},
+		{[]string{"sessions", "close", "s1"}, 1, "", "DEV-18"},
+		{[]string{"sessions", "s1"}, 1, "", "unexpected"},
+	} {
+		code, out, errs := yad(t, tc.args...)
+		if code != tc.code || !strings.Contains(out, tc.out) || !strings.Contains(errs, tc.errs) {
+			t.Errorf("yad %v: exit %d, %q, %q", tc.args, code, out, errs)
+		}
+		if _, err := os.Stat(os.Getenv("YAD_DATA_DIR") + "/state.db"); !os.IsNotExist(err) {
+			t.Errorf("yad %v created the state database", tc.args)
+		}
+	}
+}

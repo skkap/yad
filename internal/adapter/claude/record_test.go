@@ -39,6 +39,9 @@ type scenario struct {
 	model   string
 	mode    string
 	resume  bool // resume a session that does not exist
+	// before, when set, is a first turn run in a new session; the scenario's
+	// own turn resumes it, and only that turn is recorded.
+	before string
 	// act is called with each event and may steer or interrupt; it returns true
 	// once it has acted.
 	act func(t *testing.T, tr adapter.Turn, e v1.Event) bool
@@ -50,6 +53,8 @@ var scenarios = []scenario{
 	{name: "error", prompt: "Reply: hi", model: "claude-nonexistent-9"},
 	{name: "prompt-too-long", prompt: "Reply: ok. " + strings.Repeat("lorem ipsum dolor sit amet ", 45000)},
 	{name: "resume-missing", prompt: "Reply: hi", resume: true},
+	{name: "resume", before: "Remember this word: plum. Reply with exactly: ok",
+		prompt: "Which word did I ask you to remember? Reply with the word only."},
 	{name: "interrupt", prompt: "Write the numbers from 1 to 200 as words, one per line.",
 		act: func(t *testing.T, tr adapter.Turn, e v1.Event) bool {
 			if e.Kind != v1.EventText {
@@ -114,17 +119,35 @@ func TestRecord(t *testing.T) {
 			}
 			var raw bytes.Buffer
 			a := Adapter{Raw: func(adapter.Spec) io.Writer { return &raw }}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			var native string
+			if s.before != "" {
+				first, err := Adapter{}.Start(ctx, adapter.Spec{
+					RunID: "rec-" + s.name + "-before", Binary: bin, Workdir: work, Model: "haiku",
+					Brief:    v1.Brief{Instruction: s.before},
+					Settings: map[string]string{"permission_mode": "bypassPermissions"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for range first.Events() {
+				}
+				if o := first.Wait(); o.State != v1.RunSucceeded {
+					t.Fatalf("the first turn: %s %+v", o.State, o.Error)
+				}
+				native = first.NativeSessionID()
+			}
 			spec := adapter.Spec{
 				RunID: "rec-" + s.name, Binary: bin, Workdir: work,
 				Model:    firstNonEmpty(s.model, "haiku"),
 				Brief:    v1.Brief{Context: s.context, Instruction: s.prompt},
 				Settings: map[string]string{"permission_mode": firstNonEmpty(s.mode, "bypassPermissions")},
 			}
+			spec.NativeSessionID = native
 			if s.resume {
 				spec.NativeSessionID = newUUID()
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
 			tr, err := a.Start(ctx, spec)
 			if err != nil {
 				t.Fatal(err)

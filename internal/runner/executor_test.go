@@ -383,18 +383,20 @@ func TestStoppingTheRunnerLeavesTheRunHeld(t *testing.T) {
 }
 
 func TestPathNameKeepsHubIDsInsideTheirDirectory(t *testing.T) {
-	for _, id := range []string{"..", ".", "../../.ssh", "a/b", "", ".hidden", strings.Repeat("x", 65), "_abc"} {
+	// Upper case is hashed too: a case-folding file system would give "S1"
+	// and "s1" one directory.
+	for _, id := range []string{"..", ".", "../../.ssh", "a/b", "", ".hidden", strings.Repeat("x", 65), "_abc", "ZUM-19", "S1"} {
 		got := pathName(id)
 		if strings.ContainsAny(got, "/\\") || got == "." || got == ".." || !strings.HasPrefix(got, "_") {
 			t.Errorf("pathName(%q) = %q", id, got)
 		}
 	}
-	for _, id := range []string{"s1", "ZUM-19", "run.2026-09-19"} {
+	for _, id := range []string{"s1", "zum-19", "run.2026-09-19", "ses_abc234"} {
 		if got := pathName(id); got != id {
 			t.Errorf("pathName(%q) = %q, want it kept", id, got)
 		}
 	}
-	if pathName("../a") == pathName("../b") {
+	if pathName("../a") == pathName("../b") || pathName("S1") == pathName("s1") {
 		t.Error("two ids hashed alike")
 	}
 }

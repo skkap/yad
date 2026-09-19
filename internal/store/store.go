@@ -86,6 +86,46 @@ func OpenSQLite(ctx context.Context, file string, fsys fs.FS) (*sql.DB, error) {
 	return conn, nil
 }
 
+// ErrNoState is a profile whose runner has never opened its state database.
+var ErrNoState = errors.New("no state database yet")
+
+// OpenReadOnly opens the runner's state database for a reader beside the
+// daemon — `yad sessions` — without migrating it or creating it: the file is
+// the daemon's, and a CLI newer than the daemon must not change the schema
+// under it. A database at another schema version than this binary's is
+// refused with the way out.
+func OpenReadOnly(ctx context.Context, file string) (*Store, error) {
+	if _, err := os.Stat(file); errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNoState
+	}
+	q := url.Values{}
+	q.Add("mode", "ro")
+	q.Add("_pragma", "busy_timeout(5000)")
+	conn, err := sql.Open("sqlite", "file:"+file+"?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	var current int
+	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("state database %s: %w", file, err)
+	}
+	latest, err := latestVersion(migrations)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	switch {
+	case current < latest:
+		conn.Close()
+		return nil, fmt.Errorf("state database %s is at schema %d and this yad expects %d — `yad daemon restart` brings it up to date", file, current, latest)
+	case current > latest:
+		conn.Close()
+		return nil, fmt.Errorf("state database %s is at schema %d, newer than this yad knows (%d) — run the newer yad", file, current, latest)
+	}
+	return &Store{Queries: db.New(conn), DB: conn}, nil
+}
+
 // Close closes the database.
 func (s *Store) Close() error { return s.DB.Close() }
 
@@ -116,9 +156,9 @@ func migrate(ctx context.Context, conn *sql.DB, fsys fs.FS) error {
 	sort.Strings(files)
 	latest := 0
 	for _, name := range files {
-		n, err := strconv.Atoi(strings.SplitN(path.Base(name), "_", 2)[0])
+		n, err := migrationNumber(name)
 		if err != nil {
-			return fmt.Errorf("migration %s has no numeric prefix", name)
+			return err
 		}
 		latest = n
 		if n <= current {
@@ -149,4 +189,29 @@ func migrate(ctx context.Context, conn *sql.DB, fsys fs.FS) error {
 		return fmt.Errorf("schema version %d is newer than this binary knows (%d)", current, latest)
 	}
 	return nil
+}
+
+func migrationNumber(name string) (int, error) {
+	n, err := strconv.Atoi(strings.SplitN(path.Base(name), "_", 2)[0])
+	if err != nil {
+		return 0, fmt.Errorf("migration %s has no numeric prefix", name)
+	}
+	return n, nil
+}
+
+// latestVersion is the schema version the embedded migrations end at.
+func latestVersion(fsys fs.FS) (int, error) {
+	files, err := fs.Glob(fsys, "migrations/*.sql")
+	if err != nil {
+		return 0, err
+	}
+	latest := 0
+	for _, name := range files {
+		n, err := migrationNumber(name)
+		if err != nil {
+			return 0, err
+		}
+		latest = max(latest, n)
+	}
+	return latest, nil
 }

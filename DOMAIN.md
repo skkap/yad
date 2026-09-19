@@ -137,7 +137,7 @@ run is live in a session at a time. A session may move between accounts of its
 harness.
 _Avoid_: thread, conversation, chat — as names for this; Codex's "thread" is the
 native id underneath
-_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), `internal/store`
+_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), `internal/store`
 
 **Run** — one turn executed against one session, by one harness, on one model:
 one prompt in, one terminal state out. The unit of work claimed, streamed and
@@ -168,7 +168,7 @@ a question or uses host tools has none.
 kept between its runs, reclaimed after it closes. Built from the sources, or
 empty when there are none.
 _Avoid_: workspace — the tenant in Zumino and in Multica
-_See_: [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md), `internal/workdir`
+_See_: [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md), [0032](docs/decisions/0032-a-workdir-belongs-to-its-session.md), `internal/workdir`
 
 **Setup hook** — a repository's own `.worktree/setup`, which YAD runs in a new
 workdir with the `WT_*` variables, exactly as `gpiwt` does. Optional; a repo
