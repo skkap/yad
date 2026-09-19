@@ -657,8 +657,11 @@ line here is a reviewed change.
   conformance suite is the same tests pointed at a URL.
 - **End to end** (`cmd/yad/e2e_test.go`): the commands an operator types —
   token, connect, daemon, submit, watch, cancel, interrupt — against `yad hub`
-  in process, with the Claude adapter driving the test binary as a fake
-  `claude`. A run succeeds; the network drops mid-run and every event and the
+  in process, with a real adapter driving the test binary as its harness. Every
+  path runs once per harness (`e2e_harness_test.go`): the Claude adapter
+  against a fake `claude`, the Codex adapter against the fake `codex
+  app-server`, which for these tests also keeps a rollout per thread as codex
+  does, so a resume finds the thread before it or is refused. A run succeeds; the network drops mid-run and every event and the
   result still land; the runner restarts mid-run and the run is reported lost,
   with its events delivered, and the next run resumes its session in the same
   workdir; two runs in one session, the second answering from the first's
@@ -668,16 +671,18 @@ line here is a reviewed change.
   three real stop signals and drains, cancels, or exits; `yad hub drain`
   drains a runner, which exits by itself; a run with a git source — a bare
   repository on disk inside the owner's root — is checked out, its setup hook
-  writes a file, and the harness answers with what it read there. Codex has
-  one of its own (`e2e_codex_test.go`), the test binary started as `codex`: a
-  run in a new session pins Codex's thread, the next resumes it, a lost
-  rollout fails `resume_rejected`, and an interrupt ends a run cancelled.
+  writes a file, and the harness answers with what it read there. One runner
+  with both harnesses drives a run of each at once. And Codex's recorded
+  resume, missing rollout and interrupt play as recorded
+  (`e2e_codex_test.go`).
   `internal/workdir`'s tests use local bare repositories, and a loopback TLS
   server for a remote that asks for a password or never answers.
 - **Real harnesses** only behind `//go:build realharness` and
-  `YAD_REAL_HARNESS=1`, run by hand — and `make smoke`, the same path as the
-  end-to-end tests with the real `claude`, the built binary and `yad hub
-  serve` (`scripts/smoke.sh`; a few cents of haiku).
+  `YAD_REAL_HARNESS=1`, run by hand — and `make smoke` and `make
+  smoke-codex`, the same path as the end-to-end tests with the real `claude`
+  or `codex`, the built binary and `yad hub serve` (`scripts/smoke.sh
+  <harness>`; a few cents of haiku or gpt-5.6-luna, `SMOKE_MODEL` to change
+  it).
 - Table-driven, `t.Setenv`, `t.TempDir`, no assertion library; `-race` always.
 
 ## §8 Security

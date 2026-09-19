@@ -71,8 +71,8 @@ const submitUsage = "usage: yad hub submit --harness h --model m [--context text
 func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hub submit", flag.ContinueOnError)
 	hf := addHubFlags(fs, g)
-	harness := fs.String("harness", "", "the harness to run, e.g. claude (required)")
-	model := fs.String("model", "", "the model to point it at, e.g. opus (required)")
+	harness := fs.String("harness", "", "the harness to run, e.g. claude or codex (required)")
+	model := fs.String("model", "", "the model to point it at, e.g. haiku for claude or gpt-5.6-luna for codex (required)")
 	contextText := fs.String("context", "", "context appended to the harness's system prompt")
 	contextFile := fs.String("context-file", "", "read the context from this file")
 	session := fs.String("session", "", "continue this session, which the hub already has")
