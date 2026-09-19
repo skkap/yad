@@ -16,7 +16,8 @@ type Capture struct {
 	// merged it into Stdout.
 	Stderr string
 	// TimedOut reports that ctx ended before the leader exited. The group was
-	// killed; nothing is left behind.
+	// killed — but a descendant that left it with setsid can still survive,
+	// for the reason Run describes below.
 	TimedOut bool
 	// Err is the leader's exit error, nil when it exited 0. Exit status is not
 	// success: the caller decides that from Stdout.

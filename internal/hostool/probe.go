@@ -68,19 +68,37 @@ func Detect(ctx context.Context) []Detected {
 	return out
 }
 
-func locate(t Tool) (string, bool) {
+// locate finds the tool's binary. The second return says whether the override
+// names something that is not there, which is the owner's mistake to hear about
+// rather than a machine that simply has no docker: falling through to PATH
+// would hide a mistyped override behind "no docker here".
+func locate(t Tool) (path string, misconfigured bool) {
 	if path := os.Getenv(t.EnvPath); path != "" {
-		return path, true
+		if _, err := os.Stat(path); err != nil {
+			return "", true
+		}
+		return path, false
 	}
+	// LookPath, unlike the override above, already checks the file is there and
+	// can be executed.
 	path, err := exec.LookPath(t.Binary)
-	return path, err == nil
+	if err != nil {
+		return "", false
+	}
+	return path, false
 }
 
 func probeOne(ctx context.Context, t Tool) Detected {
 	d := Detected{ID: t.ID}
 
-	path, ok := locate(t)
-	if !ok {
+	path, misconfigured := locate(t)
+	switch {
+	case misconfigured:
+		// Not present: `present` means the binary was found, and a path that
+		// names nothing did not find one.
+		d.Error = t.EnvPath + " names a file that is not there — point it at the " + t.Binary + " binary, or unset it and let PATH decide"
+		return d
+	case path == "":
 		return d // absent, and that is not an error
 	}
 	d.Path, d.Present = path, true

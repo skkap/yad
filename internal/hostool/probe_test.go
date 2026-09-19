@@ -115,20 +115,22 @@ func isolate(t *testing.T, envPath, path string) {
 	t.Setenv(envPath, path)
 }
 
-// forgetGHLogin drops the remembered answer, so one test's gh is never
-// answered from another's. ageGHLogin backdates it, which is how a test reaches
-// the staleness limits without waiting for them.
+// forgetGHLogin drops what the last probe of gh left behind, so one test's gh
+// is never answered from another's. ageGHLogin backdates it, which is how a
+// test reaches the staleness limits without waiting for them.
 func forgetGHLogin() {
 	remembered.Lock()
 	defer remembered.Unlock()
-	remembered.at, remembered.in, remembered.hosts = time.Time{}, false, nil
+	remembered.ghMemory = ghMemory{}
 }
 
 func ageGHLogin(by time.Duration) {
 	remembered.Lock()
 	defer remembered.Unlock()
-	if !remembered.at.IsZero() {
-		remembered.at = remembered.at.Add(-by)
+	for _, t := range []*time.Time{&remembered.asked, &remembered.answered} {
+		if !t.IsZero() {
+			*t = t.Add(-by)
+		}
 	}
 }
 
@@ -248,9 +250,9 @@ func TestGHLoginState(t *testing.T) {
 	}
 }
 
-// A host gh knows of but cannot reach is not a host it is signed out of: the
+// A login gh could not confirm is not a login the machine does not have: the
 // runner did not find out, and says so rather than guessing.
-func TestGHUnreachableHostIsNotAnAnswer(t *testing.T) {
+func TestGHUnconfirmedLoginIsNotAnAnswer(t *testing.T) {
 	// gh's two non-success states. error is not safely "signed out" either: it
 	// covers an expired token and a host gh could not reach alike, and the two
 	// are told apart only by the message beside it, which is not read.
@@ -264,8 +266,19 @@ func TestGHUnreachableHostIsNotAnAnswer(t *testing.T) {
 			if d.LoggedIn != nil {
 				t.Errorf("LoggedIn = %v, want nothing claimed", *d.LoggedIn)
 			}
-			if !strings.Contains(d.Error, "could not reach") {
-				t.Errorf("Error = %q, want it to say the host was not reached", d.Error)
+			// gh gives a revoked token and an unreachable host the same
+			// state, so the report must not pick one — and must name the
+			// command that tells them apart.
+			if !strings.Contains(d.Error, "could not confirm") {
+				t.Errorf("Error = %q, want it to say the login was not confirmed", d.Error)
+			}
+			if !strings.Contains(d.Error, "gh auth status") {
+				t.Errorf("Error = %q, want the command that distinguishes the causes", d.Error)
+			}
+			for _, guess := range []string{"could not reach the host", "the token is expired", "the token has been revoked"} {
+				if strings.Contains(d.Error, guess) {
+					t.Errorf("Error = %q, want it not to assert one cause", d.Error)
+				}
 			}
 		})
 	}
@@ -366,7 +379,7 @@ func TestGHLoginIsAskedAgainWhenStale(t *testing.T) {
 // A gh that says nothing at all is not a gh that is signed out: claiming so
 // would route pull-request work away from a machine that may well do it.
 func TestGHSilenceIsNotAnAnswer(t *testing.T) {
-	swap(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{code: 1}, plain: answer{code: 1}})
+	install(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{code: 1}, plain: answer{code: 1}})
 	d := probe(t, "gh")
 	if d.LoggedIn != nil {
 		t.Errorf("LoggedIn = %v, want nothing claimed", *d.LoggedIn)
