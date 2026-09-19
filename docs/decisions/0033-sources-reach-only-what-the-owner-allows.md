@@ -1,4 +1,5 @@
 ---
+status: amended by 0038 — with no roots configured, the owner's home directory is the root
 date: 2026-09-19
 ---
 

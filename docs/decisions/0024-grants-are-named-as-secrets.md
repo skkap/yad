@@ -1,4 +1,5 @@
 ---
+status: superseded by 0038 — any valid name is accepted except PATH, HOME and the LD_*/DYLD_* loaders
 date: 2026-09-19
 ---
 

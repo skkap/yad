@@ -488,8 +488,8 @@ for `codex`); the suite never runs a real harness.
   accounts epic proves or kills it.**
 - **Detection**: Codex publishes `account/rateLimits/updated` with each window's
   use and reset; Claude reports a limit in its result with a reset time.
-- **On a limit**: mark the account limited until its reset → next free account in
-  owner order → resume the same session with a continuation turn. None free →
+- **On a limit**: mark the account limited until its reset → the free account
+  whose window resets soonest ([0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)) → resume the same session with a continuation turn. None free →
   the run becomes **waiting** with `resumes_at`, holds no process, and survives a
   restart. While every account of a harness is limited, the runner stops claiming
   for it.
@@ -697,18 +697,24 @@ line here is a reviewed change.
   `NODE_*`, `ANTHROPIC_*`, `IS_SANDBOX` …). `protocol/v1` checks it; a run
   carrying one that fails is refused by the hub and by the runner, never run
   with it stripped — [0024](docs/decisions/0024-grants-are-named-as-secrets.md).
+  Superseded by [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)
+  and changing with DEV-30: any valid name except `PATH`, `HOME`, `LD_*` and
+  `DYLD_*`.
   The service API never returns a grant.
 - Three secret kinds, never interchangeable: registration token, runner
   credential, admin token. The protocol accepts only the first two, the service
   API only the third.
 - Permission mode and sandbox are runner configuration per harness; no protocol
   field can set them — [0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md).
-- A hub is untrusted input; harness output is data. Neither is ever executed or
-  interpreted as an instruction to YAD.
+- The owner trusts the hubs it connects, so YAD does not police what a hub
+  sends ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)).
+  Hub input and harness output are still data to YAD itself: never executed,
+  never passed to a shell, never an instruction to the runner.
 - A run's sources are argv, never a shell: https and ssh only, no remote
   helpers, no leading `-`, no password in a URL, and nothing on the machine
   outside the owner's `[workdirs] roots` —
-  [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md).
+  [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md); with
+  no roots set they will default to the home directory (0038, DEV-30).
 - `claude -p` loads a repository's `.claude/settings.json` hooks and `.mcp.json`
   servers without a trust prompt. With auto-approve that is no worse than the run
   itself — which is exactly why a runner belongs on a machine you would let the

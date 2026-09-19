@@ -36,8 +36,11 @@ _See_: `internal/config`
 the runner protocol. A role, not a product — Zumino becomes a hub by embedding
 it, yashiki by embedding it or by using `yad hub`, which is the standalone one.
 _Avoid_: control plane, master, server, upstream, provider, dispatcher
-_Rules_: A hub is untrusted input. Nothing a hub sends can widen what the
-runner's owner configured.
+_Rules_: The owner trusts the hubs it connects: a hub writes the brief, and the
+brief can ask the harness for anything the machine allows, so YAD does not police
+what a hub sends ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)).
+What the owner configures (permission mode, sandbox, caps, accounts) no protocol
+field can set.
 _See_: [0003](docs/decisions/0003-hub-is-a-role-runner-is-multi-homed.md), `internal/hub`
 
 **Connection** — one runner's standing registration with one hub: the hub URL,
@@ -109,9 +112,12 @@ _Avoid_: driver, provider, backend, runtime
 _See_: [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md), `internal/adapter`
 
 **Account** — one harness login (subscription) on a runner, with its own harness
-home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`). Configured by the owner, in order, per
-harness. Hubs see an account's label and limit state, never its credentials.
-_See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md)
+home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), logged in by the harness's own login.
+Configured by the owner per harness; the free account whose window resets
+soonest takes the next run. An account is free, limited until a reset, or needs
+login. Hubs see an account's label, state and reset time, never its credentials.
+_See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
+[0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)
 
 **Usage limit** — a subscription window an account has exhausted: Claude's
 five-hour and weekly limits, Codex's primary and secondary windows. Has a reset
@@ -287,13 +293,7 @@ per run.
   account homes? Assumed by
   [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md);
   unverified. If not, a session is pinned to its account.
-- Do Anthropic's consumer terms allow failing over between several personal
-  subscriptions? Team or Enterprise seats and genuinely separate accounts are
-  different cases.
 - **Release** — handing a session back to its hub so it can resume on another
   runner (Anthropic's runners have it). Needs a transcript that moves; no consumer
   asks for it yet.
 - **Live** sessions: when, and what idle cost a runner accepts.
-- How Zumino hosts the hub half. Its current rules forbid an executor registry;
-  the operator called them temporary.
-- LINEMO is named as the first real use; nothing in the repos describes it yet.

@@ -1,4 +1,5 @@
 ---
+status: amended by 0039 — the soonest-resetting free account goes first, login is the harness's own, and the terms question is withdrawn
 date: 2026-09-18
 ---
 
@@ -28,6 +29,5 @@ in the hub's hands, and account names into the protocol.
 
 ## Consequences
 
-Anthropic's consumer terms may restrict using several personal subscriptions to
-avoid limits. Read them before automatic failover is relied on outside Team or
-Enterprise seats.
+Using several subscriptions is the owner's decision
+([0039](0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)).

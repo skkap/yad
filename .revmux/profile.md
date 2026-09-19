@@ -25,10 +25,11 @@ is measured against YAD's bar rather than a generic one.
 **A runner that silently does the wrong thing on someone else's machine is the
 worst outcome.** Most of what matters is a variation on that.
 
-- **A hub widening what the owner configured.** A protocol field, grant, control
-  or run spec that can set the permission mode, the sandbox, the harness's
-  environment (`LD_PRELOAD`, `ANTHROPIC_BASE_URL`, proxies), its argv, or a path
-  outside the workdir. Hub input is data, never instructions.
+- **A hub setting what the owner configures.** A protocol field, control or run
+  spec that can set the permission mode, the sandbox, capacity, caps or accounts.
+  The owner trusts its hubs (0038), so a hub may send any grant or brief, but
+  the machine's settings are the owner's alone. Hub input is still data to YAD:
+  never executed, never passed to a shell.
 - **A token leaving the machine or landing on disk wrongly.** A token or grant in
   a log line, an event, argv, `yad harnesses` output or an error message. A
   credential file that is not `0600`.
@@ -110,8 +111,9 @@ Report what is **material**, not merely true.
 - **Pull only.** Runners sync every 10–60 s at the hub's direction, and a run can
   start up to one interval after submit (0005; DEV-53 is the known follow-up).
 - **The registration token may be typed in argv** (0020); nothing else may.
-- **Grant names are restricted by shape and reservation** (0024), which refuses
-  some legitimate names such as `DATABASE_URL` until the owner allowlist (DEV-30).
+- **The owner trusts the hubs it connects** (0038). Hub-supplied grant names and
+  folder sources are not filtered for safety. That is by design, not a gap to
+  report.
 - **Lost is final**, even against a later `succeeded` from the runner (0023).
 - **Multica is read for shapes, never code** (0014). A missing Multica feature is
   not a defect.
