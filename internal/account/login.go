@@ -69,7 +69,13 @@ const statusOutputCap = 64 << 10
 // which is worse than no suggestion, because it looks like it worked. The
 // path is quoted so a home with a space in it survives the paste.
 func suggest(harness, binary, home string, args []string) string {
-	cmd := binary + " " + strings.Join(args, " ")
+	// The binary is quoted for the same reason the home is: it is a path yad
+	// resolved, not a word the reader typed, and a space or a $ in it makes
+	// the line mean something else when pasted.
+	cmd := shellQuote(binary)
+	for _, a := range args {
+		cmd += " " + a
+	}
 	env := Env(harness, home)
 	if len(env) == 0 {
 		return cmd

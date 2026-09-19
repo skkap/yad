@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -354,7 +355,7 @@ func TestATimedOutCheckIsNotAnAnswer(t *testing.T) {
 	// home variable, without which the paste reads the owner's own default
 	// home and answers about a different account.
 	// Single-quoted, not Go-quoted: a shell expands $ inside double quotes.
-	want := fmt.Sprintf("CODEX_HOME='%s' %s login status", home, bin)
+	want := fmt.Sprintf("CODEX_HOME='%s' '%s' login status", home, bin)
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("the next action is not the command yad ran:\n  want to contain: %s\n  got: %v", want, err)
 	}
@@ -374,12 +375,47 @@ func TestTheSuggestedCommandSurvivesAShell(t *testing.T) {
 		// What a POSIX shell would produce for the value, reconstructed the
 		// way sh unquotes it: everything between single quotes is literal,
 		// and '\'' is the one escape.
-		want := "CODEX_HOME='" + strings.ReplaceAll(home, "'", `'\''`) + "' /bin/codex login status"
+		want := "CODEX_HOME='" + strings.ReplaceAll(home, "'", `'\''`) + "' '/bin/codex' login status"
 		if got != want {
 			t.Errorf("suggest(%q) = %s, want %s", home, got, want)
 		}
 		if strings.Contains(got, `="`) {
 			t.Errorf("suggest(%q) double-quoted the home, so a shell would expand it: %s", home, got)
+		}
+	}
+}
+
+// The next-action command is read back by a real shell, not by this package's
+// idea of what a shell does.
+//
+// A Go test asserting Go's notion of quoting agrees with itself, which is how
+// the earlier version of this passed while emitting ”' where POSIX wants
+// '\”. Here sh parses the line and prints what it resolved, so the assertion
+// is about the thing an operator will actually paste. No token, no network.
+func TestTheSuggestedCommandIsReadBackByARealShell(t *testing.T) {
+	const binary = "/opt/co dex/bin/codex"
+	for _, home := range []string{
+		"/tmp/yad/$USER/home",
+		"/tmp/yad/with space/home",
+		"/tmp/yad/it's/home",
+		"/tmp/yad/back`tick/home",
+		`/tmp/yad/back\slash/home`,
+	} {
+		line := suggest("codex", binary, home, []string{"login", "status"})
+		// Swap the harness for a probe that prints what sh resolved, leaving
+		// the quoting of the environment assignment exactly as suggest wrote it.
+		probe := strings.Replace(line,
+			shellQuote(binary)+" login status",
+			`sh -c 'printf "%s|%s|%s" "$CODEX_HOME" "$1" "$2"' _ login status`, 1)
+		if probe == line {
+			t.Fatalf("the probe did not replace the command, so this proves nothing: %s", line)
+		}
+		out, err := exec.Command("sh", "-c", probe).Output()
+		if err != nil {
+			t.Fatalf("sh could not run %s: %v", probe, err)
+		}
+		if want := home + "|login|status"; string(out) != want {
+			t.Errorf("sh read\n  %s\nas %q, want %q", line, out, want)
 		}
 	}
 }

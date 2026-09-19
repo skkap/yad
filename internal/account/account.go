@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/skkap/yad/internal/config"
@@ -166,9 +167,10 @@ func link(from, to string) error {
 // as an error rather than a spin.
 const linkAttempts = 5
 
-// errRacedWhileLinking says another run changed the path mid-step. It is never
-// returned to a caller: link retries, and the goal-state check at the top of
-// the next attempt is what ends it.
+// errRacedWhileLinking says another run changed the path mid-step. link
+// normally absorbs it — it retries, and the goal-state check at the top of the
+// next attempt ends it — but it does reach a caller when every attempt loses,
+// which is why it reads as a sentence rather than as a marker.
 var errRacedWhileLinking = errors.New("another run is preparing this home")
 
 // linkOnce makes one attempt. keep is true for a failure retrying cannot
@@ -206,15 +208,22 @@ func linkOnce(from, to string) (keep bool, err error) {
 			}
 			return true, fmt.Errorf("%s is a directory of transcripts, not a link to %s — move it aside (its sessions can be copied into %s) and run this again", from, to, to)
 		}
-		// Still a real directory? Another run may have replaced it with the
-		// link since the Lstat above, and removing that would reopen the gap
-		// placeLink exists to close. Retrying instead ends at the goal-state
-		// check, with the link the other run already made.
-		if fi, err := os.Lstat(from); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		// rmdir rather than os.Remove, and no Lstat first: the kernel refuses
+		// rmdir on anything that is not a directory, so "remove it only if
+		// another run has not replaced it with the link" is one syscall
+		// instead of a check and an act with a gap between them. os.Remove
+		// would unlink a replacement symlink and reopen the gap placeLink
+		// exists to close, and an Lstat before it only narrows that window
+		// rather than closing it.
+		switch err := syscall.Rmdir(from); {
+		case err == nil, errors.Is(err, syscall.ENOENT):
+			// Gone, by us or by whoever got there first.
+		case errors.Is(err, syscall.ENOTDIR):
+			// Already a symlink: another run won. The goal-state check at the
+			// top of the next attempt ends this.
 			return false, errRacedWhileLinking
-		}
-		if err := os.Remove(from); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return false, err
+		default:
+			return false, &os.PathError{Op: "rmdir", Path: from, Err: err}
 		}
 	}
 	return false, placeLink(from, to)
