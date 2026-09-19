@@ -13,7 +13,7 @@ type Capabilities struct {
 	Arch             string          `json:"arch"`
 	Labels           []string        `json:"labels,omitempty"`
 	Harnesses        []HarnessReport `json:"harnesses"`
-	HostTools        []HostTool      `json:"host_tools,omitempty"`
+	HostTools        []HostTool      `json:"host_tools,omitempty" doc:"The non-harness tools a run may need, as they exist on this runner. A tool is usable when present is true and error is empty, and, for a tool that has a login, when logged_in is true as well. A tool that is missing or broken is reported rather than left out."`
 	Capacity         Capacity        `json:"capacity"`
 	ProtocolFeatures []string        `json:"protocol_features,omitempty"`
 	ObservedAt       time.Time       `json:"observed_at"`
@@ -51,22 +51,22 @@ type AccountReport struct {
 // container. A hub routing on a tool wants `present`, no `error`, and
 // `logged_in` where the tool has a login.
 type HostTool struct {
-	ID      string `json:"id"`
-	Present bool   `json:"present"`
-	Version string `json:"version,omitempty"`
+	ID      string `json:"id" doc:"The tool: git, gh or docker."`
+	Present bool   `json:"present" doc:"The binary was found on the runner. Present is not usable: see error and logged_in."`
+	Version string `json:"version,omitempty" doc:"The first line the tool prints for its version."`
 	// LoggedIn is nil when the tool has no notion of a login, and nil too when
 	// it has one and the runner could not find out — Error says why.
-	LoggedIn *bool `json:"logged_in,omitempty"`
+	LoggedIn *bool `json:"logged_in,omitempty" doc:"Whether the tool is signed in. Absent for a tool with no login, and for one whose login state the runner could not find out, where error says why."`
 	// LoginHost is the host the tool is signed in to — github.com, or a GitHub
 	// Enterprise hostname — so a hub can tell a runner that can reach its
 	// repositories from one that cannot. Never who it is signed in as: an
 	// account name is the machine owner's, not the hub's.
-	LoginHost string `json:"login_host,omitempty"`
+	LoginHost string `json:"login_host,omitempty" doc:"The host the tool is signed in to, such as github.com or a GitHub Enterprise hostname. Never the account it is signed in as."`
 	// Error is what is wrong with a tool that is installed: a probe that timed
 	// out, a binary that would not run, a Docker daemon that is not answering.
 	// It carries the next action, and it never stops a runner registering —
 	// absence and breakage are both facts a hub routes around.
-	Error string `json:"error,omitempty"`
+	Error string `json:"error,omitempty" doc:"What is wrong with a tool that is installed: a probe that timed out, a binary that would not run, a Docker daemon that is not answering. Carries the next action. A runner with one still registers."`
 }
 
 // Capacity is how many runs a runner executes at once: one pool, with the
