@@ -801,6 +801,40 @@ func TestUnnamedBranchesAreConnectionScoped(t *testing.T) {
 	}
 }
 
+// A path is checked against the roots again once its locks are held: the run
+// holding a directory above it may have swapped it for a link out of the
+// roots while this one waited.
+func TestPathRecheckedAfterTheWait(t *testing.T) {
+	f := newFixture(t)
+	project := filepath.Join(f.root, "project")
+	os.MkdirAll(project, 0o755)
+	outside := t.TempDir()
+	holder, _, err := f.prepare("a", v1.Source{Path: f.root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan error, 1)
+	go func() {
+		_, _, err := f.prepare("b", v1.Source{Path: project})
+		got <- err
+	}()
+	time.Sleep(3 * lockPoll)
+	// What the holder's harness does while b waits.
+	os.Remove(project)
+	if err := os.Symlink(outside, project); err != nil {
+		t.Fatal(err)
+	}
+	holder.Release()
+	select {
+	case err := <-got:
+		if class(err) != ClassSourceRefused {
+			t.Errorf("a path swapped for a link out of the roots: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the waiting run never finished")
+	}
+}
+
 // A tag on a commit no branch reaches is still a base.
 func TestTagOffEveryBranch(t *testing.T) {
 	f := newFixture(t)

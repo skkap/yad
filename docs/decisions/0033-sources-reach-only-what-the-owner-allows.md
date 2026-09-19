@@ -89,7 +89,9 @@ machine and every OS user contends for the same ones, and nothing is written
 into the owner's tree — exclusive on the source and shared on every directory
 above it, so a run on `/src` and one on `/src/app` wait for each other while
 `/src/app` and `/src/lib` run side by side. A run's own path sources may not
-nest. Several sources lie side by side under the
+nest, and each is resolved and checked against the roots again once its locks
+are held, since the run holding a directory above it could have swapped it for
+a link out of the roots while this one waited. Several sources lie side by side under the
 workdir, a path source as a symlink to where it lives; one repository twice in
 a run is refused, since both would take the session's one slot for it.
 

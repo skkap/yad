@@ -164,6 +164,18 @@ func (m *Manager) Prepare(ctx context.Context, req Request) (*Prepared, error) {
 			return nil, err
 		}
 		p.locks = append(p.locks, unlock)
+		// Checked again now they are held: while this run waited, the run
+		// holding a directory above one could have made it a symlink out of
+		// the roots. Held, nobody else may change them.
+		for i, path := range paths {
+			again, err := inRoots(fmt.Sprintf("path source %d", i), path, m.Roots)
+			if err == nil && again != path {
+				err = fmt.Errorf("path source %s changed while this run waited for it: it now resolves to %s", path, again)
+			}
+			if err != nil {
+				return nil, &Error{Class: ClassSourceRefused, Msg: err.Error()}
+			}
+		}
 	}
 	for _, it := range items {
 		if it.git == nil {
