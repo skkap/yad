@@ -140,9 +140,10 @@ _Kinds_: per_run (a fresh harness process per run — the default) | live (one
 process kept across runs — reserved, not built)
 _Rules_: A session lives on one runner and is resumable only there. At most one
 run is live in a session at a time. A session may move between accounts of its
-harness: its transcript is the whole of its state, it lives once in a directory
-every account home links to, and the conversation reconstructs from it alone —
-verified on both CLIs rather than assumed.
+harness: the transcript is the whole of the harness's side of it, it lives once
+in a directory every account home links to, and a home that never created the
+session rebuilds the conversation from it alone — measured on both CLIs rather
+than assumed.
 [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md) carries
 what was measured and what was not.
 A session **closes** — by its hub's word, its owner's, the idle TTL
