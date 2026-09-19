@@ -119,10 +119,12 @@ func writeJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-// truncate cuts to n bytes on a rune boundary. Bytes rather than runes because
-// the column it fills is a byte width, and on the boundary because these
-// strings carry em dashes: a byte cut mid-rune prints a replacement character
-// in the first diagnostic anyone runs on a new machine.
+// truncate shortens s to at most n bytes plus the ellipsis, cutting on a rune
+// boundary. The boundary is the point: these strings carry em dashes, and a
+// cut mid-rune prints a replacement character in the first diagnostic anyone
+// runs on a new machine. The cell it fills has no width of its own — tabwriter
+// sizes columns in runes from what they hold — so n is only this table's own
+// bound on one line, and the whole text is printed below the table anyway.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

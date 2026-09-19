@@ -249,7 +249,7 @@ func TestDoctorPrintsTheWholeHarnessError(t *testing.T) {
 			want: "error: Claude Code — `claude --version` exited with an error — run it on this machine to see why"},
 		{name: "a harness on PATH that will not start", viaPATH: true,
 			body: "#!/nonexistent/interpreter\n",
-			want: "error: Claude Code — claude is installed but will not run — check that the claude PATH resolves to is an executable file"},
+			want: "error: Claude Code — the claude on PATH will not start — run `claude --version` on this machine to see what stops it"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -283,6 +283,42 @@ func TestDoctorPrintsTheWholeHarnessError(t *testing.T) {
 				if strings.Contains(out, leak) {
 					t.Errorf("doctor printed %q:\n%s", leak, out)
 				}
+			}
+		})
+	}
+}
+
+// truncate's cut, pinned here rather than through a message: what doctor prints
+// is worded for its reader and has already moved once, so a case that happens
+// to straddle the boundary today would stop testing anything the next time
+// someone rewrites a sentence. A byte slice at the cut printed a replacement
+// character in the first diagnostic anyone runs on a new machine.
+func TestTruncateCutsOnARuneBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name, s, want string
+		n             int
+	}{
+		{name: "shorter than the cap", s: "claude 2.1.0", n: 40, want: "claude 2.1.0"},
+		{name: "exactly the cap", s: strings.Repeat("a", 40), n: 40, want: strings.Repeat("a", 40)},
+		// The em dash occupies bytes 10-12, so a cut at n-1 = 11 lands inside
+		// it — which is how the harness messages reached this function.
+		{name: "a rune across the cut", s: "installed — and broken", n: 12, want: "installed "},
+		{name: "the cut inside the first of many", s: "ab—cdefgh", n: 5, want: "ab"},
+		{name: "multibyte throughout", s: "日本語のバージョン", n: 8, want: "日本"},
+		// n-1 already starts a rune, so nothing is backed off.
+		{name: "the cut on a boundary", s: "ab—cdefgh", n: 6, want: "ab—"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncate(tc.s, tc.n)
+			want := tc.want
+			if len(tc.s) > tc.n {
+				want += "…"
+			}
+			if got != want {
+				t.Errorf("truncate(%q, %d) = %q, want %q", tc.s, tc.n, got, want)
+			}
+			if !utf8.ValidString(got) || strings.ContainsRune(got, utf8.RuneError) {
+				t.Errorf("truncate(%q, %d) = %q, which is not valid UTF-8", tc.s, tc.n, got)
 			}
 		})
 	}

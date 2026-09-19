@@ -123,14 +123,18 @@ func detectOne(ctx context.Context, h Harness) Detected {
 // work; what its owner needs is where to look, and an override's *name* is safe
 // where its value is the thing that leaks.
 //
-// The two are worded apart because only one of them may say "installed":
+// The two are worded apart because what is still worth checking differs.
 // locate does not stat an override, so a YAD_<ID>_PATH naming nothing at all
-// reaches here, while PATH has already proved the file is there and executable.
+// reaches here and the override itself is the thing to fix. LookPath has
+// already proved the other one exists and is executable, so telling its owner
+// to check that would send them to `ls -l` and a dead end: what is left is a
+// missing interpreter, a binary for another architecture, or this machine
+// failing to fork, and running it by hand is what tells them which.
 func wontStart(h Harness, fromEnv bool) string {
 	if fromEnv {
 		return fmt.Sprintf("%s does not name a %s this runner can start — point it at an executable %s, or unset it and let PATH decide", h.EnvPath, h.Binary, h.Binary)
 	}
-	return fmt.Sprintf("%s is installed but will not run — check that the %s PATH resolves to is an executable file", h.Binary, h.Binary)
+	return fmt.Sprintf("the %s on PATH will not start — run `%s %s` on this machine to see what stops it", h.Binary, h.Binary, strings.Join(h.VersionArgs, " "))
 }
 
 func wontAnswer(h Harness) string {

@@ -387,11 +387,11 @@ func TestStartFailureNamesNoPath(t *testing.T) {
 			wantNot: "is installed"},
 		// Found on PATH, so it must be executable to be found at all; what it
 		// cannot do is exec, because the interpreter it names is not there.
-		// "PATH" alone would not discriminate — it is a substring of
-		// YAD_CLAUDE_PATH, so a locate that mistook this for an override would
-		// still satisfy it.
 		{name: "on PATH, naming an interpreter that is gone", body: "#!/nonexistent/interpreter\n",
-			mode: 0o755, want: "PATH", wantAction: "executable file",
+			mode: 0o755, want: "PATH", wantAction: "run `claude --version` on this machine",
+			// LookPath has already proved this file executable, so an action
+			// saying to check that would be a dead end — and "PATH" alone
+			// would not discriminate, being a substring of YAD_CLAUDE_PATH.
 			wantNot: "YAD_CLAUDE_PATH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
