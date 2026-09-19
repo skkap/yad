@@ -75,8 +75,11 @@ type Runner struct {
 }
 
 type Session struct {
-	ID        string
-	Harness   string
-	RunnerID  sql.NullString
-	CreatedAt int64
+	ID               string
+	Harness          string
+	RunnerID         sql.NullString
+	CreatedAt        int64
+	CloseRequestedAt sql.NullInt64
+	ClosedAt         sql.NullInt64
+	CloseReason      sql.NullString
 }

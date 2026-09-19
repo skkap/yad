@@ -262,6 +262,35 @@ func cmdHubDrain(ctx context.Context, g global, args []string, stdout io.Writer)
 	return nil
 }
 
+// cmdHubCloseSession is `yad hub close-session`: the session takes no new
+// run, and its runner deletes its workdir. It prints where that stands.
+func cmdHubCloseSession(ctx context.Context, g global, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("hub close-session", flag.ContinueOnError)
+	hf := addHubFlags(fs, g)
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return errors.New("usage: yad hub close-session [--hub url] [--token-file f] <session>")
+	}
+	c, err := hf.client()
+	if err != nil {
+		return err
+	}
+	s, err := c.CloseSession(ctx, pos[0])
+	if err != nil {
+		return err
+	}
+	switch s.State {
+	case hubapi.SessionClosed:
+		fmt.Fprintf(stdout, "session %s is closed (%s)\n", s.SessionID, s.CloseReason)
+	default:
+		fmt.Fprintf(stdout, "session %s is closing: runner %s deletes its workdir at its next sync, once no run of it is held there\n", s.SessionID, s.RunnerID)
+	}
+	return nil
+}
+
 func follow(ctx context.Context, c *hubapiclient.Client, run hubapi.Run, w io.Writer) error {
 	p := &printer{w: w}
 	p.state(run)

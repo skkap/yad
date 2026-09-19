@@ -56,7 +56,7 @@ func TestLoadMissingIsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Capacity != DefaultCapacity || c.Sessions.IdleTTL.Duration != DefaultIdleTTL {
+	if c.Capacity != DefaultCapacity || c.Sessions.IdleTTL.Duration != DefaultIdleTTL || c.Sessions.DiskFloor != DefaultDiskFloor {
 		t.Errorf("defaults = %+v", c)
 	}
 }
@@ -86,7 +86,8 @@ url  = "https://ashikaga.tail.ts.net/yad/v1"
 cap  = 2
 
 [sessions]
-idle_ttl = "336h"
+idle_ttl   = "336h"
+disk_floor = "10GiB"
 
 [workdirs]
 roots = ["/home/me/src"]
@@ -103,6 +104,9 @@ roots = ["/home/me/src"]
 	}
 	if c.Harness["claude"].Accounts[1] != "family" || c.Connections[0].Cap != 2 || c.Sessions.IdleTTL.Duration != 336*time.Hour {
 		t.Errorf("loaded %+v", c)
+	}
+	if c.Sessions.DiskFloor != 10<<30 {
+		t.Errorf("disk_floor = %d, want 10 GiB", c.Sessions.DiskFloor)
 	}
 	if c.Supervise.Inactivity.Duration != DefaultInactivity {
 		t.Errorf("an unset section lost its default: %v", c.Supervise.Inactivity)
@@ -121,7 +125,7 @@ roots = ["/home/me/src"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Name != "ashikaga" || again.Harness["codex"].Sandbox != "danger-full-access" {
+	if again.Name != "ashikaga" || again.Harness["codex"].Sandbox != "danger-full-access" || again.Sessions.DiskFloor != 10<<30 {
 		t.Errorf("save/load lost data: %+v", again)
 	}
 	assertPrivate(t, p.ConfigFile())
@@ -134,6 +138,10 @@ func TestLoadRefuses(t *testing.T) {
 		"negative drain":    "[drain]\nwait = \"-1m\"\n",
 		"duplicate account": "[harness.claude]\naccounts = [\"a\", \"a\"]\n",
 		"bad duration":      "[sessions]\nidle_ttl = \"two weeks\"\n",
+		"negative idle ttl": "[sessions]\nidle_ttl = \"-1h\"\n",
+		"bad size":          "[sessions]\ndisk_floor = \"lots\"\n",
+		"negative size":     "[sessions]\ndisk_floor = \"-5GB\"\n",
+		"size overflow":     "[sessions]\ndisk_floor = \"99999999999TiB\"\n",
 		"connection no url": "[[connection]]\nname = \"x\"\n",
 		"relative root":     "[workdirs]\nroots = [\"src\"]\n",
 		"root is /":         "[workdirs]\nroots = [\"/\"]\n",
@@ -270,6 +278,30 @@ func TestCheckCredential(t *testing.T) {
 			t.Errorf("%s: %v, want %q", tc.name, err, tc.want)
 		case err != nil && strings.Contains(err.Error(), "yadrun_ab"):
 			t.Errorf("%s: the error carries the credential: %v", tc.name, err)
+		}
+	}
+}
+
+func TestByteSize(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want ByteSize
+		out  string
+	}{
+		{"0", 0, "0"},
+		{"5GiB", 5 << 30, "5GiB"},
+		{"500MB", 500e6, "500MB"},
+		{"1536 KiB", 1536 << 10, "1536KiB"},
+		{"2TB", 2e12, "2TB"},
+		{"123", 123, "123B"},
+	} {
+		var b ByteSize
+		if err := b.UnmarshalText([]byte(tc.in)); err != nil || b != tc.want {
+			t.Errorf("%q = %d, %v; want %d", tc.in, b, err, tc.want)
+			continue
+		}
+		if out, _ := b.MarshalText(); string(out) != tc.out {
+			t.Errorf("%d marshals as %q, want %q", b, out, tc.out)
 		}
 	}
 }

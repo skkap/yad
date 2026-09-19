@@ -89,6 +89,26 @@ components:
       required:
         - total
       type: object
+    ClosedSession:
+      additionalProperties: true
+      properties:
+        closed_at:
+          format: date-time
+          type: string
+        reason:
+          enum:
+            - closed
+            - closed_by_owner
+            - expired
+            - disk_pressure
+          type: string
+        session_id:
+          type: string
+      required:
+        - session_id
+        - reason
+        - closed_at
+      type: object
     Control:
       additionalProperties: true
       properties:
@@ -523,6 +543,10 @@ components:
       properties:
         capabilities:
           $ref: "#/components/schemas/Capabilities"
+        closed_sessions:
+          items:
+            $ref: "#/components/schemas/ClosedSession"
+          type: array
         fingerprint:
           type: string
         health:

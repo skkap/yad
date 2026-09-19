@@ -13,15 +13,28 @@ import (
 
 // Request is what the CLI asks.
 type Request struct {
-	Op string `json:"op"` // "status" or "stop"
+	Op string `json:"op"` // "status", "stop" or "close_session"
+	// Connection and Session name the session to close.
+	Connection string `json:"connection,omitempty"`
+	Session    string `json:"session,omitempty"`
 }
 
 // Response is the daemon's answer. Error carries the next action, as every
 // error here does.
 type Response struct {
-	Error  string  `json:"error,omitempty"`
-	PID    int     `json:"pid"`
-	Status *Status `json:"status,omitempty"`
+	Error  string        `json:"error,omitempty"`
+	PID    int           `json:"pid"`
+	Status *Status       `json:"status,omitempty"`
+	Closed *SessionClose `json:"closed,omitempty"`
+}
+
+// SessionClose is what `yad sessions close` did.
+type SessionClose struct {
+	// Outcome is closed, closing (once LiveRun ends), already_closed or
+	// unknown.
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason,omitempty"`
+	LiveRun string `json:"live_run,omitempty"`
 }
 
 // Status is everything `yad status` shows.

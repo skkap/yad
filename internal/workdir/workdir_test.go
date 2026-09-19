@@ -992,3 +992,128 @@ func TestReclaim(t *testing.T) {
 		t.Errorf("the reclaimed session's branch: %v", err)
 	}
 }
+
+// A reclaim gets past what a previous attempt, or the owner, already undid: a
+// worktree the cache has forgotten is plain files and no failure, and Prune
+// drops a cache entry whose directory was deleted by hand, so the branch it
+// held can be checked out again.
+func TestReclaimAfterPartialCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		undo func(t *testing.T, cache, dir string)
+	}{
+		{"the cache forgot the worktree", func(t *testing.T, cache, dir string) {
+			// What a worktree removed by an earlier attempt, and its files
+			// put back, looks like to the next one.
+			os.RemoveAll(filepath.Join(cache, "worktrees"))
+		}},
+		{"the workdir was deleted by hand", func(t *testing.T, cache, dir string) {
+			if err := os.RemoveAll(dir); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			o := newOrigin(t, f.root, "acme", map[string]string{"README": "x"})
+			p, _, err := f.prepare("s1", gitSource(o.bare, "", "b1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Release()
+			cache, _ := filepath.Glob(filepath.Join(f.m.Data, "repos", "acme-*.git"))
+			tc.undo(t, cache[0], p.Dir)
+
+			if err := f.m.Reclaim(context.Background(), "hub", "s1", p.Dir); err != nil {
+				t.Fatalf("reclaim: %v", err)
+			}
+			if err := f.m.Prune(context.Background()); err != nil {
+				t.Fatalf("prune: %v", err)
+			}
+			if wts := sh(t, cache[0], "git", "worktree", "list", "--porcelain"); strings.Count(wts, "worktree ") != 1 {
+				t.Errorf("the cache still lists the session's worktree:\n%s", wts)
+			}
+			if f.slots.held() != 0 {
+				t.Error("the session's slot was not freed")
+			}
+			if _, _, err := f.prepare("s2", gitSource(o.bare, "", "b1")); err != nil {
+				t.Errorf("the reclaimed session's branch: %v", err)
+			}
+		})
+	}
+}
+
+// One broken bare cache fails Prune and nothing else: every other cache is
+// still pruned, and a session's reclaim never sees it.
+func TestABrokenCacheBlocksOnlyPrune(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	o := newOrigin(t, f.root, "acme", map[string]string{"README": "x"})
+	gone, _, err := f.prepare("gone", gitSource(o.bare, "", "b1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone.Release()
+	if err := os.RemoveAll(gone.Dir); err != nil {
+		t.Fatal(err)
+	}
+	p, _, err := f.prepare("s1", gitSource(o.bare, "", "b2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	broken := filepath.Join(f.m.Data, "repos", "aaa-broken.git")
+	if err := os.MkdirAll(broken, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.m.Reclaim(ctx, "hub", "s1", p.Dir); err != nil {
+		t.Errorf("a broken cache failed an unrelated reclaim: %v", err)
+	}
+	if err := f.m.Prune(ctx); err == nil || !strings.Contains(err.Error(), "aaa-broken.git") {
+		t.Errorf("prune = %v, want the broken cache named", err)
+	}
+	cache, _ := filepath.Glob(filepath.Join(f.m.Data, "repos", "acme-*.git"))
+	if wts := sh(t, cache[0], "git", "worktree", "list", "--porcelain"); strings.Contains(wts, gone.Dir) {
+		t.Errorf("the good cache was not pruned past the broken one:\n%s", wts)
+	}
+}
+
+// A worktree that will not come out keeps its slots: freed, they would go to
+// the next worktree of the repository while this one is still registered,
+// and two setup hooks would derive the same ports.
+func TestAFailedRemovalKeepsTheSlot(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", map[string]string{"README": "x"})
+	p, _, err := f.prepare("s1", gitSource(o.bare, "", "b1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// git as it behaves with another process's lock on the worktree: the
+	// removal fails and the worktree stays registered.
+	wrapper := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = remove ] && { echo 'fatal: index.lock exists' >&2; exit 128; }; done\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.m.Git = wrapper
+
+	if err := f.m.Reclaim(context.Background(), "hub", "s1", p.Dir); err == nil {
+		t.Fatal("reclaim succeeded with the worktree still registered")
+	}
+	if f.slots.held() != 1 {
+		t.Errorf("%d slots held after a failed removal, want the session's 1", f.slots.held())
+	}
+	f.m.Git = real
+	if err := f.m.Reclaim(context.Background(), "hub", "s1", p.Dir); err != nil {
+		t.Fatalf("the retry: %v", err)
+	}
+	if f.slots.held() != 0 {
+		t.Error("the retry did not free the slot")
+	}
+}

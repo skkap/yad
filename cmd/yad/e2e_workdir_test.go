@@ -125,6 +125,26 @@ func TestE2EGitSourceAndSetupHook(t *testing.T) {
 	if b, err := exec.Command(git, "-C", sess.Workdir, "branch", "--show-current").Output(); err != nil || strings.TrimSpace(string(b)) != "e2e/hooked" {
 		t.Errorf("the workdir is on %q, %v", b, err)
 	}
+
+	// Closed from the hub, the session gives everything back: the worktree
+	// leaves its bare cache, its WT_SLOT is free, and the directory goes.
+	caches, _ := filepath.Glob(filepath.Join(m.p.data, "repos", "*.git"))
+	if len(caches) != 1 {
+		t.Fatalf("bare caches: %v", caches)
+	}
+	m.ok("hub", "close-session", "--hub", m.service, sess.ID)
+	eventually(t, "the session's workdir is reclaimed", func() bool {
+		_, err := os.Stat(sess.Workdir)
+		return os.IsNotExist(err)
+	})
+	wts, err := exec.Command(git, "-C", caches[0], "worktree", "list", "--porcelain").Output()
+	if err != nil || strings.Count(string(wts), "worktree ") != 1 {
+		t.Errorf("the bare cache still has the session's worktree (%v):\n%s", err, wts)
+	}
+	var slots int
+	if err := s.DB.QueryRow("SELECT count(*) FROM slots WHERE session_id = ?", sess.ID).Scan(&slots); err != nil || slots != 0 {
+		t.Errorf("the session still holds %d WT_SLOTs (%v)", slots, err)
+	}
 }
 
 func samePath(a, b string) bool {

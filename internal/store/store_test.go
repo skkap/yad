@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/skkap/yad/internal/store/db"
 )
@@ -193,6 +194,36 @@ func TestOpenReadOnly(t *testing.T) {
 		if ro, err := OpenReadOnly(ctx, file); err == nil {
 			ro.Close()
 			t.Errorf("opened a database at schema %d", v)
+		}
+	}
+}
+
+// Migrations are numbered in the order they merge, with no gap and no number
+// used twice: 0002_session_sources (git sources) merged before
+// 0003_session_collection, and a file numbered below the latest would be
+// skipped by every database already past it.
+func TestMigrationNumbering(t *testing.T) {
+	if err := CheckNumbering(migrations); err != nil {
+		t.Error(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		files   []string
+		retired []int
+		ok      bool
+	}{
+		{"contiguous", []string{"0001_a.sql", "0002_b.sql"}, nil, true},
+		{"a gap", []string{"0001_a.sql", "0003_b.sql"}, nil, false},
+		{"a retired gap", []string{"0001_a.sql", "0003_b.sql"}, []int{2}, true},
+		{"a retired number used", []string{"0001_a.sql", "0002_b.sql", "0003_c.sql"}, []int{2}, false},
+		{"a number taken twice", []string{"0001_a.sql", "0002_b.sql", "0002_c.sql"}, nil, false},
+	} {
+		fsys := fstest.MapFS{}
+		for _, f := range tc.files {
+			fsys["migrations/"+f] = &fstest.MapFile{Data: []byte("SELECT 1;")}
+		}
+		if err := CheckNumbering(fsys, tc.retired...); (err == nil) != tc.ok {
+			t.Errorf("%s: %v", tc.name, err)
 		}
 	}
 }

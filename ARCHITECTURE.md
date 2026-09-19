@@ -133,7 +133,8 @@ plain-text 404 or 405.
     health: { load, free_capacity: {total, by_harness}, disk_free_bytes,
               harnesses: [{id, ready, accounts: [{label, limited_until?}]}],
               spool_depth, outbox_depth, recent_errors[], draining? },
-    runs: [{ run_id, state, resumes_at?, reason? }] }   // every run held
+    runs: [{ run_id, state, resumes_at?, reason? }],    // every run held
+    closed_sessions: [{ session_id, reason, closed_at }] }  // until answered
 ← { next_sync_ms, lease_ms,
     runs: [Run],                                  // never more than free capacity
     controls: [{ kind, run_id?, session_id?, text? }],
@@ -154,6 +155,13 @@ plain-text 404 or 405.
   repeats it until a sync's health says `draining`. A draining runner declares
   no free capacity, keeps listing what it holds and is offered nothing; it
   exits once its runs have ended.
+- **Closing sessions** — [0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md).
+  A runner advertising `close_session` lists every session it closed —
+  `reason` is `closed`, `closed_by_owner`, `expired` or `disk_pressure` — in
+  each sync until one carrying it is answered. A hub sends `close_session` only
+  to such a runner and repeats it until the session appears there; a session
+  with a run held closes when that run ends. A run offered in a closed or
+  closing session is refused with class `session_closed`.
 - **Claim by listing.** A run offered in a sync response is claimed when the
   runner lists it in its next sync. An offered run that the next sync does not
   list was never received, and the hub offers it again. The runner takes the
@@ -265,6 +273,8 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `POST /runs/{run}/interrupt` | an `interrupt` control for a held run; 409 before it starts |
 | `POST /runs/{run}/steer` | a `steer` control with `{text}` for a held run, sent once; 409 before it starts |
 | `POST /runners/{runner}/drain` | a `drain` control, repeated until the runner says it is draining; 409 for a runner without the `drain` feature |
+| `GET /sessions/{session}` | the session: its runner, and `open`, `closing` or `closed` with the reason |
+| `POST /sessions/{session}/close` | a session no runner holds closes here, its unstarted runs cancelled; a held one gets `close_session` until its runner reports it closed; 409 for a runner without the `close_session` feature. A closing or closed session takes no new run |
 
 ## §3 Running a harness
 
@@ -392,8 +402,10 @@ harness process. Recording new ones is a manual step, behind a build tag
   Neither moves the pointer or closes the session; the hub decides —
   [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md).
 - **One live run per session**, enforced by the store. A run continuing a
-  session this runner does not hold, of another harness, or closed, is refused
-  at the claim (`refused`, [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md)).
+  session this runner does not hold, or of another harness, is refused at the
+  claim (`refused`, [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md));
+  one in a closed or closing session with `session_closed`
+  ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md)).
 - **Workdir** per session under `<data>/workdirs/<connection>/<session>/`, kept
   across its runs and never deleted by one —
   [0032](docs/decisions/0032-a-workdir-belongs-to-its-session.md). The session
@@ -425,10 +437,20 @@ harness process. Recording new ones is a manual step, behind a build tag
   ([0034](docs/decisions/0034-a-failing-setup-hook-fails-the-run.md)).
   Slots are allocated per repository per runner, from 1, and recycled when a
   workdir is reclaimed (`workdir.Manager.Reclaim`).
-- **Reclaiming** — [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md):
-  on `close_session`, on the idle TTL (default 14 days, reported as expired), and
-  oldest-idle-first under disk pressure. A first collection after an upgrade
-  treats a missing timestamp as unknown, never as ancient.
+- **Reclaiming** — [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md),
+  [0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md):
+  on `close_session`, on the owner's `yad sessions close`, on the idle TTL
+  (default 14 days, reported as expired), and oldest-idle-first while the disk
+  under `<data>/workdirs` is below `sessions.disk_floor` (default 5 GiB; a
+  session idle under an hour is spared). Never a session with a run held,
+  waiting ones included: its close waits for the run to end. The close is
+  recorded first and the workdir removed by the collector's sweep —
+  `workdir.Manager.Reclaim` first takes its worktrees out of their bare caches
+  and frees its slots — which retries a removal that failed and touches
+  nothing outside `<data>/workdirs`.
+  A missing last-used timestamp is unknown, never ancient: the TTL counts from
+  the sweep that first sees it. Every close goes to the session's hub in
+  `closed_sessions`.
 
 ### Accounts and usage limits
 
@@ -492,7 +514,8 @@ url  = "https://ashikaga.tail.ts.net/yad/v1"
 cap  = 2
 
 [sessions]
-idle_ttl = "336h"
+idle_ttl   = "336h"   # close sessions idle this long; "0s" keeps them — 0035
+disk_floor = "5GiB"   # below this free under the workdirs, idle sessions go; "0" is off
 
 [drain]
 wait = "30m"   # how long a drain lets runs finish before cancelling them — 0029
@@ -533,7 +556,9 @@ yad status [--json]                connections, capacity, runs, sessions and rec
                                    errors — via the socket
 yad sessions [--json]              the sessions held: workdir, runs, last use — read
                                    from state.db read-only, so the daemon may be down
-yad sessions close <id>            (DEV-18)
+yad sessions close [--connection c] <id>
+                                   close a session and reclaim its workdir, via the
+                                   daemon; one with a run held closes when it ends
 yad account add|list|use|remove
 yad service install|uninstall|status
                                    launchd user agent, systemd user unit (0028)
@@ -548,6 +573,8 @@ yad hub interrupt <run>            end a run's turn, keep its session
 yad hub steer <run> <text | ->     add input to a running turn
 yad hub drain <runner>             the runner takes no new runs, finishes those it
                                    holds and exits
+yad hub close-session <session>    the session takes no new run; its runner deletes
+                                   its workdir
 yad hub admin-token create|list|revoke
                                    the service API's tokens; create saves to a 0600
                                    file and prints nothing secret (--out - prints once)

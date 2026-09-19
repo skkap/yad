@@ -47,16 +47,21 @@ type Run struct {
 }
 
 type Session struct {
-	Connection string
-	ID         string
-	Harness    string
-	NativeID   sql.NullString
-	Account    sql.NullString
-	Workdir    string
-	State      string
-	CreatedAt  int64
-	LastUsedAt int64
-	Sources    sql.NullString
+	Connection       string
+	ID               string
+	Harness          string
+	NativeID         sql.NullString
+	Account          sql.NullString
+	Workdir          string
+	State            string
+	CreatedAt        int64
+	LastUsedAt       int64
+	Sources          sql.NullString
+	CloseReason      sql.NullString
+	CloseRequestedAt sql.NullInt64
+	ClosedAt         sql.NullInt64
+	ReclaimedAt      sql.NullInt64
+	ReportedAt       sql.NullInt64
 }
 
 type Slot struct {

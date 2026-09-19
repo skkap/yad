@@ -22,7 +22,7 @@ import (
 // no-port rule (decision 0004) binds runners, not hubs.
 func cmdHub(ctx context.Context, g global, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: yad hub serve | token create | admin-token create|list|revoke | submit | watch <run> | cancel <run> | interrupt <run> | steer <run> <text> | drain <runner>")
+		return errors.New("usage: yad hub serve | token create | admin-token create|list|revoke | submit | watch <run> | cancel <run> | interrupt <run> | steer <run> <text> | drain <runner> | close-session <session>")
 	}
 	switch args[0] {
 	case "serve":
@@ -39,8 +39,10 @@ func cmdHub(ctx context.Context, g global, args []string, stdout, stderr io.Writ
 		return cmdHubControl(ctx, g, args[0], args[1:], stdout)
 	case "drain":
 		return cmdHubDrain(ctx, g, args[1:], stdout)
+	case "close-session":
+		return cmdHubCloseSession(ctx, g, args[1:], stdout)
 	default:
-		return fmt.Errorf("unknown hub subcommand %q — use serve, token, admin-token, submit, watch, cancel, interrupt, steer or drain", args[0])
+		return fmt.Errorf("unknown hub subcommand %q — use serve, token, admin-token, submit, watch, cancel, interrupt, steer, drain or close-session", args[0])
 	}
 }
 

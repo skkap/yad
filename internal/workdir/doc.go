@@ -3,6 +3,7 @@
 // the repository's own .worktree/setup hook with the WT_* contract, and WT_SLOT
 // allocation (ARCHITECTURE.md §3, decisions 0033 and 0034).
 //
-// Collection on close, idle TTL and disk pressure (decision 0011) is epic E4's
-// DEV-18, which calls Manager.Reclaim.
+// Collection on close, idle TTL and disk pressure (decisions 0011 and 0035)
+// is internal/runner's Collector, which calls Manager.Reclaim with the
+// manager the executor prepares with, before it deletes a workdir.
 package workdir

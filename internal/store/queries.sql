@@ -17,8 +17,66 @@ UPDATE sessions SET workdir = ?, last_used_at = ? WHERE connection = ? AND id = 
 -- name: SetSessionState :exec
 UPDATE sessions SET state = ?, last_used_at = ? WHERE connection = ? AND id = ?;
 
--- name: ListIdleSessions :many
-SELECT * FROM sessions WHERE state = 'open' AND last_used_at < ? ORDER BY last_used_at;
+-- Workdir collection (decision 0035). A run held (claimed, preparing,
+-- running, or waiting on a usage limit or its start time) keeps its session
+-- open whatever else is true: its workdir is in use. The close is one
+-- statement, so a claim cannot slip a run into the session between the check
+-- and the write; it answers 0 rows when a run is held or the session is not
+-- open. A reason already asked for while a run was held stands.
+-- name: CloseSession :execrows
+UPDATE sessions SET state = sqlc.arg(state), close_reason = COALESCE(close_reason, sqlc.arg(reason)), closed_at = sqlc.arg(now),
+  close_requested_at = NULL
+WHERE sessions.connection = sqlc.arg(connection) AND sessions.id = sqlc.arg(id) AND sessions.state = 'open'
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id
+    AND r.state IN ('claimed', 'preparing', 'running', 'waiting'));
+
+-- The first reason asked for stands: a hub's close repeated on every sync
+-- must not turn the owner's into the hub's.
+-- name: RequestSessionClose :exec
+UPDATE sessions SET close_requested_at = COALESCE(close_requested_at, sqlc.arg(now)),
+  close_reason = COALESCE(close_reason, sqlc.arg(reason))
+WHERE connection = sqlc.arg(connection) AND id = sqlc.arg(id) AND state = 'open';
+
+-- name: HeldRunInSession :one
+SELECT CAST(COALESCE((SELECT r.id FROM runs r WHERE r.connection = sqlc.arg(connection) AND r.session_id = sqlc.arg(id)
+  AND r.state IN ('claimed', 'preparing', 'running', 'waiting')), '') AS TEXT);
+
+-- name: SessionsCloseRequested :many
+SELECT * FROM sessions s WHERE s.state = 'open' AND s.close_requested_at IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
+    AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
+ORDER BY s.close_requested_at;
+
+-- A last-used stamp that is missing is unknown, never ancient: the idle TTL
+-- starts from when collection first saw the session. Multica's collector
+-- read a missing stamp as the epoch and reclaimed everything at once.
+-- name: StampUnknownLastUsed :execrows
+UPDATE sessions SET last_used_at = sqlc.arg(now) WHERE state = 'open' AND last_used_at <= 0;
+
+-- Open sessions nothing has run in since before idle_since, longest idle
+-- first: the idle TTL's and disk pressure's candidates. Disk pressure asks
+-- only for sessions with a workdir, since the rest free nothing and would
+-- fill its page.
+-- name: IdleSessions :many
+SELECT * FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < sqlc.arg(idle_since)
+  AND (sqlc.arg(with_workdir) = 0 OR s.workdir != '')
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
+    AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
+ORDER BY s.last_used_at, s.connection, s.id
+LIMIT sqlc.arg(max);
+
+-- name: UnreclaimedSessions :many
+SELECT * FROM sessions WHERE state != 'open' AND reclaimed_at IS NULL ORDER BY closed_at;
+
+-- name: SetSessionReclaimed :exec
+UPDATE sessions SET reclaimed_at = ? WHERE connection = ? AND id = ?;
+
+-- name: UnreportedClosedSessions :many
+SELECT * FROM sessions WHERE connection = sqlc.arg(connection) AND state != 'open' AND reported_at IS NULL
+ORDER BY closed_at, id LIMIT sqlc.arg(max);
+
+-- name: SetSessionReported :exec
+UPDATE sessions SET reported_at = ? WHERE connection = ? AND id = ? AND reported_at IS NULL;
 
 -- name: CreateRun :exec
 INSERT INTO runs (connection, id, session_id, harness, model, state, spec, created_at, updated_at)
@@ -137,6 +195,7 @@ UPDATE sessions SET last_used_at = ? WHERE connection = ? AND id = ?;
 -- the run live in it, if any.
 -- name: ListSessions :many
 SELECT s.connection, s.id, s.harness, s.native_id, s.workdir, s.state, s.created_at, s.last_used_at,
+  s.close_reason, s.close_requested_at, s.closed_at, s.reclaimed_at, s.reported_at,
   CAST(COALESCE((SELECT r.id FROM runs r
     WHERE r.connection = s.connection AND r.session_id = s.id
       AND r.state IN ('claimed', 'preparing', 'running', 'waiting')), '') AS TEXT) AS live_run,

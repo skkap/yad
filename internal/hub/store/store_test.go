@@ -12,6 +12,7 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/hub/store/db"
+	runnerstore "github.com/skkap/yad/internal/store"
 )
 
 var t0 = time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
@@ -215,5 +216,14 @@ func TestEnqueueHoldsTheSessionFlagToTheTruth(t *testing.T) {
 				t.Errorf("err = %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+// Hub migrations are numbered in the order they merge. 0002 was never used and
+// is retired: a file added under it now would be skipped by every hub database
+// already past it.
+func TestMigrationNumbering(t *testing.T) {
+	if err := runnerstore.CheckNumbering(migrations, 2); err != nil {
+		t.Error(err)
 	}
 }

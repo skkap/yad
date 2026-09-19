@@ -100,6 +100,21 @@ func (c *Client) Drain(ctx context.Context, runnerID string) (hubapi.Runner, err
 	return out, err
 }
 
+// CloseSession asks for a session to close: at once when no runner holds it,
+// otherwise at its runner's next sync once no run of it is held there.
+func (c *Client) CloseSession(ctx context.Context, sessionID string) (hubapi.Session, error) {
+	var out hubapi.Session
+	err := c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(sessionID)+"/close", struct{}{}, &out)
+	return out, err
+}
+
+// Session reads a session.
+func (c *Client) Session(ctx context.Context, sessionID string) (hubapi.Session, error) {
+	var out hubapi.Session
+	err := c.do(ctx, http.MethodGet, "/sessions/"+url.PathEscape(sessionID), nil, &out)
+	return out, err
+}
+
 // Events long-polls once for the events after the cursor, waiting up to wait
 // when there are none.
 func (c *Client) Events(ctx context.Context, runID string, after int64, wait time.Duration) (hubapi.EventPage, error) {

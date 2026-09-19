@@ -58,6 +58,11 @@ func (e *UnresponsiveError) Unwrap() error { return e.Err }
 // Ask sends one request to the profile's daemon. No daemon is ErrNotRunning;
 // one that is running and does not answer is an *UnresponsiveError.
 func Ask(ctx context.Context, p config.Paths, op string) (Response, error) {
+	return Send(ctx, p, Request{Op: op})
+}
+
+// Send is Ask with a whole request.
+func Send(ctx context.Context, p config.Paths, req Request) (Response, error) {
 	sock := p.Socket()
 	if err := CheckPath(sock); err != nil {
 		return Response{}, err
@@ -67,7 +72,7 @@ func Ask(ctx context.Context, p config.Paths, op string) (Response, error) {
 		ctx, cancel = context.WithTimeout(ctx, askTimeout)
 		defer cancel()
 	}
-	res, err := ask(ctx, sock, op)
+	res, err := ask(ctx, sock, req)
 	if err == nil {
 		if res.Error != "" {
 			return res, errors.New(res.Error)
@@ -84,7 +89,7 @@ func Ask(ctx context.Context, p config.Paths, op string) (Response, error) {
 	return Response{}, &UnresponsiveError{PID: pid, Err: err}
 }
 
-func ask(ctx context.Context, sock, op string) (Response, error) {
+func ask(ctx context.Context, sock string, req Request) (Response, error) {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", sock)
 	if err != nil {
@@ -94,7 +99,7 @@ func ask(ctx context.Context, sock, op string) (Response, error) {
 	if dl, ok := ctx.Deadline(); ok {
 		conn.SetDeadline(dl)
 	}
-	if err := json.NewEncoder(conn).Encode(Request{Op: op}); err != nil {
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return Response{}, err
 	}
 	var res Response
