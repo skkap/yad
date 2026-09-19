@@ -671,8 +671,12 @@ line here is a reviewed change.
 
 ## §7 Testing
 
-- **No test spends a token or touches the network.** Harness detection runs
-  against an empty `PATH`; adapters replay fixtures.
+- **No test spends a token or touches the network.** Harness and host-tool
+  detection run against an empty `PATH`; adapters replay fixtures. An empty
+  `PATH` is not the whole of it: a `YAD_*_PATH` override is consulted *before*
+  `PATH`, so a test that must reach no real binary clears those too. It passes
+  either way on a machine where none is set, which is what makes forgetting
+  invisible.
 - **Two fakes.** `internal/adapter/fake` plays a scripted run in memory, for
   runner and hub logic. Child-process behaviour — hangs, ignored `SIGTERM`,
   oversized lines, orphaned grandchildren — is tested by re-executing the test
