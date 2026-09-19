@@ -27,18 +27,19 @@ vocabulary is in [`DOMAIN.md`](DOMAIN.md), the shape and the protocol in
 ```
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
-Claude Code         ready       2.1.276 (Claude Code)  /Users/me/.local/bin/claude
-Codex               no adapter  codex-cli 0.147.0      /Users/me/.local/bin/codex
+Claude Code         ready       2.1.278 (Claude Code)  /Users/me/.local/bin/claude
+Codex               ready       codex-cli 0.147.0      /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 Cursor Agent        no adapter  2025.09.12-4852336     /Users/me/.local/bin/cursor-agent
 
 profile default — config /Users/me/.config/yad
-1 harness(es) this runner can be given work for.
+2 harness(es) this runner can be given work for.
 ```
 
-Claude Code is `ready`: it has an adapter. Codex becomes `ready` when its adapter
-lands in epic E5; until then a runner advertises it as recognised and refuses
-runs for it.
+Claude Code and Codex are `ready`: each has an adapter. The others are
+recognised — reported so the gap is visible, and refused as the target of a
+run. A Codex whose app-server protocol differs from the one this yad was built
+against is still `ready`, with a `warning:` line under the table saying so.
 
 ## Status
 
@@ -64,6 +65,13 @@ runner per trust domain: personal and work are two runners.
 Claude Code runs with `--permission-mode bypassPermissions` unless
 `permission_mode` under `[harness.claude]` in `config.toml` says otherwise.
 Claude refuses that mode as root; run the runner as an ordinary user.
+
+Codex runs with approval policy `never` and sandbox `danger-full-access` unless
+`approval` and `sandbox` under `[harness.codex]` say otherwise
+([0036](docs/decisions/0036-codex-runs-unsandboxed-and-never-asks-unless-the-owner-says.md)).
+`sandbox = "workspace-write"` keeps what Codex writes inside the run's workdir,
+and keeps it off the network, so a run cannot push or install. A policy that
+asks for approval is answered no: nobody is there to say yes.
 
 ## Run it as a service
 
