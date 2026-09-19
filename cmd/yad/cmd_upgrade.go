@@ -40,7 +40,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 
 	state := upgrade.Compare(buildinfo.Version, want)
 	if *check {
-		fmt.Fprintln(w, checkLine(state, want))
+		fmt.Fprintln(w, checkLine(state, want, *tag != ""))
 		return nil
 	}
 	// Only Behind is what a bare `yad upgrade` asks for. Replacing a binary
@@ -49,7 +49,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	// rather than do quietly; --force and an explicit --tag are the two ways
 	// of meaning it.
 	if *tag == "" && !*force && state != upgrade.Behind {
-		fmt.Fprintln(w, checkLine(state, want))
+		fmt.Fprintln(w, checkLine(state, want, false))
 		return nil
 	}
 
@@ -75,16 +75,27 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 }
 
 // checkLine is the one sentence that says where this build stands, and what
-// the owner would type next.
-func checkLine(state upgrade.State, tag string) string {
+// the owner would type next. named says the tag was given with --tag rather
+// than resolved: the sentence must not call it the newest release, and every
+// command it offers has to carry the tag, or it names one release and installs
+// another.
+func checkLine(state upgrade.State, tag string, named bool) string {
+	newest := ", the newest release"
+	install := "`yad upgrade --force`"
+	replace := "`yad upgrade`"
+	if named {
+		newest = ""
+		install = fmt.Sprintf("`yad upgrade --tag %s`", tag)
+		replace = install
+	}
 	switch state {
 	case upgrade.Behind:
-		return fmt.Sprintf("this build is older than %s — `yad upgrade` replaces it", tag)
+		return fmt.Sprintf("this build is older than %s — %s replaces it", tag, replace)
 	case upgrade.Ahead:
-		return fmt.Sprintf("this build is newer than %s, the newest release — `yad upgrade --force` installs it anyway", tag)
+		return fmt.Sprintf("this build is newer than %s%s — %s installs it anyway", tag, newest, install)
 	case upgrade.Unknown:
-		return fmt.Sprintf("this build carries no release version (%q), so there is nothing to compare — `yad upgrade --force` installs %s", buildinfo.Version, tag)
+		return fmt.Sprintf("this build carries no release version (%q), so there is nothing to compare — %s installs %s", buildinfo.Version, install, tag)
 	default:
-		return fmt.Sprintf("this build is %s, the newest release — `yad upgrade --force` fetches it again", tag)
+		return fmt.Sprintf("this build is %s%s — %s fetches it again", tag, newest, install)
 	}
 }

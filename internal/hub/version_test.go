@@ -28,6 +28,7 @@ func TestMeetsFloor(t *testing.T) {
 		{"0.4.0-rc1", "0.4.0", true},        // and a prerelease of it counts as it
 		{"dev", "0.4.0", true},              // an unstamped build is not refused
 		{"", "0.4.0", true},                 // nor a runner that reports nothing
+		{"4886173", "0.4.0", true},          // an all-decimal short SHA is not version 4886173
 		{"0.3.0", "later", true},            // nor anyone, on a floor nobody can read
 		{"0.3.0", "1.2.3.4", true},
 	} {
@@ -41,7 +42,7 @@ func TestValidateMinVersion(t *testing.T) {
 	for _, c := range []struct {
 		in string
 		ok bool
-	}{{"", true}, {"0.4.0", true}, {"v0.4.0", true}, {"0.4", true}, {"dev", false}, {"latest", false}, {"0.4.0.1", false}, {"0.x", false}} {
+	}{{"", true}, {"0.4.0", true}, {"v0.4.0", true}, {"0.4", true}, {"dev", false}, {"latest", false}, {"0.4.0.1", false}, {"0.x", false}, {"4886173", false}, {"4", false}} {
 		if err := ValidateMinVersion(c.in); (err == nil) != c.ok {
 			t.Errorf("ValidateMinVersion(%q) = %v, want ok=%v", c.in, err, c.ok)
 		}

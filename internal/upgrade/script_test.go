@@ -23,12 +23,13 @@ import (
 // ~/.local/bin. It proves nothing about a fresh Linux VM, a real `gh` login or
 // a real GitHub release.
 
-// ghStub answers the three calls the install script makes and records its
-// argv, so a test can say which calls happened.
+// ghStub answers the calls the install script makes and records its argv, so a
+// test can say which calls happened. It deliberately does not answer
+// `auth status`: the script must not gate on it, and a stub that answered it
+// would hide the day someone puts the gate back.
 const ghStub = `#!/bin/sh
 echo "$@" >>"$GH_LOG"
 case "$1 $2" in
-  "auth status") exit 0 ;;
   "release view") echo "$FAKE_TAG" ;;
   "release download")
     dir=
@@ -151,6 +152,12 @@ func TestInstallScriptPlacesTheBinary(t *testing.T) {
 	if !strings.Contains(stdout, "not on PATH") {
 		t.Errorf("stdout %q does not warn that the directory is not on PATH", stdout)
 	}
+	// `gh auth status` reports a problem with an account on *any* host, so a
+	// stale GitHub Enterprise entry would refuse an install that works. The
+	// real calls say what is wrong in gh's own words instead.
+	if strings.Contains(i.calls(), "auth status") {
+		t.Errorf("gh calls were %q — the install is gated on the login state of every host", i.calls())
+	}
 	// Nothing is staged in ~/.local/bin but the binary itself.
 	entries, err := os.ReadDir(filepath.Dir(i.installed()))
 	if err != nil {
@@ -195,6 +202,44 @@ func TestInstallScriptRefusesABadChecksum(t *testing.T) {
 			}
 			if got := read(t, i.installed()); got != "the yad that works" {
 				t.Errorf("~/.local/bin/yad holds %q, want the one that was working", got)
+			}
+		})
+	}
+}
+
+// gh takes several --pattern flags as alternatives and fails only when all of
+// them match nothing, so a release missing one asset is a success it has to
+// notice itself. Before it did, a missing checksums.txt died in awk's words
+// and a missing binary hashed to nothing and read as a checksum mismatch.
+func TestInstallScriptRefusesAnIncompleteRelease(t *testing.T) {
+	name := hostAsset(t)
+	bodies := map[string]string{name: "the release binary"}
+	for _, c := range []struct {
+		label, missing, want string
+	}{
+		{"no checksums.txt", ChecksumsName, "has no checksums.txt"},
+		{"no binary for this machine", name, "has no " + name},
+	} {
+		t.Run(c.label, func(t *testing.T) {
+			assets := map[string]string{name: bodies[name], ChecksumsName: checksums(bodies)}
+			delete(assets, c.missing)
+			i := newInstall(t, "v0.4.0", assets)
+
+			_, stderr, err := i.run()
+			if err == nil {
+				t.Fatal("install.sh installed from a release that was missing an asset")
+			}
+			if !strings.Contains(stderr, c.want) {
+				t.Errorf("stderr %q, want it to name what the release is missing (%q)", stderr, c.want)
+			}
+			if !strings.Contains(stderr, "nothing was installed") {
+				t.Errorf("stderr %q does not tell the operator nothing changed", stderr)
+			}
+			if !strings.Contains(stderr, "install:") {
+				t.Errorf("stderr %q is not the script's own refusal — it died in another tool's words", stderr)
+			}
+			if _, err := os.Stat(i.installed()); err == nil {
+				t.Error("it installed something anyway")
 			}
 		})
 	}

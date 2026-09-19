@@ -68,14 +68,28 @@ gh api -H "Accept: application/vnd.github.raw" \
 
 It puts `yad` in `~/.local/bin`, checks the release's SHA-256 before writing
 anything, and tells you if that directory is not on your `PATH`. Then
-`yad doctor`. `YAD_VERSION` pins a release and `YAD_INSTALL_DIR` moves where it
-lands.
+`yad doctor`.
+
+Fetch it with `gh` rather than `curl`: a `curl` carrying
+`Authorization: Bearer $(gh auth token)` puts the live token in `curl`'s argv,
+where `/proc` and `ps` hand it to every local account for the length of the
+request.
+
+`YAD_VERSION` pins a release and `YAD_INSTALL_DIR` moves where it lands. The
+assignment goes on `sh`, not on `gh` — a prefix applies to the one command it
+prefixes and does not cross the pipe:
+
+```bash
+gh api -H "Accept: application/vnd.github.raw" \
+  repos/skkap/yad/contents/scripts/install.sh | YAD_VERSION=v0.3.1 sh
+```
 
 Later, on your command and never on its own:
 
 ```bash
-yad upgrade --check   # what the newest release is; changes nothing
-yad upgrade           # fetch it, verify its checksum, then replace this binary
+yad upgrade --check       # what the newest release is; changes nothing
+yad upgrade               # fetch it, verify its checksum, then replace this binary
+yad upgrade --tag v0.3.1  # that release, newer or older — how a bad one is rolled back
 ```
 
 `yad upgrade` downloads to a temporary directory beside the installed binary,

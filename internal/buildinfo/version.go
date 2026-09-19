@@ -13,16 +13,23 @@ import (
 // equal, which is the smaller lie and the safer one.
 type Number [3]int
 
-// ParseNumber reads "v0.4", "0.4.1" or "v0.4.1-4-gabc1234"; missing components
-// are zero, and anything else is not a version number — "dev", the unstamped
-// default, among them.
+// ParseNumber reads "v0.4", "0.4.1" or "v0.4.1-4-gabc1234"; a missing third
+// component is zero, and anything else is not a version number — "dev", the
+// unstamped default, among them.
+//
+// A bare number is refused on purpose. The Makefile stamps with
+// `git describe --tags --always`, which falls back to a short SHA in a
+// checkout with no reachable tag — an untagged repository, or a shallow clone
+// — and about one short SHA in thirty is all decimal digits. Read as a version
+// it would be an enormous major, which is worse than unreadable: it makes the
+// build look newer than every release rather than unstamped.
 func ParseNumber(s string) (Number, bool) {
 	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
 	if i := strings.IndexAny(s, "-+"); i >= 0 {
 		s = s[:i]
 	}
 	parts := strings.Split(s, ".")
-	if len(parts) > 3 {
+	if len(parts) < 2 || len(parts) > 3 {
 		return Number{}, false
 	}
 	var n Number

@@ -334,6 +334,12 @@ func TestCompare(t *testing.T) {
 		{"v0.5.0", "v0.4.0", Ahead},              // --tag rolling back, or a tag not yet cut
 		{"v1.0.0", "v0.9.9", Ahead},
 		{"dev", "v0.4.0", Unknown}, // a `go build` in someone's checkout
+		// `git describe --tags --always` in a checkout with no reachable tag —
+		// an untagged repository, a shallow clone — stamps a short SHA, and
+		// about one in thirty of those is all decimal digits. Read as a
+		// version it would outrank every release and stop the upgrade.
+		{"4886173", "v0.4.0", Unknown},
+		{"7f2331c", "v0.4.0", Unknown},
 		{"", "v0.4.0", Unknown},
 		{"v0.4.0", "latest", Unknown}, // a tag that is not a version number
 	} {
