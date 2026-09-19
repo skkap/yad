@@ -490,6 +490,20 @@ for `codex`); the suite never runs a real harness.
   it under a second subscription is the part that stays untested.
   [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md) carries
   the steps and the line between the two.
+- **State**: an account is `free`, `limited` until a reset, or `needs_login`
+  (DOMAIN.md). It travels to every hub by label and state, in the capability
+  document and in every sync's health; the home and everything the harness
+  wrote in it never leave the machine.
+- **Needs login**: entered when a turn fails for a reason the harness does not
+  explain and the harness's own login check then says the home has no login —
+  never by reading the failure's wording, because Claude reports a missing
+  login and a bad model identically, both inside an object that says
+  `subtype: "success"`. A needs-login account is skipped for runs exactly as a
+  limited one is. The way back is the owner's: `yad account add` again.
+  Finishing a login remotely is backlog (DEV-57).
+- **No accounts is a state.** A harness the owner configured none for runs on
+  the harness's own default home and reports no accounts. It is never an error
+  that stops a runner registering.
 - **Detection**: Codex publishes `account/rateLimits/updated` with each window's
   use and reset; Claude reports a limit in its result with a reset time.
 - **On a limit**: mark the account limited until its reset → the free account
@@ -586,7 +600,13 @@ yad sessions [--json]              the sessions held: workdir, runs, last use �
 yad sessions close [--connection c] <id>
                                    close a session and reclaim its workdir, via the
                                    daemon; one with a run held closes when it ends
-yad account add|list|use|remove
+yad account add <harness> <label>  run the harness's own login in that account's
+                                   home, with the owner there; yad keeps no token
+yad account list [--json]          the accounts held, and each one's state
+yad account remove <harness> <label> [--yes]
+                                   delete that account's home and its login; the
+                                   shared transcripts are kept
+yad account use                    (with failover — DEV-28)
 yad service install|uninstall|status
                                    launchd user agent, systemd user unit (0028)
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1

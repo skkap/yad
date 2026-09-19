@@ -37,11 +37,35 @@ type HarnessReport struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// AccountReport is an account's public face: its label and whether it is at a
-// usage limit, and until when.
+// AccountState is what a hub may know about an account, and the whole of it.
+// The words are DOMAIN.md's: an account is free, limited until a reset, or
+// needs login.
+type AccountState string
+
+const (
+	// AccountFree takes runs.
+	AccountFree AccountState = "free"
+	// AccountLimited is at a usage limit until LimitedUntil.
+	AccountLimited AccountState = "limited"
+	// AccountNeedsLogin has a harness home but no working login in it: the
+	// owner has to run `yad account add` at the machine. Skipped for claiming
+	// exactly as a limited account is, and never an error that stops a runner
+	// registering.
+	AccountNeedsLogin AccountState = "needs_login"
+)
+
+// AccountStates lists the closed set.
+func AccountStates() []AccountState {
+	return []AccountState{AccountFree, AccountLimited, AccountNeedsLogin}
+}
+
+// AccountReport is an account's public face: its label, its state, and until
+// when a limit lasts. A label is not a secret and a credential is — nothing
+// else from an account's home is reportable, and none of it appears here.
 type AccountReport struct {
-	Label        string     `json:"label"`
-	LimitedUntil *time.Time `json:"limited_until,omitempty"`
+	Label        string       `json:"label"`
+	State        AccountState `json:"state" enum:"free,limited,needs_login"`
+	LimitedUntil *time.Time   `json:"limited_until,omitempty"`
 }
 
 // HostTool is a non-harness executable a run may need — gh, git, docker.

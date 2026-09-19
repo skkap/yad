@@ -16,6 +16,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter/codex"
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/config"
@@ -39,8 +40,12 @@ const FeatureDrain = "drain"
 const FeatureCloseSession = "close_session"
 
 // Build probes the machine and assembles the document from it and the owner's
-// config. Accounts and host tools are filled in by their packages as they land.
-func Build(ctx context.Context, runnerID string, cfg config.Config) v1.Capabilities {
+// config. Host tools are filled in by their package as it lands.
+//
+// accounts is the runner's accounts with their states, or nil when there are
+// none to report — a harness with no accounts runs on its own default home and
+// says so by reporting none, which is a state and not a failure.
+func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []account.Account) v1.Capabilities {
 	goos, goarch := harness.Platform()
 	name := cfg.Name
 	if name == "" {
@@ -62,7 +67,7 @@ func Build(ctx context.Context, runnerID string, cfg config.Config) v1.Capabilit
 		OS:               goos,
 		Arch:             goarch,
 		Labels:           sortedCopy(cfg.Labels),
-		Harnesses:        Harnesses(Detect(ctx), cfg),
+		Harnesses:        Harnesses(Detect(ctx), cfg, accounts),
 		Capacity:         caps,
 		ProtocolFeatures: Features(),
 		ObservedAt:       time.Now().UTC(),
@@ -86,8 +91,12 @@ func Detect(ctx context.Context) []harness.Detected {
 }
 
 // Harnesses turns detection into the public report, with the owner's accounts
-// by label. Only the fields a hub may see survive the translation.
-func Harnesses(found []harness.Detected, cfg config.Config) []v1.HarnessReport {
+// by label and state. Only the fields a hub may see survive the translation:
+// an account's home, and everything the harness wrote inside it, do not.
+//
+// An account the owner configured but the store has never seen is reported
+// free, so a label added to config.toml by hand works without a store write.
+func Harnesses(found []harness.Detected, cfg config.Config, accounts []account.Account) []v1.HarnessReport {
 	out := make([]v1.HarnessReport, 0, len(found))
 	for _, d := range found {
 		r := v1.HarnessReport{
@@ -95,8 +104,12 @@ func Harnesses(found []harness.Detected, cfg config.Config) []v1.HarnessReport {
 			Present: d.Present, Version: d.Version, Error: d.Error, Models: d.Models,
 			Warnings: d.Warnings,
 		}
-		for _, a := range cfg.Harness[d.ID].Accounts {
-			r.Accounts = append(r.Accounts, v1.AccountReport{Label: a})
+		if reps := account.Reports(accounts, d.ID); reps != nil {
+			r.Accounts = reps
+		} else {
+			for _, a := range cfg.Harness[d.ID].Accounts {
+				r.Accounts = append(r.Accounts, v1.AccountReport{Label: a, State: v1.AccountFree})
+			}
 		}
 		out = append(out, r)
 	}

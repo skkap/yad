@@ -14,6 +14,7 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/capability"
+	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
@@ -656,7 +657,56 @@ func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
 	if n, err := l.Store.OutboxDepth(ctx); err == nil {
 		h.OutboxDepth = int(n)
 	}
+	h.Harnesses = l.harnessHealth(ctx)
 	return h
+}
+
+// harnessHealth is every first-class harness with each of its accounts' live
+// state, so a hub can see why a runner is not claiming for one: an account
+// limited until a reset, or one whose login the owner has to finish, is a
+// reason, and having no accounts at all is not.
+//
+// The labels and their order come from the capability document, which is the
+// owner's config; the states come from the store, which is where a run that
+// has just failed to authenticate wrote one seconds ago. A document rebuilt on
+// its own slower tick would report the old state.
+func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
+	doc := l.Capabilities()
+	live := map[string]v1.AccountReport{}
+	if rows, err := l.Store.ListAllAccounts(ctx); err == nil {
+		for _, r := range rows {
+			rep := v1.AccountReport{Label: r.Label, State: v1.AccountState(r.State)}
+			if r.LimitedUntil.Valid {
+				t := time.UnixMilli(r.LimitedUntil.Int64).UTC()
+				rep.LimitedUntil = &t
+			}
+			live[r.Harness+"\x00"+r.Label] = rep
+		}
+	}
+	var out []v1.HarnessHealth
+	for _, hr := range doc.Harnesses {
+		if hr.Kind != string(harness.FirstClass) || !hr.Present {
+			continue
+		}
+		hh := v1.HarnessHealth{ID: hr.ID, Ready: true}
+		usable := 0
+		for _, a := range hr.Accounts {
+			rep := v1.AccountReport{Label: a.Label, State: v1.AccountFree}
+			if r, ok := live[hr.ID+"\x00"+a.Label]; ok {
+				rep = r
+			}
+			if rep.State == v1.AccountFree {
+				usable++
+			}
+			hh.Accounts = append(hh.Accounts, rep)
+		}
+		// No accounts means the harness runs on its own default home, which
+		// is ready; accounts that all need login or are limited mean it is
+		// not. Acting on that — declining to claim — is DEV-28's.
+		hh.Ready = len(hh.Accounts) == 0 || usable > 0
+		out = append(out, hh)
+	}
+	return out
 }
 
 // fatal is an answer no retry can change: the owner has to act.

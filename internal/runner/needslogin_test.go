@@ -1,0 +1,303 @@
+package runner
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/account"
+	"github.com/skkap/yad/internal/adapter"
+	"github.com/skkap/yad/internal/adapter/fake"
+
+	"context"
+)
+
+// The test binary doubles as claude for its login check: re-executed with
+// YAD_RUNNER_TEST_CLAUDE set, `auth status` answers in JSON the way claude
+// does, from the home it was pointed at. Nothing else about claude is faked
+// here — the turn itself is the in-memory adapter.
+func TestMain(m *testing.M) {
+	if os.Getenv("YAD_RUNNER_TEST_CLAUDE") != "" {
+		os.Exit(fakeClaudeAuth(os.Args[1:]))
+	}
+	os.Exit(m.Run())
+}
+
+func fakeClaudeAuth(args []string) int {
+	if strings.Join(args, " ") != "auth status" {
+		fmt.Fprintf(os.Stderr, "unexpected argv %q\n", args)
+		return 2
+	}
+	// A claude whose login check cannot answer: an older build without the
+	// subcommand, or one whose output shape moved.
+	if os.Getenv("YAD_RUNNER_TEST_CLAUDE") == "broken" {
+		fmt.Fprintln(os.Stderr, "unknown command: auth")
+		return 1
+	}
+	home := os.Getenv("CLAUDE_CONFIG_DIR")
+	_, err := os.Stat(filepath.Join(home, ".credentials.json"))
+	b, _ := json.Marshal(map[string]any{"loggedIn": err == nil, "email": "owner@example.com"})
+	fmt.Println(string(b))
+	return 0
+}
+
+// fakeClaudeBinary points the executor's login check at this test binary.
+// mode "broken" is a harness whose login check cannot answer at all.
+func fakeClaudeBinary(t *testing.T, x *Exec, mode ...string) {
+	t.Helper()
+	m := "1"
+	if len(mode) > 0 {
+		m = mode[0]
+	}
+	t.Setenv("YAD_RUNNER_TEST_CLAUDE", m)
+	// Without this each re-executed child sleeps a second at exit under -race.
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.Binary = func(string) (string, bool) { return bin, true }
+}
+
+func accountState(t *testing.T, e *env, label string) v1.AccountState {
+	t.Helper()
+	rows, err := e.store.ListAllAccounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Harness == "claude" && r.Label == label {
+			return v1.AccountState(r.State)
+		}
+	}
+	return ""
+}
+
+// The behaviour the whole state exists for: a turn that failed because the
+// account has no working login leaves the account in needs-login.
+//
+// The failure itself never says so — Claude reports a missing login with
+// is_error and terminal_reason "api_error" in the same object that says
+// subtype "success", and reports a bad model identically — so the harness's
+// own login check is what decides, not the wording.
+func TestAFailedTurnWithNoLoginMarksTheAccountNeedsLogin(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		credential   bool
+		class        string
+		before, want v1.AccountState
+	}{
+		{"no login behind an unexplained failure", false, adapter.ClassHarness, v1.AccountFree, v1.AccountNeedsLogin},
+		{"no login behind a harness that just exited", false, adapter.ClassHarnessExited, v1.AccountFree, v1.AccountNeedsLogin},
+		// A bad model fails the same way and must not cost the account its
+		// state: the login is there, so the check says so.
+		{"a failure with the login intact", true, adapter.ClassHarness, v1.AccountFree, v1.AccountFree},
+		// A usage limit says why it failed. Reading it as a login problem
+		// would hide DEV-27's state behind this one.
+		{"a usage limit is not a login problem", false, adapter.ClassUsageLimit, v1.AccountFree, v1.AccountFree},
+		{"a prompt that does not fit", false, adapter.ClassPromptTooLong, v1.AccountFree, v1.AccountFree},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			home, err := account.Ensure(e.paths.Data, "claude", "work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.credential {
+				if err := os.WriteFile(filepath.Join(home, ".credentials.json"), []byte("{}"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := account.SetState(ctx, e.store.Queries, "claude", "work", c.before, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			l := e.loop(t, 1)
+			e.enqueue(t, testRun("a", "s1"))
+			x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+				Outcome: adapter.Outcome{State: v1.RunFailed, Error: &v1.RunError{Class: c.class, Message: "it failed"}},
+			}))
+			fakeClaudeBinary(t, x)
+			claimAndRun(t, l, x)
+
+			if got := accountState(t, e, "work"); got != c.want {
+				t.Errorf("account state = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// An account already in needs-login is never given a run, so no run can take
+// it back out of that state. The way back is the owner's: `yad account add`
+// runs the harness's login again and re-checks. Remote completion is DEV-57.
+func TestNeedsLoginIsOnlyClearedByLoggingInAgain(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	home, err := account.Ensure(e.paths.Data, "claude", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The owner logged in by hand; the store has not heard.
+	if err := os.WriteFile(filepath.Join(home, ".credentials.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountNeedsLogin, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunSucceeded},
+	}))
+	fakeClaudeBinary(t, x)
+	claimAndRun(t, l, x)
+
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunFailed {
+		t.Fatalf("the run was given a needs-login account: %+v", res)
+	}
+	if got := accountState(t, e, "work"); got != v1.AccountNeedsLogin {
+		t.Errorf("account state = %q, want it to stand until the owner logs in", got)
+	}
+	if !strings.Contains(res.Error.Message, "yad account add claude work") {
+		t.Errorf("the failure does not name the way back: %q", res.Error.Message)
+	}
+}
+
+// A run that succeeded is never a reason to ask: the login obviously works.
+func TestASuccessfulRunLeavesTheAccountAlone(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountFree, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunSucceeded},
+	}))
+	fakeClaudeBinary(t, x)
+	claimAndRun(t, l, x)
+
+	if got := accountState(t, e, "work"); got != v1.AccountFree {
+		t.Errorf("a successful run moved the account to %q", got)
+	}
+}
+
+// Every hub hears which accounts need login, by label, in the health of every
+// sync — that is how an owner finds out from the hub's side that a runner is
+// not claiming.
+func TestHealthReportsNeedsLoginWithItsLabel(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountNeedsLogin, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	l := e.loop(t, 1)
+	doc := l.Capabilities()
+	doc.Harnesses[0].Accounts = []v1.AccountReport{
+		{Label: "personal", State: v1.AccountFree},
+		{Label: "work", State: v1.AccountFree},
+	}
+	l.Capabilities = func() v1.Capabilities { return doc }
+
+	h := l.health(ctx, l.Pool.Reserve())
+	if len(h.Harnesses) != 1 || h.Harnesses[0].ID != "claude" {
+		t.Fatalf("health harnesses = %+v", h.Harnesses)
+	}
+	got := map[string]v1.AccountState{}
+	for _, a := range h.Harnesses[0].Accounts {
+		got[a.Label] = a.State
+	}
+	if got["work"] != v1.AccountNeedsLogin {
+		t.Errorf("health says work is %q, want needs_login", got["work"])
+	}
+	// The state the store has never heard of is free, not missing.
+	if got["personal"] != v1.AccountFree {
+		t.Errorf("health says personal is %q, want free", got["personal"])
+	}
+	// One account still free means the harness is still ready.
+	if !h.Harnesses[0].Ready {
+		t.Error("a harness with one free account is reported not ready")
+	}
+	// The home and everything in it stays out of health.
+	b, err := json.Marshal(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), e.paths.Data) {
+		t.Errorf("health carries a path into the data directory: %s", b)
+	}
+}
+
+// Every account needing login makes the harness not ready, and the reason is
+// there by label. Declining to claim on it is DEV-28's.
+func TestAHarnessWhoseAccountsAllNeedLoginIsNotReady(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountNeedsLogin, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	l := e.loop(t, 1)
+	doc := l.Capabilities()
+	doc.Harnesses[0].Accounts = []v1.AccountReport{{Label: "work", State: v1.AccountFree}}
+	l.Capabilities = func() v1.Capabilities { return doc }
+
+	h := l.health(ctx, l.Pool.Reserve())
+	if len(h.Harnesses) != 1 || h.Harnesses[0].Ready {
+		t.Fatalf("harness health = %+v, want not ready", h.Harnesses)
+	}
+}
+
+// A harness with no accounts is ready: it runs on its own login, and having
+// none configured is a state rather than a failure.
+func TestAHarnessWithNoAccountsIsReady(t *testing.T) {
+	e := newEnv(t)
+	l := e.loop(t, 1)
+	h := l.health(context.Background(), l.Pool.Reserve())
+	if len(h.Harnesses) != 1 || !h.Harnesses[0].Ready {
+		t.Fatalf("harness health = %+v, want ready", h.Harnesses)
+	}
+	if len(h.Harnesses[0].Accounts) != 0 {
+		t.Errorf("accounts = %+v, want none", h.Harnesses[0].Accounts)
+	}
+}
+
+// A login check that cannot answer leaves the account exactly as it was.
+// Absence is data, and an unanswered question is not a "no": parking a working
+// account because `claude auth status` is missing from an older build would
+// stop the runner claiming for a reason that was never established.
+func TestALoginCheckThatCannotAnswerLeavesTheStateAlone(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountFree, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, logged := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunFailed, Error: &v1.RunError{Class: adapter.ClassHarness, Message: "it failed"}},
+	}))
+	fakeClaudeBinary(t, x, "broken")
+	claimAndRun(t, l, x)
+
+	if got := accountState(t, e, "work"); got != v1.AccountFree {
+		t.Errorf("an unanswered login check moved the account to %q", got)
+	}
+	// It is not silent about it either: the owner has to be able to find out.
+	if !strings.Contains(logged.String(), "could not check whether the account is still logged in") {
+		t.Errorf("nothing was logged about the check failing:\n%s", logged.String())
+	}
+}

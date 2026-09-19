@@ -10,8 +10,15 @@ components:
         limited_until:
           format: date-time
           type: string
+        state:
+          enum:
+            - free
+            - limited
+            - needs_login
+          type: string
       required:
         - label
+        - state
       type: object
     Ack:
       additionalProperties: true

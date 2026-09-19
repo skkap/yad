@@ -18,6 +18,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
@@ -444,10 +445,42 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassPrepare, err.Error())
 		return
 	}
+	// Which account the run uses, and the harness home it runs in. The
+	// owner's order decides; a limited account and one that needs login are
+	// skipped alike. A harness the owner gave no accounts runs on the
+	// harness's own default home, exactly as every installation did before
+	// accounts existed — no accounts is a state, not a failure.
+	acct, hasAccount, err := e.pickAccount(bg, run.Harness)
+	if err != nil {
+		// A run the runner will not take is refused (§2), not a preparation
+		// that went wrong: nothing was wrong with the run, and a hub may
+		// offer it to a runner whose accounts can take it.
+		fail(ClassRefused, err.Error())
+		return
+	}
+	var home string
+	if hasAccount {
+		if home, err = account.Ensure(e.Data, run.Harness, acct.Label); err != nil {
+			fail(ClassPrepare, "the account's harness home could not be prepared: "+err.Error())
+			return
+		}
+		env = append(env, account.Env(run.Harness, home)...)
+		e.setRunAccount(bg, c, acct.Label)
+		// The label and nothing else. Which account ran a turn is how an
+		// owner tells two subscriptions' work apart, and the label is the
+		// only thing about an account that may leave this machine.
+		ev := v1.Event{Kind: v1.EventStatus, Status: "account", Text: acct.Label}
+		if e.spool(bg, c, &ev, lastSeq+1) {
+			lastSeq = ev.Seq
+			e.report(c.Connection)
+		}
+		log = log.With("account", acct.Label)
+	}
+
 	spec := adapter.Spec{
 		RunID: run.RunID, Model: run.Model, Workdir: prep.Dir,
 		SessionID: run.Session.ID, NativeSessionID: native, Brief: run.Brief,
-		Env: env, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
+		Home: home, Env: env, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
 	}
 
 	if stoppedEarly() {
@@ -494,6 +527,9 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	res := e.result(out, w, started)
 	if res.Error != nil {
 		res.Error.Class = hubClass(res.Error.Class, spec.NativeSessionID != "")
+	}
+	if hasAccount {
+		e.checkLogin(bg, acct, bin, res, log)
 	}
 	if res.State == v1.RunCancelled && w.cancelled {
 		res.Error = runnerStopped(a.stoppedByRunner())

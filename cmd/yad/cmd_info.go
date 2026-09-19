@@ -8,6 +8,7 @@ import (
 	"io"
 	"text/tabwriter"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
@@ -103,7 +104,11 @@ func cmdHarnesses(ctx context.Context, g global, args []string, w io.Writer) err
 	if err != nil {
 		return err
 	}
-	return writeJSON(w, capability.Build(ctx, id, cfg))
+	accounts, err := account.Read(ctx, g.paths, cfg)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, capability.Build(ctx, id, cfg, accounts))
 }
 
 func writeJSON(w io.Writer, v any) error {

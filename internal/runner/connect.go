@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
@@ -73,7 +74,14 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 	if err != nil {
 		return conn, none, err
 	}
-	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: capability.Build(ctx, id, cfg)})
+	// A runner registers with the accounts the owner configured, whatever
+	// state they are in: a harness whose accounts all need login is still a
+	// runner a hub should know about.
+	accounts, err := account.Read(ctx, p, cfg)
+	if err != nil {
+		return conn, none, err
+	}
+	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: capability.Build(ctx, id, cfg, accounts)})
 	if err != nil {
 		return conn, none, fmt.Errorf("register with %s: %w", hubURL, err)
 	}

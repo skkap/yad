@@ -157,6 +157,20 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const deleteAccount = `-- name: DeleteAccount :exec
+DELETE FROM accounts WHERE harness = ? AND label = ?
+`
+
+type DeleteAccountParams struct {
+	Harness string
+	Label   string
+}
+
+func (q *Queries) DeleteAccount(ctx context.Context, arg DeleteAccountParams) error {
+	_, err := q.db.ExecContext(ctx, deleteAccount, arg.Harness, arg.Label)
+	return err
+}
+
 const deleteEmptySession = `-- name: DeleteEmptySession :exec
 DELETE FROM sessions WHERE sessions.connection = ?1 AND sessions.id = ?2
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id)
@@ -441,7 +455,7 @@ func (q *Queries) LastEventSeq(ctx context.Context, arg LastEventSeqParams) (int
 }
 
 const listAccounts = `-- name: ListAccounts :many
-SELECT harness, label, limited_until FROM accounts WHERE harness = ? ORDER BY label
+SELECT harness, label, limited_until, state, updated_at FROM accounts WHERE harness = ? ORDER BY label
 `
 
 func (q *Queries) ListAccounts(ctx context.Context, harness string) ([]Account, error) {
@@ -453,7 +467,49 @@ func (q *Queries) ListAccounts(ctx context.Context, harness string) ([]Account, 
 	items := []Account{}
 	for rows.Next() {
 		var i Account
-		if err := rows.Scan(&i.Harness, &i.Label, &i.LimitedUntil); err != nil {
+		if err := rows.Scan(
+			&i.Harness,
+			&i.Label,
+			&i.LimitedUntil,
+			&i.State,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllAccounts = `-- name: ListAllAccounts :many
+SELECT harness, label, limited_until, state, updated_at FROM accounts ORDER BY harness, label
+`
+
+// Every account this runner has a row for, across harnesses: what
+// `yad account list` and the health report read. The owner's order lives in
+// config.toml, so this sorts only for a stable read.
+func (q *Queries) ListAllAccounts(ctx context.Context) ([]Account, error) {
+	rows, err := q.db.QueryContext(ctx, listAllAccounts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Account{}
+	for rows.Next() {
+		var i Account
+		if err := rows.Scan(
+			&i.Harness,
+			&i.Label,
+			&i.LimitedUntil,
+			&i.State,
+			&i.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -848,6 +904,30 @@ type SetAccountLimitParams struct {
 
 func (q *Queries) SetAccountLimit(ctx context.Context, arg SetAccountLimitParams) error {
 	_, err := q.db.ExecContext(ctx, setAccountLimit, arg.Harness, arg.Label, arg.LimitedUntil)
+	return err
+}
+
+const setAccountState = `-- name: SetAccountState :exec
+INSERT INTO accounts (harness, label, state, updated_at) VALUES (?, ?, ?, ?)
+ON CONFLICT (harness, label) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at
+`
+
+type SetAccountStateParams struct {
+	Harness   string
+	Label     string
+	State     string
+	UpdatedAt int64
+}
+
+// The state an account is in, without disturbing limited_until: DEV-27 owns
+// the limit, this owns free and needs_login.
+func (q *Queries) SetAccountState(ctx context.Context, arg SetAccountStateParams) error {
+	_, err := q.db.ExecContext(ctx, setAccountState,
+		arg.Harness,
+		arg.Label,
+		arg.State,
+		arg.UpdatedAt,
+	)
 	return err
 }
 

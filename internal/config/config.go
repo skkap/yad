@@ -229,11 +229,28 @@ func Save(p Paths, c Config) error {
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
-func validName(s string) error {
+// ValidName is the rule for every name the owner chooses and YAD then puts in
+// a path or on the wire — a connection, an account label. Exported because an
+// account label becomes a directory under <data>/accounts/ and a field in
+// health, so it is checked where it is typed and not only where it is loaded.
+func ValidName(s string) error {
 	if !nameRE.MatchString(s) {
 		return fmt.Errorf("name %q: use lowercase letters, digits, dash and underscore", s)
 	}
 	return nil
+}
+
+// HarnessIDs is every harness the owner configured, in a stable order: map
+// iteration would otherwise reorder accounts and the capability document's
+// fingerprint with them, and a fingerprint that moves on its own makes a hub
+// re-fetch the document all day.
+func (c Config) HarnessIDs() []string {
+	ids := make([]string, 0, len(c.Harness))
+	for id := range c.Harness {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // Validate checks what the decoder cannot.
@@ -268,7 +285,7 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("harness.%s.cap must not be negative", id))
 		}
 		for _, a := range h.Accounts {
-			if err := validName(a); err != nil {
+			if err := ValidName(a); err != nil {
 				errs = append(errs, fmt.Errorf("harness.%s.accounts: %w", id, err))
 			}
 		}
@@ -278,7 +295,7 @@ func (c Config) Validate() error {
 	}
 	var names []string
 	for _, conn := range c.Connections {
-		if err := validName(conn.Name); err != nil {
+		if err := ValidName(conn.Name); err != nil {
 			errs = append(errs, fmt.Errorf("connection: %w", err))
 		}
 		if conn.URL == "" {
