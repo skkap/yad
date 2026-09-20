@@ -122,6 +122,20 @@ type Runner struct {
 	// DrainRequestedAt is when a drain was asked for and no sync since has
 	// said the runner is draining; the runner hears it at its next sync.
 	DrainRequestedAt *time.Time `json:"drain_requested_at,omitempty"`
+	// Health is what the runner's last sync said about itself: its load, its
+	// free capacity, the disk under its workdirs, each harness's readiness
+	// with its accounts, the depth of what it owes this hub, and its recent
+	// errors. Absent for a runner that registered and never synced.
+	//
+	// As the runner sent it, and as old as LastSyncAt: a runner whose process
+	// has gone still shows the health of its last word. Nothing here is
+	// derived by the hub.
+	Health *v1.Health `json:"health,omitempty" doc:"The runner's own health at its last sync, unchanged by the hub. Absent for a runner that has never synced, and as old as last_sync_at."`
+}
+
+// RunnerList is every runner a hub knows, the ones still syncing first.
+type RunnerList struct {
+	Runners []Runner `json:"runners"`
 }
 
 // Session is a session as a service sees it.

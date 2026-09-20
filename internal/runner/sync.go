@@ -17,6 +17,7 @@ import (
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
+	"github.com/skkap/yad/internal/logfile"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 )
@@ -125,6 +126,10 @@ type Loop struct {
 	// measures the disk for health. Nil ignores the control, and the hub
 	// hears of no close.
 	Sessions *Collector
+	// RecentErrors is the ring `yad status` reads, shared with every other
+	// connection: what has gone wrong on this runner lately. Nil sends no
+	// recent_errors. Only the messages are reported — see healthErrors.
+	RecentErrors func() []logfile.Record
 
 	sentFingerprint string
 	wantDocument    bool
@@ -661,7 +666,7 @@ func (l *Loop) withdrawOrphan(ctx context.Context, r db.Run) (bool, error) {
 }
 
 func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
-	h := v1.Health{FreeCapacity: res.Free(), DiskFreeBytes: l.Sessions.FreeBytes()}
+	h := v1.Health{Load: loadAverage(), FreeCapacity: res.Free(), DiskFreeBytes: l.Sessions.FreeBytes()}
 	// Depths are best effort: a health report is not worth failing a sync.
 	if n, err := l.Store.SpoolDepth(ctx); err == nil {
 		h.SpoolDepth = int(n)
@@ -670,6 +675,9 @@ func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
 		h.OutboxDepth = int(n)
 	}
 	h.Harnesses = l.harnessHealth(ctx)
+	if l.RecentErrors != nil {
+		h.RecentErrors = healthErrors(l.RecentErrors(), l.Clock.Now())
+	}
 	return h
 }
 
@@ -713,12 +721,17 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		if !capability.Drivable(doc, hr.ID) {
 			continue
 		}
-		hh := v1.HarnessHealth{ID: hr.ID, Accounts: account.Reports(accounts, hr.ID)}
+		reports := account.Reports(accounts, hr.ID)
+		// Ready is computed from the whole list and the cap is applied after
+		// it, so bounding the block costs a hub detail and never correctness:
+		// an account past the cap still decides whether this harness can take
+		// a run, it is only not named.
+		//
 		// No accounts means the harness runs on its own default home, which
 		// is ready; accounts that all need login or are limited mean it is
 		// not. Acting on that — declining to claim — is DEV-28's.
 		_, usable := account.First(accounts, hr.ID)
-		hh.Ready = len(hh.Accounts) == 0 || usable
+		hh := v1.HarnessHealth{ID: hr.ID, Ready: len(reports) == 0 || usable, Accounts: capAccounts(reports)}
 		out = append(out, hh)
 	}
 	return out
@@ -830,4 +843,38 @@ func (l *Loop) reported(ctx context.Context, closed []v1.ClosedSession) {
 			l.Log.Error("a close the hub heard is not recorded as heard", "connection", l.Connection, "session", c.SessionID, "err", err)
 		}
 	}
+}
+
+// The bounds on the per-harness block. Health rides every sync, so its size is
+// paid for on every one of them; these hold it to a few kilobytes whatever the
+// owner has configured. The harnesses themselves need no cap: they come from
+// the catalog, which this binary ships.
+const (
+	// maxHealthAccounts is how many of one harness's accounts are named.
+	// Owners run one to four; sixteen is room to grow without a hub ever
+	// receiving a list it would not read.
+	maxHealthAccounts = 16
+	// maxHealthWindows is how many usage windows one account reports. Claude
+	// has two and Codex has two; four is every window either harness has ever
+	// named, and a harness that starts naming more is bounded rather than
+	// believed.
+	maxHealthWindows = 4
+)
+
+// capAccounts bounds one harness's accounts, and each account's windows, to
+// the caps above. What is kept is the head of the owner's own order, which is
+// the order account.First takes an account in, so a hub is told about the
+// accounts a run reaches for first. DEV-28 adds a preference for the free
+// account whose window resets soonest (decision 0039); once it lands, the
+// account a run takes need no longer be the first one named here.
+func capAccounts(reports []v1.AccountReport) []v1.AccountReport {
+	if len(reports) > maxHealthAccounts {
+		reports = reports[:maxHealthAccounts]
+	}
+	for i, r := range reports {
+		if len(r.Windows) > maxHealthWindows {
+			reports[i].Windows = r.Windows[:maxHealthWindows]
+		}
+	}
+	return reports
 }

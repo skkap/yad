@@ -15,6 +15,7 @@ import (
 
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
+	"github.com/skkap/yad/internal/logfile"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/workdir"
 )
@@ -36,6 +37,9 @@ type Options struct {
 	Log   *slog.Logger
 	// Monitor, when set, is kept current for the control socket.
 	Monitor *Monitor
+	// RecentErrors is the ring the process keeps for `yad status`; health
+	// reports its messages to every hub. Nil sends no recent_errors.
+	RecentErrors func() []logfile.Record
 }
 
 // Serve syncs every configured connection, all of them drawing on one
@@ -129,6 +133,7 @@ func Serve(ctx context.Context, o Options) error {
 			Capabilities: o.Capabilities, Executor: executor, Drain: o.Drain,
 			Config: o.Config, Data: o.Paths.Data,
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
+			RecentErrors: o.RecentErrors,
 		})
 	}
 	return sv.run(ctx)

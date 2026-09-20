@@ -157,6 +157,10 @@ usage: yad [--profile name] <command> [flags]
   hub interrupt <run> end a run's turn and keep its session
   hub steer <run> <text | ->
                       add input to a running turn
+  hub runners [runner] [--json]
+                      the runners this hub knows and the health each last
+                      reported: load, free capacity, disk, each harness's
+                      readiness with its accounts, and recent errors
   hub drain <runner>  the runner takes no new runs, finishes those it holds
                       and exits
   hub close-session <session>

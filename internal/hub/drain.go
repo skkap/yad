@@ -76,9 +76,12 @@ func (h *Hub) registerDrain(api huma.API) {
 	})
 }
 
-// runnerView is a runner as the service API shows it. Draining comes from the
-// runner's own last word, its health, not from the request — and a runner that
-// drained and exited keeps saying it until its next process syncs.
+// runnerView is a runner as the service API shows it. Draining and the health
+// beside it come from the runner's own last word, not from the request — and a
+// runner that drained and exited keeps saying it until its next process syncs.
+//
+// The health is passed on as the runner sent it: a hub that edited it would be
+// answering a question about the machine with an opinion of its own.
 func runnerView(r db.Runner) (hubapi.Runner, error) {
 	view := hubapi.Runner{RunnerID: r.ID, Name: r.Name}
 	if r.LastSyncAt.Valid {
@@ -95,6 +98,7 @@ func runnerView(r db.Runner) (hubapi.Runner, error) {
 			return view, fmt.Errorf("stored health for %s: %w", r.ID, err)
 		}
 		view.Draining = h.Draining
+		view.Health = &h
 	}
 	return view, nil
 }
