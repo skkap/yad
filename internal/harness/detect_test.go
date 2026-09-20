@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 func TestParseVersion(t *testing.T) {
@@ -160,6 +162,11 @@ func TestHangingProbeIsBoundedAndLeavesNothing(t *testing.T) {
 	if !strings.Contains(d.Error, "no answer") {
 		t.Errorf("Error = %q, want a timeout report", d.Error)
 	}
+	// The case the action is worth most in: a CLI that hangs on its own version
+	// flag has stopped saying anything, so the report has to.
+	if !strings.Contains(d.Error, "run it on this machine to see what it waits on") {
+		t.Errorf("Error = %q, want the next action", d.Error)
+	}
 	raw, err := os.ReadFile(pidfile)
 	if err != nil {
 		t.Fatalf("grandchild never started: %v", err)
@@ -254,14 +261,17 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 			wantVersion: "codex-cli 1.0"},
 		{name: "exits 0, detached child holds stdout", body: detached + "echo 'codex-cli 1.0'\n",
 			wantVersion: "codex-cli 1.0"},
+		// The status and the stderr these two used to be asserted on are the
+		// leak DEV-60 closed; what the report says now is the command and the
+		// next action, and the check below proves the child's words are gone.
 		{name: "exits 3", body: "echo oops >&2\nexit 3\n",
-			wantErr: "exit status 3"},
+			wantErr: "`codex --version` exited with an error"},
 		{name: "exits 3, detached child holds stdout", body: detached + "exit 3\n",
-			wantErr: "exit status 3"},
+			wantErr: "`codex --version` exited with an error"},
 		{name: "hangs", body: "sleep 60\n",
-			wantErr: "no answer", waitsItOut: true},
+			wantErr: "no answer to `codex --version`", waitsItOut: true},
 		{name: "hangs, detached child holds stdout", body: detached + "sleep 60\n",
-			wantErr: "no answer", waitsItOut: true, endsAtCancel: true},
+			wantErr: "no answer to `codex --version`", waitsItOut: true, endsAtCancel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -312,6 +322,13 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 			if (tc.wantErr == "") != (d.Error == "") || !strings.Contains(d.Error, tc.wantErr) {
 				t.Errorf("Error = %q, want %q", d.Error, tc.wantErr)
 			}
+			// Whatever the leader's fate, nothing it printed and no wrapped
+			// exit status travels: the report goes to every connected hub.
+			for _, leak := range []string{"oops", "exit status"} {
+				if strings.Contains(d.Error, leak) {
+					t.Errorf("Error carries %q: %q", leak, d.Error)
+				}
+			}
 		})
 	}
 }
@@ -343,5 +360,195 @@ func waitForPIDs(t *testing.T, path string) {
 		if time.Now().After(deadline) {
 			t.Fatalf("the fake harness recorded no descendant in %s", afterTheDeadline)
 		}
+	}
+}
+
+// A harness that is installed and will not start is reported broken without a
+// word of the machine it is on. supervise.Start wraps a start failure as
+// `start <path>: fork/exec <path>: permission denied`, and that path is under
+// the owner's home the moment an override names a file there that lost its
+// execute bit — the ordinary way this happens (DEV-60). HOME is the test's own,
+// so the assertion holds wherever the suite runs; the real one is checked too,
+// since a leak of that is the thing being prevented.
+func TestStartFailureNamesNoPath(t *testing.T) {
+	realHome, _ := os.UserHomeDir()
+	for _, tc := range []struct {
+		name string
+		// body and mode make a binary that cannot be started for the reason
+		// this case is about; fromEnv picks which of the two ways detection
+		// finds it, because that is what the next action must name. absent
+		// writes no file at all, which only an override can reach.
+		// want is where the message must send its reader and wantAction is what
+		// it must tell them to do there; wantNot is what it must not say.
+		body, want, wantAction, wantNot string
+		mode                            os.FileMode
+		fromEnv, absent                 bool
+	}{
+		{name: "an override that lost its execute bit", body: "#!/bin/sh\necho 'claude 1.0'\n",
+			mode: 0o644, fromEnv: true, want: "YAD_CLAUDE_PATH",
+			wantAction: "unset it and let PATH decide"},
+		// locate does not stat an override, so this reaches the same branch —
+		// which must therefore not claim the harness is installed.
+		{name: "an override naming nothing at all", absent: true, fromEnv: true,
+			want: "YAD_CLAUDE_PATH", wantAction: "unset it and let PATH decide",
+			wantNot: "is installed"},
+		// Found on PATH, so it must be executable to be found at all; what it
+		// cannot do is exec, because the interpreter it names is not there.
+		{name: "on PATH, naming an interpreter that is gone", body: "#!/nonexistent/interpreter\n",
+			mode: 0o755, want: "PATH", wantAction: "run `claude --version` on this machine",
+			// LookPath has already proved this file executable, so an action
+			// saying to check that would be a dead end — and "PATH" alone
+			// would not discriminate, being a substring of YAD_CLAUDE_PATH.
+			wantNot: "YAD_CLAUDE_PATH"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			bin := filepath.Join(home, "bin", "claude")
+			if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.absent {
+				if err := os.WriteFile(bin, []byte(tc.body), tc.mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.fromEnv {
+				t.Setenv("PATH", t.TempDir())
+				t.Setenv("YAD_CLAUDE_PATH", bin)
+			} else {
+				t.Setenv("PATH", filepath.Dir(bin))
+				t.Setenv("YAD_CLAUDE_PATH", "")
+			}
+
+			h, _ := Lookup("claude")
+			d := detectOne(context.Background(), h)
+			if !d.Present || d.Error == "" {
+				t.Fatalf("claude = %+v, want it present and broken", d)
+			}
+			if tc.wantNot != "" && strings.Contains(d.Error, tc.wantNot) {
+				t.Errorf("Error = %q, want it not to say %q", d.Error, tc.wantNot)
+			}
+			leaks := []string{home, bin, "fork/exec", "/Users/", "permission denied", "no such file"}
+			// The literal above is macOS-only, and this runner deploys on Linux.
+			if realHome != "" && realHome != "/" {
+				leaks = append(leaks, realHome)
+			}
+			for _, leak := range leaks {
+				if strings.Contains(d.Error, leak) {
+					t.Errorf("Error carries %q: %q", leak, d.Error)
+				}
+			}
+			// Where to look is half the next action: the name of an override is
+			// safe to print where its value is not.
+			if !strings.Contains(d.Error, tc.want) || !strings.Contains(d.Error, tc.wantAction) {
+				t.Errorf("Error = %q, want %q and %q", d.Error, tc.want, tc.wantAction)
+			}
+		})
+	}
+}
+
+// What a harness prints on its way out is unbounded text nobody vetted: a proxy
+// URL with a password in it, a loader error naming the owner's home. None of it
+// reaches the capability document, which every connected hub reads.
+func TestHarnessOutputIsNeverQuotedInTheReport(t *testing.T) {
+	const secret = "https://user:hunter2@proxy.internal/"
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	body := "#!/bin/sh\necho 'fatal: unable to access " + secret + "' >&2\nexit 128\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAD_CLAUDE_PATH", script)
+
+	h, _ := Lookup("claude")
+	d := detectOne(context.Background(), h)
+	if d.Error == "" {
+		t.Fatalf("claude = %+v, want the failure reported", d)
+	}
+	for _, leak := range []string{secret, "hunter2", "fatal:", "exit status", dir} {
+		if strings.Contains(d.Error, leak) {
+			t.Errorf("Error carries %q: %q", leak, d.Error)
+		}
+	}
+	if !strings.Contains(d.Error, "run it on this machine") {
+		t.Errorf("Error = %q, want the next action", d.Error)
+	}
+}
+
+// The rule the report rests on, tested where it is decidable. The race it
+// exists for is supervise.Run's select between the deadline, the leader's exit
+// and the pipe's EOF — all three ready at once once the deadline's kill lands,
+// and Go picks among ready cases at random — so no arrangement of a child makes
+// the *outcome* deterministic. The rule is deterministic, and this is it.
+func TestProbeTimedOutIsTheDeadlinesCall(t *testing.T) {
+	killed := errors.New("signal: killed")
+	for _, tc := range []struct {
+		name   string
+		out    supervise.Capture
+		runErr error
+		ctxErr error
+		want   bool
+	}{
+		{name: "the supervisor said so", out: supervise.Capture{TimedOut: true}, want: true},
+		// The racy shape: the deadline fired, its kill ended the child, and the
+		// supervisor happened to see the exit first.
+		{name: "killed by the deadline, reported as an exit", out: supervise.Capture{Err: killed},
+			ctxErr: context.DeadlineExceeded, want: true},
+		{name: "the parent gave up", out: supervise.Capture{Err: killed},
+			ctxErr: context.Canceled, want: true},
+		{name: "could not start, and the deadline had gone", runErr: errors.New("start: fork/exec"),
+			ctxErr: context.DeadlineExceeded, want: true},
+		// A real exit status with time still on the clock is not a timeout, and
+		// an answer that landed just inside the deadline keeps it.
+		{name: "exited non-zero in time", out: supervise.Capture{Err: errors.New("exit status 3")}, want: false},
+		{name: "answered, and the deadline went a moment later",
+			out: supervise.Capture{Stdout: []byte("codex-cli 1.0\n")}, ctxErr: context.DeadlineExceeded, want: false},
+		{name: "could not start, in time", runErr: errors.New("start: fork/exec"), want: false},
+		{name: "answered in time", out: supervise.Capture{Stdout: []byte("codex-cli 1.0\n")}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ProbeTimedOut(tc.out, tc.runErr, tc.ctxErr); got != tc.want {
+				t.Errorf("ProbeTimedOut(%+v, %v, %v) = %v, want %v", tc.out, tc.runErr, tc.ctxErr, got, tc.want)
+			}
+		})
+	}
+}
+
+// And end to end. supervise.Run decides TimedOut in a select between the
+// deadline, the leader's exit and the pipe's EOF, so a child that reaches EOF
+// first settles that select before the deadline exists: Run then blocks in
+// Wait, the deadline kills the child there, and the capture comes back with a
+// kill for an error and TimedOut false. That is the CI failure's shape, made to
+// happen on purpose rather than waited for (DEV-69).
+func TestATimedOutProbeIsNeverReportedAsAnExit(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		// Closing stdout is what makes this deterministic — a wrapper that
+		// redirects and then waits on something does it for real.
+		{"closes stdout, then hangs", "#!/bin/sh\nexec 1>&-\nsleep 60\n"},
+		// Holding it is the ordinary hang, where the same three cases are ready
+		// at once and the choice among them is random: green here on an idle
+		// machine, red on a loaded one, which is how CI found this.
+		{"hangs holding stdout", "#!/bin/sh\nsleep 60\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := filepath.Join(dir, "codex")
+			if err := os.WriteFile(script, []byte(tc.body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("YAD_CODEX_PATH", script)
+			old := versionTimeout
+			// Short, because every run waits it out; all the case needs is that
+			// the deadline arrive while the child is still there.
+			versionTimeout = 250 * time.Millisecond
+			t.Cleanup(func() { versionTimeout = old })
+
+			h, _ := Lookup("codex")
+			d := detectOne(context.Background(), h)
+			if !strings.Contains(d.Error, "no answer to `codex --version`") {
+				t.Errorf("Error = %q, want the timeout rather than the child's fate", d.Error)
+			}
+		})
 	}
 }

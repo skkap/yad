@@ -144,7 +144,12 @@ func run(ctx context.Context, path string, args []string, mergeStderr bool) (sup
 	// passphrase or a login through /dev/tty whatever their environment says,
 	// and a probe must fail at once rather than wait for a person who is not
 	// there.
-	return supervise.Run(ctx, supervise.Spec{Path: path, Args: args, NoTTY: true, MergeStderr: mergeStderr}, outputCap)
+	c, err := supervise.Run(ctx, supervise.Spec{Path: path, Args: args, NoTTY: true, MergeStderr: mergeStderr}, outputCap)
+	// Here rather than in the callers: the deadline is this function's, and it
+	// is gone the moment this returns. Why the supervisor's own answer is not
+	// enough on its own is in harness.ProbeTimedOut (DEV-69).
+	c.TimedOut = harness.ProbeTimedOut(c, err, ctx.Err())
+	return c, err
 }
 
 // wontRun and noAnswer are the two things that go wrong with a tool that is

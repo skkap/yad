@@ -18,7 +18,13 @@ type Detected struct {
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
 	Present bool   `json:"present"`
-	Error   string `json:"error,omitempty"`
+	// Error is what is wrong with this harness and what to do about it. It
+	// never carries a word the harness printed,
+	// nor the path it was started from: the capability document reaches every
+	// connected hub, and a child's stderr is unbounded text nobody vetted — a
+	// proxy URL with a password in it, a loader error naming the owner's home
+	// (DEV-60).
+	Error string `json:"error,omitempty"`
 	// Warnings are readiness checks beyond the version probe that failed
 	// without making the harness undrivable; capability.Detect fills them.
 	Warnings []string `json:"warnings,omitempty"`
@@ -65,22 +71,26 @@ func Locate(id string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return locate(h)
+	path, _, found := locate(h)
+	return path, found
 }
 
-func locate(h Harness) (string, bool) {
+// locate says where the binary is and which of the two places it came from.
+// Which one is what a broken harness's report sends its owner to: the override
+// they set, or whatever PATH resolved.
+func locate(h Harness) (path string, fromEnv, found bool) {
 	if path := os.Getenv(h.EnvPath); path != "" {
-		return path, true
+		return path, true, true
 	}
 	path, err := exec.LookPath(h.Binary)
-	return path, err == nil
+	return path, false, err == nil
 }
 
 func detectOne(ctx context.Context, h Harness) Detected {
 	d := Detected{Harness: h}
 
-	path, ok := locate(h)
-	if !ok {
+	path, fromEnv, found := locate(h)
+	if !found {
 		return d // absent, and that is not an error
 	}
 	d.Path, d.Present = path, true
@@ -92,16 +102,68 @@ func detectOne(ctx context.Context, h Harness) Detected {
 	defer cancel()
 	out, err := supervise.Run(ctx, supervise.Spec{Path: path, Args: h.VersionArgs}, versionOutputCap)
 	switch {
+	case ProbeTimedOut(out, err, ctx.Err()):
+		d.Error = noAnswer(h)
 	case err != nil:
-		d.Error = err.Error()
-	case out.TimedOut:
-		d.Error = fmt.Sprintf("no answer to %s within %s", strings.Join(h.VersionArgs, " "), versionTimeout)
+		d.Error = wontStart(h, fromEnv)
 	case out.Err != nil:
-		d.Error = strings.TrimSpace(out.Err.Error() + " " + out.Stderr)
+		d.Error = wontAnswer(h)
 	default:
 		d.Version = ParseVersion(string(out.Stdout))
 	}
 	return d
+}
+
+// wontStart and wontAnswer are the two things that go wrong with a harness the
+// runner found, said without quoting it. The wrapped exec error names the
+// binary's absolute path — under /Users/<name> on a Mac, which is the owner's
+// name — and a harness's own stderr is unbounded text nobody vetted: a dyld
+// failure listing libraries under that same home, a proxy URL with a password
+// in it. Neither travels. What a hub can act on is that the harness does not
+// work; what its owner needs is where to look, and an override's *name* is safe
+// where its value is the thing that leaks.
+//
+// The two are worded apart because what is still worth checking differs.
+// locate does not stat an override, so a YAD_<ID>_PATH naming nothing at all
+// reaches here and the override itself is the thing to fix. LookPath has
+// already proved the other one exists and is executable, so telling its owner
+// to check that would send them to `ls -l` and a dead end: what is left is a
+// missing interpreter, a binary for another architecture, or this machine
+// failing to fork, and running it by hand is what tells them which.
+func wontStart(h Harness, fromEnv bool) string {
+	if fromEnv {
+		return fmt.Sprintf("%s does not name a %s this runner can start — point it at an executable %s, or unset it and let PATH decide", h.EnvPath, h.Binary, h.Binary)
+	}
+	return fmt.Sprintf("the %s on PATH will not start — run `%s %s` on this machine to see what stops it", h.Binary, h.Binary, strings.Join(h.VersionArgs, " "))
+}
+
+// ProbeTimedOut says the probe ran out of time, whoever the child's own fate
+// blamed. The deadline ending kills the process group, so the leader's exit
+// error and the deadline become ready together and supervise.Run picks between
+// them at random — a probe that hung would be reported as an ordinary non-zero
+// exit on some runs and not others, which is what made two packages' timeout
+// tests fail under CI load (DEV-69). The deadline is the fact here: the kill is
+// its consequence, not a result of its own.
+//
+// Only a failure is reclassified. A probe that got its answer out before the
+// deadline keeps it, however close the two were.
+//
+// internal/hostool calls this for the same reason it calls ParseVersion: the
+// rule is the supervisor's, and having it twice is how the two packages drift.
+func ProbeTimedOut(out supervise.Capture, runErr, ctxErr error) bool {
+	return out.TimedOut || ctxErr != nil && (runErr != nil || out.Err != nil)
+}
+
+// noAnswer is a probe the harness never came back from. It names the command
+// and the wait and nothing else — the same rule as the two above — and gives
+// the action because this is the case where it is worth most: a CLI that hangs
+// on its own version flag has stopped telling its owner anything at all.
+func noAnswer(h Harness) string {
+	return fmt.Sprintf("no answer to `%s %s` within %s — run it on this machine to see what it waits on", h.Binary, strings.Join(h.VersionArgs, " "), versionTimeout)
+}
+
+func wontAnswer(h Harness) string {
+	return fmt.Sprintf("`%s %s` exited with an error — run it on this machine to see why", h.Binary, strings.Join(h.VersionArgs, " "))
 }
 
 // ParseVersion reduces a CLI's version banner to one line.
