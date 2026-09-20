@@ -103,7 +103,7 @@ UPDATE runs SET started_at = ?, updated_at = ? WHERE connection = ? AND id = ? A
 
 -- Park the run on a usage limit. The state, the moment it comes back, when
 -- the wait began and what the run has cost so far, in one statement: a park
--- missing any of them is a run the resumer cannot finish or a metric that
+-- missing any of them is a run no sync can finish or a metric that
 -- silently resets.
 -- name: SetRunWaiting :exec
 UPDATE runs SET state = 'waiting', resumes_at = ?, waiting_since = ?, account_switches = ?,
@@ -117,9 +117,11 @@ UPDATE runs SET waited_ms = waited_ms + MAX(sqlc.arg(now) - COALESCE(waiting_sin
   waiting_since = NULL, resumes_at = NULL, updated_at = sqlc.arg(now)
 WHERE connection = sqlc.arg(connection) AND id = sqlc.arg(id);
 
--- Every parked run, across connections: the resumer is one per process, not
--- one per hub. Ordered oldest first so the run that has waited longest is the
--- first to take the capacity that frees up.
+-- Every parked run, across connections, for the collector: it ends the ones
+-- whose cap has run out on a connection no sync loop is serving, and it never
+-- starts one. A loop resuming its own connection's parked runs reads them from
+-- the listing it already makes. Ordered oldest first so the run that has waited
+-- longest is dealt with first.
 -- name: ListWaitingRuns :many
 SELECT * FROM runs WHERE state = 'waiting' ORDER BY created_at, connection, id;
 

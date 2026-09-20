@@ -964,7 +964,12 @@ func (e *Exec) finish(ctx context.Context, c Claim, res v1.Result) {
 // for a caller whose bookkeeping must land exactly when the result does. A
 // parked run's is the case: ending its wait writes away the resume time that
 // keeps it from being started again, so a wait ended beside a result that
-// was not recorded leaves a run every later sweep executes.
+// was not recorded leaves a run a later sync would start.
+//
+// It runs *first*, before the result's own writes, so that a caller can use
+// it to refuse the whole transaction on what it finds — reading the run's
+// state after SetRunState has already changed it would only ever see what
+// this function just wrote.
 func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func(*db.Queries) error) error {
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	res.FinalText, _ = capBytes(res.FinalText, maxTextBytes)
@@ -984,6 +989,11 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 	}
 	now := time.Now().UnixMilli()
 	err = e.Store.Tx(ctx, func(q *db.Queries) error {
+		if also != nil {
+			if err := also(q); err != nil {
+				return err
+			}
+		}
 		if err := q.SetRunState(ctx, db.SetRunStateParams{
 			State: string(res.State), Reason: reason, UpdatedAt: now, Connection: c.Connection, ID: c.Run.RunID,
 		}); err != nil {
@@ -992,13 +1002,7 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 		if err := q.TouchSession(ctx, db.TouchSessionParams{LastUsedAt: now, Connection: c.Connection, ID: c.Run.Session.ID}); err != nil {
 			return err
 		}
-		if err := q.PutOutbox(ctx, db.PutOutboxParams{Connection: c.Connection, RunID: c.Run.RunID, Body: string(body), NextAttemptAt: now}); err != nil {
-			return err
-		}
-		if also == nil {
-			return nil
-		}
-		return also(q)
+		return q.PutOutbox(ctx, db.PutOutboxParams{Connection: c.Connection, RunID: c.Run.RunID, Body: string(body), NextAttemptAt: now})
 	})
 	if err != nil {
 		log.Error("result not recorded; the run stays held", "err", err)

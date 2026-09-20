@@ -171,8 +171,8 @@ func (e *Exec) setStarted(ctx context.Context, c Claim, at time.Time) {
 //
 // Waiting holds no process and no goroutine. The run's own goroutine ends
 // here: what it was doing is on disk — the state, the moment it comes back,
-// the wait so far and the accounts it has been through — and the Resumer
-// builds the run again from that row. A parked goroutine would pass the
+// the wait so far and the accounts it has been through — and the run's own
+// connection builds it again from that row at its next sync. A parked goroutine would pass the
 // acceptance test and still be wrong, because a `kill -9` has no goroutine to
 // wake; with the run reconstructed from the row every time, a restart is not
 // a second path to keep in step with the first, it is the first path.
@@ -182,7 +182,7 @@ func (e *Exec) setStarted(ctx context.Context, c Claim, at time.Time) {
 // until someone noticed; that case falls through to the caller, which refuses
 // the run and names the command to run. A needs-login account that the owner
 // then logs in does bring a parked run back early — LoginProbe frees it and
-// the Resumer sees it — but it cannot be what a run is parked on, because
+// the next sync reads it — but it cannot be what a run is parked on, because
 // nothing can say when that will happen.
 func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64, reason string) bool {
 	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config)
@@ -197,8 +197,8 @@ func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64
 	now := time.Now()
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	// A cap already spent is not a wait the run gets to start. Checked here
-	// as well as in the Resumer so a run whose hub allowed it less time than
-	// it has already waited ends now rather than after one more park.
+	// as well as in the sync loop, so a run whose hub allowed it less time
+	// than it has already waited ends now rather than after one more park.
 	if c.Run.MaxWaitMS > 0 && prog.waitedMS >= c.Run.MaxWaitMS {
 		e.finish(ctx, c, v1.Result{
 			State: v1.RunTimedOut, LastSeq: *lastSeq,
@@ -307,6 +307,12 @@ func (e *Exec) Forget(connection, runID string) {
 // without one reads as due right now: apart, a failed result would leave a
 // run still waiting and permanently due, and the next sync would run a turn
 // for one that was cancelled or timed out.
+//
+// The same transaction checks the run is still waiting, and that is not
+// belt and braces: the collector ends a parked run past its cap from its
+// own goroutine while a connection's sync may be resuming it. Without the
+// check the collector's write lands on a run that is already running and
+// reports it timed out, which is a second terminal state for one run.
 func (e *Exec) End(ctx context.Context, c Claim, row db.Run, state v1.RunState, rerr *v1.RunError, now time.Time) error {
 	e.init()
 	prog := progress{started: now, waitedMS: row.WaitedMs + waitingFor(row, now), switches: int(row.AccountSwitches)}
@@ -324,6 +330,12 @@ func (e *Exec) End(ctx context.Context, c Claim, row db.Run, state v1.RunState, 
 		Usage:   v1.RunUsage{ByModel: prog.spent.Usage},
 		Metrics: prog.metrics(now),
 	}, func(q *db.Queries) error {
+		switch fresh, err := q.GetRun(ctx, db.GetRunParams{Connection: row.Connection, ID: row.ID}); {
+		case err != nil:
+			return err
+		case fresh.State != string(v1.RunWaiting):
+			return errNoLongerWaiting
+		}
 		return q.EndRunWait(ctx, db.EndRunWaitParams{Now: now.UnixMilli(), Connection: row.Connection, ID: row.ID})
 	})
 }

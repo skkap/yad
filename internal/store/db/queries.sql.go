@@ -831,9 +831,11 @@ const listWaitingRuns = `-- name: ListWaitingRuns :many
 SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs WHERE state = 'waiting' ORDER BY created_at, connection, id
 `
 
-// Every parked run, across connections: the resumer is one per process, not
-// one per hub. Ordered oldest first so the run that has waited longest is the
-// first to take the capacity that frees up.
+// Every parked run, across connections, for the collector: it ends the ones
+// whose cap has run out on a connection no sync loop is serving, and it never
+// starts one. A loop resuming its own connection's parked runs reads them from
+// the listing it already makes. Ordered oldest first so the run that has waited
+// longest is dealt with first.
 func (q *Queries) ListWaitingRuns(ctx context.Context) ([]Run, error) {
 	rows, err := q.db.QueryContext(ctx, listWaitingRuns)
 	if err != nil {
@@ -1229,7 +1231,7 @@ type SetRunWaitingParams struct {
 
 // Park the run on a usage limit. The state, the moment it comes back, when
 // the wait began and what the run has cost so far, in one statement: a park
-// missing any of them is a run the resumer cannot finish or a metric that
+// missing any of them is a run no sync can finish or a metric that
 // silently resets.
 func (q *Queries) SetRunWaiting(ctx context.Context, arg SetRunWaitingParams) error {
 	_, err := q.db.ExecContext(ctx, setRunWaiting,

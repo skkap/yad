@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,15 +26,20 @@ import (
 //
 // Here there is nothing to restate. A claim *is* an answer to a sync, and so
 // is a resume: it runs inside SyncOnce, so it cannot precede a sync, cannot
-// outlive the loop, cannot run before Recover or while draining, takes its
-// capacity from the same reservation a claim does, and always has a reporter
-// to deliver its result — not because each was checked, but because there is
-// no code path on which they are false.
+// run before Recover or while draining, takes its capacity from the same
+// reservation a claim does, and always has a reporter to deliver its result
+// — not because each was checked, but because there is no code path on which
+// they are false. It may outlive its loop, and is meant to: runsOn starts
+// every run on the server's context, so a connection that stops leaves the
+// runs in hand to finish.
 //
 // It costs one sync interval. A run that comes due a moment after a sync
 // waits for the next one: 15 s by default, bounded 5–60 s, and a number the
 // hub itself chooses. Against a park measured in hours that is nothing, and
-// it is the same latency a hub already accepts for every offer it makes.
+// it is the same latency a hub already accepts for every offer it makes —
+// but only because holdWaiting takes the run's capacity before the hub is
+// asked for more work. Left to compete with the offers, a parked run on a
+// busy hub waits not one interval but for ever.
 
 // resumeSkew is added to a run's resume time before it is taken as due. The
 // reset came from the harness, whose clock is its own; starting a turn a
@@ -41,10 +47,69 @@ import (
 // while starting a moment late costs a moment.
 const resumeSkew = 5 * time.Second
 
-// resumeWaiting starts the parked runs of this connection that are due, with
-// the capacity this sync reserved. held is what the sync listed, which is
-// where the waiting ones already are.
-func (l *Loop) resumeWaiting(ctx context.Context, held []db.Run, res *Reservation) {
+// loadAccounts reads this sync's account states, once. Whoever needs them
+// first calls it and everyone after reads what it left, so there is no
+// order to get wrong — and no second reading of the same question within
+// one sync.
+func (l *Loop) loadAccounts(ctx context.Context) {
+	if l.accountsRead {
+		return
+	}
+	accounts, err := account.Load(ctx, l.Store.Queries, l.Data, l.Config)
+	if err != nil {
+		l.Log.Warn("could not read account states; this sync reports no harness health and resumes nothing",
+			"connection", l.Connection, "err", err)
+		return
+	}
+	l.accounts, l.accountsRead = accounts, true
+}
+
+// holdWaiting takes a unit of this sync's reservation for each parked run
+// that looks due, before the request is built, and returns them by run id.
+//
+// It is a reservation and not a decision: what becomes of each run is
+// settled after the hub has answered, against a freshly read row. A unit
+// held for a run that turns out to be cancelled, or not due after all, is
+// given back at the end of the same sync, so a wrong guess here costs one
+// sync's worth of one unit and nothing else. That is why this may read the
+// stale snapshot and considerWaiting may not.
+func (l *Loop) holdWaiting(held []db.Run, res *Reservation) map[string]func() {
+	if l.Executor == nil {
+		return nil
+	}
+	now := l.Clock.Now()
+	var reserved map[string]func()
+	for _, row := range held {
+		if row.State != string(v1.RunWaiting) {
+			continue
+		}
+		var run v1.Run
+		if err := json.Unmarshal([]byte(row.Spec), &run); err != nil {
+			continue // ended, not started, after the answer
+		}
+		if waited := row.WaitedMs + waitingFor(row, now); run.MaxWaitMS > 0 && waited >= run.MaxWaitMS {
+			continue // the same
+		}
+		if l.cancelled[row.ID] || !l.due(row, run, now) {
+			continue
+		}
+		release, ok := res.Take(run.Harness)
+		if !ok {
+			continue
+		}
+		if reserved == nil {
+			reserved = map[string]func(){}
+		}
+		reserved[row.ID] = release
+	}
+	return reserved
+}
+
+// resumeWaiting settles what becomes of each parked run of this connection,
+// with the capacity holdWaiting put aside for it. held is the listing this
+// sync made *before* the hub answered, so it is only a list of candidates:
+// every row is read again before it is acted on.
+func (l *Loop) resumeWaiting(ctx context.Context, held []db.Run, res *Reservation, reserved map[string]func()) {
 	if l.Executor == nil || !l.mayClaim() {
 		return
 	}
@@ -55,7 +120,7 @@ func (l *Loop) resumeWaiting(ctx context.Context, held []db.Run, res *Reservatio
 			continue
 		}
 		waiting[row.ID] = true
-		l.considerWaiting(ctx, row, res, now)
+		l.considerWaiting(ctx, row, res, reserved, now)
 	}
 	// A run that left waiting some other way — the collector timed it out
 	// while its cancel could not be written — takes its remembered cancel
@@ -68,8 +133,25 @@ func (l *Loop) resumeWaiting(ctx context.Context, held []db.Run, res *Reservatio
 }
 
 // considerWaiting decides what becomes of one parked run of this connection.
-func (l *Loop) considerWaiting(ctx context.Context, row db.Run, res *Reservation, now time.Time) {
-	log := l.Log.With("connection", l.Connection, "run", row.ID)
+//
+// The row is read again first, and this is not caution. The listing it came
+// from was made before the hub was asked, and the hub's answer has since
+// been acted on: a cancel in it ends the run, writes `cancelled` and gives
+// up the claim — all of which the stale row knows nothing about. Acting on
+// that copy wrote `claimed` over the cancelled row and started the harness,
+// so a run the hub had asked to stop ran a turn, with the outbox's
+// ON CONFLICT DO NOTHING swallowing the second result. The sweep this
+// replaced could not do that, because it listed afresh on every pass.
+func (l *Loop) considerWaiting(ctx context.Context, stale db.Run, res *Reservation, reserved map[string]func(), now time.Time) {
+	log := l.Log.With("connection", l.Connection, "run", stale.ID)
+	row, err := l.Store.GetRun(ctx, db.GetRunParams{Connection: l.Connection, ID: stale.ID})
+	if err != nil {
+		log.Warn("a parked run could not be read again; it is left as it is", "err", err)
+		return
+	}
+	if row.State != string(v1.RunWaiting) {
+		return // it stopped waiting while this sync was in flight
+	}
 	// A cancel this process could not write down is still a cancel, and the
 	// row says nothing about it: a failed transaction leaves it exactly as
 	// it was, which is what keeps the run's grants and its wait, and makes
@@ -90,7 +172,7 @@ func (l *Loop) considerWaiting(ctx context.Context, row db.Run, res *Reservation
 		return
 	}
 	var run v1.Run
-	if err := json.Unmarshal([]byte(row.Spec), &run); err != nil {
+	if err = json.Unmarshal([]byte(row.Spec), &run); err != nil {
 		// Unreadable, so it can never run and never resume: ending it is the
 		// only way the hub hears anything at all about it.
 		l.endWait(ctx, row, v1.RunFailed, &v1.RunError{Class: ClassAdapter,
@@ -120,17 +202,29 @@ func (l *Loop) considerWaiting(ctx context.Context, row db.Run, res *Reservation
 		}
 		parked = run
 	}
-	release, ok := res.Take(run.Harness)
-	if !ok {
-		// Past what this sync reserved. The next one has the capacity the
-		// runs ending in between give back.
+	release, ok := reserved[row.ID]
+	if ok {
+		delete(reserved, row.ID)
+	} else if release, ok = res.Take(run.Harness); !ok {
+		// No unit was put aside for it — it was not due when the request
+		// was built — and none is left over from the offers. The next sync
+		// holds one for it before asking.
 		return
 	}
 	// Ending the wait and leaving waiting are one transaction, because
 	// EndRunWait clears resumes_at and a row with no resumes_at reads as due
 	// right now: written separately, a failure of the second would leave a
 	// row every later sync starts again.
-	err := l.Store.Tx(ctx, func(q *db.Queries) error {
+	// Still waiting, checked inside the transaction: the collector ends a
+	// parked run past its cap from another goroutine, so the read above is
+	// not the last word.
+	err = l.Store.Tx(ctx, func(q *db.Queries) error {
+		switch fresh, err := q.GetRun(ctx, db.GetRunParams{Connection: l.Connection, ID: row.ID}); {
+		case err != nil:
+			return err
+		case fresh.State != string(v1.RunWaiting):
+			return errNoLongerWaiting
+		}
 		if err := q.EndRunWait(ctx, db.EndRunWaitParams{Now: now.UnixMilli(), Connection: l.Connection, ID: row.ID}); err != nil {
 			return err
 		}
@@ -138,6 +232,10 @@ func (l *Loop) considerWaiting(ctx context.Context, row db.Run, res *Reservation
 			State: string(v1.RunClaimed), UpdatedAt: now.UnixMilli(), Connection: l.Connection, ID: row.ID,
 		})
 	})
+	if errors.Is(err, errNoLongerWaiting) {
+		release()
+		return
+	}
 	if err != nil {
 		release()
 		log.Error("the run could not be taken out of waiting; it stays parked", "err", err)
@@ -147,6 +245,10 @@ func (l *Loop) considerWaiting(ctx context.Context, row db.Run, res *Reservation
 	log.Info("the account's limit has reset; the run continues in the same session", "waited_ms", waited)
 	l.Executor.Start(ctx, Claim{Connection: l.Connection, Run: parked, Release: release})
 }
+
+// errNoLongerWaiting ends a transaction that found the run had stopped
+// waiting since it was read: something else has already decided it.
+var errNoLongerWaiting = errors.New("the run is no longer waiting")
 
 // due says whether a parked run may start now.
 //

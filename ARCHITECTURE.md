@@ -615,15 +615,23 @@ for `codex`); the suite never runs a real harness.
 
   **It comes back through its own connection's sync loop, and through nothing
   else.** A claim is an answer to a sync; so is a resume. Running it inside the
-  sync is what makes it impossible for a resumed run to precede a sync, outlive
-  its loop, run before `Recover` or during a drain, take capacity outside the
-  sync's own reservation, or start on a connection with no reporter to deliver
-  its result — not because each is checked, but because there is no code path on
-  which they are false. It was a sweep of its own, and four review rounds each
-  found one clause of "may I start work now?" that the sweep had not restated;
-  a predicate copied by hand drifts from the original. The cost is one sync
-  interval — 15 s by default, bounded 5–60 s, chosen by the hub — against a park
-  measured in hours.
+  sync is what makes it impossible for a resumed run to precede a sync, to run
+  before `Recover` or during a drain, to take capacity outside the sync's own
+  reservation, or to *start* on a connection with no reporter to deliver its
+  result — not because each is checked, but because there is no code path on
+  which they are false. (It may well outlive its loop, and is meant to:
+  `runsOn` starts every run on the server's context so a connection that stops
+  leaves the runs in hand to finish.) It was a sweep of its own, and four
+  review rounds each found one clause of "may I start work now?" that the sweep
+  had not restated; a predicate copied by hand drifts from the original.
+
+  The cost is one sync interval — 15 s by default, bounded 5–60 s, chosen by the
+  hub — **provided the run's capacity is held before the hub is asked**, which
+  it is: a sync takes a unit for each parked run that is due and advertises what
+  is left, so the hub cannot fill that unit with a fresh offer. Without that the
+  cost is not one interval but unbounded: a hub fills whatever capacity the
+  request advertises, and those offers are claimed before the resume is reached,
+  so on a runner with a standing queue the parked run never moves.
 
   A restart is therefore not a second path but the same one, which is why
   `kill -9` costs a waiting run nothing and why

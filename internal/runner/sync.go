@@ -159,10 +159,13 @@ type Loop struct {
 	// accounts are all limited or need login, so the claim that follows the
 	// hub's answer acts on the same reading the hub was sent.
 	harnessReady map[string]bool
-	// accounts are the states that reading came from, kept for the same
-	// reason: resuming a parked run early because an account is free must
-	// be the same answer the hub was just given, not a second read of it.
-	accounts []account.Account
+	// accounts are the states this sync read, once, before its request was
+	// built. Health, the claim and the resume all read them here rather
+	// than asking again, so what the hub is told and what this runner then
+	// does cannot disagree. accountsRead tells "none configured" from "the
+	// read failed"; the second reports no harness health at all.
+	accounts     []account.Account
+	accountsRead bool
 	// cancelled are parked runs the hub asked to stop whose terminal result
 	// could not be written. The intent lives nowhere else: the transaction
 	// leaves the row exactly as it was, which is what keeps the run's grants
@@ -297,6 +300,36 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	}
 	defer res.Close()
 
+	// Account states, once per sync: the health this request carries, the
+	// parked runs it holds capacity for and the claim after the hub's reply
+	// all read the same answer rather than asking again.
+	//
+	// Dropped again at the end, so the field is never a stale answer to
+	// somebody outside a sync — health asked on its own loads afresh.
+	l.accounts, l.accountsRead = nil, false
+	defer func() { l.accounts, l.accountsRead = nil, false }()
+	l.loadAccounts(ctx)
+	// Capacity for the parked runs that are due, taken before the hub is
+	// asked so it is out of the free capacity the request advertises.
+	//
+	// Without this a parked run is last in line for ever. A hub fills
+	// whatever free capacity the request advertises (internal/hub/sync.go
+	// pages offers until it is full), and those offers are claimed before
+	// the resume is reached — so on a runner whose hub has a standing
+	// queue, each unit that frees goes to a new run at every sync and the
+	// run that has already waited hours never moves. With a max_wait it is
+	// then timed out for a limit that had in fact lifted.
+	//
+	// The units are only held here; what becomes of each run is decided
+	// after the hub's answer, and a unit held for one that turns out not to
+	// run is given back at the end of the same sync.
+	reserved := l.holdWaiting(held, res)
+	defer func() {
+		for _, release := range reserved {
+			release()
+		}
+	}()
+
 	req := v1.SyncRequest{RunnerID: l.RunnerID, Fingerprint: fp, Health: l.health(ctx, res)}
 	req.Health.Draining = draining
 	// The document goes with the first sync of every process, after any move
@@ -353,8 +386,8 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 			l.withdraw(ctx, c.RunID)
 		case c.Kind == v1.ControlCancel && l.cancelWaiting(ctx, c.RunID):
 			// A parked run has no turn to interrupt and no process to
-			// signal, so the executor has nothing to cancel: the Resumer
-			// ends it where it is. A cancel is repeated until the run ends
+			// signal, so the executor has nothing to cancel: the loop ends
+			// it where it stands. A cancel is repeated until the run ends
 			// (decision 0025), and the second one finds it already terminal
 			// and falls through to the executor, which drops it.
 		case c.Kind == v1.ControlCloseSession:
@@ -382,7 +415,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	// and after its offers: a run already held is this runner's, but a run
 	// the hub is offering now is work it is waiting on an answer about.
 	if !l.Drain.IsDraining() {
-		l.resumeWaiting(ctx, held, res)
+		l.resumeWaiting(ctx, held, res, reserved)
 	}
 	res.Close()
 	l.sendRefusals(ctx)
@@ -638,8 +671,8 @@ func (l *Loop) Recover(ctx context.Context) error {
 		if r.State == string(v1.RunWaiting) {
 			// A waiting run held no process to lose (decision 0013). It is
 			// the one run a restart does not end: everything it was doing is
-			// in its row, the Resumer picks it up from there when its reset
-			// passes, and reporting it lost here would throw away the wait
+			// in its row, and this connection's own sync picks it up from
+			// there when its reset passes, and reporting it lost here would throw away the wait
 			// the persistence exists for. It stays listed in every sync
 			// meanwhile, as it was before the restart.
 			l.Log.Info("a previous process parked this run on a usage limit; it keeps waiting", "connection", l.Connection, "run", r.ID)
@@ -757,20 +790,16 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 	// told and what this runner then does come from one answer.
 	ready := map[string]bool{}
 	defer func() { l.harnessReady = ready }()
-	// Cleared first, so a read that fails leaves this sync with no account
-	// states rather than the last one's.
-	l.accounts = nil
-	accounts, err := account.Load(ctx, l.Store.Queries, l.Data, l.Config)
-	if err != nil {
+	l.loadAccounts(ctx)
+	accounts, ok := l.accounts, l.accountsRead
+	if !ok {
 		// Reporting every account free because the read failed would be the
 		// one direction that costs something: the hub keeps offering runs for
 		// a harness whose accounts cannot take them, and each is refused after
 		// being claimed. Saying nothing is the honest answer to a question
 		// that did not get one, and health carries no harnesses when empty.
-		l.Log.Warn("could not read account states; this sync reports no harness health", "connection", l.Connection, "err", err)
 		return nil
 	}
-	l.accounts = accounts
 	var out []v1.HarnessHealth
 	for _, hr := range doc.Harnesses {
 		// The predicate a claim uses, not a copy of part of it: a harness

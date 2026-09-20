@@ -1138,3 +1138,148 @@ func TestOnlyTheSyncLoopStartsARun(t *testing.T) {
 		}
 	}
 }
+
+// The worst outcome anyone found on this branch: a run the hub has
+// cancelled running a turn anyway. The listing a sync resumes from is made
+// before the hub is asked, and the hub's answer is acted on in between — so
+// a cancel in that answer ends the run while the snapshot still says it is
+// waiting. Acting on the snapshot wrote `claimed` over the cancelled row
+// and started the harness, and the outbox's ON CONFLICT DO NOTHING
+// swallowed the second result, so the hub never even saw the contradiction.
+func TestACancelInThisSyncsAnswerStopsTheResumeInTheSameSync(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	// Everything a resume needs is true: the limit has lifted and the run
+	// is due. Only the cancel should stop it, and it arrives in the answer
+	// to the very sync that would otherwise start it.
+	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if view, err := e.api(t).Cancel(ctx, "a"); err != nil || view.CancelRequestedAt == nil {
+		t.Fatalf("cancel: %+v %v", view, err)
+	}
+	syncAt(t, l, x, reset.Add(resumeSkew+time.Second))
+
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunCancelled {
+		t.Fatalf("result = %+v, %v, want cancelled", res, ok)
+	}
+	if got, _ := x.Adapters.Lookup("claude"); len(got.(*fake.Adapter).Starts) != 1 {
+		t.Errorf("the harness was started %d times, want the one turn before the cancel — the run the hub stopped ran anyway",
+			len(got.(*fake.Adapter).Starts))
+	}
+	if got := localRun(t, e, "a").State; got != string(v1.RunCancelled) {
+		t.Errorf("local state = %s, want cancelled", got)
+	}
+}
+
+// A parked run whose limit has lifted must not lose its capacity to a fresh
+// offer, for ever. The reservation takes every free unit and the hub fills
+// whatever the request advertises, so a runner whose hub has a standing
+// queue would hand each freed unit to a new run at every sync and the run
+// that has already waited hours would never move — and with a max_wait
+// would be timed out for a limit that had in fact lifted.
+//
+// The unit is taken before the request is built, so the hub is never
+// offered it in the first place.
+func TestAParkedRunKeepsItsCapacityFromTheHubsQueue(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	// One unit of capacity, and a hub with more work than that.
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), byHome(map[string]fake.Script{
+		"work": limitScript("five_hour", reset, "native-1"),
+	}))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The queue the parked run is competing with.
+	e.enqueue(t, testRun("b", "s2"), testRun("c", "s3"))
+
+	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunSucceeded, FinalText: "resumed", NativeSessionID: "native-1"},
+	}))
+	var offered int
+	l.Hub = hubFunc{Hub: l.Hub, sync: func(req v1.SyncRequest) { offered = req.Health.FreeCapacity.Total }}
+	syncAt(t, l, x2, reset.Add(resumeSkew+time.Second))
+
+	if offered != 0 {
+		t.Errorf("the sync advertised %d free units while a parked run was due; the hub fills what it is offered", offered)
+	}
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunSucceeded {
+		t.Fatalf("result = %+v, %v — the parked run lost its capacity to the hub's queue", res, ok)
+	}
+	if _, ok := e.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "b"}); ok == nil {
+		t.Error("a queued run was claimed while the parked one was still waiting for capacity")
+	}
+}
+
+// The collector ends a parked run past its cap from its own goroutine while
+// a connection's sync may be resuming it, so "is it still waiting" has to be
+// asked inside the transaction that ends it. Asked outside, the collector's
+// write lands on a run that is already running and reports it timed out —
+// a second terminal state for one run, against DOMAIN.md's rule that a run
+// reaches exactly one.
+//
+// Driven through Exec.End directly, because the two goroutines cannot be
+// made to interleave on demand: the property is that a row which stopped
+// waiting is refused, whenever that happened.
+func TestEndingAParkedRunRefusesOneThatIsNoLongerWaiting(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	row := waitingRow(t, e, "a")
+
+	// The sync got there first: the run is out of waiting and running.
+	if err := e.store.SetRunState(ctx, db.SetRunStateParams{
+		State: string(v1.RunRunning), UpdatedAt: time.Now().UnixMilli(), Connection: "hub", ID: "a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	claim, err := claimFor(row, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The collector, acting on the row it listed a moment earlier.
+	if err := x.End(ctx, claim, row, v1.RunTimedOut,
+		&v1.RunError{Class: ClassMaxWait, Message: "too long"}, time.Now()); err == nil {
+		t.Fatal("a run that had stopped waiting was ended anyway")
+	}
+	if got := localRun(t, e, "a").State; got != string(v1.RunRunning) {
+		t.Errorf("local state = %s; the running run was overwritten", got)
+	}
+	if res, ok := outboxResult(t, e, "a"); ok {
+		t.Errorf("a terminal result was written for a running run: %+v", res)
+	}
+}

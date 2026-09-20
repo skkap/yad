@@ -62,9 +62,13 @@ type CloseResult struct {
 
 // expireWaits ends every parked run whose hub's max_wait has run out. A run
 // whose connection has a loop is normally ended by that loop's own sync
-// first; this is what catches the ones no loop will reach, and running on
-// both is harmless because the two write the same terminal state and only
-// one transaction can be the one that lands.
+// first; this is what catches the ones no loop will reach.
+//
+// Running on both is safe because Exec.End refuses a run that has stopped
+// waiting, inside its own transaction. Without that it would not be: this
+// sweep and a connection's sync are different goroutines, so a row read
+// here a moment before that sync resumes it would be written as timed out
+// over a run that is already running.
 func (c *Collector) expireWaits(ctx context.Context, now time.Time) error {
 	if c.Runs == nil {
 		return nil
@@ -90,7 +94,10 @@ func (c *Collector) expireWaits(ctx context.Context, now time.Time) error {
 			"connection", row.Connection, "run", row.ID, "waited_ms", waited, "max_wait_ms", run.MaxWaitMS)
 		if err := c.Runs.End(ctx, claim, row, v1.RunTimedOut,
 			&v1.RunError{Class: ClassMaxWait, Message: maxWaitMessage(waited, run.MaxWaitMS)}, now); err != nil {
-			continue // tried again at the next sweep
+			// Including the run having stopped waiting since it was listed,
+			// which is the ordinary outcome of racing its own sync and is
+			// not worth a line in the log.
+			continue
 		}
 		c.Runs.Forget(row.Connection, row.ID)
 	}
