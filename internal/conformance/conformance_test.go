@@ -3,6 +3,7 @@ package conformance
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +68,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawTakesAnyResult, check: "result/conflict", want: Failed},
 		{flaw: flawShortInterval, check: "sync/timings", want: Failed},
 		{flaw: flawShortLease, check: "sync/lease-outlasts-the-interval", want: Failed},
+		{flaw: flawStrictResultFields, check: "result/unknown-fields-ignored", want: Failed},
 		{flaw: flawUngatedControl, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawNoNextAction, check: "errors/next-action", want: Failed},
 		{flaw: flawRenewsEverything, check: "lease/lapse", leaseWait: time.Minute, want: Failed},
@@ -182,8 +184,12 @@ func TestNoSecretReachesTheReport(t *testing.T) {
 	if strings.Contains(out.String(), cred) {
 		t.Errorf("the runner credential %q is in the report:\n%s", cred, out.String())
 	}
-	if !strings.Contains(out.String(), "redacted") {
-		t.Errorf("the credential was neither printed nor marked as removed; the report should say what it took out:\n%s", out.String())
+	// A register answer that succeeded is described rather than printed at
+	// all, since the credential in it may be under a name this suite does not
+	// know. The report has to say that is what it did.
+	flat := strings.Join(strings.Fields(out.String()), " ")
+	if !strings.Contains(flat, "the body is not printed because a register answer carries a credential") {
+		t.Errorf("the credential was neither printed nor accounted for; the report should say what it withheld:\n%s", out.String())
 	}
 }
 
@@ -262,10 +268,14 @@ func TestAnUnreadableBodyIsNotPrinted(t *testing.T) {
 // use: a run offered and taken back is one a runner would have had to refuse.
 func TestEveryOfferedRunIsValidated(t *testing.T) {
 	t.Parallel()
-	s := &session{opts: Options{Harness: DefaultHarness}, offered: map[string]v1.Run{
-		"taken-back": {RunID: "taken-back", Session: v1.SessionRef{ID: "s"}, Harness: DefaultHarness, Brief: v1.Brief{Instruction: "hi"}},
-		"kept":       fakeRunSpec(0),
-	}}
+	// Offered in an earlier answer and taken back, so it is in the offers but
+	// not among the runs the suite went on to use.
+	takenBack := v1.Run{RunID: "taken-back", Session: v1.SessionRef{ID: "s"}, Harness: DefaultHarness, Brief: v1.Brief{Instruction: "hi"}}
+	s := &session{
+		opts:    Options{Harness: DefaultHarness},
+		offered: map[string]v1.Run{takenBack.RunID: takenBack, "kept": fakeRunSpec(0)},
+		offers:  []v1.Run{takenBack, fakeRunSpec(0)},
+	}
 	s.pick([]string{"kept"})
 	err := checkOfferedRunIsValid(context.Background(), s)
 	if err == nil {
@@ -322,6 +332,61 @@ func TestAStalledHubIsNotAnInterruption(t *testing.T) {
 	cancel()
 	if got := s.make(stopped, timedOut); got.Status != Skipped {
 		t.Errorf("a check the suite was stopped in was %s, not skipped", label(got.Status))
+	}
+	// And the other way about: a signal arriving while a hub was already
+	// answering wrongly must not relabel the hub's failure as this suite's
+	// interruption, which would lose a finding it had already made.
+	broke := check{
+		id: "probe", rule: "A rule.", section: sectionCalls,
+		run: func(context.Context, *session) error { return brokenf("the hub answered 500") },
+	}
+	if got := s.make(stopped, broke); got.Status != Failed {
+		t.Errorf("a rule the hub broke was %s once the suite was stopped, not failed: %s", label(got.Status), got.Detail)
+	}
+}
+
+// Redaction reads the decoded document, so it must reach every decoded place a
+// string can be — including an object's keys, and a body that is one string.
+func TestASecretIsFoundWhereverAStringCanBe(t *testing.T) {
+	t.Parallel()
+	const secret = "tok-abcdef-0123456789"
+	c := newClient("http://hub.example/v1", secret)
+	for _, body := range []string{
+		`{"` + secret + ` is not valid":true}`,
+		`"the registration token ` + secret + ` has been used"`,
+		`{"error":{"message":"the token ` + secret + ` has been used"}}`,
+	} {
+		text, read := c.redacted([]byte(body))
+		switch {
+		case !read:
+			t.Errorf("%s could not be read", body)
+		case strings.Contains(text, secret):
+			t.Errorf("the secret survived redaction: %s -> %s", body, text)
+		}
+	}
+}
+
+// A register answer that succeeded is never printed by any check, because the
+// credential in it may be under a name this suite has no way to recognise. The
+// hub here registers a runner with no bearer at all and names the field its own
+// way, so the check that catches it is one that prints the answer it got.
+func TestAMisnamedCredentialIsNeverPrinted(t *testing.T) {
+	t.Parallel()
+	f, url := newFake(t, flawRegistersAnyone, fakeRunSpec(0), fakeRunSpec(1))
+	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := outcome(t, rep, "register/token-required"); o.Status != Failed {
+		t.Fatalf("register/token-required was %s against a hub that registers anyone", label(o.Status))
+	}
+	var out strings.Builder
+	rep.Print(&out)
+	f.mu.Lock()
+	cred := f.cred
+	f.mu.Unlock()
+	if cred != "" && strings.Contains(out.String(), cred) {
+		t.Errorf("the credential is in the report, under a name the redaction could not know:\n%s", out.String())
 	}
 }
 
@@ -400,5 +465,40 @@ func TestASecretEscapedBeyondGuessingIsStillFound(t *testing.T) {
 		if strings.Contains(out.String(), form) {
 			t.Errorf("the token is in the report as %q:\n%s", form, out.String())
 		}
+	}
+}
+
+// The rule is about the runs the hub dropped: every one of them must come
+// back, and anything else it offered besides them is its own business. A hub
+// whose queue grows between syncs — the case a set comparison would call a
+// failure — is keeping the rule, and the same answer decides the verdict and
+// what the skip says, so a skip can never name no run at all.
+func TestTheReofferRuleIsAboutTheRunsThatWereDropped(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name             string
+		dropped, back    []string
+		wantStillMissing []string
+	}{
+		{name: "all back", dropped: []string{"a", "b"}, back: []string{"a", "b"}},
+		{name: "all back and more besides", dropped: []string{"a"}, back: []string{"a", "b"}},
+		{name: "two dropped, three back", dropped: []string{"a", "b"}, back: []string{"a", "b", "c"}},
+		{name: "one lost for ever", dropped: []string{"a", "b"}, back: []string{"a"}, wantStillMissing: []string{"b"}},
+		{name: "none back", dropped: []string{"a", "b"}, back: nil, wantStillMissing: []string{"a", "b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stillMissing(tc.dropped, tc.back)
+			if !slices.Equal(got, tc.wantStillMissing) {
+				t.Fatalf("stillMissing(%v, %v) = %v, want %v", tc.dropped, tc.back, got, tc.wantStillMissing)
+			}
+			// What the check does with it: nothing missing is the rule kept,
+			// and anything missing is named in the skip rather than left to a
+			// count that can print an empty id.
+			for _, id := range got {
+				if !slices.Contains(tc.dropped, id) {
+					t.Errorf("the skip would name %q, which the hub never dropped", id)
+				}
+			}
+		})
 	}
 }

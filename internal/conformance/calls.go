@@ -200,9 +200,10 @@ func checkResultCredentialRequired(ctx context.Context, s *session) error {
 // forbids — a body shaped for another version fails validation in ways that
 // say nothing about the cause.
 //
-// Both go to two calls rather than one. The rule is about every request, and a
-// hub built route by route — which a hub generated from openapi.yaml is —
-// can hold the header where its sync is and nowhere else. Register is left out
+// Both go to every call this suite may safely send twice, not to one. The rule
+// is about every request, and a hub built route by route — which a hub
+// generated from openapi.yaml is — can hold the header where its sync is and
+// nowhere else. Register is left out
 // deliberately: it is the one call the registration token authenticates, and a
 // hub that reads the body before the header would burn the operator's token on
 // a request this suite sent to check a header.

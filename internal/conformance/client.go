@@ -58,11 +58,26 @@ type answer struct {
 	Call   string
 	Status int
 	Body   []byte
-	// secrets says this call's answer is one the protocol lets carry a secret:
-	// register answers with the runner credential, and a sync with the grants
-	// of every run it offers. A body of one of these that cannot be read is
-	// never printed, because what cannot be read cannot be redacted.
+	// secrets says this call's answer is one the protocol itself puts a secret
+	// in: register answers with the runner credential, and a sync with the
+	// grants of every run it offers. A body of one of these that cannot be
+	// read is never printed, because what cannot be read cannot be redacted,
+	// and these are the two that can hold a secret this suite has never seen
+	// — a grant value, or a credential under a name of the hub's own — which
+	// no list of known strings could remove afterwards.
+	//
+	// The other calls carry a credential as a bearer, so a hub could quote one
+	// back in an error there too. That one this suite holds, so it is removed
+	// from every body whatever the call, and what is left needs a body that
+	// will not parse *and* an escaping the raw search misses. Against that the
+	// cost of widening is real: a proxy's error page on a wrong URL is the
+	// commonest thing this suite prints, and describing it instead would make
+	// the most ordinary misconfiguration harder to see.
 	secrets bool
+	// credential says the answer is a register 200, whose body is a credential
+	// under whatever name the hub chose and nothing else worth printing: its
+	// timings are read from the decoded value by the checks that judge them.
+	credential bool
 }
 
 // client is the suite's whole HTTP surface. It is deliberately not
@@ -196,7 +211,8 @@ func (c *client) do(ctx context.Context, in call) (*answer, error) {
 	}
 	a := &answer{
 		c: c, Call: method + " " + in.path, Status: res.StatusCode, Body: raw,
-		secrets: in.path == registerPath || strings.HasSuffix(in.path, "/sync"),
+		secrets:    in.path == registerPath || strings.HasSuffix(in.path, "/sync"),
+		credential: in.path == registerPath && res.StatusCode/100 == 2,
 	}
 	c.seen = append(c.seen, a)
 	return a, nil
@@ -235,10 +251,11 @@ func (c *client) redacted(body []byte) (string, bool) {
 	if err := json.Unmarshal(body, &v); err != nil {
 		return string(body), false
 	}
-	if !c.scrub(v, "") {
+	scrubbed, found := c.scrub(v, "")
+	if !found {
 		return string(body), true
 	}
-	out, err := json.Marshal(v)
+	out, err := json.Marshal(scrubbed)
 	if err != nil {
 		// Unreachable for a value that came out of Unmarshal; if it ever is
 		// reached, say nothing rather than print what was being redacted.
@@ -247,60 +264,69 @@ func (c *client) redacted(body []byte) (string, bool) {
 	return string(out), true
 }
 
-// scrub takes every secret out of a decoded body and reports whether it took
-// any — which is what decides between re-marshalling the document and printing
-// the hub's own bytes, so a replacement that does not say so is a replacement
-// thrown away.
+// scrub takes every secret out of a decoded body and returns it with whether
+// it took any — which is what decides between re-marshalling the document and
+// printing the hub's own bytes, so a replacement that does not say so is a
+// replacement thrown away.
 //
-// Two kinds of secret. The fields v1 puts one in, whatever the value there
+// Three kinds of secret. The fields v1 puts one in, whatever the value there
 // turns out to be: a hub is not obliged to send a string, and a credential
-// inside an object under runner_credential is still a credential. And the
-// secrets this suite itself presented, wherever in any string they appear,
-// because a hub that quotes one back inside a message — "the token … is spent"
-// — has put it somewhere no walk by field name will look.
+// inside an object under runner_credential is still a credential. The secrets
+// this suite itself presented, in any string anywhere — a hub that quotes one
+// back inside a message has put it where no walk by field name will look. And
+// the same, in an object's keys, because a key is a string a hub wrote and
+// `{"<the token> is not valid": true}` is as readable as any message.
 //
-// Matching the decoded text is what makes the second kind exact: Unmarshal has
+// Matching the decoded text is what makes the last two exact: Unmarshal has
 // already collapsed \u0026, \/ and every other escape some encoder chose, so
 // one comparison covers all of them. Matching the encoded text could only ever
-// cover the forms this suite thought of, and the hubs it exists for are written
-// by other people in other languages.
+// cover the forms this suite thought of, and the hubs it exists for are
+// written by other people in other languages.
 //
 // The grant value is matched by the key it sits under rather than by its own
 // name, because "value" alone is a field name any hub might use for something
 // harmless.
-func (c *client) scrub(v any, under string) bool {
-	found := false
+func (c *client) scrub(v any, under string) (any, bool) {
 	switch t := v.(type) {
+	case string:
+		// Every string reaches this case, including a body that is one: the
+		// walk must not depend on a secret being wrapped in an object.
+		if hidden := c.hideKnown(t); hidden != t {
+			return hidden, true
+		}
 	case map[string]any:
+		found := false
+		renamed := map[string]string{}
 		for k, child := range t {
 			if k == "runner_credential" || under == "grants" && k == "value" {
 				t[k], found = json.RawMessage(redaction), true
 				continue
 			}
-			if text, ok := child.(string); ok {
-				if hidden := c.hideKnown(text); hidden != text {
-					t[k], found = hidden, true
-					continue
-				}
+			if scrubbed, ok := c.scrub(child, k); ok {
+				t[k], found = scrubbed, true
 			}
-			found = c.scrub(child, k) || found
+			if hidden := c.hideKnown(k); hidden != k {
+				renamed[k] = hidden
+			}
 		}
+		// After the walk: a map must not be written to while it is ranged.
+		for from, to := range renamed {
+			t[to], found = t[from], true
+			delete(t, from)
+		}
+		return t, found
 	case []any:
+		found := false
 		for i, child := range t {
-			if text, ok := child.(string); ok {
-				if hidden := c.hideKnown(text); hidden != text {
-					t[i], found = hidden, true
-					continue
-				}
+			if scrubbed, ok := c.scrub(child, under); ok {
+				t[i], found = scrubbed, true
 			}
-			found = c.scrub(child, under) || found
 		}
+		return t, found
 	}
-	return found
+	return v, false
 }
 
-// decode reads the body into v. A hub that answers 200 with something else has
-// broken the call, so the failure says that rather than leaking a Go type name.
 func (a *answer) decode(v any) error {
 	if err := json.Unmarshal(a.Body, v); err != nil {
 		return brokenf("the body is not the JSON this call answers with (%s): %s", err, a)
@@ -333,6 +359,13 @@ func (a *answer) envelope() (v1.Error, bool) {
 // body to show what happened — with the secrets the protocol carries taken
 // out of it first.
 func (a *answer) String() string {
+	if a.credential {
+		// Never printed, by any check: a register that answered 200 has put a
+		// credential in the body under a name this suite may not know, and
+		// every failure that prints such an answer is a failure about a hub
+		// that registered something it should not have.
+		return fmt.Sprintf("%s -> %d, and the body is not printed because a register answer carries a credential", a.Call, a.Status)
+	}
 	text, read := a.c.redacted(a.Body)
 	text = a.c.hide(text)
 	if !read && a.secrets {

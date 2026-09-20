@@ -46,6 +46,7 @@ type fakeRun struct {
 	spec    v1.Run
 	state   v1.RunState
 	queued  bool
+	offers  int
 	holder  string
 	expires time.Time
 	events  map[int64]bool
@@ -70,6 +71,8 @@ const (
 	flawTakesAnyResult     = "a second, different terminal state replaces the first"
 	flawShortInterval      = "the sync interval named is a second"
 	flawShortLease         = "the lease named is shorter than the interval named beside it"
+	flawStrictResultFields = "a result carrying an unknown field is refused"
+	flawRegistersAnyone    = "anyone registers, and the credential comes back under a name of the hub's own"
 	flawUngatedControl     = "a steer goes to a runner that never advertised one"
 	flawNoNextAction       = "errors say what went wrong and not what to do"
 	flawRenewsEverything   = "every run's lease is renewed, listed or not"
@@ -184,7 +187,7 @@ func (f *fake) register(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var req v1.RegisterRequest
-	issued := bearer(r) == f.token || f.flaw == flawAcceptsAnyToken && bearer(r) != ""
+	issued := bearer(r) == f.token || f.flaw == flawAcceptsAnyToken && bearer(r) != "" || f.flaw == flawRegistersAnyone
 	if !issued || json.NewDecoder(r.Body).Decode(&req) != nil {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "that is not a registration token this hub issued", "ask the hub for a new one")
 		return
@@ -218,7 +221,7 @@ func (f *fake) register(w http.ResponseWriter, r *http.Request) {
 		// after it and the test reads one broken rule rather than a cascade.
 		f.cred, f.runner = "fake-credential", req.Capabilities.RunnerID
 	}
-	if f.flaw == flawCredentialMisnamed {
+	if f.flaw == flawCredentialMisnamed || f.flaw == flawRegistersAnyone {
 		// A hub whose field is called something else: the answer is a 200
 		// carrying a live credential that no walk by field name can find.
 		f.writeRaw(w, http.StatusOK, fmt.Sprintf(`{"credential":%q,"sync_interval_ms":%d,"lease_ms":%d}`,
@@ -320,6 +323,7 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 			spec.Model = ""
 		}
 		run.queued, run.expires = false, now.Add(f.lease)
+		run.offers++
 		res.Runs = append(res.Runs, spec)
 		// The same run named twice in one answer: offered once, and never
 		// dropped by a sync that did not list it.
@@ -407,6 +411,12 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 	if f.flaw == flawStrictEventFields {
 		if _, isBatch := body.(*v1.EventBatch); isBatch {
 			f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the batch carries a field this hub does not know", "send only the fields in protocol/v1/openapi.yaml")
+			return false
+		}
+	}
+	if f.flaw == flawStrictResultFields {
+		if _, isResult := body.(*v1.Result); isResult {
+			f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the result carries a field this hub does not know", "send only the fields in protocol/v1/openapi.yaml")
 			return false
 		}
 	}

@@ -3,10 +3,8 @@ package conformance
 import (
 	"context"
 	"encoding/json"
-	"maps"
 	"net/http"
 	"net/url"
-	"slices"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -70,6 +68,28 @@ func checkEventsUnknownFields(ctx context.Context, s *session) error {
 	}
 	if !a.ok() {
 		return brokenf("the batch was refused for carrying a field the hub does not know: %s", a)
+	}
+	return nil
+}
+
+// checkResultUnknownFields is the same wire rule on the last call that takes a
+// body. It re-sends the terminal state the hub already holds, so a hub that
+// takes it changes nothing — what is being asked is whether a field it does
+// not know is enough to make it refuse.
+func checkResultUnknownFields(ctx context.Context, s *session) error {
+	body, err := withField(v1.Result{
+		State: v1.RunFailed, LastSeq: s.lastSeq,
+		Error: &v1.RunError{Class: "refused", Message: "the yad conformance suite claimed this run to check the protocol and drives no harness"},
+	}, "a_field_from_a_later_v1", true)
+	if err != nil {
+		return err
+	}
+	a, err := s.c.do(ctx, call{path: resultPath(s.report), bearer: s.cred, raw: body})
+	if err != nil {
+		return err
+	}
+	if !a.ok() {
+		return brokenf("the result was refused for carrying a field the hub does not know: %s", a)
 	}
 	return nil
 }
@@ -154,12 +174,13 @@ func checkEventsAfterTheRunEnds(ctx context.Context, s *session) error {
 }
 
 func checkOfferedRunIsValid(_ context.Context, s *session) error {
-	// Every run the hub offered, not only the two the suite went on to use:
-	// a run offered and taken back is one a runner would have had to refuse,
-	// and it is exactly as much a mistake as one still open.
-	for _, id := range slices.Sorted(maps.Keys(s.offered)) {
-		if err := s.offered[id].Validate(); err != nil {
-			return brokenf("the hub offered run %s, and %s", id, err)
+	// Every offer, not only the two the suite went on to use and not only the
+	// last of each id: a run offered and taken back is one a runner would
+	// have had to refuse, and it is exactly as much a mistake as one still
+	// open.
+	for _, run := range s.offers {
+		if err := run.Validate(); err != nil {
+			return brokenf("the hub offered run %s, and %s", run.RunID, err)
 		}
 	}
 	return nil

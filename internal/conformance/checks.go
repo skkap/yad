@@ -173,6 +173,12 @@ func checks() []check {
 		needs:   heldRun,
 		run:     checkResultCredentialRequired,
 	}, {
+		id:      "result/unknown-fields-ignored",
+		rule:    "Unknown fields are ignored on every call, not only on sync: a result carrying a field this version of the protocol does not define is accepted.",
+		section: sectionCalls,
+		needs:   heldRun,
+		run:     checkResultUnknownFields,
+	}, {
 		id:      "events/after-the-run-ends",
 		rule:    "The runner a run was claimed by may append to it after it has ended, so a batch still in its spool when the result landed is not lost.",
 		section: sectionEvents,

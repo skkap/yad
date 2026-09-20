@@ -171,9 +171,13 @@ type session struct {
 	// carries: the hub kept no fingerprint from register.
 	sentDoc bool
 
-	// offered is every run the hub offered this runner, by id, so a check can
-	// judge the runs themselves and not only the answers that carried them.
+	// offered is every run the hub offered this runner, by id, for the checks
+	// that need one run's specification. offers is each offer as it arrived,
+	// including a second offer of the same id, because a run offered valid
+	// once and invalid again was offered invalid — and the map alone keeps
+	// only the last.
 	offered map[string]v1.Run
+	offers  []v1.Run
 	// offeredAtOnce is the most runs one answer offered, which is what bounds
 	// how many the suite can hold — and so which rules it can check at all.
 	offeredAtOnce int
@@ -274,16 +278,18 @@ func (s *session) make(ctx context.Context, ch check) Outcome {
 		out.Status = Passed
 	case errors.As(err, &sk):
 		out.Status, out.Detail = Skipped, sk.reason
-	case ctx.Err() != nil:
+	case ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)):
 		// The check the signal landed in is not a rule the hub broke, and a
 		// report naming a §2 rule against a hub that did nothing is worse
 		// than one check fewer.
 		//
-		// Judged on this run's own context, never on the error: a hub that
-		// does not answer inside requestTimeout hands back a deadline of the
-		// client's, and calling that "the suite was stopped" would report a
-		// stalled hub as this suite's own interruption — and, since nothing
-		// then failed, exit 0 on it.
+		// Both halves are needed. On the error alone, a hub that does not
+		// answer inside requestTimeout hands back a deadline of the client's,
+		// and calling that "the suite was stopped" reports a stalled hub as
+		// this suite's own interruption — and, since nothing then failed,
+		// exits 0 on it. On the context alone, a signal arriving while a hub
+		// was already answering wrongly relabels the hub's own failure as an
+		// interruption, which loses a finding the suite had already made.
 		out.Status, out.Detail = Skipped, "the suite was stopped while this check was being made"
 	default:
 		// A transport error is reported like any other failure: from the
@@ -401,6 +407,7 @@ func (s *session) syncWith(ctx context.Context, req v1.SyncRequest, raw []byte) 
 	// them rather than about the two this suite goes on to use.
 	for _, r := range res.Runs {
 		s.offered[r.RunID] = r
+		s.offers = append(s.offers, r)
 	}
 	s.offeredAtOnce = max(s.offeredAtOnce, len(res.Runs))
 	s.note(a.Call, res.NextSyncMS, res.LeaseMS)

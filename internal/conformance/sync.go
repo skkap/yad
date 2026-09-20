@@ -142,9 +142,6 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 		// counting the second as a repeat would report the rule kept without
 		// a sync ever having dropped it.
 		ids := sorted(setOf(runIDs(res.Runs)))
-		for _, r := range res.Runs {
-			s.offered[r.RunID] = r
-		}
 		for _, id := range ids {
 			if slices.Contains(seen, id) {
 				if !slices.Contains(back, id) {
@@ -171,20 +168,21 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 			s.opts.Harness, offerSyncs)
 	// Every run the hub dropped, not one of them: seeing A come back says
 	// nothing about B, and a hub that re-offers one run for ever while losing
-	// the other keeps the rule for A alone.
-	case len(back) == len(answers[first]) && subset(answers[first], back):
+	// the other keeps the rule for A alone. Anything else it offered besides
+	// them is its business — the rule is about the runs it dropped, and a hub
+	// with more to give is keeping it, not breaking it.
+	case len(stillMissing(answers[first], back)) == 0:
 		return nil
 	}
 	// What the hub said after the answer that first offered something: how
 	// many syncs followed it, and which runs it had to offer that were not
 	// the ones it had just dropped.
+	// The verdict above and the sentence below are the same question asked
+	// once: a pass judged one way and a message written another is how a skip
+	// comes to name no run at all.
 	dropped, after := answers[first], answers[first+1:]
-	var missing, others []string
-	for _, id := range dropped {
-		if !slices.Contains(back, id) {
-			missing = append(missing, id)
-		}
-	}
+	missing := stillMissing(dropped, back)
+	var others []string
 	for _, ids := range after {
 		for _, id := range ids {
 			if !slices.Contains(dropped, id) {
@@ -288,14 +286,16 @@ func checkControlsAreGated(_ context.Context, s *session) error {
 
 func sorted(set map[string]bool) []string { return slices.Sorted(maps.Keys(set)) }
 
-// subset reports whether every member of want is in have.
-func subset(want, have []string) bool {
-	for _, id := range want {
-		if !slices.Contains(have, id) {
-			return false
+// stillMissing is the runs the hub dropped and has not offered again, in the
+// order it offered them. Empty is the rule kept.
+func stillMissing(dropped, back []string) []string {
+	var missing []string
+	for _, id := range dropped {
+		if !slices.Contains(back, id) {
+			missing = append(missing, id)
 		}
 	}
-	return true
+	return missing
 }
 
 func setOf(ids []string) map[string]bool {
