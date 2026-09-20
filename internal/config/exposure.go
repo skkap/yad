@@ -65,10 +65,13 @@ func privateFiles(p Paths) []privateFile {
 		// The runner's own store holds no grant: Loop.record strips them
 		// before writing, so a run is stored without the secrets it carried.
 		{p.StateDB(), "it holds every run's events, which carry what the harness did", "chmod 600 " + p.StateDB()},
-		// The hub's store is the opposite, and deliberately so — a queued run
-		// is held with its grants until it ends (hub/store/migrations/0001),
-		// so an exposed hub.db is exposed secrets, not just exposed state.
-		{p.HubDB(), "it holds this hub's queued runs with their grants, in plaintext", "chmod 600 " + p.HubDB() + " stops the next reader, but not the one who already read it, so rotate whatever secret a queued run's grants carry"},
+		// The hub's store is the opposite, and it keeps them: a run's spec is
+		// written once with its grants (hub/store/migrations/0001) and no
+		// query clears it — FinishRun sets state, reason and the lease, and
+		// nothing deletes a run. So every grant this hub was ever given is
+		// still in the file, and the advice cannot be limited to the runs
+		// waiting now.
+		{p.HubDB(), "it holds every run this hub has been given, with its grants, in plaintext", "chmod 600 " + p.HubDB() + " stops the next reader, but not the one who already read it, so rotate every secret any run's grants have carried"},
 	}
 	// Credentials are one file per connection and named by the owner, so they
 	// can only be found by reading the directory. ReadDir sorts by name, which
@@ -115,7 +118,13 @@ func Exposures(p Paths) []string {
 		// not whether there is anything to say. Every harness still runs as
 		// root either way, which is the fact the owner is being told.
 		if os.Getenv("IS_SANDBOX") == "1" {
-			out = append(out, "running as root with IS_SANDBOX=1 — Claude Code will start, but every harness this runner runs has root on this machine")
+			// What is settled here is the root question and nothing else: this
+			// says a run is no longer refused *for being root*, never that one
+			// would start. Exposures has not looked at whether a harness is
+			// installed, answers its version probe, or was given a permission
+			// mode the adapter accepts — and the harness table right above
+			// this line is where that is reported.
+			out = append(out, "running as root with IS_SANDBOX=1 — root alone no longer refuses a Claude run, but every harness this runner runs has root on this machine")
 		} else {
 			out = append(out, "running as root — every harness this runner runs would have root, and Claude Code refuses the default permission mode there; run yad as an ordinary user")
 		}

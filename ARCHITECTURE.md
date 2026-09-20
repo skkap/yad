@@ -842,8 +842,11 @@ line here is a reviewed change.
   itself — which is exactly why a runner belongs on a machine you would let the
   repository run code on.
 - `yad doctor` warns on the three exposures an owner can fix: running as root,
-  a config or data directory with group or other permissions, and a profile file
-  another user can read (`config.Exposures`). They are warnings and never change
+  a config or data directory another user can reach — by its mode, or by owning
+  it, the same pair `control.checkDir` refuses before it binds the socket — and
+  a profile file another user can read (`config.Exposures`). The files that hold
+  a secret say how to retire it as well as how to close it: a chmod stops the
+  next reader and not the one who already read it. They are warnings and never change
   its exit code — absence and misconfiguration are both facts it reports, and a
   diagnostic that refused to run would answer a question nobody asked. The
   places an exposure would actually leak still refuse on their own

@@ -53,7 +53,10 @@ CREATE TABLE runs (
     harness    TEXT NOT NULL,
     model      TEXT NOT NULL,
     -- The run exactly as it will be offered — brief, sources and grants — as
-    -- JSON. Grants are the hub's to hold until the run ends.
+    -- JSON. Nothing clears this: FinishRun settles a run's state and no query
+    -- deletes one, so every grant this hub has been given stays in the file.
+    -- Narrowing that is a decision, not a patch; an exposed hub.db is exposed
+    -- secrets and `yad doctor` says so.
     spec       TEXT NOT NULL,
     state      TEXT NOT NULL CHECK (state IN (
         'queued', 'offered',

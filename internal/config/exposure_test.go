@@ -369,3 +369,27 @@ func TestExposuresReportsADirectoryOwnedBySomeoneElse(t *testing.T) {
 		t.Errorf("a directory owned by uid 0 was not reported as another user's:\n%s", got)
 	}
 }
+
+// Exposures answers one question about the machine, and its wording may not
+// borrow authority from questions it never asked. With IS_SANDBOX declared it
+// knows root no longer refuses a Claude run; it has not looked at whether a
+// harness is installed, whether its version probe answers, or whether the
+// configured permission mode is one the adapter accepts — all of which the
+// harness table above these lines reports. Saying "Claude Code will start"
+// contradicted doctor's own output in a bare container, where the same run
+// prints "No drivable harness found".
+func TestTheSandboxWarningClaimsOnlyWhatItChecked(t *testing.T) {
+	old := geteuid
+	geteuid = func() int { return 0 }
+	t.Cleanup(func() { geteuid = old })
+	t.Setenv("IS_SANDBOX", "1")
+	got := strings.Join(Exposures(paths(t)), "\n")
+	for _, overclaim := range []string{"will start", "will run", "is installed", "is ready"} {
+		if strings.Contains(got, overclaim) {
+			t.Errorf("the warning claims %q, which Exposures never checked:\n%s", overclaim, got)
+		}
+	}
+	if !strings.Contains(got, "every harness this runner runs has root") {
+		t.Errorf("the warning dropped the fact it does establish:\n%s", got)
+	}
+}

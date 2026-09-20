@@ -88,8 +88,13 @@ wanted any of this could simply ask the harness for it.
 - **Grant names.** A grant may be named anything a shell accepts as an
   environment variable (`[A-Za-z_][A-Za-z0-9_]*`), except `PATH`, `HOME`, and
   the loader variables `LD_*` and `DYLD_*`, refused whatever their case
-  (`protocol/v1/grant.go`). The reason is in the code next to the list: those
-  four would make every run on the machine fail in a way nobody could trace.
+  (`protocol/v1/grant.go`). The reason is in the code next to the list: these
+  four would break the run rather than attack it. Each has its own — `PATH`
+  chooses which executable every command runs, `HOME` moves every tool's
+  configuration, and the loader variables load code into every process a run
+  starts — and the one 0038 gives for keeping the list at all is that a hub's
+  mistake must not unset `PATH` and make every run fail in a way nobody can
+  trace back.
   0024's secret-shaped suffix rule and its reserved namespaces are gone.
 - **`IS_SANDBOX` is two facts that only make sense together.** It is an
   acceptable *grant name* — no namespace rule refuses it any more — and the
@@ -138,11 +143,15 @@ starts. Nothing does: the harness is an ordinary process running as you, and it
 can read your whole home whatever `roots` says. Narrowing `roots` narrows what
 a hub can ask to have checked out, and that is all it is for.
 
-If a machine also runs `yad hub`, note that the hub's own store is where a
-queued run waits **with its grants, in plaintext** until it ends
-(`internal/hub/store/migrations/0001_init.sql`). That is the hub's job rather
-than the runner's, and it is why `yad doctor` treats an exposed `hub.db` as
-exposed secrets rather than exposed state.
+If a machine also runs `yad hub`, note that the hub's own store holds every run
+it has been given **with its grants, in plaintext**
+(`internal/hub/store/migrations/0001_init.sql`). Not only the ones waiting: a
+run's spec is written once and no query clears it, and nothing deletes a
+finished run (`internal/hub/store/queries.sql`), so a grant handed to this hub
+a month ago is still in the file. That is the hub's job rather than the
+runner's, and it is why `yad doctor` treats an exposed `hub.db` as exposed
+secrets rather than exposed state — and why the remediation is every secret
+any run has carried, not the current queue.
 
 ## Give it a machine of its own
 
@@ -230,8 +239,9 @@ environment, and the adapter honours it (`ARCHITECTURE.md §3`). Use it only
 where the container really is disposable: it turns off a check, it does not add
 a sandbox, and the harnesses still have root inside that container.
 
-`yad doctor` says both of those, run as root in a bare container with no
-harness installed:
+`yad doctor` says both of those. Run as root in a bare container with no
+harness installed — note that the warning speaks only to the root question,
+while whether a harness exists at all is the table above it:
 
 ```
 # id -u
@@ -252,7 +262,7 @@ No drivable harness found. Install Claude Code or Codex and run this again.
 
 # IS_SANDBOX=1 yad doctor
 …
-warning: running as root with IS_SANDBOX=1 — Claude Code will start, but every harness this runner runs has root on this machine
+warning: running as root with IS_SANDBOX=1 — root alone no longer refuses a Claude run, but every harness this runner runs has root on this machine
 ```
 
 The second run's harness table and footer are the same as the first, elided
@@ -290,7 +300,9 @@ is an identity rather than a secret — a hub refuses to re-register an id
 without a token minted for that runner — so closing the file is the whole of
 its fix. `state.db` holds runs without their grants, which the runner strips
 before writing. `hub.db`, a connection's credential and the hub admin token do
-hold secrets, so each of those asks for the rotation as well as the mode.
+hold secrets, so each of those asks for the rotation as well as the mode. The
+admin token's line names the delete between `revoke` and `create`, because
+`revoke` only touches `hub.db` and `create` refuses while the file is there.
 
 Here is what it looks like on a profile with a group-readable data directory and
 a world-readable credential:
@@ -313,7 +325,8 @@ profile default — config /tmp/yad/config
 2 harness(es) this runner can be given work for.
 ```
 
-Do what each warning says, and it goes quiet:
+Close the two files and `yad doctor` goes quiet — which is not the same as
+being finished, as the paragraph after this one explains:
 
 ```
 $ chmod 700 /tmp/yad/data
@@ -339,11 +352,12 @@ own: `ReadSecret` will not hand out a credential others can read, and the
 control server will not bind its socket in a directory others can reach.
 
 **A `chmod` is only ever half the answer for a secret.** It stops the next
-reader; it does nothing about whoever already read the file, and a credential
-that has been readable by others must be assumed leaked — which is the same
-premise `config.ReadSecret` refuses on. So the two warnings that name a secret,
-a connection's credential and this machine's hub admin token, ask for the
-rotation as well as the mode.
+reader; it does nothing about whoever already read the file, and a secret that
+has been readable by others must be assumed leaked — which is the same premise
+`config.ReadSecret` refuses on. So each of the three warnings that names a
+secret — a connection's credential, this machine's hub admin token, and
+`hub.db` — asks for the rotation as well as the mode, and names the sequence
+that actually works for that one.
 
 That is also the one place this diagnostic cannot keep you honest: **the chmod
 alone silences the warning.** `yad doctor` can see a file's mode; it cannot see
