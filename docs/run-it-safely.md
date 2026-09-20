@@ -239,6 +239,12 @@ environment, and the adapter honours it (`ARCHITECTURE.md §3`). Use it only
 where the container really is disposable: it turns off a check, it does not add
 a sandbox, and the harnesses still have root inside that container.
 
+`IS_SANDBOX` is not the only way a Claude run starts as root, and the guide
+would be overstating if it said so. The adapter refuses root **only** for
+`bypassPermissions`, so a narrower `permission_mode` runs as root without it —
+and gives up the auto-approval the runner exists for. Neither route makes root
+a good idea; they are different trades.
+
 `yad doctor` says both of those. Run as root in a bare container with no
 harness installed — note that the warning speaks only to the root question,
 while whether a harness exists at all is the table above it:
@@ -285,21 +291,23 @@ harnesses it already reported:
    belonging to somebody else passes a mode check and is still theirs to read
    and replace, which is why the owning uid is compared too; the control server
    already refuses to bind a socket in one.)
-3. **The profile's long-lived files**: `runner-id`, each
+3. **The profile's long-lived files**: `config.toml`, `runner-id`, each
    `credentials/<connection>`, `hub-admin-token`, `state.db` and `hub.db`.
 
 The rule for a file is the one `config.ReadSecret` already enforces before it
 will hand out a credential — no group or other bits — rather than a literal
 `0600`, so a credential you tightened to `0400` by hand is not scolded for it.
-`config.toml` is not on the list: it holds no secret and is legitimately
-world-readable, and a check that cried wolf over it would be a check people turn
-off.
+`config.toml` **is** on the list, for the reason `config.Save` gives for writing
+it `0600`: it names the hubs this runner connects to and the accounts it holds.
+It carries no secret, so the mode is the whole of its fix — it is not asked to
+be rotated.
 
 Each file says what is at stake and what to do, and those differ. `runner-id`
 is an identity rather than a secret — a hub refuses to re-register an id
 without a token minted for that runner — so closing the file is the whole of
-its fix. `state.db` holds runs without their grants, which the runner strips
-before writing. `hub.db`, a connection's credential and the hub admin token do
+its fix, and so it is for `config.toml`, which names hubs and accounts but
+carries no secret. `state.db` holds runs without their grants, which the runner
+strips before writing. `hub.db`, a connection's credential and the hub admin token do
 hold secrets, so each of those asks for the rotation as well as the mode. The
 admin token's line names the delete between `revoke` and `create`, because
 `revoke` only touches `hub.db` and `create` refuses while the file is there.
@@ -325,8 +333,8 @@ profile default — config /tmp/yad/config
 2 harness(es) this runner can be given work for.
 ```
 
-Close the two files and `yad doctor` goes quiet — which is not the same as
-being finished, as the paragraph after this one explains:
+Close the directory and the file and `yad doctor` goes quiet — which is not
+the same as being finished, as the paragraph after this one explains:
 
 ```
 $ chmod 700 /tmp/yad/data

@@ -66,10 +66,11 @@ func TestExposures(t *testing.T) {
 			absent: []string{"IS_SANDBOX=1 —"},
 		},
 		{
-			// Root in a disposable container is the one way a Claude run starts
-			// as root at all, so telling that owner to become an ordinary user
-			// is advice they have already declined. What is left to say is that
-			// the harnesses still have root.
+			// Not the only way a Claude run starts as root — the adapter
+			// refuses root only for bypassPermissions — but it is the one this
+			// owner has declared, so telling them to become an ordinary user
+			// is advice they have already considered. What is left to say is
+			// that the harnesses still have root.
 			name:    "root with the sandbox declared",
 			euid:    0,
 			sandbox: "1",
@@ -129,14 +130,17 @@ func TestExposures(t *testing.T) {
 			absent: []string{"chmod"},
 		},
 		{
-			// config.toml is written by the owner's editor and holds no secret,
-			// so a 0644 one is not reported. This is why the list is explicit.
+			// config.Save writes config.toml 0600 on purpose — it names the
+			// hubs and the accounts — so a world-readable one is reported. It
+			// holds no secret, so the mode is the whole of its fix and it must
+			// not ask for a rotation.
 			name: "a world-readable config.toml",
 			euid: 501,
 			setup: func(t *testing.T, p Paths) {
 				write(t, p.ConfigFile(), 0o644)
 			},
-			absent: []string{"chmod", "config.toml"},
+			want:   []string{"config.toml is -rw-r--r--", "names the hubs", "chmod 600 "},
+			absent: []string{"not the one who already read it"},
 		},
 		{
 			name: "every profile file at once, each named",
@@ -224,9 +228,19 @@ func TestExposuresSurvivesAnUnreadableCredentialsDirectory(t *testing.T) {
 // It matches by file rather than by line so that moving code inside a file does
 // not fail it, and it reads the syntax tree rather than grepping so that 0o600
 // in a comment or a test's expectation is not a site.
+//
+// A literal is not the only way to make one. config.WriteSecret and
+// writePrivate are the sanctioned ways to create a profile secret and neither
+// puts 0o600 at the call site, so calls to them count as sites too — which is
+// how config.toml came to be on the list at all.
+var privateWriters = map[string]bool{"WriteSecret": true, "writePrivate": true}
+
 func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 	excused := map[string]string{
 		"internal/config/credentials.go": "writePrivate: runner-id, credentials/* and hub-admin-token — all in privateFiles",
+		"internal/config/config.go":      "Save writes config.toml 0600 — in privateFiles, as the mode without the rotation",
+		"internal/config/identity.go":    "runner-id, in privateFiles",
+		"cmd/yad/cmd_hub.go":             "WriteSecret for hub-admin-token, which is in privateFiles",
 		"internal/store/store.go":        "state.db and hub.db — both in privateFiles",
 		"internal/control/server.go":     "yad.sock and yad.lock: gone when the daemon stops, and inside the data directory this checks as a whole",
 		"internal/logfile/logfile.go":    "the daemon's log, inside the data directory this checks as a whole",
@@ -265,9 +279,21 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 		rel = filepath.ToSlash(rel)
 		var found bool
 		ast.Inspect(f, func(n ast.Node) bool {
-			lit, ok := n.(*ast.BasicLit)
-			if ok && lit.Kind == token.INT && lit.Value == "0o600" {
-				found = true
+			switch n := n.(type) {
+			case *ast.BasicLit:
+				if n.Kind == token.INT && n.Value == "0o600" {
+					found = true
+				}
+			case *ast.CallExpr:
+				// WriteSecret / config.WriteSecret / writePrivate, by the name
+				// called rather than by resolving the package, which would
+				// need type information this walk deliberately does not load.
+				switch fn := n.Fun.(type) {
+				case *ast.Ident:
+					found = found || privateWriters[fn.Name]
+				case *ast.SelectorExpr:
+					found = found || privateWriters[fn.Sel.Name]
+				}
 			}
 			return !found
 		})
@@ -291,10 +317,12 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 }
 
 // A secret that has been readable by others must be assumed leaked, which a
-// chmod does not undo — so the two files that hold a secret say how to retire
-// it, and the two that do not are left with the chmod alone. Getting this
-// wrong is worse than saying nothing: an owner does the chmod, feels finished,
-// and goes on using a credential they were just told to distrust.
+// chmod does not undo — so the files that hold one say how to retire it, and
+// the files that do not are left with the chmod alone. Getting this wrong is
+// worse than saying nothing: an owner does the chmod, feels finished, and goes
+// on using a credential they were just told to distrust. The test asserts the
+// correspondence rather than a count, so adding a file to either group cannot
+// silently put it in the wrong one.
 func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 	old := geteuid
 	geteuid = func() int { return 501 }
@@ -341,6 +369,41 @@ func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 	for _, line := range Exposures(p) {
 		if strings.Contains(line, "runner-id") && strings.Contains(line, "take over") {
 			t.Errorf("the runner id is reported as a takeover that reading it cannot cause:\n%s", line)
+		}
+	}
+}
+
+// The next action is a command an owner pastes, so a path with a space in it
+// has to survive the trip. A profile directory comes from an environment
+// variable and is not constrained to shell-safe characters.
+func TestNextActionsSurviveAPathWithASpace(t *testing.T) {
+	old := geteuid
+	geteuid = func() int { return 501 }
+	t.Cleanup(func() { geteuid = old })
+	base := t.TempDir()
+	dir := filepath.Join(base, "My Disk")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := Paths{Profile: DefaultProfile, Config: dir, Data: dir}
+	write(t, filepath.Join(dir, "credentials", "yashiki"), 0o644)
+	got := strings.Join(Exposures(p), "\n")
+	if !strings.Contains(got, "chmod 700 '"+dir+"'") {
+		t.Errorf("the directory command is not pasteable:\n%s", got)
+	}
+	if !strings.Contains(got, "chmod 600 '"+filepath.Join(dir, "credentials", "yashiki")+"'") {
+		t.Errorf("the credential command is not pasteable:\n%s", got)
+	}
+	// A path needing no quoting keeps none, so the ordinary message stays
+	// readable — which is the whole reason shellArg checks before quoting.
+	// Checked on the command alone: these messages are prose and carry
+	// apostrophes of their own ("every run's events").
+	plain := paths(t)
+	write(t, plain.StateDB(), 0o644)
+	for _, line := range Exposures(plain) {
+		_, cmd, ok := strings.Cut(line, "chmod 600 ")
+		if ok && strings.HasPrefix(cmd, "'") {
+			t.Errorf("an ordinary path was quoted:\n%s", line)
 		}
 	}
 }
