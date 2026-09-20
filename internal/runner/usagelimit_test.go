@@ -343,3 +343,44 @@ func TestAnUndatedLimitIsNotDatedFromAWindowThatHasAlreadyReset(t *testing.T) {
 		t.Errorf("limited until %s, want about %s", until, want)
 	}
 }
+
+// A limit nothing dated is the one usage limit that does not become a wait:
+// there is no moment to come back at, so parking the run would be a park
+// nothing ends. It is refused instead, and the refusal names the state
+// rather than inventing a time.
+//
+// Reachable, not dead. account.SetLimit dates every limit it writes — from
+// the harness, from a full window, or from limitWithoutReset — so this is a
+// row from another version of yad or a hand-edited database, and stateOf
+// deliberately leaves such a row limited rather than reading it as free.
+// Without this test the branch reads as unreachable and invites deletion.
+func TestAnUndatedLimitRefusesTheRunRatherThanParkingIt(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	// SetState, not SetLimit: the state without the reset is what a row
+	// written by something other than SetLimit looks like.
+	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountLimited, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunSucceeded},
+	}))
+	claimAndRun(t, l, x)
+
+	if got := localRun(t, e, "a").State; got == string(v1.RunWaiting) {
+		t.Fatal("the run is waiting on a limit with no reset; nothing would ever end that wait")
+	}
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunFailed {
+		t.Fatalf("result = %+v, %v, want failed", res, ok)
+	}
+	if res.Error.Class != ClassRefused {
+		t.Errorf("error class = %q, want %q", res.Error.Class, ClassRefused)
+	}
+	if want := "work at an undated usage limit"; !strings.Contains(res.Error.Message, want) {
+		t.Errorf("the refusal is %q, want it to contain %q", res.Error.Message, want)
+	}
+}
