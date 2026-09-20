@@ -157,7 +157,7 @@ func checkLeaseLapse(ctx context.Context, s *session) error {
 		}
 	}
 	req := s.syncRequest(0)
-	req.Runs = append(req.Runs, v1.HeldRun{RunID: s.lapse, State: v1.RunRunning})
+	req.Runs = append(req.Runs, v1.HeldRun{RunID: s.lapse, State: v1.RunClaimed})
 	res, a, err := s.syncWith(ctx, req, nil)
 	if err != nil {
 		return err

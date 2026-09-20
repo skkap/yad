@@ -247,6 +247,25 @@ func runIDs(runs []v1.Run) []string {
 // checks before it reads the body.
 var notJSON = json.RawMessage(`{ this is not JSON`)
 
+// withField marshals v and splices one more field into the object, for the
+// rule about a field this version of the protocol does not have.
+func withField(v any, name string, value any) ([]byte, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	m[name] = raw
+	return json.Marshal(m)
+}
+
 // syncBodyWith returns this runner's sync body with extra fields spliced in,
 // which the protocol's own types cannot carry.
 func (s *session) syncBodyWith(free int, extra map[string]any) ([]byte, error) {

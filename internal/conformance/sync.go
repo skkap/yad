@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -43,13 +44,9 @@ func checkEmptyListsOmitted(ctx context.Context, s *session) error {
 
 func checkUnknownFieldsIgnored(ctx context.Context, s *session) error {
 	req := s.syncRequest(0)
-	// A field beside health's own, and one beside the request's: a hub that
-	// refuses either would break on the next field added within v1.
-	health, err := json.Marshal(map[string]any{
-		"load": req.Health.Load, "free_capacity": req.Health.FreeCapacity,
-		"disk_free_bytes": req.Health.DiskFreeBytes, "spool_depth": 0, "outbox_depth": 0,
-		"harnesses": req.Health.Harnesses, "a_field_from_a_later_v1": true,
-	})
+	// One field beside the request's own and one inside health, because a hub
+	// decodes the two separately and may be strict about only one of them.
+	health, err := withField(req.Health, "a_field_from_a_later_v1", true)
 	if err != nil {
 		return err
 	}
@@ -87,7 +84,7 @@ func checkCancelForRunNotHeld(ctx context.Context, s *session) error {
 		return err
 	}
 	req := s.syncRequest(0)
-	req.Runs = append(req.Runs, v1.HeldRun{RunID: notOurs, State: v1.RunRunning})
+	req.Runs = append(req.Runs, v1.HeldRun{RunID: notOurs, State: v1.RunClaimed})
 	res, a, err := s.syncWith(ctx, req, nil)
 	if err != nil {
 		return err
@@ -142,12 +139,16 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 	if missing := absent(want, seen); len(missing) > 0 {
 		note := ""
 		if len(instead) > 0 {
-			note = fmt.Sprintf(" (it offered %s instead)", strings.Join(sorted(instead), ", "))
+			note = fmt.Sprintf(", and it offered %s instead", strings.Join(sorted(instead), ", "))
 		}
-		return brokenf("run %s was offered, was not listed in the next sync, and was not offered again in the %d syncs after it%s: %s",
-			strings.Join(missing, ", "), offerSyncs, note, last)
+		// §2 says the hub offers it again and does not say how soon, so the
+		// number of syncs waited is this suite's tolerance and not a verdict
+		// about the protocol. A hub with a deep queue for this harness can
+		// have something else to say first, and the failure says so rather
+		// than calling queue depth a broken rule.
+		return brokenf("run %s was offered, was not listed in the next sync, and had not been offered again %d syncs later%s; §2 does not say how soon a hub must offer it again, so %d syncs is this suite's tolerance rather than the protocol's number: %s",
+			strings.Join(missing, ", "), offerSyncs, note, offerSyncs, last)
 	}
-	s.pick(want)
 	return nil
 }
 
@@ -178,7 +179,8 @@ func checkClaimByListing(ctx context.Context, s *session) error {
 		s.drop(s.lapse)
 		s.lapseAt, s.leaseAtClaim = time.Now(), time.Duration(res.LeaseMS)*time.Millisecond
 	}
-	s.hold(s.report, v1.RunRunning)
+	// Still claimed, never running: this runner prepares no workdir and spawns
+	// no harness, and §2 has a run report running only once its workdir exists.
 	return nil
 }
 
@@ -186,11 +188,11 @@ func checkTimings(_ context.Context, s *session) error {
 	for _, t := range s.timings {
 		switch {
 		case t.interval < v1MinInterval || t.interval > v1MaxInterval:
-			return brokenf("the hub named a sync interval of %s, outside the %s to %s the protocol bounds it to: %s",
-				t.interval, v1MinInterval, v1MaxInterval, t.call)
+			return brokenf("answering %s the hub named a sync interval of %s, outside the %s to %s the protocol bounds it to",
+				t.call, t.interval, v1MinInterval, v1MaxInterval)
 		case t.lease < t.interval:
-			return brokenf("the hub named a lease of %s, shorter than the %s interval it asks the runner to sync at, so a run would be lost between two syncs that were on time: %s",
-				t.lease, t.interval, t.call)
+			return brokenf("answering %s the hub named a lease of %s and a sync interval of %s, so a run would be lost between two syncs that were both on time",
+				t.call, t.lease, t.interval)
 		}
 	}
 	return nil
@@ -204,12 +206,13 @@ const (
 )
 
 func checkControlsAreGated(_ context.Context, s *session) error {
-	for _, res := range s.syncs {
-		for _, c := range res.Controls {
+	for _, seen := range s.syncs {
+		for _, c := range seen.res.Controls {
 			switch c.Kind {
 			case v1.ControlCancel, v1.ControlReportCapabilities:
 			default:
-				return brokenf("the hub sent a %q control to a runner whose capability document advertises no protocol feature; only cancel and report_capabilities go to every v1 runner", c.Kind)
+				return brokenf("answering %s the hub sent a %q control, and this runner's capability document advertises no protocol feature; only cancel and report_capabilities go to every v1 runner",
+					seen.call, c.Kind)
 			}
 		}
 	}
@@ -227,11 +230,4 @@ func absent(want []string, seen map[string]bool) []string {
 	return missing
 }
 
-func sorted(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
-}
+func sorted(set map[string]bool) []string { return slices.Sorted(maps.Keys(set)) }

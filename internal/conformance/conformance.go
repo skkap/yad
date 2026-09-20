@@ -155,9 +155,10 @@ type session struct {
 	// timings is every pair of them, with the call that carried it, for the
 	// check that judges them all at the end.
 	timings []timing
-	// syncs is every sync response, for the check on which controls a hub may
-	// send to a runner advertising no feature.
-	syncs []v1.SyncResponse
+	// syncs is every sync response with the call that carried it, for the
+	// check on which controls a hub may send to a runner advertising no
+	// feature: a failure has to name the answer it read.
+	syncs []syncSeen
 
 	// held is what the suite lists in its syncs, in order, so two runs of the
 	// suite make the same requests.
@@ -181,6 +182,12 @@ type session struct {
 	lapseAt time.Time
 	// leaseAtClaim is the lease the hub named in the answer that claimed it.
 	leaseAtClaim time.Duration
+}
+
+// syncSeen is one sync answer and the request it answered.
+type syncSeen struct {
+	call string
+	res  v1.SyncResponse
 }
 
 // timing is one hub-named pair of interval and lease, and where it came from.
@@ -337,7 +344,7 @@ func (s *session) syncWith(ctx context.Context, req v1.SyncRequest, raw []byte) 
 	if err := a.decode(&res); err != nil {
 		return res, a, err
 	}
-	s.syncs = append(s.syncs, res)
+	s.syncs = append(s.syncs, syncSeen{call: a.Call, res: res})
 	s.note(a.Call, res.NextSyncMS, res.LeaseMS)
 	return res, a, nil
 }
