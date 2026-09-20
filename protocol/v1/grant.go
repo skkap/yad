@@ -38,12 +38,19 @@ import (
 // lookalike out — Cyrillic "РАТН" does not match this pattern at all.
 var grantNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// deniedGrantNames and deniedGrantPrefixes are matched case-insensitively.
-// Environment variables are case-sensitive on linux and darwin, so "path" is
-// not PATH to a process — but a file grant's name is a file name, and macOS
-// folds case, so "path" beside the loader variables is the same mistake with
-// the same untraceable end. A hub with a use for either name has another it
-// can use instead.
+// deniedGrantNames and deniedGrantPrefixes are matched case-insensitively,
+// which refuses more than it strictly has to: environment variables are
+// case-sensitive on linux and darwin, so a grant named "path" arrives as
+// "path" and leaves PATH alone. It is refused anyway because this list catches
+// a hub's mistake, and the mistake it catches is a hub author's — one who
+// expects Windows, where the environment folds case and "Path" is PATH. The
+// over-refusal costs nothing real, since no legitimate grant is named "path"
+// or "home", and it leaves no question of a name in the wrong case slipping
+// past a list meant to be exhaustive.
+//
+// The filesystem's own case folding is a different problem, and it is handled
+// where it actually bites: two file grants whose names differ only by case
+// share one file (Run.Validate).
 var deniedGrantNames = map[string]string{
 	"PATH": "chooses which executable every command runs, so a run carrying it may not find its harness at all",
 	"HOME": "moves every tool's configuration and credentials, the harness's own among them",
