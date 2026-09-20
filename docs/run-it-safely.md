@@ -212,6 +212,34 @@ environment, and the adapter honours it (`ARCHITECTURE.md §3`). Use it only
 where the container really is disposable: it turns off a check, it does not add
 a sandbox, and the harnesses still have root inside that container.
 
+`yad doctor` says both of those, run as root in a bare container with no
+harness installed:
+
+```
+# id -u
+0
+# yad doctor
+HARNESS             STATUS  VERSION  PATH
+Claude Code         —
+Codex               —
+Gemini CLI          —
+GitHub Copilot CLI  —
+OpenCode            —
+Cursor Agent        —
+
+warning: running as root — every harness this runner runs would have root, and Claude Code refuses the default permission mode there; run yad as an ordinary user
+
+profile default — config /root/p/config
+No drivable harness found. Install Claude Code or Codex and run this again.
+
+# IS_SANDBOX=1 yad doctor
+…
+warning: running as root with IS_SANDBOX=1 — Claude Code will start, but every harness this runner runs has root on this machine
+```
+
+The second run's harness table and footer are the same as the first, elided
+here; only the warning changes.
+
 ## Keep the profile private, and let `yad doctor` tell you
 
 The profile's directories hold credentials and harness transcripts, so YAD

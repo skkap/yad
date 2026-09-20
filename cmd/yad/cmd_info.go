@@ -73,13 +73,15 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 			fmt.Fprintf(w, "\nwarning: %s — %s\n", d.Label, warn)
 		}
 	}
-	// How the machine is set up, not what is installed on it, so these carry no
-	// harness label — and they are printed here rather than folded into the
-	// --json capability document, which is what a hub receives and has no
-	// business learning a directory's mode. They never change the exit code:
-	// the guide these back (docs/run-it-safely.md) tells an owner to run
-	// `yad doctor`, and one that failed on a group-readable directory would
-	// stop reporting the harnesses they ran it for.
+	// How the machine is set up rather than what is installed on it, so these
+	// carry no harness label, and they stay out of --json: that is the
+	// detection result a hub's capability document is built from, and a
+	// directory's mode is none of a hub's business.
+	//
+	// They never change the exit code. docs/run-it-safely.md sends an owner
+	// here to see their harnesses and their exposures at once, and a doctor
+	// that failed on a group-readable directory would stop reporting the
+	// harnesses they ran it for.
 	for _, warn := range config.Exposures(g.paths) {
 		fmt.Fprintf(w, "\nwarning: %s\n", warn)
 	}

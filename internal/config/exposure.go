@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 )
 
 // geteuid is swapped by tests, the same seam the Claude adapter uses for its
@@ -42,22 +41,18 @@ func privateFiles(p Paths) []privateFile {
 		{p.HubDB(), "it holds this hub's runs and the hashes of its tokens"},
 	}
 	// Credentials are one file per connection and named by the owner, so they
-	// can only be found by reading the directory.
-	entries, err := os.ReadDir(filepath.Join(p.Config, "credentials"))
-	if err == nil {
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			if !e.IsDir() {
-				names = append(names, e.Name())
-			}
+	// can only be found by reading the directory. ReadDir sorts by name, which
+	// is what keeps two runs on an unchanged machine printing the same thing.
+	// A directory that cannot be read is not a reason to check nothing else.
+	entries, _ := os.ReadDir(filepath.Join(p.Config, "credentials"))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
 		}
-		sort.Strings(names)
-		for _, n := range names {
-			files = append(files, privateFile{
-				filepath.Join(p.Config, "credentials", n),
-				fmt.Sprintf("it is the runner credential for the connection %q, and one that has been readable by others must be assumed leaked", n),
-			})
-		}
+		files = append(files, privateFile{
+			filepath.Join(p.Config, "credentials", e.Name()),
+			fmt.Sprintf("it is the runner credential for the connection %q, and one that has been readable by others must be assumed leaked", e.Name()),
+		})
 	}
 	return files
 }
