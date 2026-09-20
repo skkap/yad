@@ -19,10 +19,17 @@ const otherUsers os.FileMode = 0o077
 
 // privateFile is one of the profile's long-lived files, with the reason its
 // mode is worth a warning of its own rather than being left to the directory
-// check above it.
+// check above it, and the next action for that file.
+//
+// fix is per-file because for two of them the chmod is not the whole answer. A
+// chmod stops the next reader; it does nothing about the one who already read
+// it, and a secret that has been readable by others must be assumed leaked
+// (the premise ReadSecret already refuses on). Telling an owner only to chmod
+// a leaked credential leaves them feeling finished while still using it.
 type privateFile struct {
 	path string
 	why  string
+	fix  string
 }
 
 // privateFiles are the files this profile keeps between runs that no other user
@@ -34,11 +41,15 @@ type privateFile struct {
 // config.toml is legitimately world-readable and a check that cried wolf over
 // it would be turned off.
 func privateFiles(p Paths) []privateFile {
+	runnerID := filepath.Join(p.Config, "runner-id")
+	admin := p.HubAdminToken()
 	files := []privateFile{
-		{filepath.Join(p.Config, "runner-id"), "another machine claiming this id would take over this runner's sessions"},
-		{p.HubAdminToken(), "it is the admin token for this machine's hub"},
-		{p.StateDB(), "it holds every run's events, which carry what the harness did"},
-		{p.HubDB(), "it holds this hub's runs and the hashes of its tokens"},
+		// An identity rather than a secret: reading it leaks nothing, so
+		// closing the file is the whole of the fix.
+		{runnerID, "another machine claiming this id would take over this runner's sessions", "chmod 600 " + runnerID},
+		{admin, "it is the admin token for this machine's hub", "chmod 600 " + admin + " stops the next reader, but not the one who already read it, so revoke it with `yad hub admin-token revoke` (`list` names them) and create another"},
+		{p.StateDB(), "it holds every run's events, which carry what the harness did", "chmod 600 " + p.StateDB()},
+		{p.HubDB(), "it holds this hub's runs and the hashes of its tokens", "chmod 600 " + p.HubDB()},
 	}
 	// Credentials are one file per connection and named by the owner, so they
 	// can only be found by reading the directory. ReadDir sorts by name, which
@@ -49,9 +60,14 @@ func privateFiles(p Paths) []privateFile {
 		if e.IsDir() {
 			continue
 		}
+		path := filepath.Join(p.Config, "credentials", e.Name())
 		files = append(files, privateFile{
-			filepath.Join(p.Config, "credentials", e.Name()),
-			fmt.Sprintf("it is the runner credential for the connection %q, and one that has been readable by others must be assumed leaked", e.Name()),
+			path,
+			fmt.Sprintf("it is the runner credential for the connection %q", e.Name()),
+			// The same next action config.Credential gives when ReadSecret
+			// refuses this file outright, so an owner who meets it here and
+			// there is told to do one thing, not two.
+			"chmod 600 " + path + " stops the next reader, but not the one who already read it, so revoke this credential at the hub and run `yad connect` again",
 		})
 	}
 	return files
@@ -103,7 +119,7 @@ func Exposures(p Paths) []string {
 			continue
 		}
 		if fi.Mode().Perm()&otherUsers != 0 {
-			out = append(out, fmt.Sprintf("%s is %v — %s; chmod 600 %s", f.path, fi.Mode().Perm(), f.why, f.path))
+			out = append(out, fmt.Sprintf("%s is %v — %s; %s", f.path, fi.Mode().Perm(), f.why, f.fix))
 		}
 	}
 	return out

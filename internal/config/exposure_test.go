@@ -109,8 +109,11 @@ func TestExposures(t *testing.T) {
 			want: []string{
 				filepath.Join("credentials", "yashiki") + " is -rw-r--r--",
 				`connection "yashiki"`,
-				"must be assumed leaked",
 				"chmod 600 ",
+				// A chmod stops the next reader, not the one who already read
+				// it, so the action a leaked secret needs is the rotation.
+				"not the one who already read it",
+				"revoke this credential at the hub and run `yad connect` again",
 			},
 		},
 		{
@@ -147,7 +150,8 @@ func TestExposures(t *testing.T) {
 				write(t, filepath.Join(p.Config, "credentials", "a"), 0o644)
 			},
 			want: []string{"runner-id", "hub-admin-token", "state.db", "hub.db",
-				`connection "a"`, `connection "b"`},
+				`connection "a"`, `connection "b"`,
+				"revoke it with `yad hub admin-token revoke`"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,5 +287,39 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 	// excusing a file that no longer writes anything private.
 	for rel, why := range excused {
 		t.Errorf("%s no longer creates a 0600 file, so its excuse (%s) is stale — delete the line", rel, why)
+	}
+}
+
+// A secret that has been readable by others must be assumed leaked, which a
+// chmod does not undo — so the two files that hold a secret say how to retire
+// it, and the two that do not are left with the chmod alone. Getting this
+// wrong is worse than saying nothing: an owner does the chmod, feels finished,
+// and goes on using a credential they were just told to distrust.
+func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
+	old := geteuid
+	geteuid = func() int { return 501 }
+	t.Cleanup(func() { geteuid = old })
+	p := paths(t)
+	write(t, filepath.Join(p.Config, "credentials", "yashiki"), 0o644)
+	write(t, p.HubAdminToken(), 0o644)
+	write(t, filepath.Join(p.Config, "runner-id"), 0o644)
+	write(t, p.StateDB(), 0o644)
+
+	for _, line := range Exposures(p) {
+		secret := strings.Contains(line, "credentials") || strings.Contains(line, "hub-admin-token")
+		rotates := strings.Contains(line, "not the one who already read it")
+		if secret != rotates {
+			t.Errorf("secret=%v but rotation advice=%v:\n%s", secret, rotates, line)
+		}
+		if !strings.Contains(line, "chmod 600 ") {
+			t.Errorf("no chmod in:\n%s", line)
+		}
+	}
+	// `yad disconnect` is not built yet (it answers "arrives in epic E7"), so
+	// no warning may tell an owner to run it. The credential path is the one
+	// config.Credential already gives when ReadSecret refuses the same file.
+	got := strings.Join(Exposures(p), "\n")
+	if strings.Contains(got, "yad disconnect") {
+		t.Errorf("a warning names a command this yad does not have:\n%s", got)
 	}
 }

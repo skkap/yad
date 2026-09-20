@@ -278,13 +278,13 @@ Cursor Agent        no adapter  2025.09.12-4852336     /Users/me/.local/bin/curs
 
 warning: the data directory /tmp/yad/data is -rwxr-xr-x — another user on this machine can reach what is in it; chmod 700 /tmp/yad/data
 
-warning: /tmp/yad/config/credentials/yashiki is -rw-r--r-- — it is the runner credential for the connection "yashiki", and one that has been readable by others must be assumed leaked; chmod 600 /tmp/yad/config/credentials/yashiki
+warning: /tmp/yad/config/credentials/yashiki is -rw-r--r-- — it is the runner credential for the connection "yashiki"; chmod 600 /tmp/yad/config/credentials/yashiki stops the next reader, but not the one who already read it, so revoke this credential at the hub and run `yad connect` again
 
 profile default — config /tmp/yad/config
 2 harness(es) this runner can be given work for.
 ```
 
-Run what each warning tells you to, and it goes quiet:
+Do what each warning says, and it goes quiet:
 
 ```
 $ chmod 700 /tmp/yad/data
@@ -309,8 +309,17 @@ nobody asked. The places where the exposure would actually leak refuse on their
 own: `ReadSecret` will not hand out a credential others can read, and the
 control server will not bind its socket in a directory others can reach.
 
-A credential that warned here should be treated as leaked, not just fixed:
-revoke it at the hub and run `yad connect` again.
+**A `chmod` is only ever half the answer for a secret.** It stops the next
+reader; it does nothing about whoever already read the file, and a credential
+that has been readable by others must be assumed leaked — which is the same
+premise `config.ReadSecret` refuses on. So the two warnings that name a secret,
+a connection's credential and this machine's hub admin token, ask for the
+rotation as well as the mode.
+
+That is also the one place this diagnostic cannot keep you honest: **the chmod
+alone silences the warning.** `yad doctor` can see a file's mode; it cannot see
+whether the credential behind it was ever replaced. If you skip the second
+half, nothing here will tell you again.
 
 Two limits, so you know what the check does not cover. It looks at the two
 directories themselves, not at their parents — a `~/.local/share` anyone can
