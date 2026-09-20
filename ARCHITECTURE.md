@@ -116,6 +116,11 @@ registration token, for `register` only), `Yad-Protocol: 1` and
 "next_action"}}` — the next action is mandatory, because a runner on a
 customer's machine is debugged by reading it.
 
+A registration token registers one runner once. The exchange kills it, and the
+same token again — for that runner or for another — is refused: runner ids are
+not secret, so a token that stayed usable would hand a runner's sessions, and
+the grants delivered into them, to whoever else had it.
+
 Two wire rules every hub must follow, both because TypeScript hubs generate
 strict types from `openapi.yaml`:
 
@@ -715,7 +720,9 @@ yad hub admin-token create|list|revoke
 yad hub token create [--ttl 1h] [--runner id]
                                    a one-time registration token; --runner re-registers
                                    that runner, the only way to replace its credential
-yad conformance <url>              check any hub against v1
+yad conformance <url> --token T    check any hub against v1: every rule it
+                                   breaks, where that rule is written, and what
+                                   it does not check
 yad upgrade [--check] [--force] [--tag v]
                                    replace this binary with the newest release
 ```
@@ -770,8 +777,14 @@ line here is a reviewed change.
   a fake `codex app-server` that answers each request the recording answered
   (`internal/adapter/codex/codextest`, `CODEX_TEST_FIXTURE=<file>`).
   Re-executed children set `GORACE=atexit_sleep_ms=0`, or each costs a second.
-- **The runner is tested against `yad hub`**, in process, on a random port. The
-  conformance suite is the same tests pointed at a URL.
+- **The runner is tested against `yad hub`**, in process, on a random port, and
+  **`yad hub` is tested against the conformance suite** — `internal/conformance`,
+  which holds a URL and a registration token and nothing else. It imports no
+  package of the hub's, so the checks that pass `yad hub` on a local listener
+  (`internal/hub/conformance_test.go`) are the same ones a TypeScript hub is
+  judged by. The suite's own tests run it against a fake hub in its own package:
+  one that follows §2, and one per rule that breaks exactly that rule, because a
+  failure is only worth what it says to whoever has to fix it.
 - **End to end** (`cmd/yad/e2e_test.go`): the commands an operator types —
   token, connect, daemon, submit, watch, cancel, interrupt — against `yad hub`
   in process, with a real adapter driving the test binary as its harness. Every

@@ -87,7 +87,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cmdErr = cmdAccount(ctx, g, rest, stdout)
 	case "upgrade":
 		cmdErr = cmdUpgrade(ctx, g, rest, stdout)
-	case "disconnect", "conformance":
+	case "conformance":
+		cmdErr = cmdConformance(ctx, rest, stdout)
+	case "disconnect":
 		cmdErr = notYet(cmd, rest)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
@@ -170,9 +172,12 @@ usage: yad [--profile name] <command> [flags]
                       its checksum first. Nothing upgrades on its own, and a
                       runner already running keeps the old binary until it is
                       restarted
+  conformance <url> --token T
+                      check any hub against v1: every rule it breaks, and
+                      where that rule is written
   version             version and build
 
-  disconnect · conformance · account use
+  disconnect · account use
                       exist, and each says which epic brings it
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.
