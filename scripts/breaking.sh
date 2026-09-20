@@ -10,11 +10,15 @@
 #
 #   scripts/breaking.sh        make check-breaking
 #
-# Each document is compared against itself at the last release tag. Exit 1 with
-# oasdiff's report on a breaking change; exit 0 otherwise, and see below for
-# what "otherwise" is allowed to mean. An unparseable document exits 102, which
-# is a failure here and deliberately not a silence: a spec that will not load
-# is the one input a check most wants to be loud about.
+# Each document is compared against itself at the last release tag that is not
+# this commit's own. Exit 1 with oasdiff's report on a breaking change; exit 0
+# otherwise, and see below for what "otherwise" is allowed to mean.
+#
+# When oasdiff cannot do the comparison at all it exits neither 0 nor 1 — 102
+# for a document it could not load, 100 for a bad flag — and that status is
+# carried out of here unchanged rather than folded into 1. A spec that will not
+# load is the input a check most wants to be loud about, and calling it a
+# breaking change would send the reader hunting a rename that does not exist.
 #
 # ONE KNOWN FALSE ALARM, before you switch this off: adding a value to an enum
 # the hub *returns* — a new control kind is the case that will come up — fails
@@ -31,10 +35,20 @@ set -euo pipefail
 # own path major precisely because breaking it costs a caller a rewrite.
 docs=(protocol/v1/openapi.yaml protocol/hubapi/openapi.yaml)
 
-# The same glob release.yml publishes on, so the baseline is by construction a
-# spec someone could have taken, not merely a tag someone wrote. Version sort,
+# The same glob release.yml publishes on, so the baseline is a spec someone
+# could have taken rather than merely a tag someone wrote. Version sort,
 # because refname sort puts v0.9.0 above v0.10.0.
-tag=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1)
+#
+# --no-contains HEAD is what keeps that true during a release. release.yml runs
+# `make check` on a tag push, with HEAD detached at the tag being released, so
+# the newest tag is this commit's own: without this the baseline would be the
+# working tree, oasdiff would compare a file to itself, and the release job's
+# copy of the gate would pass on every release while printing a reassuring
+# "against v0.2.0". That is the run release.yml's own comment exists for — a
+# tag can sit on a commit CI never saw — and it is the one run where this check
+# must not be vacuous. Excluding tags that contain HEAD leaves the previous
+# release, which is the spec the people downstream actually hold.
+tag=$(git tag --list 'v[0-9]*' --sort=-v:refname --no-contains HEAD | head -n1)
 
 if [ -z "$tag" ]; then
 	# Absence is data, and this is the absence that matters most: a check with
@@ -50,6 +64,7 @@ base=$(mktemp -d)
 trap 'rm -rf "$base"' EXIT
 
 failed=0
+toolstatus=0
 for doc in "${docs[@]}"; do
 	if ! git cat-file -e "$tag:$doc" 2>/dev/null; then
 		# A document that did not exist at the last release cannot have broken
@@ -83,13 +98,43 @@ for doc in "${docs[@]}"; do
 	# this document and in no other, and ERR exits 0 while WARN exits 1. ERR
 	# catches a rename, because the added half is an error — so the acceptance
 	# criterion would have passed while a plain deletion walked through.
-	# An additive change stays clean at either level, so the stricter one is
+	#
+	# Adding a property stays clean at either level, so the stricter one is
 	# free: a new optional field was measured on both documents and reported
-	# no breaking change.
-	if ! go tool oasdiff breaking "$was" "$doc" --fail-on WARN; then
-		failed=1
-	fi
+	# no breaking change. Not every additive change is clean, though — the
+	# grown enum at the top of this file is additive and fails at *both*
+	# levels, being an ERR-level rule. So WARN costs nothing there either, and
+	# relaxing this to ERR would not buy DEV-87 back.
+	set +e
+	go tool oasdiff breaking "$was" "$doc" --fail-on WARN
+	status=$?
+	set -e
+	case $status in
+	0) ;;
+	# 1 is the only status that means "compared, and found something
+	# breaking". Everything else is oasdiff failing to do the comparison at
+	# all — 102 for a document it cannot load, 100 for a bad flag — and
+	# reporting that as a breaking change would send the reader to invent a
+	# rename that is not there. Kept apart so the message can carry the right
+	# next action.
+	1) failed=1 ;;
+	*)
+		echo "check-breaking: $doc — oasdiff exited $status without comparing anything. This is oasdiff failing, not a breaking change: 102 is a document it could not load, 100 a bad flag. Fix the document or the invocation and run it again."
+		toolstatus=$status
+		;;
+	esac
 done
+
+# A document that could not be compared outranks one that compared badly: the
+# run has not answered the question, so saying "nothing broke" would be a
+# silent pass and saying "something broke" would be a fabricated one. oasdiff's
+# own status is carried out rather than flattened, which is what makes the
+# contract at the top of this file true.
+if [ "$toolstatus" -ne 0 ]; then
+	echo
+	echo "check-breaking: oasdiff could not compare every document, so this run proves nothing about the ones it did not reach."
+	exit "$toolstatus"
+fi
 
 if [ "$failed" -ne 0 ]; then
 	echo

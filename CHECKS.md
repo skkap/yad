@@ -46,7 +46,11 @@ usual way a new sqlc output file goes missing from a PR.
 a change every TypeScript hub will feel. If it renames or removes anything, it
 belongs in v2, not in this PR. `make check-breaking` is what stops that by
 machine rather than by eye: each document against itself at the last release
-tag, failing on anything oasdiff rates breaking. It covers
+tag that is not this commit's own, failing on anything oasdiff rates breaking.
+The exclusion is what keeps it honest during a release — `release.yml` runs
+`make check` with HEAD detached at the tag being published, and without it the
+baseline would be the working tree and the check would compare a file to
+itself. It covers
 `protocol/hubapi/openapi.yaml` too — a service generates its client from that
 file alone ([0022](docs/decisions/0022-hub-service-api-beside-the-protocol.md)),
 and the same renamed field showed up as one error in the protocol document and
