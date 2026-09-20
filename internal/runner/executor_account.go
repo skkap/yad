@@ -12,15 +12,16 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
-// pickAccount is the account a run takes: the first of the harness's, in the
-// owner's order, that is free. False and no error is a harness the owner gave
-// no accounts, whose runs use the harness's own default home.
+// pickAccount is the account a run takes: of the harness's free accounts, the
+// one whose usage window resets soonest (decision 0039). False and no error is
+// a harness the owner gave no accounts, whose runs use the harness's own
+// default home.
 //
-// Every account being limited or needing login is reported as a failure of
-// this run rather than silently falling back to the default home: running a
-// hub's work on whatever login happens to sit in ~/.claude is the one thing an
-// owner who configured accounts did not ask for. Not claiming at all while
-// that is true is DEV-28's.
+// Every account being limited or needing login is an error rather than a
+// silent fall back to the default home: running a hub's work on whatever login
+// happens to sit in ~/.claude is the one thing an owner who configured accounts
+// did not ask for. What the caller does with the error depends on what is in
+// the way — a limited account is a wait, a login is the owner's to finish.
 func (e *Exec) pickAccount(ctx context.Context, harness string) (account.Account, bool, error) {
 	if !account.Supported(harness) {
 		return account.Account{}, false, nil
@@ -33,7 +34,7 @@ func (e *Exec) pickAccount(ctx context.Context, harness string) (account.Account
 	if len(all) == 0 {
 		return account.Account{}, false, nil
 	}
-	if a, ok := account.First(accounts, harness); ok {
+	if a, ok := account.Soonest(accounts, harness, time.Now()); ok {
 		return a, true, nil
 	}
 	return account.Account{}, false, &noFreeAccountError{harness: harness, accounts: all}
@@ -169,8 +170,10 @@ func (e *Exec) setRunAccount(ctx context.Context, c Claim, label string) {
 // because the API answered 429 once and the harness carried on is the failure
 // this function is shaped to avoid.
 //
-// Moving the run to another account, and waiting when none is free, are
-// DEV-28's. This marks the account and no more.
+// It marks the account and no more. The executor's turn loop reads the same
+// Limit and decides what becomes of the run — another account, or a wait —
+// and it reads the account's state back from the store afterwards, so the
+// account this parks is the one the next pick cannot choose.
 func (e *Exec) recordUsage(ctx context.Context, a account.Account, out adapter.Outcome, log *slog.Logger) {
 	now := time.Now()
 	// Windows first, and whatever the turn's outcome: a turn that succeeded

@@ -97,8 +97,8 @@ func (q *Queries) CountOpenSessions(ctx context.Context) (int64, error) {
 }
 
 const createRun = `-- name: CreateRun :exec
-INSERT INTO runs (connection, id, session_id, harness, model, state, spec, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?)
+INSERT INTO runs (connection, id, session_id, harness, model, state, spec, had_grants, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?, ?)
 `
 
 type CreateRunParams struct {
@@ -108,6 +108,7 @@ type CreateRunParams struct {
 	Harness    string
 	Model      string
 	Spec       string
+	HadGrants  int64
 	CreatedAt  int64
 	UpdatedAt  int64
 }
@@ -120,6 +121,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) error {
 		arg.Harness,
 		arg.Model,
 		arg.Spec,
+		arg.HadGrants,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -294,6 +296,26 @@ func (q *Queries) DueOutbox(ctx context.Context, arg DueOutboxParams) ([]Outbox,
 	return items, nil
 }
 
+const endRunWait = `-- name: EndRunWait :exec
+UPDATE runs SET waited_ms = waited_ms + MAX(?1 - COALESCE(waiting_since, ?1), 0),
+  waiting_since = NULL, resumes_at = NULL, updated_at = ?1
+WHERE connection = ?2 AND id = ?3
+`
+
+type EndRunWaitParams struct {
+	Now        int64
+	Connection string
+	ID         string
+}
+
+// End the current wait, folding it into the total. Called by whoever takes
+// the run out of waiting, before it runs again or times out, so the wait in
+// progress is counted exactly once whichever of the two happens.
+func (q *Queries) EndRunWait(ctx context.Context, arg EndRunWaitParams) error {
+	_, err := q.db.ExecContext(ctx, endRunWait, arg.Now, arg.Connection, arg.ID)
+	return err
+}
+
 const freeSlots = `-- name: FreeSlots :exec
 DELETE FROM slots WHERE connection = ? AND session_id = ?
 `
@@ -309,7 +331,7 @@ func (q *Queries) FreeSlots(ctx context.Context, arg FreeSlotsParams) error {
 }
 
 const getRun = `-- name: GetRun :one
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at FROM runs WHERE connection = ? AND id = ?
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs WHERE connection = ? AND id = ?
 `
 
 type GetRunParams struct {
@@ -333,6 +355,12 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.Reason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.WaitedMs,
+		&i.WaitingSince,
+		&i.AccountSwitches,
+		&i.HadGrants,
+		&i.Spent,
 	)
 	return i, err
 }
@@ -583,7 +611,7 @@ func (q *Queries) ListAllAccounts(ctx context.Context) ([]Account, error) {
 }
 
 const listAllHeldRuns = `-- name: ListAllHeldRuns :many
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at FROM runs
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs
 WHERE state IN ('claimed', 'preparing', 'running', 'waiting')
 ORDER BY created_at
 `
@@ -611,6 +639,12 @@ func (q *Queries) ListAllHeldRuns(ctx context.Context) ([]Run, error) {
 			&i.Reason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.WaitedMs,
+			&i.WaitingSince,
+			&i.AccountSwitches,
+			&i.HadGrants,
+			&i.Spent,
 		); err != nil {
 			return nil, err
 		}
@@ -626,7 +660,7 @@ func (q *Queries) ListAllHeldRuns(ctx context.Context) ([]Run, error) {
 }
 
 const listHeldRuns = `-- name: ListHeldRuns :many
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at FROM runs
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs
 WHERE connection = ? AND state IN ('claimed', 'preparing', 'running', 'waiting')
 ORDER BY created_at
 `
@@ -653,6 +687,12 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 			&i.Reason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.WaitedMs,
+			&i.WaitingSince,
+			&i.AccountSwitches,
+			&i.HadGrants,
+			&i.Spent,
 		); err != nil {
 			return nil, err
 		}
@@ -668,7 +708,7 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 }
 
 const listReportingRuns = `-- name: ListReportingRuns :many
-SELECT r.connection, r.id, r.session_id, r.harness, r.model, r.state, r.spec, r.account, r.resumes_at, r.reason, r.created_at, r.updated_at FROM runs r JOIN outbox o ON o.connection = r.connection AND o.run_id = r.id
+SELECT r.connection, r.id, r.session_id, r.harness, r.model, r.state, r.spec, r.account, r.resumes_at, r.reason, r.created_at, r.updated_at, r.started_at, r.waited_ms, r.waiting_since, r.account_switches, r.had_grants, r.spent FROM runs r JOIN outbox o ON o.connection = r.connection AND o.run_id = r.id
 WHERE r.connection = ? ORDER BY r.created_at
 `
 
@@ -697,6 +737,12 @@ func (q *Queries) ListReportingRuns(ctx context.Context, connection string) ([]R
 			&i.Reason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.WaitedMs,
+			&i.WaitingSince,
+			&i.AccountSwitches,
+			&i.HadGrants,
+			&i.Spent,
 		); err != nil {
 			return nil, err
 		}
@@ -767,6 +813,57 @@ func (q *Queries) ListSessions(ctx context.Context) ([]ListSessionsRow, error) {
 			&i.ReportedAt,
 			&i.LiveRun,
 			&i.Runs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWaitingRuns = `-- name: ListWaitingRuns :many
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs WHERE state = 'waiting' ORDER BY created_at, connection, id
+`
+
+// Every parked run, across connections, for the collector: it ends the ones
+// whose cap has run out on a connection no sync loop is serving, and it never
+// starts one. A loop resuming its own connection's parked runs reads them from
+// the listing it already makes. Ordered oldest first so the run that has waited
+// longest is dealt with first.
+func (q *Queries) ListWaitingRuns(ctx context.Context) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listWaitingRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.Connection,
+			&i.ID,
+			&i.SessionID,
+			&i.Harness,
+			&i.Model,
+			&i.State,
+			&i.Spec,
+			&i.Account,
+			&i.ResumesAt,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.WaitedMs,
+			&i.WaitingSince,
+			&i.AccountSwitches,
+			&i.HadGrants,
+			&i.Spent,
 		); err != nil {
 			return nil, err
 		}
@@ -1067,6 +1164,30 @@ func (q *Queries) SetRunAccount(ctx context.Context, arg SetRunAccountParams) er
 	return err
 }
 
+const setRunStarted = `-- name: SetRunStarted :exec
+UPDATE runs SET started_at = ?, updated_at = ? WHERE connection = ? AND id = ? AND started_at IS NULL
+`
+
+type SetRunStartedParams struct {
+	StartedAt  sql.NullInt64
+	UpdatedAt  int64
+	Connection string
+	ID         string
+}
+
+// The moment the run first reached preparing, kept so a run that waited
+// between two turns still reports the whole of its duration. Written once:
+// a resumed run is the same run, not a new one.
+func (q *Queries) SetRunStarted(ctx context.Context, arg SetRunStartedParams) error {
+	_, err := q.db.ExecContext(ctx, setRunStarted,
+		arg.StartedAt,
+		arg.UpdatedAt,
+		arg.Connection,
+		arg.ID,
+	)
+	return err
+}
+
 const setRunState = `-- name: SetRunState :exec
 UPDATE runs SET state = ?, resumes_at = ?, reason = ?, updated_at = ? WHERE connection = ? AND id = ?
 `
@@ -1084,6 +1205,40 @@ func (q *Queries) SetRunState(ctx context.Context, arg SetRunStateParams) error 
 	_, err := q.db.ExecContext(ctx, setRunState,
 		arg.State,
 		arg.ResumesAt,
+		arg.Reason,
+		arg.UpdatedAt,
+		arg.Connection,
+		arg.ID,
+	)
+	return err
+}
+
+const setRunWaiting = `-- name: SetRunWaiting :exec
+UPDATE runs SET state = 'waiting', resumes_at = ?, waiting_since = ?, account_switches = ?,
+  spent = ?, reason = ?, updated_at = ? WHERE connection = ? AND id = ?
+`
+
+type SetRunWaitingParams struct {
+	ResumesAt       sql.NullInt64
+	WaitingSince    sql.NullInt64
+	AccountSwitches int64
+	Spent           sql.NullString
+	Reason          sql.NullString
+	UpdatedAt       int64
+	Connection      string
+	ID              string
+}
+
+// Park the run on a usage limit. The state, the moment it comes back, when
+// the wait began and what the run has cost so far, in one statement: a park
+// missing any of them is a run no sync can finish or a metric that
+// silently resets.
+func (q *Queries) SetRunWaiting(ctx context.Context, arg SetRunWaitingParams) error {
+	_, err := q.db.ExecContext(ctx, setRunWaiting,
+		arg.ResumesAt,
+		arg.WaitingSince,
+		arg.AccountSwitches,
+		arg.Spent,
 		arg.Reason,
 		arg.UpdatedAt,
 		arg.Connection,
