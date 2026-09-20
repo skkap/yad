@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
+	"github.com/skkap/yad/internal/logfile"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 )
@@ -137,6 +139,10 @@ type Loop struct {
 	// measures the disk for health. Nil ignores the control, and the hub
 	// hears of no close.
 	Sessions *Collector
+	// RecentErrors is the ring `yad status` reads, shared with every other
+	// connection: what has gone wrong on this runner lately. Nil sends no
+	// recent_errors. Only the messages are reported — see healthErrors.
+	RecentErrors func() []logfile.Record
 
 	sentFingerprint string
 	wantDocument    bool
@@ -815,7 +821,7 @@ func (l *Loop) withdrawOrphan(ctx context.Context, r db.Run) (bool, error) {
 }
 
 func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
-	h := v1.Health{FreeCapacity: res.Free(), DiskFreeBytes: l.Sessions.FreeBytes()}
+	h := v1.Health{Load: loadAverage(), FreeCapacity: res.Free(), DiskFreeBytes: l.Sessions.FreeBytes()}
 	// Depths are best effort: a health report is not worth failing a sync.
 	if n, err := l.Store.SpoolDepth(ctx); err == nil {
 		h.SpoolDepth = int(n)
@@ -824,6 +830,9 @@ func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
 		h.OutboxDepth = int(n)
 	}
 	h.Harnesses = l.harnessHealth(ctx)
+	if l.RecentErrors != nil {
+		h.RecentErrors = healthErrors(l.RecentErrors(), l.Clock.Now())
+	}
 	return h
 }
 
@@ -871,12 +880,30 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		if !capability.Drivable(doc, hr.ID) {
 			continue
 		}
-		hh := v1.HarnessHealth{ID: hr.ID, Accounts: account.Reports(accounts, hr.ID)}
+		reports := account.Reports(accounts, hr.ID)
+		// Ready is computed from the whole list and the cap is applied after
+		// it, so bounding the block costs a hub detail and never correctness:
+		// an account past the cap still decides whether this harness can take
+		// a run, and capAccounts gives it the last reported slot rather than
+		// leaving the hub a list nothing in which can run.
+		//
 		// No accounts means the harness runs on its own default home, which
 		// is ready; accounts that all need login or are limited mean it is
 		// not, and the claim below leaves such a harness's offers alone.
-		_, usable := account.Soonest(accounts, hr.ID, l.Clock.Now())
-		hh.Ready = len(hh.Accounts) == 0 || usable
+		//
+		// Soonest, not First: the account a run takes is the free one whose
+		// window resets soonest (DEV-28, decision 0039). Either way it is the
+		// claim's own predicate, asked once — what a hub is told and what this
+		// runner then does come from one answer.
+		chosen, usable := account.Soonest(accounts, hr.ID, l.Clock.Now())
+		// Empty unless a run could actually start: Soonest returns free
+		// accounts only, so a harness with none configured and one whose
+		// every account is limited both arrive here with nothing to name.
+		running := ""
+		if usable {
+			running = chosen.Label
+		}
+		hh := v1.HarnessHealth{ID: hr.ID, Ready: len(reports) == 0 || usable, Accounts: capAccounts(reports, running)}
 		if !hh.Ready {
 			ready[hr.ID] = false
 		}
@@ -1006,4 +1033,77 @@ func (l *Loop) reported(ctx context.Context, closed []v1.ClosedSession) {
 			l.Log.Error("a close the hub heard is not recorded as heard", "connection", l.Connection, "session", c.SessionID, "err", err)
 		}
 	}
+}
+
+// The bounds on the per-harness block. Health rides every sync, so its size is
+// paid for on every one of them; these hold it to a few kilobytes whatever the
+// owner has configured. The harnesses themselves need no cap: they come from
+// the catalog, which this binary ships.
+const (
+	// maxHealthAccounts is how many of one harness's accounts are named.
+	// Owners run one to four; sixteen is room to grow without a hub ever
+	// receiving a list it would not read.
+	maxHealthAccounts = 16
+	// maxHealthWindows is how many usage windows one account reports. Claude
+	// has two and Codex has two; four is every window either harness has ever
+	// named, and a harness that starts naming more is bounded rather than
+	// believed.
+	maxHealthWindows = 4
+)
+
+// capAccounts bounds one harness's accounts, and each account's windows, to
+// the caps above. What is kept is the head of the owner's reporting order,
+// with one exception: the last slot goes to running — the account a run would
+// actually take — when the cap would otherwise leave it out.
+//
+// The exception is there because without it the report contradicts itself.
+// The order accounts are reported in is the owner's; the order a run picks
+// from is not, since account.Soonest takes the free account whose window
+// resets soonest and the owner's order only breaks ties (decision 0039). On a
+// harness with more accounts than the cap, the one carrying the work can
+// therefore sit past it — and a hub would receive Ready true above a list in
+// which every account named is limited or needs a login. That is not a
+// partial answer, it is a self-contradictory one, and an operator asking the
+// question E8 exists to answer, why is this runner idle, would read it as a
+// fault in yad rather than as a cap.
+//
+// It costs a scan of a list already in hand, not a sort: Soonest has already
+// chosen, and this only finds where that account was reported.
+//
+// Conditional by construction rather than by a check: running is empty exactly
+// when Soonest had nothing to return, and neither case it covers wants a
+// replacement.
+//
+// One of them is ready and the other is not, which is why this is two
+// sentences rather than one. A harness with no accounts configured is ready —
+// it runs on the harness's own login — and there is simply no account to name;
+// it never reaches the cap either, having no reports to exceed it. A harness
+// whose accounts are all limited or need a login is Ready false, and there a
+// capped list of accounts none of which can run is the honest answer with no
+// contradiction to remove. Limited and needs_login are different states
+// (DOMAIN.md) and this case covers both, so neither name will do for it.
+//
+// The head is never reordered. Only the final slot can differ from a plain
+// truncation, so what a hub loses to the cap stays one account of the owner's
+// order and never the shape of the list.
+func capAccounts(reports []v1.AccountReport, running string) []v1.AccountReport {
+	if len(reports) > maxHealthAccounts {
+		kept := reports[:maxHealthAccounts]
+		named := func(r v1.AccountReport) bool { return r.Label == running }
+		if running != "" && !slices.ContainsFunc(kept, named) {
+			if i := slices.IndexFunc(reports[maxHealthAccounts:], named); i >= 0 {
+				// A copy: the last slot is overwritten, and reports is the
+				// caller's view of what account.Reports built.
+				kept = append([]v1.AccountReport(nil), kept...)
+				kept[len(kept)-1] = reports[maxHealthAccounts+i]
+			}
+		}
+		reports = kept
+	}
+	for i, r := range reports {
+		if len(r.Windows) > maxHealthWindows {
+			reports[i].Windows = r.Windows[:maxHealthWindows]
+		}
+	}
+	return reports
 }

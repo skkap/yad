@@ -51,14 +51,30 @@ const (
 )
 
 // Health is the runner's state as a hub needs it for routing and alerting.
+//
+// Every field of it is computed on every sync, so each one is a read the
+// runner can afford every few seconds, and the lists are capped: a health
+// block that grows with the machine's uptime makes every sync slower for ever.
 type Health struct {
-	Load          float64         `json:"load"`
+	// Load is the machine's one-minute load average, as uptime(1) prints it —
+	// the whole machine, not this runner's share, and not divided by CPU
+	// count, which the capability document does not carry. 0 from a machine
+	// this runner cannot read one from.
+	Load          float64         `json:"load" doc:"The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. 0 where the runner cannot read one."`
 	FreeCapacity  Capacity        `json:"free_capacity"`
 	DiskFreeBytes int64           `json:"disk_free_bytes"`
 	Harnesses     []HarnessHealth `json:"harnesses,omitempty"`
 	SpoolDepth    int             `json:"spool_depth"`
 	OutboxDepth   int             `json:"outbox_depth"`
-	RecentErrors  []string        `json:"recent_errors,omitempty"`
+	// RecentErrors are the runner's own recent warnings and errors, newest
+	// first, each "<RFC3339 time> <LEVEL> <message>" — why this runner is
+	// slow or idle, in the words its owner sees in `yad status`.
+	//
+	// The runner's words and only those: the message of a log record, never
+	// the key=value attrs beside it, which is where a wrapped error's text, a
+	// path on the machine and anything a harness printed live. Bounded in
+	// number, in age and in length by the runner.
+	RecentErrors []string `json:"recent_errors,omitempty" doc:"The runner's recent warnings and errors, newest first, each '<RFC3339 time> <LEVEL> <message>'. The runner's own words: never what a harness printed, never a path on the machine, never a credential. Capped in number, age and length."`
 	// Draining says the runner has stopped claiming and exits once the runs
 	// it holds have ended. It keeps syncing until then, so their leases renew
 	// and their results land; its free capacity is zero, and a hub offers it

@@ -599,6 +599,47 @@ func (q *Queries) ListAdminTokens(ctx context.Context) ([]ListAdminTokensRow, er
 	return items, nil
 }
 
+const listRunners = `-- name: ListRunners :many
+SELECT id, name, credential_hash, capabilities, fingerprint, wants_capabilities, health, registered_at, last_sync_at, drain_requested_at FROM runners ORDER BY last_sync_at IS NULL, last_sync_at DESC, id
+`
+
+// Every runner this hub knows. The ones still talking to it come first, so an
+// operator reading the list sees the live fleet before the retired machines;
+// a runner that registered and never synced sorts last, by id.
+func (q *Queries) ListRunners(ctx context.Context) ([]Runner, error) {
+	rows, err := q.db.QueryContext(ctx, listRunners)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Runner{}
+	for rows.Next() {
+		var i Runner
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CredentialHash,
+			&i.Capabilities,
+			&i.Fingerprint,
+			&i.WantsCapabilities,
+			&i.Health,
+			&i.RegisteredAt,
+			&i.LastSyncAt,
+			&i.DrainRequestedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loseLapsedRuns = `-- name: LoseLapsedRuns :execrows
 UPDATE runs SET state = 'lost', reason = 'the runner stopped syncing and its lease lapsed', updated_at = ?1
 WHERE state IN ('claimed', 'preparing', 'running', 'waiting') AND lease_expires_at <= ?1

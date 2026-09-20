@@ -200,6 +200,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			Drain:    drain,
 			Log:      log,
 			Monitor:  monitor,
+			// The same ring `yad status` shows. Health reports the messages
+			// alone, never the attrs — see runner.healthErrors.
+			RecentErrors: recent.Records,
 		})
 	}()
 

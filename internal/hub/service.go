@@ -101,6 +101,7 @@ func (h *Hub) registerService(api huma.API) {
 	}, h.runEvents)
 
 	h.registerControls(api)
+	h.registerRunners(api)
 	h.registerDrain(api)
 	h.registerSessions(api)
 }

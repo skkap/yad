@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 	"unicode"
 
@@ -408,4 +410,156 @@ func clean(s string) string {
 		}
 		return '�'
 	}, s)
+}
+
+// cmdHubRunners is `yad hub runners`: the fleet as this hub last heard it.
+// Every runner's own health, which is the answer to the question an operator
+// asks first — why is that machine slow, or idle.
+func cmdHubRunners(ctx context.Context, g global, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("hub runners", flag.ContinueOnError)
+	hf := addHubFlags(fs, g)
+	asJSON := fs.Bool("json", false, "print the runners and their health as JSON")
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) > 1 {
+		return errors.New("usage: yad hub runners [--hub url] [--token-file f] [--json] [runner]")
+	}
+	c, err := hf.client()
+	if err != nil {
+		return err
+	}
+	var runners []hubapi.Runner
+	if len(pos) == 1 {
+		r, err := c.Runner(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+		runners = []hubapi.Runner{r}
+	} else if runners, err = c.Runners(ctx); err != nil {
+		return err
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(hubapi.RunnerList{Runners: runners})
+	}
+	printRunners(stdout, runners, time.Now())
+	return nil
+}
+
+// printRunners writes what a hub knows of each runner. Everything printed here
+// came over the wire from a machine the hub does not own, so every string of
+// it goes through cleanLine: a newline or an escape in a label would otherwise
+// draw rows of its own in the operator's terminal.
+func printRunners(w io.Writer, runners []hubapi.Runner, now time.Time) {
+	if len(runners) == 0 {
+		fmt.Fprintln(w, "no runners registered — `yad hub token create` makes a registration token for one")
+		return
+	}
+	for i, r := range runners {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		when := "never synced"
+		if r.LastSyncAt != nil {
+			when = "synced " + now.Sub(*r.LastSyncAt).Round(time.Second).String() + " ago"
+		}
+		state := ""
+		switch {
+		case r.Draining:
+			state = " — draining"
+		case r.DrainRequestedAt != nil:
+			state = " — drain asked for, not yet acknowledged"
+		}
+		fmt.Fprintf(w, "%s (%s) — %s%s\n", cleanLine(r.Name), cleanLine(r.RunnerID), when, state)
+		if r.Health == nil {
+			fmt.Fprintln(w, "  no health yet: this runner registered and has not synced")
+			continue
+		}
+		h := r.Health
+		// Free capacity, not total: health carries what is free, and the
+		// capability document is where the pool's size lives.
+		fmt.Fprintf(w, "  load %.2f · %d free · disk %.1f GiB · spool %d · outbox %d\n",
+			h.Load, h.FreeCapacity.Total, float64(h.DiskFreeBytes)/(1<<30), h.SpoolDepth, h.OutboxDepth)
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		for _, hh := range h.Harnesses {
+			ready := "not ready"
+			if hh.Ready {
+				ready = "ready"
+			}
+			if n, ok := h.FreeCapacity.ByHarness[hh.ID]; ok {
+				ready += fmt.Sprintf(", %d free", n)
+			}
+			fmt.Fprintf(tw, "  %s\t%s\t%s\n", cleanLine(hh.ID), ready, accountLine(hh.Accounts))
+		}
+		tw.Flush()
+		if len(h.RecentErrors) > 0 {
+			fmt.Fprintln(w, "  recent errors, newest first (the runner's own words — `yad daemon logs` on that machine has everything)")
+			for _, e := range h.RecentErrors {
+				fmt.Fprintf(w, "    %s\n", cleanLine(e))
+			}
+		}
+	}
+}
+
+// accountLine is one harness's accounts as one cell: each label with its state
+// and, where the harness said, the window nearest its limit. A harness with no
+// accounts runs on the harness's own login, which is a state and not a gap.
+func accountLine(accounts []v1.AccountReport) string {
+	if len(accounts) == 0 {
+		return "no accounts configured; runs on the harness's own login"
+	}
+	parts := make([]string, 0, len(accounts))
+	for _, a := range accounts {
+		part := cleanLine(a.Label) + " " + accountStateWord(a.State)
+		if a.LimitedUntil != nil {
+			part += " until " + a.LimitedUntil.Local().Format(time.DateTime)
+		}
+		if w, ok := busiestWindow(a.Windows); ok {
+			part += fmt.Sprintf(" (%s %.0f%%)", cleanLine(w.Name), w.UsedPercent)
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// accountStateWord is how one account's state reads in the listing. Each state
+// of the closed set is written out here rather than printed from the value, so
+// for a state this binary knows, no byte of the answer reaches the terminal at
+// all. The hub validates the enum on the way in, and that is not what protects
+// the operator: `yad hub runners --hub <url>` will talk to any hub, and
+// hubapiclient decodes the answer with encoding/json, which enforces nothing.
+// A state from outside the set is news — the hub is newer than this binary —
+// so it is shown, cleaned.
+//
+// Absent is its own answer and not a blank: state is omitempty because a
+// runner from before the field cannot say (ARCHITECTURE.md §2), and an empty
+// cell beside a label would read as free.
+func accountStateWord(s v1.AccountState) string {
+	switch s {
+	case v1.AccountFree:
+		return "free"
+	case v1.AccountLimited:
+		return "limited"
+	case v1.AccountNeedsLogin:
+		return "needs_login"
+	case "":
+		return "state unknown"
+	}
+	return "state " + cleanLine(string(s))
+}
+
+// busiestWindow is the account's fullest usage window: the one that will stop
+// it first, which is the only one worth a line of a summary.
+func busiestWindow(windows []v1.AccountWindow) (v1.AccountWindow, bool) {
+	var out v1.AccountWindow
+	found := false
+	for _, w := range windows {
+		if !found || w.UsedPercent > out.UsedPercent {
+			out, found = w, true
+		}
+	}
+	return out, found
 }

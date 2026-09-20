@@ -347,6 +347,8 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `POST /runs/{run}/cancel` | a run no runner started ends `cancelled` here; a held one gets a `cancel` control, and shows `cancel_requested_at` until it ends |
 | `POST /runs/{run}/interrupt` | an `interrupt` control for a held run; 409 before it starts, and for a runner without the `interrupt` feature |
 | `POST /runs/{run}/steer` | a `steer` control with `{text}` for a held run, sent once; 409 before it starts, and for a runner without the `steer` feature |
+| `GET /runners` | every runner this hub knows, newest sync first, each with the health its last sync carried — load, free capacity, disk, per-harness readiness with each account's state and windows, spool and outbox depth, recent errors |
+| `GET /runners/{runner}` | one runner, the same view |
 | `POST /runners/{runner}/drain` | a `drain` control, repeated until the runner says it is draining; 409 for a runner without the `drain` feature |
 | `GET /sessions/{session}` | the session: its runner, and `open`, `closing` or `closed` with the reason |
 | `POST /sessions/{session}/close` | a session no runner holds closes here, its unstarted runs cancelled; a held one gets `close_session` until its runner reports it closed; 409 for a runner without the `close_session` feature. A closing or closed session takes no new run |
@@ -790,6 +792,8 @@ yad hub cancel <run>               stop a run: at once when no runner started it
                                    else by its runner, down the cancel ladder
 yad hub interrupt <run>            end a run's turn, keep its session
 yad hub steer <run> <text | ->     add input to a running turn
+yad hub runners [runner] [--json]  the runners this hub knows and the health each
+                                   last reported: why one is slow or idle
 yad hub drain <runner>             the runner takes no new runs, finishes those it
                                    holds and exits
 yad hub close-session <session>    the session takes no new run; its runner deletes

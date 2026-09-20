@@ -92,6 +92,21 @@ func (c *Client) Steer(ctx context.Context, runID, text string) (hubapi.Run, err
 	return out, err
 }
 
+// Runners lists every runner the hub knows, with the health each one last
+// reported, the ones still syncing first.
+func (c *Client) Runners(ctx context.Context) ([]hubapi.Runner, error) {
+	var out hubapi.RunnerList
+	err := c.do(ctx, http.MethodGet, "/runners", nil, &out)
+	return out.Runners, err
+}
+
+// Runner reads one runner and the health its last sync carried.
+func (c *Client) Runner(ctx context.Context, runnerID string) (hubapi.Runner, error) {
+	var out hubapi.Runner
+	err := c.do(ctx, http.MethodGet, "/runners/"+url.PathEscape(runnerID), nil, &out)
+	return out, err
+}
+
 // Drain asks a runner to drain: it takes no new runs, lets those it holds
 // finish, and exits.
 func (c *Client) Drain(ctx context.Context, runnerID string) (hubapi.Runner, error) {
