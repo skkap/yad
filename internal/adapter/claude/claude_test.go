@@ -229,12 +229,18 @@ func TestRecordedStreams(t *testing.T) {
 		textHas   string
 		steers    int
 		interrupt bool
+		// diesBeforeReading marks a harness that exits without ever reading
+		// its instruction, so how many user frames it logged is undefined:
+		// the fake reads and logs stdin from a goroutine, and os.Exit does
+		// not wait for it. Asserting a count here fails 299 times in 300
+		// under GOMAXPROCS=1, and intermittently on a runner with more cores.
+		diesBeforeReading bool
 	}{
 		{name: "plain", state: v1.RunSucceeded, final: "pong", textHas: "pong"},
 		{name: "tool", state: v1.RunSucceeded, final: "hello from a small file", textHas: "hello from a small file"},
 		{name: "error", state: v1.RunFailed, class: adapter.ClassHarness, textHas: "issue with the selected model"},
 		{name: "prompt-too-long", state: v1.RunFailed, class: adapter.ClassPromptTooLong},
-		{name: "resume-missing", resume: true, state: v1.RunFailed, class: adapter.ClassSessionNotFound},
+		{name: "resume-missing", resume: true, state: v1.RunFailed, class: adapter.ClassSessionNotFound, diesBeforeReading: true},
 		{name: "interrupt", act: interruptOn(v1.EventText), state: v1.RunCancelled, interrupt: true},
 		{name: "steer-tool", act: steerOn(v1.EventToolCall, "end with STEERED"), state: v1.RunSucceeded, textHas: "STEERED", steers: 1},
 		{name: "steer-followup", act: steerOn(v1.EventText, "reply: steered"), state: v1.RunSucceeded, final: "steered", steers: 1},
@@ -274,7 +280,7 @@ func TestRecordedStreams(t *testing.T) {
 				t.Errorf("resumed %s, outcome names %s", spec.NativeSessionID, out.NativeSessionID)
 			}
 			s := h.seen(t)
-			if got := len(s.frames("user")); got != 1+c.steers {
+			if got := len(s.frames("user")); !c.diesBeforeReading && got != 1+c.steers {
 				t.Errorf("%d user frames on stdin, want %d", got, 1+c.steers)
 			}
 			if got := len(s.frames("control_request")); (got > 0) != c.interrupt {

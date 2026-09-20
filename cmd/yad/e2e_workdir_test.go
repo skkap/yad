@@ -137,14 +137,19 @@ func testE2EGitSourceAndSetupHook(t *testing.T, h *e2eHarness) {
 		_, err := os.Stat(sess.Workdir)
 		return os.IsNotExist(err)
 	})
-	wts, err := exec.Command(git, "-C", caches[0], "worktree", "list", "--porcelain").Output()
-	if err != nil || strings.Count(string(wts), "worktree ") != 1 {
-		t.Errorf("the bare cache still has the session's worktree (%v):\n%s", err, wts)
-	}
-	var slots int
-	if err := s.DB.QueryRow("SELECT count(*) FROM slots WHERE session_id = ?", sess.ID).Scan(&slots); err != nil || slots != 0 {
-		t.Errorf("the session still holds %d WT_SLOTs (%v)", slots, err)
-	}
+	// The worktree registration and the WT_SLOT row are given back after the
+	// directory is gone, not with it, so the reclaimed workdir above is not a
+	// sync point for either. Asserting them the moment it vanishes fails on a
+	// machine with few cores -- every run under GOMAXPROCS=1 before this.
+	eventually(t, "the bare cache has given up the session's worktree", func() bool {
+		wts, err := exec.Command(git, "-C", caches[0], "worktree", "list", "--porcelain").Output()
+		return err == nil && strings.Count(string(wts), "worktree ") == 1
+	})
+	eventually(t, "the session's WT_SLOT is released", func() bool {
+		var slots int
+		err := s.DB.QueryRow("SELECT count(*) FROM slots WHERE session_id = ?", sess.ID).Scan(&slots)
+		return err == nil && slots == 0
+	})
 }
 
 func samePath(a, b string) bool {
