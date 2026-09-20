@@ -276,13 +276,13 @@ func TestHealthReportsAHomeThatIsGoneAsNeedsLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := account.First(accounts, "claude"); ok {
+	if _, ok := account.Soonest(accounts, "claude", time.Now()); ok {
 		t.Error("health and the claim disagree: a run would have taken the account")
 	}
 }
 
 // Every account needing login makes the harness not ready, and the reason is
-// there by label. Declining to claim on it is DEV-28's.
+// there by label.
 func TestAHarnessWhoseAccountsAllNeedLoginIsNotReady(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

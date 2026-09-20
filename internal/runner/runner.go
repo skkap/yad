@@ -93,6 +93,7 @@ func Serve(ctx context.Context, o Options) error {
 
 	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, pool: pool,
 		log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{}}
+	sv.probe = &LoginProbe{Store: st, Config: o.Config, Data: o.Paths.Data, Log: o.Log}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -104,6 +105,7 @@ func Serve(ctx context.Context, o Options) error {
 		},
 		Ended: sessions.Wake,
 	}
+	sessions.Runs = sv.exec
 	var executor Executor
 	if o.Adapters != nil {
 		executor = sv.exec
@@ -187,6 +189,7 @@ type server struct {
 	pool      *Pool
 	exec      *Exec
 	sessions  *Collector
+	probe     *LoginProbe
 	loops     []*Loop
 	reporters map[string]*Reporter
 	log       *slog.Logger
@@ -226,12 +229,21 @@ func (s *server) run(ctx context.Context) error {
 	s.loops = loops
 	// Collection starts once the runs a previous process held are settled,
 	// and ends with the loops: the store closes when Serve returns.
-	collected := make(chan struct{})
-	go func() {
-		defer close(collected)
-		s.sessions.Run(lctx)
-	}()
-	defer func() { stopLoops(); <-collected }()
+	//
+	// A parked run comes back through its own connection's sync loop, so
+	// nothing here starts one. What the collector adds is the other end:
+	// a parked run whose hub's cap has run out, on a connection no loop is
+	// serving, which no sync will ever reach.
+	//
+	// The login probe is the other half of "says when that ends": a limited
+	// account comes back at its reset, and a needs-login one when the owner
+	// logs it in, which nothing would otherwise notice.
+	background := make(chan struct{})
+	var bg sync.WaitGroup
+	bg.Go(func() { s.sessions.Run(lctx) })
+	bg.Go(func() { s.probe.Run(lctx) })
+	go func() { bg.Wait(); close(background) }()
+	defer func() { stopLoops(); <-background }()
 	var wg sync.WaitGroup
 	ended := make([]chan struct{}, len(s.loops))
 	for i, l := range s.loops {
