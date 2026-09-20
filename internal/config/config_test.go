@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -303,5 +304,78 @@ func TestByteSize(t *testing.T) {
 		if out, _ := b.MarshalText(); string(out) != tc.out {
 			t.Errorf("%d marshals as %q, want %q", b, out, tc.out)
 		}
+	}
+}
+
+// With no roots configured, a runner reaches the owner's home directory
+// (decision 0038) — and a machine where there is no home to resolve reaches
+// nothing, rather than everything.
+func TestEffectiveRoots(t *testing.T) {
+	home := t.TempDir()
+	for _, tc := range []struct {
+		name  string
+		roots []string
+		home  string
+		want  []string
+	}{
+		{"the roots the owner listed", []string{"/srv/src"}, home, []string{"/srv/src"}},
+		{"none listed, so the home directory", nil, home, []string{home}},
+		{"none listed and no home directory", nil, "", nil},
+		{"a home directory of /, which is every directory", nil, "/", nil},
+		{"a home directory that is not absolute", nil, "somewhere", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", tc.home)
+			got := WorkdirsConfig{Roots: tc.roots}.EffectiveRoots()
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("EffectiveRoots() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The default is the runner's, not the configuration's: a config saved on one
+// machine must not carry that machine's home directory to the next.
+func TestTheHomeDefaultIsNeverSaved(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := Paths{Config: t.TempDir(), Data: t.TempDir()}
+	if err := Save(p, Default()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "roots") {
+		t.Errorf("config.toml names roots the owner never set:\n%s", b)
+	}
+}
+
+// A configured root that is a symlink to "/" is refused for the reason "/"
+// itself is: inRoots resolves its roots, so it reaches every directory.
+func TestValidateRefusesARootThatResolvesToTheFilesystemRoot(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "everything")
+	if err := os.Symlink("/", link); err != nil {
+		t.Fatal(err)
+	}
+	c := Default()
+	c.Workdirs.Roots = []string{link}
+	err := c.Validate()
+	if err == nil || !strings.Contains(err.Error(), "root of the filesystem") {
+		t.Errorf("Validate() = %v, want a refusal naming the filesystem root", err)
+	}
+}
+
+// A home directory that is a symlink to "/" is every directory on the machine,
+// which is what the default must never become. inRoots resolves its roots, so
+// the check here has to resolve too.
+func TestEffectiveRootsRefusesAHomeThatResolvesToRoot(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink("/", link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", link)
+	if got := (WorkdirsConfig{}).EffectiveRoots(); got != nil {
+		t.Errorf("EffectiveRoots() = %v, want none — that root reaches every directory", got)
 	}
 }

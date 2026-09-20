@@ -480,8 +480,10 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 }
 
 // refusal is why this runner cannot take a run, judged from the run alone and
-// the current document; "" when it can. A hub is untrusted input: an offer is
-// checked here whatever the hub checked before sending it.
+// the current document; "" when it can. An offer is checked here whatever the
+// hub checked before sending it — not because the hub is an attacker (0038)
+// but because this runner is the one that has to run it, and a hub on an older
+// protocol may not have checked at all.
 func refusal(run v1.Run, doc v1.Capabilities) string {
 	if err := run.Validate(); err != nil {
 		return "the run is invalid: " + err.Error()

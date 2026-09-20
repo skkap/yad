@@ -217,44 +217,50 @@ func TestRunValidate(t *testing.T) {
 	}
 }
 
-// Every class a grant name can fall in, each refused for its own reason.
+// Any valid environment variable name is a grant name (decision 0038); the
+// four that remain are refused because they would break the run, and they are
+// refused whatever their case.
 func TestGrantNames(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		want string // "" when allowed, else a word the refusal must contain
 	}{
-		{"ZUMINO_TOKEN", ""}, {"GH_TOKEN", ""}, {"DEPLOY_KEY", ""}, {"DB_PASSWORD", ""},
-		{"STRIPE_SECRET", ""}, {"SERVICE_CREDENTIALS", ""}, {"SERVICE_CREDENTIAL", ""}, {"_X_TOKEN", ""},
+		// The names 0024 asked for still pass, and so do the ones it cost the
+		// owner: a database URL, a cloud deploy credential, a harness's own
+		// settings. Filtering these never protected the machine — the brief
+		// could ask the harness for the same thing (0038).
+		{"ZUMINO_TOKEN", ""}, {"DATABASE_URL", ""}, {"GH_TOKEN", ""}, {"DEPLOY_KEY", ""},
+		{"AWS_SECRET_ACCESS_KEY", ""}, {"GOOGLE_APPLICATION_CREDENTIALS", ""}, {"AZURE_OPENAI_API_KEY", ""},
+		{"ANTHROPIC_BASE_URL", ""}, {"ANTHROPIC_API_KEY", ""}, {"CLAUDE_CONFIG_DIR", ""},
+		{"CODEX_HOME", ""}, {"OPENAI_BASE_URL", ""}, {"GIT_SSH_COMMAND", ""}, {"NODE_OPTIONS", ""},
+		{"NPM_CONFIG__AUTH_TOKEN", ""}, {"BUN_AUTH_TOKEN", ""}, {"YAD_TOKEN", ""},
+		{"IS_SANDBOX", ""}, {"SHELL", ""}, {"TMPDIR", ""}, {"BASH_ENV", ""}, {"ENV", ""},
+		{"HTTPS_PROXY", ""}, {"NODE_EXTRA_CA_CERTS", ""}, {"SHELLOPTS", ""}, {"PS4", ""},
+		// Any valid name: lower case, mixed case, a digit, a leading
+		// underscore, and one that is only an underscore.
+		{"npm_token", ""}, {"http_proxy", ""}, {"Zumino_Token", ""}, {"A1", ""}, {"_X", ""}, {"_", ""},
+		// Near the deny list, and outside it: a prefix is a prefix, not a
+		// substring, and the two names are matched whole.
+		{"PATHX", ""}, {"MY_PATH", ""}, {"HOMEBREW_TOKEN", ""}, {"LDAP_PASSWORD", ""},
+		{"LD", ""}, {"DYLDX", ""},
 
-		// Not an environment variable name, or not a plain file name.
-		{"", "environment variable name"}, {"zumino_token", "environment variable name"},
-		{"Zumino_TOKEN", "environment variable name"}, {"1_TOKEN", "environment variable name"},
+		// Not an environment variable name, or not a plain file name. The
+		// pattern is ASCII, so a Cyrillic lookalike of PATH is not a name at
+		// all — it never reaches the deny list.
+		{"", "environment variable name"}, {"1_TOKEN", "environment variable name"},
 		{"../X_TOKEN", "environment variable name"}, {"a/b_TOKEN", "environment variable name"},
 		{"X_TOKEN.json", "environment variable name"}, {"X-TOKEN", "environment variable name"},
+		{"X TOKEN", "environment variable name"}, {"X=Y", "environment variable name"},
+		{"X\x00Y", "environment variable name"}, {"\u0420\u0410\u0422\u041d", "environment variable name"},
 
-		// Reserved names.
-		{"PATH", "reserved"}, {"HOME", "reserved"}, {"SHELL", "reserved"}, {"TMPDIR", "reserved"},
-		{"BASH_ENV", "reserved"}, {"ENV", "reserved"}, {"NODE_OPTIONS", "reserved"}, {"IS_SANDBOX", "reserved"},
-
-		// Reserved namespaces, secret-shaped or not.
-		{"LD_PRELOAD", "LD_"}, {"LD_TOKEN", "LD_"}, {"DYLD_INSERT_LIBRARIES", "DYLD_"},
-		{"YAD_TOKEN", "YAD_"}, {"CLAUDE_CONFIG_DIR", "CLAUDE"}, {"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE"},
-		{"ANTHROPIC_BASE_URL", "ANTHROPIC_"}, {"ANTHROPIC_API_KEY", "ANTHROPIC_"},
-		{"CODEX_HOME", "CODEX_"}, {"CODEX_API_KEY", "CODEX_"},
-		{"OPENAI_BASE_URL", "OPENAI_"}, {"OPENAI_API_KEY", "OPENAI_"},
-		{"GIT_SSH_COMMAND", "GIT_"}, {"GIT_TOKEN", "GIT_"}, {"NODE_AUTH_TOKEN", "NODE_"},
-		{"NPM_CONFIG__AUTH_TOKEN", "NPM_CONFIG_"}, {"BUN_AUTH_TOKEN", "BUN_"},
-		{"AWS_BEARER_TOKEN_BEDROCK", "AWS_"}, {"AWS_SECRET_ACCESS_KEY", "AWS_"}, {"AWS_SESSION_TOKEN", "AWS_"},
-		{"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_"}, {"AZURE_OPENAI_API_KEY", "AZURE_"},
-
-		// Steering variables nobody listed: refused for not being secrets.
-		{"HTTPS_PROXY", "not named as a secret"}, {"HTTP_PROXY", "not named as a secret"},
-		{"ALL_PROXY", "not named as a secret"}, {"NO_PROXY", "not named as a secret"},
-		{"SSL_CERT_FILE", "not named as a secret"}, {"REQUESTS_CA_BUNDLE", "not named as a secret"},
-		{"CURL_CA_BUNDLE", "not named as a secret"}, {"SHELLOPTS", "not named as a secret"},
-		{"PS4", "not named as a secret"}, {"GCONV_PATH", "not named as a secret"},
-		{"JAVA_TOOL_OPTIONS", "not named as a secret"}, {"_JAVA_OPTIONS", "not named as a secret"},
-		{"TOKEN", "not named as a secret"}, {"_TOKEN", "not named as a secret"}, {"A_TOKEN_X", "not named as a secret"},
+		// The four, in every case. Not because "path" would break a run —
+		// it arrives as "path" and leaves PATH alone — but because the list
+		// catches a hub's mistake, and a hub author whose platform folds
+		// environment case writes "Path" meaning PATH (see grant.go).
+		{"PATH", "PATH"}, {"path", "PATH"}, {"Path", "PATH"},
+		{"HOME", "HOME"}, {"home", "HOME"}, {"hOmE", "HOME"},
+		{"LD_PRELOAD", "LD_"}, {"ld_preload", "LD_"}, {"Ld_Library_Path", "LD_"}, {"LD_", "LD_"},
+		{"DYLD_INSERT_LIBRARIES", "DYLD_"}, {"dyld_insert_libraries", "DYLD_"},
 	} {
 		for _, as := range []GrantDelivery{GrantEnv, GrantFile} {
 			err := Grant{Name: tc.name, Value: "v", As: as}.Validate()
@@ -265,6 +271,32 @@ func TestGrantNames(t *testing.T) {
 				t.Errorf("%s as %s: err %v, want one mentioning %q", tc.name, as, err, tc.want)
 			}
 		}
+	}
+}
+
+// Two file grants whose names differ only by case are one file where the
+// filesystem folds case, and the second would silently overwrite the first.
+// Two env grants by those names are two variables, and both arrive: the
+// environment and the filesystem have different rules.
+func TestGrantNamesThatCollideAsFiles(t *testing.T) {
+	run := Run{RunID: "r", Session: SessionRef{ID: "s"}, Harness: "claude", Model: "opus", Brief: Brief{Instruction: "hi"}}
+	for _, tc := range []struct {
+		name   string
+		grants []Grant
+		ok     bool
+	}{
+		{"two file grants differing by case", []Grant{{Name: "DEPLOY_KEY", As: GrantFile}, {Name: "deploy_key", As: GrantFile}}, false},
+		{"two env grants differing by case", []Grant{{Name: "DEPLOY_KEY", As: GrantEnv}, {Name: "deploy_key", As: GrantEnv}}, true},
+		{"one of each", []Grant{{Name: "DEPLOY_KEY", As: GrantEnv}, {Name: "deploy_key", As: GrantFile}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := run
+			r.Grants = tc.grants
+			err := r.Validate()
+			if tc.ok != (err == nil) {
+				t.Errorf("err = %v, want ok = %v", err, tc.ok)
+			}
+		})
 	}
 }
 
