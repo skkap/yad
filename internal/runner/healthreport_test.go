@@ -308,7 +308,8 @@ func TestAccountsAndWindowsAreCappedAndReadyIsNot(t *testing.T) {
 	// The head of the owner's reporting order is what is kept — not a claim
 	// about which account a run picks, which account.Soonest decides by the
 	// soonest reset with the owner's order only breaking ties (decision 0039).
-	// The last slot is the exception, and the test below is about it.
+	// The last slot is the exception, which is why this stops one short of it
+	// and the assertion below takes it.
 	if hh.Accounts[0].Label != labels[0] || hh.Accounts[maxHealthAccounts-2].Label != labels[maxHealthAccounts-2] {
 		t.Errorf("accounts kept = %q…%q, want the head of the owner's order", hh.Accounts[0].Label, hh.Accounts[maxHealthAccounts-2].Label)
 	}
