@@ -32,7 +32,10 @@ func cmdConformance(ctx context.Context, args []string, w io.Writer) error {
 		return err
 	}
 	rep.Print(w)
-	if rep.Failed() {
+	// A run that was stopped part way through exits non-zero too: most of the
+	// suite never ran, and a zero from a command that checks things is read as
+	// "it checked out".
+	if rep.Failed() || rep.Interrupted {
 		// The report has already said what broke and where it is written;
 		// anything more here would be said twice.
 		return exitError{code: 1}

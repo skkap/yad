@@ -2,8 +2,10 @@ package conformance
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -122,7 +124,10 @@ func checkEventsAfterTheRunEnds(ctx context.Context, s *session) error {
 }
 
 func checkOfferedRunIsValid(_ context.Context, s *session) error {
-	for _, id := range s.claimable() {
+	// Every run the hub offered, not only the two the suite went on to use:
+	// a run offered and taken back is one a runner would have had to refuse,
+	// and it is exactly as much a mistake as one still open.
+	for _, id := range slices.Sorted(maps.Keys(s.offered)) {
 		if err := s.offered[id].Validate(); err != nil {
 			return brokenf("the hub offered run %s, and %s", id, err)
 		}

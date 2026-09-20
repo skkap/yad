@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -74,5 +75,30 @@ func TestConformanceFailsAndNamesTheRule(t *testing.T) {
 		if !strings.Contains(flat, want) {
 			t.Errorf("the report does not say %q:\n%s", want, out)
 		}
+	}
+}
+
+// A suite stopped part way through exits non-zero. Most of it never ran, and a
+// zero from a command whose job is checking is read as "it checked out".
+func TestConformanceExitsNonZeroWhenStopped(t *testing.T) {
+	p := newProfile(t)
+	t.Setenv("YAD_CONFIG_DIR", p.config)
+	t.Setenv("YAD_DATA_DIR", p.data)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	// Stopped before the first check: every one of them is reported as never
+	// made, and none as a rule the hub broke.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, errb bytes.Buffer
+	code := run(ctx, []string{"conformance", srv.URL + "/v1", "--token", "no-hub-issued-this", "--lease-wait", "0"}, &out, &errb)
+	if code == 0 {
+		t.Fatalf("a suite that never ran exited 0:\n%s%s", out.String(), errb.String())
+	}
+	flat := strings.Join(strings.Fields(out.String()), " ")
+	if !strings.Contains(flat, "stopped before it finished") {
+		t.Errorf("the report does not say the run was stopped:\n%s", out.String())
 	}
 }

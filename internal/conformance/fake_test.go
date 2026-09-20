@@ -78,6 +78,17 @@ const (
 	flawGuardsSyncOnly     = "the credential and the protocol header are checked on sync alone"
 	flawSendsUpdate        = "the reserved update control is sent"
 	flawOverOffersWhenBusy = "one run more than the free capacity is offered, whenever there is any"
+	flawBOMBeforeJSON      = "every body starts with a UTF-8 BOM, so no answer parses"
+	flawResultUnguarded    = "the result call reads neither the credential nor the protocol header"
+	flawTakesNoBearer      = "a request with no Authorization header at all is taken"
+	// Both halves: the duplicate is what a suite counting it as a repeat
+	// would take for the rule being kept, and the forgotten offer is the
+	// defect that would then go unreported.
+	flawOffersTwiceOver = "one answer names the same run twice, and a dropped offer is never repeated"
+	// The missing next action is what makes the refusal reach the report at
+	// all: a refusal the suite reads and passes is never printed, so a test
+	// over it would prove nothing about what is printed.
+	flawEchoesTheToken = "a refusal quotes the token it was given, and names no next action"
 )
 
 func newFake(t *testing.T, flaw string, queued ...v1.Run) (*fake, string) {
@@ -129,7 +140,13 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.fail(w, http.StatusMethodNotAllowed, v1.CodeInvalid, r.Method+" is not how a protocol call is made", "every protocol call is a POST")
 		return
 	}
-	guarded := f.flaw != flawGuardsSyncOnly || strings.HasSuffix(path, "/sync")
+	guarded := true
+	switch f.flaw {
+	case flawGuardsSyncOnly:
+		guarded = strings.HasSuffix(path, "/sync")
+	case flawResultUnguarded:
+		guarded = !strings.HasSuffix(path, "/result")
+	}
 	if f.flaw != flawIgnoresProtocol && guarded && r.Header.Get(v1.HeaderProtocol) != v1.Version {
 		f.fail(w, http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol, "this hub speaks protocol 1", "upgrade yad or the hub")
 		return
@@ -162,7 +179,14 @@ func (f *fake) register(w http.ResponseWriter, r *http.Request) {
 	}
 	sameRunner := f.flaw == flawSameRunnerReuse && req.Capabilities.RunnerID == f.runner
 	if f.spent && f.flaw != flawTokenIsReusable && !sameRunner {
-		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "that registration token has been used", "ask the hub for a new one")
+		// A hub quoting back what it was given: valid JSON, no field any
+		// walk of it would know to redact, and one of the commonest ways a
+		// token reaches somebody's log.
+		message, next := "that registration token has been used", "ask the hub for a new one"
+		if f.flaw == flawEchoesTheToken {
+			message, next = "the registration token "+bearer(r)+" has been used", ""
+		}
+		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, message, next)
 		return
 	}
 	f.spent = true
@@ -230,7 +254,7 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	for _, id := range f.order {
 		run := f.runs[id]
 		// An offer this sync did not list was never received (§2, Sync).
-		if run.holder == "" && !run.queued && !listed[id] && f.flaw != flawForgetsOffers {
+		if run.holder == "" && !run.queued && !listed[id] && f.flaw != flawForgetsOffers && f.flaw != flawOffersTwiceOver {
 			run.queued = true
 		}
 	}
@@ -260,6 +284,13 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 		}
 		run.queued, run.expires = false, now.Add(f.lease)
 		res.Runs = append(res.Runs, spec)
+		// The same run named twice in one answer: offered once, and never
+		// dropped by a sync that did not list it.
+		if f.flaw == flawOffersTwiceOver {
+			run.queued = false
+			res.Runs = append(res.Runs, spec)
+			break
+		}
 	}
 	if f.flaw == flawSendsEmptyLists {
 		f.writeRaw(w, http.StatusOK, fmt.Sprintf(`{"next_sync_ms":%d,"lease_ms":%d,"runs":[],"controls":null}`, res.NextSyncMS, res.LeaseMS))
@@ -323,6 +354,11 @@ func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string, guar
 // authenticated checks the runner credential and decodes the body. guarded is
 // false on the calls a hub with the sync-only flaw does not authenticate.
 func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, guarded bool) bool {
+	// A hub that checks an Authorization header when there is one and takes
+	// the request when there is not.
+	if f.flaw == flawTakesNoBearer && bearer(r) == "" {
+		return true
+	}
 	if guarded && (bearer(r) != f.cred || f.cred == "") {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "this hub does not know that runner credential", "register again")
 		return false
@@ -354,6 +390,12 @@ func (f *fake) fail(w http.ResponseWriter, status int, code, message, next strin
 func (f *fake) write(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	if f.flaw == flawBOMBeforeJSON {
+		// encoding/json refuses a document that starts with one, which is
+		// how a body carrying the credential becomes unreadable — and so
+		// unredactable — while still being a hub's answer.
+		_, _ = w.Write([]byte("\ufeff"))
+	}
 	_ = json.NewEncoder(w).Encode(body)
 }
 

@@ -174,6 +174,9 @@ type session struct {
 	// offered is every run the hub offered this runner, by id, so a check can
 	// judge the runs themselves and not only the answers that carried them.
 	offered map[string]v1.Run
+	// offeredAtOnce is the most runs one answer offered, which is what bounds
+	// how many the suite can hold — and so which rules it can check at all.
+	offeredAtOnce int
 	// report is the run the event and result rules are checked against;
 	// lapse is the one left out of every sync so its lease runs out.
 	report, lapse string
@@ -227,7 +230,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 	s := &session{
 		opts: opts,
-		c:    newClient(opts.BaseURL),
+		c:    newClient(opts.BaseURL, opts.Token),
 		// Every id this suite invents begins with the same word, whichever
 		// harness was named, so whoever reads the hub's records afterwards
 		// can see where this runner and its runs came from.
@@ -271,6 +274,11 @@ func (s *session) make(ctx context.Context, ch check) Outcome {
 		out.Status = Passed
 	case errors.As(err, &sk):
 		out.Status, out.Detail = Skipped, sk.reason
+	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		// The check the signal landed in is not a rule the hub broke, and a
+		// report naming a §2 rule against a hub that did nothing is worse
+		// than one check fewer.
+		out.Status, out.Detail = Skipped, "the suite was stopped while this check was being made"
 	default:
 		// A transport error is reported like any other failure: from the
 		// outside, a hub that cannot be reached and a hub that answers
@@ -285,8 +293,12 @@ func (s *session) missing(need requirement) string {
 	switch {
 	case need >= credential && s.cred == "":
 		return "the suite never registered with this hub, so nothing needing a runner credential could be checked"
+	case need >= heldRun && s.report == "" && len(s.offered) > 0:
+		return "the hub offered runs and had taken them all back before the suite could claim one — an offer a sync does not list is requeued — so nothing needing a run it holds could be checked"
 	case need >= heldRun && s.report == "":
 		return "no run was offered to this runner, so nothing needing a run it holds could be checked; queue a run for harness " + s.opts.Harness + " and run the suite again"
+	case need >= secondRun && s.lapse == "" && s.offeredAtOnce > 1:
+		return "the hub had two runs open to this runner earlier and only one by the last sync, so the suite could not claim the two the lease rules need — one to report on, and one to leave unrenewed"
 	case need >= secondRun && s.lapse == "" && len(s.offered) > 1:
 		// Offering one run at a time breaks no rule of §2's, and no way of
 		// queueing runs gets around it: say so rather than repeat advice the
@@ -434,13 +446,16 @@ func (s *session) drop(runID string) {
 
 // pick chooses what the runs the hub offered are used for: the first carries
 // the event and result rules, and a second — when the hub offered one — is
-// left unlisted for its lease to lapse.
+// left unlisted for its lease to lapse. The ids must be distinct; one run
+// taken for both would be reported terminal and then waited on for a lease.
 func (s *session) pick(offered []string) {
-	if len(offered) > 0 {
-		s.report = offered[0]
-	}
-	if len(offered) > 1 {
-		s.lapse = offered[1]
+	for _, id := range offered {
+		switch {
+		case s.report == "":
+			s.report = id
+		case s.lapse == "" && id != s.report:
+			s.lapse = id
+		}
 	}
 }
 

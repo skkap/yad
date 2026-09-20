@@ -51,11 +51,18 @@ type call struct {
 // the bytes. Nothing is decoded away, because half of §2's wire rules are
 // about which fields the JSON does and does not carry.
 type answer struct {
+	// c is the client that made the call, for the secrets it holds.
+	c *client
 	// Call is the request that got it — "POST /runners/r-1/sync" — because a
 	// failure has to say which call broke the rule.
 	Call   string
 	Status int
 	Body   []byte
+	// secrets says this call's answer is one the protocol lets carry a secret:
+	// register answers with the runner credential, and a sync with the grants
+	// of every run it offers. A body of one of these that cannot be read is
+	// never printed, because what cannot be read cannot be redacted.
+	secrets bool
 }
 
 // client is the suite's whole HTTP surface. It is deliberately not
@@ -67,10 +74,18 @@ type client struct {
 	// seen is every answer in order, for the checks that judge all of them —
 	// the error envelope, and the controls a hub may send.
 	seen []*answer
+	// known is the secrets this suite itself presented: the registration
+	// token, and the credential the hub gave back for it. Redacting by field
+	// name cannot catch a hub that echoes one inside a message — "token sk-…
+	// is not valid" is valid JSON with no field a walk would know — and that
+	// is one of the commonest ways a token reaches a log. Matching strings
+	// the suite already holds is exact; guessing at token-shaped text is not,
+	// and a redactor that hides hub identifiers is one somebody turns off.
+	known []string
 }
 
-func newClient(base string) *client {
-	return &client{
+func newClient(base string, known ...string) *client {
+	c := &client{
 		base: strings.TrimRight(base, "/"),
 		http: &http.Client{
 			Timeout: requestTimeout,
@@ -82,6 +97,32 @@ func newClient(base string) *client {
 			},
 		},
 	}
+	for _, secret := range known {
+		c.learn(secret)
+	}
+	return c
+}
+
+// shortestSecret is the length below which a string is not treated as one. A
+// secret this short is not a secret, and replacing every occurrence of a short
+// string would take the report apart.
+const shortestSecret = 8
+
+// learn adds a secret this suite holds to what is hidden from the report.
+func (c *client) learn(secret string) {
+	if len(secret) >= shortestSecret {
+		c.known = append(c.known, secret)
+	}
+}
+
+// hide removes every secret this suite presented from text, wherever in it
+// they are and whatever the shape around them. It runs before the excerpt is
+// cut, so a secret is removed whole rather than left with its head showing.
+func (c *client) hide(text string) string {
+	for _, secret := range c.known {
+		text = strings.ReplaceAll(text, secret, redactedText)
+	}
+	return text
 }
 
 func (c *client) do(ctx context.Context, in call) (*answer, error) {
@@ -121,15 +162,28 @@ func (c *client) do(ctx context.Context, in call) (*answer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: reading the answer: %w", method, in.path, err)
 	}
-	a := &answer{Call: method + " " + in.path, Status: res.StatusCode, Body: raw}
+	a := &answer{
+		c: c, Call: method + " " + in.path, Status: res.StatusCode, Body: raw,
+		secrets: in.path == registerPath || strings.HasSuffix(in.path, "/sync"),
+	}
 	c.seen = append(c.seen, a)
 	return a, nil
 }
 
 func (a *answer) ok() bool { return a.Status/100 == 2 }
 
-// redaction replaces a secret in a printed body.
-const redaction = `"[redacted by yad conformance]"`
+// What replaces a secret in a printed body: redactedText inside a string a hub
+// wrote, and redaction where a whole JSON value is being replaced. They are the
+// same words, and the quotes belong to the JSON rather than to the words —
+// putting the quoted form inside someone's message would leave the printed
+// body malformed for the reader.
+const (
+	redactedText = "[redacted by yad conformance]"
+	redaction    = `"` + redactedText + `"`
+)
+
+// registerPath is the one call whose answer carries the runner credential.
+const registerPath = "/runners/register"
 
 // redacted is a body with the two secrets v1 carries removed: the runner
 // credential a register answers with, and the value of every grant in a run a
@@ -139,24 +193,26 @@ const redaction = `"[redacted by yad conformance]"`
 // the log of whatever pipeline ran the suite, for as long as that log is kept.
 // CLAUDE.md's guardrail is that a secret is never printed, and a report about
 // a hub's mistakes is not an exception to it.
-func redacted(body []byte) string {
+// It returns whether the body could be read at all, because a body that is not
+// JSON is not thereby free of secrets: a UTF-8 BOM before the first brace is
+// enough for encoding/json to refuse a register answer whose first field is the
+// credential, and so is a body over readLimit, which arrives cut mid-object.
+// This is the half of the guard that has to fail closed.
+func redacted(body []byte) (string, bool) {
 	var v any
 	if err := json.Unmarshal(body, &v); err != nil {
-		// Not this protocol's JSON, so it holds no field known to be a
-		// secret — and a proxy's HTML error page is worth printing as it
-		// arrived, since that is the evidence that it was a proxy.
-		return string(body)
+		return string(body), false
 	}
 	if !scrub(v, "") {
-		return string(body)
+		return string(body), true
 	}
 	out, err := json.Marshal(v)
 	if err != nil {
 		// Unreachable for a value that came out of Unmarshal; if it ever is
 		// reached, say nothing rather than print what was being redacted.
-		return "[a body this suite could not print without its secrets]"
+		return "[a body this suite could not print without its secrets]", true
 	}
-	return string(out)
+	return string(out), true
 }
 
 // scrub replaces every secret v1 carries, wherever in the body it is, and
@@ -216,7 +272,15 @@ func (a *answer) envelope() (v1.Error, bool) {
 // body to show what happened — with the secrets the protocol carries taken
 // out of it first.
 func (a *answer) String() string {
-	body := strings.TrimSpace(redacted(a.Body))
+	text, read := redacted(a.Body)
+	text = a.c.hide(text)
+	if !read && a.secrets {
+		// A proxy's error page would have been worth printing. It is not
+		// worth a credential, and from outside there is no telling the two
+		// apart — so this call's unreadable bodies are described, not shown.
+		return fmt.Sprintf("%s -> %d with %d bytes that are not JSON; this call's answer can carry a secret, so it is described rather than printed", a.Call, a.Status, len(a.Body))
+	}
+	body := strings.TrimSpace(text)
 	if len(body) > bodyExcerpt {
 		body = strings.ToValidUTF8(body[:bodyExcerpt], "") + "..."
 	}

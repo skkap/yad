@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/buildinfo"
 )
 
 // The rules of §2's "Calls": what authenticates a request, what every answer
@@ -62,6 +64,13 @@ func checkRegister(ctx context.Context, s *session) error {
 		return err
 	}
 	if !a.ok() {
+		// A hub may set a version floor and refuse below it — §2, Versioning
+		// — and the token is not burned by that refusal. Blaming the hub for
+		// what §2 grants it is the mistake this suite exists not to make.
+		if e, ok := a.envelope(); ok && e.Code == v1.CodeVersionTooOld {
+			return skipf("this hub refuses yad %s and said so: %s. §2 lets a hub set a version floor, so this is its right and not a fault — run the suite from a build at or above that floor to check the rest",
+				buildinfo.Version, e.Message)
+		}
 		return brokenf("the hub refused the registration token: %s", a)
 	}
 	var res v1.RegisterResponse
@@ -72,6 +81,9 @@ func checkRegister(ctx context.Context, s *session) error {
 		return brokenf("the answer carries no runner_credential, so nothing after register can be authenticated: %s", a)
 	}
 	s.cred = res.RunnerCredential
+	// From here the credential is a secret this suite holds, and no failure
+	// prints it — including the answer that has just carried it.
+	s.c.learn(res.RunnerCredential)
 	s.note(a.Call, res.SyncIntervalMS, res.LeaseMS)
 	return nil
 }
@@ -108,11 +120,20 @@ func checkCredentialRequired(ctx context.Context, s *session) error {
 	if err != nil {
 		return err
 	}
-	a, err := s.c.do(ctx, call{path: s.syncPath(), bearer: "yad-conformance-not-a-credential-" + id, body: s.syncRequest(0)})
-	if err != nil {
-		return err
+	// A bearer the hub never issued, and then none at all: a hub that checks
+	// an Authorization header when one is there and takes the request when it
+	// is not would pass the first alone, while anyone at all could sync as a
+	// runner it knows and be handed runs and their grants.
+	for _, bearer := range []string{"yad-conformance-not-a-credential-" + id, ""} {
+		a, err := s.c.do(ctx, call{path: s.syncPath(), bearer: bearer, body: s.syncRequest(0)})
+		if err != nil {
+			return err
+		}
+		if err := refused(a); err != nil {
+			return err
+		}
 	}
-	return refused(a)
+	return nil
 }
 
 // checkEventsCredentialRequired is the same rule on another call, and it takes
@@ -125,14 +146,44 @@ func checkEventsCredentialRequired(ctx context.Context, s *session) error {
 		return err
 	}
 	batch := v1.EventBatch{Events: []v1.Event{{Seq: seqFirst, Kind: v1.EventText, Text: "yad conformance"}}}
-	a, err := s.c.do(ctx, call{path: eventsPath(s.report), bearer: "yad-conformance-not-a-credential-" + id, body: batch})
+	for _, bearer := range []string{"yad-conformance-not-a-credential-" + id, ""} {
+		a, err := s.c.do(ctx, call{path: eventsPath(s.report), bearer: bearer, body: batch})
+		if err != nil {
+			return err
+		}
+		if a.ok() {
+			return brokenf("the hub took events for run %s from a bearer it never issued: %s", s.report, a)
+		}
+		if err := refused(a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkResultCredentialRequired is the same rule on the last call that has
+// one. It re-sends the terminal state the hub already holds, so a hub that
+// authenticates nothing changes nothing by taking it — and still shows that it
+// took a result from a caller it cannot identify.
+func checkResultCredentialRequired(ctx context.Context, s *session) error {
+	id, err := newID()
 	if err != nil {
 		return err
 	}
-	if a.ok() {
-		return brokenf("the hub took events for run %s from a bearer it never issued: %s", s.report, a)
+	res := v1.Result{State: v1.RunFailed, LastSeq: s.lastSeq, Error: &v1.RunError{Class: "refused", Message: "the yad conformance suite claimed this run to check the protocol and drives no harness"}}
+	for _, bearer := range []string{"yad-conformance-not-a-credential-" + id, ""} {
+		a, err := s.c.do(ctx, call{path: resultPath(s.report), bearer: bearer, body: res})
+		if err != nil {
+			return err
+		}
+		if a.ok() {
+			return brokenf("the hub took a terminal state for run %s from a bearer it never issued: %s", s.report, a)
+		}
+		if err := refused(a); err != nil {
+			return err
+		}
 	}
-	return refused(a)
+	return nil
 }
 
 // The version is checked before the body, so these two send a body no hub can
@@ -163,14 +214,17 @@ func checkProtocolHeaderOtherVersion(ctx context.Context, s *session) error {
 	})
 }
 
-// everyCall makes the same request of the sync and the events paths and wants
-// 426 unsupported_protocol from both.
+// everyCall makes the same request of every call this suite may safely send
+// twice and wants 426 unsupported_protocol from each. Register is left out: it
+// is the one call the registration token authenticates, and a hub that reads
+// the body before the header would burn the operator's token on a request sent
+// to check a header.
 func (s *session) everyCall(ctx context.Context, build func(path string) call) error {
 	run, err := s.strangeRun()
 	if err != nil {
 		return err
 	}
-	for _, path := range []string{s.syncPath(), eventsPath(run)} {
+	for _, path := range []string{s.syncPath(), eventsPath(run), resultPath(run)} {
 		a, err := s.c.do(ctx, build(path))
 		if err != nil {
 			return err

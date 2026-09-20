@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	v1 "github.com/skkap/yad/protocol/v1"
 )
 
 const fakeToken = "fake-registration-token"
@@ -74,6 +76,12 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		// The reserved update control is gated on nothing (decision 0018), so
 		// the rule about ungated controls must not fire on it.
 		{flaw: flawOverOffersWhenBusy, check: "sync/offers-within-capacity", want: Failed},
+		{flaw: flawResultUnguarded, check: "protocol-header/missing", want: Failed},
+		{flaw: flawResultUnguarded, check: "result/credential-required", want: Failed},
+		{flaw: flawTakesNoBearer, check: "sync/credential-required", want: Failed},
+		// One answer naming a run twice has not shown that a dropped offer
+		// comes back, so the rule is unproven rather than kept.
+		{flaw: flawOffersTwiceOver, check: "sync/offer-is-repeated", want: Skipped},
 		{flaw: flawSendsUpdate, check: "versioning/controls-are-gated", want: Passed},
 	} {
 		t.Run(tc.flaw+"/"+tc.check, func(t *testing.T) {
@@ -200,5 +208,89 @@ func TestAnInterruptedRunIsNotAPass(t *testing.T) {
 	}
 	if rep.count(Skipped) == 0 {
 		t.Error("no check is recorded as not made")
+	}
+	// Including the check the signal landed in: a stopped suite must not
+	// name a §2 rule against a hub that did nothing wrong.
+	for _, o := range rep.Outcomes {
+		if o.Status == Failed {
+			t.Errorf("%s is reported as broken by a hub that only had the suite stopped on it: %s", o.ID, o.Detail)
+		}
+	}
+}
+
+// The redaction has to fail closed. A body that encoding/json refuses — a
+// UTF-8 BOM before the brace, a body cut at the read limit — cannot be
+// redacted, and the bodies most worth printing are the ones that carry the
+// credential.
+func TestAnUnreadableBodyIsNotPrinted(t *testing.T) {
+	t.Parallel()
+	f, url := newFake(t, flawBOMBeforeJSON, fakeRunSpec(0), fakeRunSpec(1))
+	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The register answer is the one that carries the credential, and with a
+	// body the suite cannot read it is also the answer a failure prints.
+	if o := outcome(t, rep, "register/exchange"); o.Status != Failed {
+		t.Fatalf("register/exchange was %s against a hub whose answers do not parse, so the body was never printed", label(o.Status))
+	}
+	var out strings.Builder
+	rep.Print(&out)
+	f.mu.Lock()
+	cred := f.cred
+	f.mu.Unlock()
+	if cred == "" {
+		t.Fatal("the fake hub issued no credential, so this test proves nothing")
+	}
+	if strings.Contains(out.String(), cred) {
+		t.Errorf("the runner credential %q is in the report, from a body that could not be parsed to redact:\n%s", cred, out.String())
+	}
+	if !strings.Contains(out.String(), "not JSON") {
+		t.Errorf("the report neither printed the body nor said why it did not:\n%s", out.String())
+	}
+}
+
+// Every run the hub offered is judged, not only the ones the suite went on to
+// use: a run offered and taken back is one a runner would have had to refuse.
+func TestEveryOfferedRunIsValidated(t *testing.T) {
+	t.Parallel()
+	s := &session{opts: Options{Harness: DefaultHarness}, offered: map[string]v1.Run{
+		"taken-back": {RunID: "taken-back", Session: v1.SessionRef{ID: "s"}, Harness: DefaultHarness, Brief: v1.Brief{Instruction: "hi"}},
+		"kept":       fakeRunSpec(0),
+	}}
+	s.pick([]string{"kept"})
+	err := checkOfferedRunIsValid(context.Background(), s)
+	if err == nil {
+		t.Fatal("a run with no model was offered and taken back, and the check passed")
+	}
+	if !strings.Contains(err.Error(), "taken-back") {
+		t.Errorf("the failure does not name the run: %v", err)
+	}
+}
+
+// Redacting by field name cannot see a secret a hub puts inside a message.
+// The suite holds the token it presented and the credential it was given, so
+// neither reaches the report whatever shape the hub wrapped it in.
+func TestASecretQuotedBackIsNotPrinted(t *testing.T) {
+	t.Parallel()
+	_, url := newFake(t, flawEchoesTheToken, fakeRunSpec(0), fakeRunSpec(1))
+	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// That refusal names no next action, so it is printed — without which
+	// this test would assert only that an answer nobody prints is safe.
+	if o := outcome(t, rep, "errors/next-action"); o.Status != Failed {
+		t.Fatalf("errors/next-action was %s, so the answer quoting the token was never printed", label(o.Status))
+	}
+	var out strings.Builder
+	rep.Print(&out)
+	// The report wraps its prose, so the phrase is matched with the spacing
+	// flattened rather than as it happens to have broken.
+	if flat := strings.Join(strings.Fields(out.String()), " "); !strings.Contains(flat, "has been used") {
+		t.Fatalf("the report does not carry the refusal that quotes the token, so it proves nothing:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), fakeToken) {
+		t.Errorf("the registration token is in the report, quoted inside an error message:\n%s", out.String())
 	}
 }

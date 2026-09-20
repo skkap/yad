@@ -54,7 +54,7 @@ func checks() []check {
 		run:     checkTokenIsOneTime,
 	}, {
 		id:      "sync/credential-required",
-		rule:    "Every call but register is authenticated by the runner credential: a sync carrying a bearer the hub did not issue is refused.",
+		rule:    "Every call but register is authenticated by the runner credential: a sync is refused when its bearer is one the hub did not issue, and refused when it carries none at all.",
 		section: sectionCalls,
 		needs:   credential,
 		run:     checkCredentialRequired,
@@ -114,7 +114,7 @@ func checks() []check {
 		run:     checkOfferedRunIsValid,
 	}, {
 		id:      "events/credential-required",
-		rule:    "Every call but register is authenticated by the runner credential, on every call and not only on sync: a batch of events for a run this runner holds is refused when the bearer is one the hub never issued.",
+		rule:    "Every call but register is authenticated by the runner credential, on every call and not only on sync: a batch of events for a run this runner holds is refused when the bearer is one the hub never issued, or absent.",
 		section: sectionCalls,
 		needs:   heldRun,
 		run:     checkEventsCredentialRequired,
@@ -160,6 +160,12 @@ func checks() []check {
 		section: sectionResult,
 		needs:   heldRun,
 		run:     checkResultConflict,
+	}, {
+		id:      "result/credential-required",
+		rule:    "Every call but register is authenticated by the runner credential, on every call and not only on sync: a terminal state for a run this runner holds is refused when the bearer is one the hub never issued, or absent.",
+		section: sectionCalls,
+		needs:   heldRun,
+		run:     checkResultCredentialRequired,
 	}, {
 		id:      "events/after-the-run-ends",
 		rule:    "The runner a run was claimed by may append to it after it has ended, so a batch still in its spool when the result landed is not lost.",

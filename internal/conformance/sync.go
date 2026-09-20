@@ -127,10 +127,9 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 	// Ask for work, listing nothing each time: every run offered is therefore
 	// one the next sync did not list, which is the state the rule is about.
 	var (
-		offered  []string // every run this hub has offered the suite, in order
-		others   []string // those it had not offered before, after the first answer
-		current  []v1.Run // what the last answer offered, which is what the hub holds open now
-		repeated bool     // a run came back after a sync that did not list it
+		answers  [][]string // the runs each answer offered, in order, without repeats within one
+		seen     []string   // every run offered so far, so a repeat is one from an earlier answer
+		repeated bool
 		last     *answer
 	)
 	for i := 0; i < offerSyncs; i++ {
@@ -138,39 +137,62 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 		if err != nil {
 			return err
 		}
-		last, current = a, res.Runs
+		last = a
+		// A hub that names one run twice in one answer has offered it once;
+		// counting the second as a repeat would report the rule kept without
+		// a sync ever having dropped it.
+		ids := sorted(setOf(runIDs(res.Runs)))
 		for _, r := range res.Runs {
 			s.offered[r.RunID] = r
-			switch {
-			case slices.Contains(offered, r.RunID):
-				repeated = true
-			default:
-				if i > 0 {
-					others = append(others, r.RunID)
-				}
-				offered = append(offered, r.RunID)
-			}
 		}
-		if repeated && len(current) >= runsWanted {
+		for _, id := range ids {
+			if slices.Contains(seen, id) {
+				repeated = true
+				continue
+			}
+			seen = append(seen, id)
+		}
+		answers = append(answers, ids)
+		s.offeredAtOnce = max(s.offeredAtOnce, len(ids))
+		if repeated && len(ids) >= runsWanted {
 			break
 		}
 	}
 	// The runs later checks use are the ones the hub offered last. An id from
 	// an earlier answer is one a sync did not list, so by this very rule the
 	// hub has taken it back, and claiming it would be this suite's mistake.
-	s.pick(runIDs(current))
+	s.pick(answers[len(answers)-1])
+
+	first := slices.IndexFunc(answers, func(ids []string) bool { return len(ids) > 0 })
 	switch {
-	case len(offered) == 0:
+	case first < 0:
 		return skipf("the hub offered no run for harness %s in %d syncs, so the rules that need one could not be checked; queue one or two runs for that harness and run the suite again",
 			s.opts.Harness, offerSyncs)
 	case repeated:
 		return nil
+	}
+	// What the hub said after the answer that first offered something: how
+	// many syncs followed it, and which runs it had to offer that were not
+	// the ones it had just dropped.
+	dropped, after := answers[first], answers[first+1:]
+	var others []string
+	for _, ids := range after {
+		for _, id := range ids {
+			if !slices.Contains(dropped, id) {
+				others = append(others, id)
+			}
+		}
+	}
+	switch {
+	case len(after) == 0:
+		return skipf("run %s was offered on the last of this suite's %d syncs, so no sync followed it and whether the hub offers it again could not be seen. Run the suite again against a hub with a run already queued for harness %s.",
+			strings.Join(dropped, ", "), offerSyncs, s.opts.Harness)
 	case len(others) > 0:
-		return skipf("run %s was offered and not listed, and in the %d syncs after it the hub had other runs to offer first (%s), so whether it comes back cannot be told in a bounded number of syncs — §2 names no deadline, and this is not a verdict on the hub. Queue only the runs this suite should use, and run it again: %s",
-			strings.Join(offered[:1], ""), offerSyncs-1, strings.Join(sorted(setOf(others)), ", "), last)
+		return skipf("run %s was offered and not listed, and in the %d sync(s) after it the hub had other runs to offer first (%s), so whether it comes back cannot be told in a bounded number of syncs — §2 names no deadline, and this is not a verdict on the hub. Queue only the runs this suite should use, and run it again: %s",
+			strings.Join(dropped, ", "), len(after), strings.Join(sorted(setOf(others)), ", "), last)
 	default:
-		return skipf("run %s was offered and not listed, and the hub offered nothing at all in the %d syncs after it though this runner declared room for %d. §2 says the hub offers such a run again but names no deadline, so this is not a verdict — read it as a warning instead: a hub that never offers a dropped run again loses every run it drops. %s",
-			strings.Join(offered[:1], ""), offerSyncs-1, runsWanted, last)
+		return skipf("run %s was offered and not listed, and the hub offered nothing at all in the %d sync(s) after it though this runner declared room for %d. §2 says the hub offers such a run again but names no deadline, so this is not a verdict — read it as a warning instead: a hub that never offers a dropped run again loses every run it drops. %s",
+			strings.Join(dropped, ", "), len(after), runsWanted, last)
 	}
 }
 
