@@ -99,8 +99,11 @@ wanted any of this could simply ask the harness for it.
   `IS_SANDBOX` switches off Claude's own refusal to bypass permissions as root,
   so only the owner may declare it, in the runner's own environment. A hub may
   name a grant that; it cannot make it take effect.
-- **Sources are argv, never a shell.** https and ssh only, no remote helpers,
-  no leading `-`, no password in a URL (`internal/workdir/source.go`). Those
+- **Sources are argv, never a shell.** For a repository off the machine, https
+  and ssh only — no plain http, no `git://`, no remote helpers, no leading `-`,
+  no password in the URL. A repository *on* the machine, given as a path or a
+  `file://` URL, is fetched too, but only from inside `[workdirs] roots`
+  (`parseRemote` and `localRemote` in `internal/workdir/source.go`). Those
   prevent bugs.
 - **Hub input and harness output are data.** Streamed and stored, never
   executed and never an instruction to the runner itself.
@@ -110,8 +113,9 @@ wanted any of this could simply ask the harness for it.
 
 ### Where a grant actually lands
 
-A grant reaches the harness process and nothing else: not the prompt, not the
-logs, not the events, and never argv. An `env` grant is `NAME=value` in the
+On the runner, a grant reaches the harness process and nothing else: not the
+prompt, not the logs, not the events, and never argv. (On the hub it is a
+different story — see the end of this section.) An `env` grant is `NAME=value` in the
 harness's environment. A `file` grant is a `0600` file whose path is in `NAME`,
 in a directory of that run's own under `<data>/grants/`, keyed by connection
 and run (`internal/runner/executor.go`). It is deleted when the run ends, and by the
@@ -123,8 +127,22 @@ necessarily outside everything a run can see.** `[workdirs] roots` defaults to
 your home directory when you have listed none
 ([0038](decisions/0038-the-owner-trusts-the-hubs-it-connects.md),
 `WorkdirsConfig.EffectiveRoots`), and the data directory is normally under your
-home too — so a run whose `path` source is your home has the grant directory
-somewhere beneath it. Listing roots narrows both at once.
+home too — so a run whose `path` source is your home gets a checkout with the
+grant directory somewhere beneath it.
+
+**Be clear about what `roots` is, because it is easy to read as a sandbox.** It
+decides which local directories a hub may name as the *material a workdir is
+built from* — a `path` source, or a local git URL (`inRoots` in
+`internal/workdir/source.go`). It does not confine the harness once the run
+starts. Nothing does: the harness is an ordinary process running as you, and it
+can read your whole home whatever `roots` says. Narrowing `roots` narrows what
+a hub can ask to have checked out, and that is all it is for.
+
+If a machine also runs `yad hub`, note that the hub's own store is where a
+queued run waits **with its grants, in plaintext** until it ends
+(`internal/hub/store/migrations/0001_init.sql`). That is the hub's job rather
+than the runner's, and it is why `yad doctor` treats an exposed `hub.db` as
+exposed secrets rather than exposed state.
 
 ## Give it a machine of its own
 
@@ -251,8 +269,12 @@ modes — and nothing announces it.
 harnesses it already reported:
 
 1. **Running as root.**
-2. **The config and data directories**, for group or other permissions. (The
-   credentials live in the config directory, so both are checked.)
+2. **The config and data directories** — for group or other permissions, and
+   for an owner who is not you. (The credentials live in the config directory,
+   so both directories are checked, not just the data one. A `0700` directory
+   belonging to somebody else passes a mode check and is still theirs to read
+   and replace, which is why the owning uid is compared too; the control server
+   already refuses to bind a socket in one.)
 3. **The profile's long-lived files**: `runner-id`, each
    `credentials/<connection>`, `hub-admin-token`, `state.db` and `hub.db`.
 
@@ -262,6 +284,13 @@ will hand out a credential — no group or other bits — rather than a literal
 `config.toml` is not on the list: it holds no secret and is legitimately
 world-readable, and a check that cried wolf over it would be a check people turn
 off.
+
+Each file says what is at stake and what to do, and those differ. `runner-id`
+is an identity rather than a secret — a hub refuses to re-register an id
+without a token minted for that runner — so closing the file is the whole of
+its fix. `state.db` holds runs without their grants, which the runner strips
+before writing. `hub.db`, a connection's credential and the hub admin token do
+hold secrets, so each of those asks for the rotation as well as the mode.
 
 Here is what it looks like on a profile with a group-readable data directory and
 a world-readable credential:
@@ -345,9 +374,17 @@ sandbox  = "workspace-write"
 approval = "never"
 ```
 
-`sandbox = "workspace-write"` keeps what Codex writes inside the run's workdir,
-and cuts the network — so runs that push or install will fail. That is the
-trade, and it is yours to make.
+`sandbox = "workspace-write"` cuts the network, so runs that push or install
+will fail. That is the trade, and it is yours to make.
+
+It does **not** confine writes to the workdir alone. In the app-server contract
+this yad is pinned against, a `workspaceWrite` policy leaves `/tmp` and
+`$TMPDIR` writable unless asked otherwise — `excludeSlashTmp` and
+`excludeTmpdirEnvVar` both default to `false`
+(`internal/adapter/codex/testdata/codex-0.147.0/codex_app_server_protocol.schemas.json`)
+— and YAD sends the mode as Codex's own string, setting neither
+(`internal/adapter/codex/codex.go`). Treat it as "not the whole filesystem",
+not as "only the workdir".
 
 Two things about this that are not negotiable by anyone else:
 
@@ -369,7 +406,8 @@ Two things about this that are not negotiable by anyone else:
 - [ ] `yad doctor` shows the harnesses you expect, and no warning you have not
       decided about
 - [ ] Only hubs you would hand this machine to are in `config.toml`
-- [ ] `[workdirs] roots` set, if a run should reach less than your home directory
+- [ ] `[workdirs] roots` set, if a hub should be able to check out less than
+      your whole home directory
 - [ ] `yad service install` run as that user, after PATH is what you want it
 - [ ] On Linux, lingering decided one way or the other
 

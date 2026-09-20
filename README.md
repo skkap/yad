@@ -167,8 +167,9 @@ prompt, the logs or the events, as `NAME=value` or a `0600` file under the
 runner's data directory rather than in the checkout, and it is deleted when the
 run ends — or at the next start, if the runner was killed before it could. A
 folder source is taken only inside `[workdirs] roots` in `config.toml`; with
-none listed that is your home directory, so list the directories runs may use if
-you want them to reach less.
+none listed that is your home directory. List the directories a hub may have
+checked out if you want it to name fewer — `roots` chooses the material a
+workdir is built from, and does not confine the harness once the run starts.
 
 Claude Code runs with `--permission-mode bypassPermissions` unless
 `permission_mode` under `[harness.claude]` in `config.toml` says otherwise.
@@ -177,9 +178,11 @@ Claude refuses that mode as root; run the runner as an ordinary user.
 Codex runs with approval policy `never` and sandbox `danger-full-access` unless
 `approval` and `sandbox` under `[harness.codex]` say otherwise
 ([0036](docs/decisions/0036-codex-runs-unsandboxed-and-never-asks-unless-the-owner-says.md)).
-`sandbox = "workspace-write"` keeps what Codex writes inside the run's workdir,
-and keeps it off the network, so a run cannot push or install. A policy that
-asks for approval is answered no: nobody is there to say yes.
+`sandbox = "workspace-write"` keeps Codex off the network, so a run cannot push
+or install. It narrows what Codex may write but does not confine it to the
+workdir — `/tmp` and `$TMPDIR` stay writable by default
+([docs/run-it-safely.md](docs/run-it-safely.md)). A policy that asks for
+approval is answered no: nobody is there to say yes.
 
 ## Run it as a service
 

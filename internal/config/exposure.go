@@ -1,9 +1,17 @@
+//go:build unix
+
+// This file reads a directory's owning uid, which needs syscall.Stat_t. The
+// tag follows internal/control, which is unix for the same reason, and the
+// binary is already unix-only through it — the release targets are linux and
+// darwin.
+
 package config
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // geteuid is swapped by tests, the same seam the Claude adapter uses for its
@@ -44,12 +52,23 @@ func privateFiles(p Paths) []privateFile {
 	runnerID := filepath.Join(p.Config, "runner-id")
 	admin := p.HubAdminToken()
 	files := []privateFile{
-		// An identity rather than a secret: reading it leaks nothing, so
-		// closing the file is the whole of the fix.
-		{runnerID, "another machine claiming this id would take over this runner's sessions", "chmod 600 " + runnerID},
-		{admin, "it is the admin token for this machine's hub", "chmod 600 " + admin + " stops the next reader, but not the one who already read it, so revoke it with `yad hub admin-token revoke` (`list` names them) and create another"},
+		// An identity rather than a secret. Reading it takes nothing over:
+		// hub.Register refuses a generic token for an id already registered
+		// and a ForRunner token for a different runner, so the id alone is
+		// not enough. It is here because yad writes it 0600 and something
+		// changed that, which is a fact about the directory it sits in.
+		{runnerID, "yad writes this 0600 and something has changed it; the id itself is not a secret, but the credentials beside it are", "chmod 600 " + runnerID},
+		// The sequence `yad hub admin-token create` itself prints when it
+		// refuses: revoke only touches hub.db, so create refuses while this
+		// file is still here, and deleting it is the step between.
+		{admin, "it is the admin token for this machine's hub", "chmod 600 " + admin + " stops the next reader, but not the one who already read it, so revoke it (`yad hub admin-token list`, then revoke), delete " + admin + ", and `yad hub admin-token create` again"},
+		// The runner's own store holds no grant: Loop.record strips them
+		// before writing, so a run is stored without the secrets it carried.
 		{p.StateDB(), "it holds every run's events, which carry what the harness did", "chmod 600 " + p.StateDB()},
-		{p.HubDB(), "it holds this hub's runs and the hashes of its tokens", "chmod 600 " + p.HubDB()},
+		// The hub's store is the opposite, and deliberately so — a queued run
+		// is held with its grants until it ends (hub/store/migrations/0001),
+		// so an exposed hub.db is exposed secrets, not just exposed state.
+		{p.HubDB(), "it holds this hub's queued runs with their grants, in plaintext", "chmod 600 " + p.HubDB() + " stops the next reader, but not the one who already read it, so rotate whatever secret a queued run's grants carry"},
 	}
 	// Credentials are one file per connection and named by the owner, so they
 	// can only be found by reading the directory. ReadDir sorts by name, which
@@ -111,6 +130,18 @@ func Exposures(p Paths) []string {
 		}
 		if fi.Mode().Perm()&otherUsers != 0 {
 			out = append(out, fmt.Sprintf("the %s directory %s is %v — another user on this machine can reach what is in it; chmod 700 %s", d.what, d.path, fi.Mode().Perm(), d.path))
+		}
+		// A 0700 directory owned by somebody else passes the mode check and is
+		// still theirs to read and replace. control.checkDir already refuses
+		// this before binding the socket; reporting it here is the same rule
+		// one step earlier, so an owner meets it in doctor rather than in a
+		// daemon that will not start.
+		//
+		// The real uid, not the effective one the root check above reads:
+		// this has to be the same comparison control.checkDir makes, or
+		// doctor would call a profile clean that the daemon then refuses.
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+			out = append(out, fmt.Sprintf("the %s directory %s belongs to uid %d, not to you (%d) — run yad as its owner, or point %s at a directory of your own", d.what, d.path, st.Uid, os.Getuid(), map[string]string{"config": "YAD_CONFIG_DIR", "data": "YAD_DATA_DIR"}[d.what]))
 		}
 	}
 	for _, f := range privateFiles(p) {

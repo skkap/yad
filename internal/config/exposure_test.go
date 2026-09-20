@@ -151,7 +151,7 @@ func TestExposures(t *testing.T) {
 			},
 			want: []string{"runner-id", "hub-admin-token", "state.db", "hub.db",
 				`connection "a"`, `connection "b"`,
-				"revoke it with `yad hub admin-token revoke`"},
+				"`yad hub admin-token list`, then revoke"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -302,11 +302,19 @@ func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 	p := paths(t)
 	write(t, filepath.Join(p.Config, "credentials", "yashiki"), 0o644)
 	write(t, p.HubAdminToken(), 0o644)
+	write(t, p.HubDB(), 0o644)
 	write(t, filepath.Join(p.Config, "runner-id"), 0o644)
 	write(t, p.StateDB(), 0o644)
 
 	for _, line := range Exposures(p) {
-		secret := strings.Contains(line, "credentials") || strings.Contains(line, "hub-admin-token")
+		// Match the path this line is about, not the prose after it: the
+		// runner-id line mentions the word "credentials" while being about a
+		// file that is not one.
+		path, _, _ := strings.Cut(line, " is -rw")
+		// hub.db holds a queued run's grants in plaintext; state.db does not,
+		// because Loop.record strips them before writing.
+		secret := strings.Contains(path, "credentials") || strings.HasSuffix(path, "hub-admin-token") ||
+			strings.HasSuffix(path, "hub.db")
 		rotates := strings.Contains(line, "not the one who already read it")
 		if secret != rotates {
 			t.Errorf("secret=%v but rotation advice=%v:\n%s", secret, rotates, line)
@@ -321,5 +329,43 @@ func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 	got := strings.Join(Exposures(p), "\n")
 	if strings.Contains(got, "yad disconnect") {
 		t.Errorf("a warning names a command this yad does not have:\n%s", got)
+	}
+	// `yad hub admin-token create` refuses while the file is still there —
+	// revoke only touches hub.db — so an advice line that skips the delete
+	// sends the owner into that refusal.
+	if !strings.Contains(got, "delete "+p.HubAdminToken()) {
+		t.Errorf("the admin-token advice skips deleting the file, which is what makes create refuse:\n%s", got)
+	}
+	// The runner id is not a secret, and saying it is would have an owner
+	// rotating an identity that rotating retires.
+	for _, line := range Exposures(p) {
+		if strings.Contains(line, "runner-id") && strings.Contains(line, "take over") {
+			t.Errorf("the runner id is reported as a takeover that reading it cannot cause:\n%s", line)
+		}
+	}
+}
+
+// A directory nobody else can reach by mode is still not yours when somebody
+// else owns it, and control.checkDir already refuses to bind a socket in one.
+// Reporting only the mode would call such a profile clean.
+func TestExposuresReportsADirectoryOwnedBySomeoneElse(t *testing.T) {
+	old := geteuid
+	geteuid = func() int { return 501 }
+	t.Cleanup(func() { geteuid = old })
+	p := paths(t)
+	// Not chown — a test cannot give a directory away without root. What the
+	// check compares is the directory's uid against the process's, so a
+	// process claiming to be somebody else is the same comparison.
+	got := strings.Join(Exposures(p), "\n")
+	if got != "" {
+		t.Fatalf("a private profile owned by this process reported:\n%s", got)
+	}
+	if u := os.Getuid(); u == 0 {
+		t.Skip("running as root owns everything")
+	}
+	root := Paths{Profile: DefaultProfile, Config: "/", Data: "/"}
+	got = strings.Join(Exposures(root), "\n")
+	if !strings.Contains(got, "belongs to uid 0") || !strings.Contains(got, "YAD_CONFIG_DIR") {
+		t.Errorf("a directory owned by uid 0 was not reported as another user's:\n%s", got)
 	}
 }
