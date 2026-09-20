@@ -5,17 +5,22 @@ on:
     branches: [master]
   pull_request:
 
+# CI is deliberately a subset. Its one advantage over the machine this is
+# written on is that it is a clean Linux box, so it runs what can answer
+# differently there — vet, a build, the suite — and nothing that cannot.
+# gofmt, staticcheck, generated-file drift and the cross-compile matrix give
+# the same answer anywhere; CHECKS.md makes `make check` the bar before a pull
+# request, and that is where they run.
+#
+# There is no sqlc step any more: it existed only for check-generated, which
+# is now local. If a generated file is stale, `make check` says so before the
+# branch is ever pushed.
 jobs:
-  check:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      # sqlc is a build-time generator, not a Go dependency; check-generated
-      # needs the same version that produced the committed code.
-      - uses: sqlc-dev/setup-sqlc@v4
-        with:
-          sqlc-version: '1.31.1'
-      - run: make check
+      - run: make ci

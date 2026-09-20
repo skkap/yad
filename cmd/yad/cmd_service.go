@@ -37,11 +37,8 @@ func cmdService(ctx context.Context, g global, args []string, w io.Writer) error
 	sub := args[0]
 	fs := flag.NewFlagSet("service "+sub, flag.ContinueOnError)
 	profile := fs.String("profile", "", "which runner (default: the profile yad was started with)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if _, err := positional(fs, args[1:], 0, fmt.Sprintf("usage: yad service %s [--profile name]", sub)); err != nil {
 		return err
-	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected argument %q — usage: yad service %s [--profile name]", fs.Arg(0), sub)
 	}
 	paths := g.paths
 	if *profile != "" {

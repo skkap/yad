@@ -150,15 +150,25 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 	dbFile := fs.String("db", g.paths.HubDB(), "the hub's database — the one `yad hub serve` uses")
 	name := fs.String("name", "cli", "what to call the token, to tell it apart and revoke it")
 	out := fs.String("out", g.paths.HubAdminToken(), "file to save the token in (0600); - prints it once to stdout, for a service's secret store")
-	if err := fs.Parse(args[1:]); err != nil {
+	// The subcommand is judged before its arguments are: how many positionals
+	// are right depends on which one it is, so a mistyped subcommand checked
+	// afterwards is reported as a bad argument, and the complaint points at
+	// the one part of the command line that was fine.
+	want := 0
+	switch args[0] {
+	case "revoke":
+		want = 1 // the token it names
+	case "create", "list":
+	default:
+		return fmt.Errorf("unknown admin-token subcommand %q — %s", args[0], usage)
+	}
+	pos, err := positional(fs, args[1:], want, usage)
+	if err != nil {
 		return err
 	}
 	open := func() (*store.Store, error) { return store.Open(ctx, *dbFile) }
 	switch args[0] {
 	case "create":
-		if fs.NArg() > 0 {
-			return fmt.Errorf("unexpected argument %q — %s", fs.Arg(0), usage)
-		}
 		// Checked before the token exists: a token issued and then not
 		// saved is a live secret nobody holds.
 		if *out != "-" {
@@ -203,20 +213,16 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 		}
 		return nil
 	case "revoke":
-		if fs.NArg() != 1 {
-			return errors.New("usage: yad hub admin-token revoke <name>")
-		}
 		s, err := open()
 		if err != nil {
 			return err
 		}
 		defer s.Close()
-		if err := hub.RevokeAdminToken(ctx, s, fs.Arg(0)); err != nil {
+		if err := hub.RevokeAdminToken(ctx, s, pos[0]); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "admin token %q revoked — it stops working on its next request\n", fs.Arg(0))
+		fmt.Fprintf(stdout, "admin token %q revoked — it stops working on its next request\n", pos[0])
 		return nil
-	default:
-		return fmt.Errorf("unknown admin-token subcommand %q — %s", args[0], usage)
 	}
+	return nil
 }

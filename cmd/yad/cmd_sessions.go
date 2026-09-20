@@ -50,11 +50,8 @@ func cmdSessions(ctx context.Context, g global, args []string, w io.Writer) erro
 	}
 	fs := flag.NewFlagSet("sessions", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print the sessions as JSON")
-	if err := fs.Parse(args); err != nil {
+	if _, err := positional(fs, args, 0, "`yad sessions [--json]` lists every session"); err != nil {
 		return err
-	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected %q — `yad sessions [--json]` lists every session", fs.Arg(0))
 	}
 	var list []session
 	s, err := store.OpenReadOnly(ctx, g.paths.StateDB())
@@ -135,13 +132,11 @@ func printSessions(w io.Writer, list []session, now time.Time) {
 func cmdSessionsClose(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("sessions close", flag.ContinueOnError)
 	conn := fs.String("connection", "", "the connection the session belongs to, when more than one has that id")
-	if err := fs.Parse(args); err != nil {
+	pos, err := positional(fs, args, 1, "usage: yad sessions close [--connection name] <session> — `yad sessions` lists them")
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
-		return errors.New("usage: yad sessions close [--connection name] <session> — `yad sessions` lists them")
-	}
-	id := fs.Arg(0)
+	id := pos[0]
 	if *conn == "" {
 		found, err := sessionConnections(ctx, g, id)
 		if err != nil {

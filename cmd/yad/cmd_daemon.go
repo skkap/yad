@@ -289,7 +289,7 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		if !ok {
 			cs.State = runner.ConnStarting
 		}
-		conn := control.Connection{Name: c.Name, URL: c.URL, State: cs.State, LastError: cs.LastError}
+		conn := control.Connection{Name: c.Name, URL: c.URL, State: cs.State, LastError: cs.LastError, Held: cs.Held, Cap: cs.Cap}
 		if !cs.LastSync.IsZero() {
 			conn.LastSync = &cs.LastSync
 		}

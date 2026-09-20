@@ -64,7 +64,11 @@ func printStatus(w io.Writer, s control.Status, now time.Time) {
 			if c.LastSync != nil {
 				last = "synced " + ago(*c.LastSync)
 			}
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", cleanLine(c.Name), c.State, last, cleanLine(c.URL))
+			held := fmt.Sprintf("%d run(s)", c.Held)
+			if c.Cap > 0 {
+				held = fmt.Sprintf("%d of %d run(s)", c.Held, c.Cap)
+			}
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", cleanLine(c.Name), c.State, held, last, cleanLine(c.URL))
 			if c.LastError != "" && c.LastErrorAt != nil {
 				fmt.Fprintf(tw, "  \t\tlast error %s: %s\t\n", ago(*c.LastErrorAt), cleanLine(c.LastError))
 			}

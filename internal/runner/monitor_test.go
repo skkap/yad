@@ -132,7 +132,7 @@ func TestMonitorReadsTheStore(t *testing.T) {
 	}
 	m := NewMonitor()
 	p := NewPool(v1.Capacity{Total: 4})
-	res := p.Reserve()
+	res := p.Reserve("hub")
 	res.Take("claude")
 	res.Close()
 	m.attach(p, e.store, nil)
