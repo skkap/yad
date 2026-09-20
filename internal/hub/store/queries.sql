@@ -30,6 +30,12 @@ SELECT * FROM runners WHERE id = ?;
 -- name: GetRunnerByCredential :one
 SELECT * FROM runners WHERE credential_hash = ?;
 
+-- name: ListRunners :many
+-- Every runner this hub knows. The ones still talking to it come first, so an
+-- operator reading the list sees the live fleet before the retired machines;
+-- a runner that registered and never synced sorts last, by id.
+SELECT * FROM runners ORDER BY last_sync_at IS NULL, last_sync_at DESC, id;
+
 -- name: RecordSync :exec
 UPDATE runners SET last_sync_at = ?, health = ?, wants_capabilities = ? WHERE id = ?;
 

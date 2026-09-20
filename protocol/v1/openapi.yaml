@@ -337,12 +337,14 @@ components:
             $ref: "#/components/schemas/HarnessHealth"
           type: array
         load:
+          description: "The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. 0 where the runner cannot read one."
           format: double
           type: number
         outbox_depth:
           format: int64
           type: integer
         recent_errors:
+          description: "The runner's recent warnings and errors, newest first, each '<RFC3339 time> <LEVEL> <message>'. The runner's own words: never what a harness printed, never a path on the machine, never a credential. Capped in number, age and length."
           items:
             type: string
           type: array

@@ -2,6 +2,45 @@
 # Regenerate with `make generate`.
 components:
   schemas:
+    AccountReport:
+      additionalProperties: true
+      properties:
+        label:
+          type: string
+        limited_until:
+          format: date-time
+          type: string
+        state:
+          enum:
+            - free
+            - limited
+            - needs_login
+          type: string
+        windows:
+          items:
+            $ref: "#/components/schemas/AccountWindow"
+          type: array
+      required:
+        - label
+      type: object
+    AccountWindow:
+      additionalProperties: true
+      properties:
+        name:
+          description: "The window as its harness names it: five_hour or seven_day for Claude, primary or secondary for Codex."
+          type: string
+        resets_at:
+          description: When the window refills, if the harness said.
+          format: date-time
+          type: string
+        used_percent:
+          description: How much of the window is used, 0-100.
+          format: double
+          type: number
+      required:
+        - name
+        - used_percent
+      type: object
     Brief:
       additionalProperties: true
       properties:
@@ -11,6 +50,20 @@ components:
           type: string
       required:
         - instruction
+      type: object
+    Capacity:
+      additionalProperties: true
+      properties:
+        by_harness:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
       type: object
     Error:
       additionalProperties: true
@@ -115,6 +168,57 @@ components:
         - name
         - value
         - as
+      type: object
+    HarnessHealth:
+      additionalProperties: true
+      properties:
+        accounts:
+          items:
+            $ref: "#/components/schemas/AccountReport"
+          type: array
+        id:
+          type: string
+        ready:
+          type: boolean
+      required:
+        - id
+        - ready
+      type: object
+    Health:
+      additionalProperties: true
+      properties:
+        disk_free_bytes:
+          format: int64
+          type: integer
+        draining:
+          type: boolean
+        free_capacity:
+          $ref: "#/components/schemas/Capacity"
+        harnesses:
+          items:
+            $ref: "#/components/schemas/HarnessHealth"
+          type: array
+        load:
+          description: "The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. 0 where the runner cannot read one."
+          format: double
+          type: number
+        outbox_depth:
+          format: int64
+          type: integer
+        recent_errors:
+          description: "The runner's recent warnings and errors, newest first, each '<RFC3339 time> <LEVEL> <message>'. The runner's own words: never what a harness printed, never a path on the machine, never a credential. Capped in number, age and length."
+          items:
+            type: string
+          type: array
+        spool_depth:
+          format: int64
+          type: integer
+      required:
+        - load
+        - free_capacity
+        - disk_free_bytes
+        - spool_depth
+        - outbox_depth
       type: object
     Metrics:
       additionalProperties: true
@@ -266,6 +370,9 @@ components:
           type: string
         draining:
           type: boolean
+        health:
+          $ref: "#/components/schemas/Health"
+          description: The runner's own health at its last sync, unchanged by the hub. Absent for a runner that has never synced, and as old as last_sync_at.
         last_sync_at:
           format: date-time
           type: string
@@ -277,6 +384,16 @@ components:
         - runner_id
         - name
         - draining
+      type: object
+    RunnerList:
+      additionalProperties: true
+      properties:
+        runners:
+          items:
+            $ref: "#/components/schemas/Runner"
+          type: array
+      required:
+        - runners
       type: object
     Session:
       additionalProperties: true
@@ -436,6 +553,78 @@ info:
   version: 1.0.0
 openapi: 3.1.0
 paths:
+  /runners:
+    get:
+      description: "The ones still syncing come first. Health is the runner's own, as it sent it, and is as old as its last sync: a machine that has gone away still shows the health of its last word. A runner that registered and never synced has none."
+      operationId: listRunners
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunnerList"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Every runner this hub knows, with its last health
+  /runners/{runner}:
+    get:
+      description: The same view as the list, for a runner whose id is already known.
+      operationId: getRunner
+      parameters:
+        - description: The runner id, as its daemon prints it at start.
+          in: path
+          name: runner
+          required: true
+          schema:
+            description: The runner id, as its daemon prints it at start.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Runner"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: One runner, with its last health
   /runners/{runner}/drain:
     post:
       description: "The runner hears it at its next sync: it stops taking runs, lets the ones it holds finish — up to its owner's drain wait, after which it cancels them — and exits. It keeps syncing until then, so leases renew and results land, and this hub offers it nothing. The request stands until a sync made after it says the runner is draining. A runner that does not advertise the drain feature is 409: it would ignore the control."
