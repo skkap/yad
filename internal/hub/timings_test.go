@@ -17,6 +17,9 @@ func TestTheShippedSyncFloorIsFiveSeconds(t *testing.T) {
 	if SyncFloorForTests != 0 {
 		t.Fatalf("a test left the floor seam set to %s", SyncFloorForTests)
 	}
+	if LeaseForTests != 0 {
+		t.Fatalf("a test left the lease seam set to %s", LeaseForTests)
+	}
 	if MinSyncInterval != 5*time.Second {
 		t.Errorf("MinSyncInterval = %s, want 5s", MinSyncInterval)
 	}
@@ -38,6 +41,13 @@ func TestOnlyTestsReachTheSyncFloor(t *testing.T) {
 	// declared under this name in both packages; this walks the whole module,
 	// so either package's would be caught here.
 	assertSeamIsNeverAssignedOutsideTests(t, "SyncFloorForTests")
+}
+
+// The lease seam is the same bargain as the floor above and needs the same
+// guard: a shipped hub that names a one-second lease loses every run of a
+// runner whose network blinked, and every protocol test would still pass.
+func TestOnlyTestsReachTheLease(t *testing.T) {
+	assertSeamIsNeverAssignedOutsideTests(t, "LeaseForTests")
 }
 
 // assertSeamIsNeverAssignedOutsideTests fails when any shipped file of the

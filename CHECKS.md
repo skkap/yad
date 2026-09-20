@@ -126,9 +126,10 @@ right on its own terms: the committed file is what a hub author downloads.
   cheapest model unless `SMOKE_MODEL` says otherwise); they spend tokens and
   need the harness installed and logged in, so they are run by hand, never
   here or in CI.
-- **No hub is contacted.** The runner is tested against `yad hub` in process.
-  There is no test against Zumino or yashiki; `yad conformance <url>` (epic E7)
-  is how a real hub is checked, by hand.
+- **No hub is contacted.** The runner is tested against `yad hub` in process,
+  and `yad hub` against the conformance suite over HTTP on a local listener.
+  There is no test against Zumino or yashiki; `yad conformance <url>` is how
+  one of those is checked, by hand.
 - **No release is fetched.** `yad upgrade` and `scripts/install.sh` both go
   through `gh`, so both are tested against a `gh` that is a shell stub on
   `PATH` and a release made of files on disk. Nothing here downloads a real
