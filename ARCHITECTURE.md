@@ -186,6 +186,21 @@ plain-text 404 or 405.
   runner lists it in its next sync. An offered run that the next sync does not
   list was never received, and the hub offers it again. The runner takes the
   capacity *before* it syncs, so it can always start what it is offered.
+- **Capacity goes round the hubs** — [0005](docs/decisions/0005-pull-by-periodic-sync.md).
+  One pool for every connection. A sync takes what is free up to its
+  connection's share of the whole capacity, less what it already holds; the
+  share is the capacity dealt a unit at a time around the ring of connections
+  from where the last unit taken left off. So a hub with a deep queue cannot
+  crowd out a quieter one: two hubs that both want everything hold half each,
+  and a unit freed goes to whoever's turn it is rather than to whoever asks
+  first. A connection that leaves units unused has no work for them and is
+  skipped until its next sync asks again, so one busy hub still fills a pool
+  the others have no queue for. The share is recomputed per sync from the
+  cursor as it stands then, so with three or more hubs filling one pool a hub
+  can find its turn taken and wait a sync interval for the next unit; it is
+  never starved, and no run is lost or claimed twice. The owner's `cap` on a
+  connection bounds what a sync *asks* for and is checked nowhere else: a run
+  over it is never claimed and then found to be over it.
 - **Start on acknowledgement** — [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md).
   The runner starts a run only after a sync listing it has been answered without
   a `cancel` for it, and syncs again at once when offers arrive, so a run starts
@@ -698,7 +713,7 @@ accounts = ["personal"]
 [[connection]]
 name = "yashiki"
 url  = "https://ashikaga.tail.ts.net/yad/v1"
-cap  = 2
+cap  = 2   # at most this many runs held for this hub at once; absent = only capacity limits it
 
 [sessions]
 idle_ttl   = "336h"   # close sessions idle this long; "0s" keeps them — 0035
@@ -733,7 +748,8 @@ run's hub-side state adds two before the protocol's: `queued` and `offered`.
 ## §5 The local surface
 
 ```
-yad doctor                         what is installed, and what YAD can drive
+yad doctor                         what is installed, what YAD can drive, and what about
+                                   this machine or profile is reachable by other users
 yad harnesses [--json]             the capability document, as a hub receives it
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
 yad disconnect <name>
@@ -915,6 +931,21 @@ line here is a reviewed change.
   servers without a trust prompt. With auto-approve that is no worse than the run
   itself — which is exactly why a runner belongs on a machine you would let the
   repository run code on.
+- `yad doctor` warns on the three exposures an owner can fix: running as root,
+  a config or data directory another user can reach — by its mode, or by owning
+  it, the same pair `control.checkDir` refuses before it binds the socket — and
+  a profile file another user can read (`config.Exposures`). The files that hold
+  a secret say how to retire it as well as how to close it: a chmod stops the
+  next reader and not the one who already read it. They are warnings and never change
+  its exit code — absence and misconfiguration are both facts it reports, and a
+  diagnostic that refused to run would answer a question nobody asked. Some of
+  what it reports is refused elsewhere and some is not: `config.ReadSecret`
+  refuses an exposed credential or admin token, and `control.checkDir` refuses
+  an exposed **data** directory before binding the socket. Nothing refuses an
+  exposed `state.db`, `hub.db` or `config.toml`, and nothing else looks at the
+  config directory — which is why doctor is where an owner hears about those.
+- The operator-facing version of this section is
+  [docs/run-it-safely.md](docs/run-it-safely.md).
 
 ## §9 Build order
 

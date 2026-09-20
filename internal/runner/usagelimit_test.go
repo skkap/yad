@@ -145,7 +145,7 @@ func TestHealthCarriesTheAccountsStateWindowsAndReset(t *testing.T) {
 	}))
 	claimAndRun(t, l, x)
 
-	h := l.health(ctx, l.Pool.Reserve())
+	h := l.health(ctx, l.Pool.Reserve(l.Connection))
 	if len(h.Harnesses) != 1 || len(h.Harnesses[0].Accounts) != 1 {
 		t.Fatalf("health harnesses = %+v", h.Harnesses)
 	}
@@ -204,7 +204,7 @@ func TestASucceededRunStillRecordsItsWindows(t *testing.T) {
 	}))
 	claimAndRun(t, l, x)
 
-	h := l.health(ctx, l.Pool.Reserve())
+	h := l.health(ctx, l.Pool.Reserve(l.Connection))
 	got := h.Harnesses[0].Accounts[0]
 	if got.State != v1.AccountFree {
 		t.Errorf("a succeeded run left the account %q, want free", got.State)
@@ -245,7 +245,7 @@ func TestARunIsNotClaimedWhileEveryAccountIsLimited(t *testing.T) {
 		t.Error("the runner owes the hub a result for a run it never took")
 	}
 	// And the hub was told why, with the moment it ends.
-	h := l.health(ctx, l.Pool.Reserve())
+	h := l.health(ctx, l.Pool.Reserve(l.Connection))
 	if len(h.Harnesses) != 1 || h.Harnesses[0].Ready {
 		t.Fatalf("health harnesses = %+v, want claude not ready", h.Harnesses)
 	}

@@ -3,6 +3,12 @@
 What to run before pushing. This file is the authority — `fly` and anything else
 that ships work reads it here and runs nothing else.
 
+**The local bar is the whole bar.** CI runs a deliberate subset (`make ci`, and
+see the end of this file), because its one advantage over the machine you are
+sitting at is that it is a clean Linux box. Everything whose answer is the same
+on any machine runs here and not there. **A green CI is therefore not evidence
+that a branch is ready; a green `make check` is.**
+
 YAD is a single Go module. Its dependencies are a short curated list
 (`ARCHITECTURE.md §6`), fetched by the Go toolchain on first build, so there is
 no separate install step. Two things are generated and committed — the sqlc
@@ -47,7 +53,34 @@ OS lacks — `syscall.Getsid` exists on darwin only — fails there rather than 
 CI. Everything builds with
 `CGO_ENABLED=0`; only the race detector turns cgo back on, for tests.
 
-## What CI does not run
+## What CI runs, and what it does not
+
+CI is one job: `make ci` on `ubuntu-latest`, which is
+
+```bash
+go vet ./...            # type-checks the tests too, which a build never does
+go build ./cmd/yad
+go test ./...           # no -race
+```
+
+That is the part whose answer can differ on Linux, plus `vet`, which is kept
+despite being machine-independent because it type-checks test files — twice a
+merge here has been textually clean and failed to compile, and only `vet` saw
+it.
+
+**CI does not run** `gofmt`, `staticcheck`, `check-generated`, the
+cross-compile matrix, or the race detector. Not because they do not matter —
+they are in `make check` and `make check` is the bar — but because they answer
+the same on any machine, and paying a hosted runner to repeat a local answer
+buys nothing. `-race` is the exception that is about cost rather than
+duplication: it needs cgo and roughly triples the suite.
+
+So, concretely, **these reach master only if someone ran `make check`**: a
+formatting slip, a staticcheck finding, a stale or uncommitted generated file,
+a darwin-only symbol that breaks the linux build, and a data race. `fly` runs
+`make check` before it pushes, which is what makes that safe.
+
+## What nothing runs, here or in CI
 
 - **No harness is invoked.** Detection is tested against an empty `PATH`,
   children are the test binary re-executed as a fake, and adapters replay

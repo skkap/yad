@@ -296,7 +296,11 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	fp := capability.Fingerprint(doc)
 	res := emptyReservation()
 	if l.Executor != nil && !draining && l.mayClaim() {
-		res = l.Pool.Reserve()
+		res = l.Pool.Reserve(l.Connection)
+	} else {
+		// This sync claims nothing, so its turn goes to the other
+		// connections rather than being held for a hub that cannot take it.
+		l.Pool.Pass(l.Connection)
 	}
 	defer res.Close()
 

@@ -71,8 +71,12 @@ type Capacity struct {
 
 // Connection is one hub as the daemon sees it now.
 type Connection struct {
-	Name        string     `json:"name"`
-	URL         string     `json:"url"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Held is the runs this connection has of the capacity pool, and Cap the
+	// owner's bound on it: 0 is no cap of its own.
+	Held        int        `json:"held"`
+	Cap         int        `json:"cap,omitempty"`
 	State       string     `json:"state"` // starting | syncing | retrying | stopped
 	LastSync    *time.Time `json:"last_sync,omitempty"`
 	LastError   string     `json:"last_error,omitempty"`

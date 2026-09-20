@@ -32,12 +32,17 @@ const (
 	ConnStopped  = "stopped"  // the loop gave up; the owner has to act
 )
 
-// ConnectionState is one connection's recent history.
+// ConnectionState is one connection's recent history, and its standing in the
+// capacity pool.
 type ConnectionState struct {
 	State       string
 	LastSync    time.Time // zero until a sync succeeds
 	LastError   string
 	LastErrorAt time.Time
+	// Held is how many runs this connection has of the pool, and Cap the
+	// owner's bound on it — 0 when only the runner's capacity bounds it. A
+	// cap nobody can see is a cap nobody can trust, so `yad status` shows it.
+	Held, Cap int
 }
 
 // NewMonitor returns an empty monitor.
@@ -140,6 +145,12 @@ func (m *Monitor) Snapshot(ctx context.Context) (Snapshot, error) {
 	if pool != nil {
 		pool.mu.Lock()
 		s.Capacity = &struct{ Total, Free int }{pool.total, pool.total - pool.used}
+		for name, c := range s.Connections {
+			if pc, ok := pool.conns[name]; ok {
+				c.Held, c.Cap = pc.held, pc.cap
+				s.Connections[name] = c
+			}
+		}
 		pool.mu.Unlock()
 	}
 	if st == nil {

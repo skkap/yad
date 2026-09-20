@@ -55,13 +55,11 @@ func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error
 // is skipped for runs until the owner finishes the login.
 func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account add", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	pos, err := positional(fs, args, 2, "usage: yad account add <harness> <label>")
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 2 {
-		return errors.New("usage: yad account add <harness> <label>")
-	}
-	id, label := fs.Arg(0), fs.Arg(1)
+	id, label := pos[0], pos[1]
 	if err := checkHarness(id); err != nil {
 		return err
 	}
@@ -135,11 +133,8 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 func accountList(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account list", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "as JSON")
-	if err := fs.Parse(args); err != nil {
+	if _, err := positional(fs, args, 0, "usage: yad account list [--json]"); err != nil {
 		return err
-	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected %q — usage: yad account list [--json]", fs.Arg(0))
 	}
 	cfg, err := config.Load(g.paths)
 	if err != nil {
@@ -223,22 +218,11 @@ func windowsColumn(ws []v1.AccountWindow) string {
 func accountRemove(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account remove", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "do not ask; the login in that home is deleted")
-	if err := fs.Parse(args); err != nil {
+	pos, err := positional(fs, args, 2, "usage: yad account remove <harness> <label> [--yes]")
+	if err != nil {
 		return err
 	}
-	// flag stops at the first positional argument, so --yes is parsed on
-	// either side of the harness and label.
-	rest := fs.Args()
-	if len(rest) < 2 {
-		return errors.New("usage: yad account remove <harness> <label> [--yes]")
-	}
-	id, label := rest[0], rest[1]
-	if err := fs.Parse(rest[2:]); err != nil {
-		return err
-	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected %q — usage: yad account remove <harness> <label> [--yes]", fs.Arg(0))
-	}
+	id, label := pos[0], pos[1]
 	// Checked before anything is printed or deleted, as `add` does at its own
 	// top: this argument becomes a path element under <data>/accounts/, and
 	// what waits at the end of that path is os.RemoveAll.
