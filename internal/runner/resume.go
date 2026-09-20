@@ -37,13 +37,26 @@ type Resumer struct {
 	// an account has become usable before the reset the run was parked on.
 	Config config.Config
 	Data   string
-	// Live is the connections this process actually runs: those with a loop
-	// syncing and a reporter delivering. A waiting row of any other
-	// connection is left alone — nothing here would renew its lease or
-	// deliver its result, so starting it would spend tokens on a run the hub
-	// is about to give to somebody else. Nil runs every connection, which is
-	// what a test with one wants.
-	Live map[string]bool
+	// Live is the connections this process actually runs, each with a
+	// channel closed once it has completed a sync (Loop.Synced).
+	//
+	// A waiting row of a connection that is not here at all is left alone:
+	// nothing would renew its lease or deliver its result, so starting it
+	// would spend tokens on a run the hub is about to give to somebody else.
+	//
+	// And one whose channel is still open is left alone too, which is the
+	// part a map of booleans could not say. Every loop is constructed before
+	// any of them syncs, so a sweep at start-up would otherwise pass the
+	// gate and start a run before this process had heard a word from the
+	// hub — and a run parked across an outage long enough to lapse its lease
+	// is already `lost` there, irreversibly (decision 0023), or carries a
+	// cancel waiting in the first sync's answer. Either way the turn is work
+	// nobody will accept, run with the owner's credentials, possibly beside
+	// a continuation another runner has already started.
+	//
+	// Nil runs every connection at once, which is what a test with one
+	// wants.
+	Live map[string]<-chan struct{}
 	// Runs is what a resumed run's own context is, as runsOn is for a
 	// claimed one: a connection stopping, or a sweep ending, must not kill a
 	// run it has just handed over. Nil starts runs on the sweep's context.
@@ -197,10 +210,11 @@ func (r *Resumer) consider(ctx context.Context, row db.Run, accounts []account.A
 	// waiting, holding its session and workdir out of collection, as every
 	// other held run of a removed connection already does; clearing up after
 	// one is `yad disconnect` (epic E7, cmd/yad/cmd_later.go).
-	if r.Live != nil && !r.Live[row.Connection] {
-		// This process has no loop and no reporter for that connection — its
-		// credential could not be read, its Recover failed, or the owner
-		// took it out of the configuration. Running the turn would spend
+	if !r.serves(row.Connection) {
+		// Either this process has no loop and no reporter for that
+		// connection — its credential could not be read, its Recover failed,
+		// or the owner took it out of the configuration — or it has one that
+		// has not yet been answered by the hub. Running the turn would spend
 		// tokens on a run whose lease nothing here renews and whose result
 		// nothing here delivers, so the hub would lose it, give it to
 		// another runner, and this machine would run it twice.
@@ -313,6 +327,24 @@ func (r *Resumer) consider(ctx context.Context, row db.Run, accounts []account.A
 	return 0
 }
 
+// serves says whether this process may start a parked run of a connection:
+// it has a loop for it, and that loop has completed a sync.
+func (r *Resumer) serves(connection string) bool {
+	if r.Live == nil {
+		return true
+	}
+	ready, ok := r.Live[connection]
+	if !ok {
+		return false
+	}
+	select {
+	case <-ready:
+		return true
+	default:
+		return false
+	}
+}
+
 // capWait shortens a wait that would run past the hub's max_wait, so the run
 // is timed out when its cap runs out rather than at the next reset after it.
 func capWait(wait time.Duration, run v1.Run, waited int64) time.Duration {
@@ -388,7 +420,14 @@ func (e *Exec) finishParked(ctx context.Context, c Claim, row db.Run, state v1.R
 // CancelWaiting ends a parked run because the hub or the owner asked. A
 // waiting run has no turn to interrupt and no process to signal, so the
 // cancel ladder has nothing to climb: the run ends here, with the wait it
-// served reported. It answers whether the run was parked.
+// served reported.
+//
+// It answers whether the cancellation was recorded — not whether the run was
+// parked. False covers both "this run is not waiting" and "it is, and the
+// write failed"; the caller in the sync loop wants exactly that distinction
+// collapsed, because in either case it should pass the control on to the
+// executor, and a write that failed is remembered here and tried again at
+// the next sweep.
 func (r *Resumer) CancelWaiting(ctx context.Context, connection, runID string) bool {
 	if r == nil {
 		return false
@@ -405,10 +444,18 @@ func (r *Resumer) CancelWaiting(ctx context.Context, connection, runID string) b
 }
 
 // cancel writes a parked run's cancellation, and reports whether it landed.
-// A write that did not is remembered rather than left to the hub's repeat:
-// the row is deliberately untouched by a failed transaction, so nothing on
-// disk says this run must not be started, and the next sweep is sooner than
-// the next sync.
+//
+// A write that did not is remembered rather than left to the hub's repeat.
+// The row is deliberately untouched by a failed transaction — that is what
+// keeps the run's grants and its wait — so nothing on disk says this run
+// must not be started. The hub does repeat a cancel, and usually sooner than
+// a sweep: its interval is 15 s by default against this sweep's one-minute
+// floor. The set is not there to beat it on latency. It is there because a
+// sweep is not on a timer at all — Wake fires when a run ends and gives back
+// capacity, when the login probe frees an account, and when a parked run
+// comes due — so a sweep can land at any moment inside the window, and one
+// that does starts a turn for a run the hub asked to stop. It is a race, not
+// a wait this side wins by default.
 //
 // The caller holds mu.
 func (r *Resumer) cancel(ctx context.Context, row db.Run, now time.Time) bool {

@@ -146,6 +146,14 @@ type Loop struct {
 	// idle.
 	quiesced     chan struct{}
 	quiescedOnce sync.Once
+	// synced is closed by the first sync this process completed with the
+	// hub. Anything that starts work from outside the sync loop waits for
+	// it: a claim cannot precede a sync, because a claim *is* an answer to
+	// one, but a resumed run can — and would start before the hub has had
+	// any chance to say the run was cancelled or lost while the runner was
+	// away (decision 0030).
+	synced     chan struct{}
+	syncedOnce sync.Once
 	// recovered is set once the runs a previous process held are settled.
 	recovered bool
 	// harnessReady is what this sync's health said about each harness whose
@@ -173,6 +181,7 @@ func (l *Loop) init() {
 		l.refused = map[string]v1.Result{}
 		l.echoes = map[string]v1.ClosedSession{}
 		l.quiesced = make(chan struct{})
+		l.synced = make(chan struct{})
 	}
 	if l.Clock == nil {
 		l.Clock = realClock{}
@@ -362,7 +371,20 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	// What was not claimed goes back before anything else can wait on the hub.
 	res.Close()
 	l.sendRefusals(ctx)
+	// Last, so it means "a sync ran and its answer was acted on" rather than
+	// "a request went out": the hub's controls for this sync, a cancel among
+	// them, have reached the executor by here.
+	l.syncedOnce.Do(func() { close(l.synced) })
 	return out, nil
+}
+
+// Synced is closed once this connection has completed a sync in this
+// process. It is what the Resumer waits for before starting a parked run:
+// the run may have been cancelled, or lost on a lapsed lease, while the
+// runner was away, and the first sync is where either would be heard.
+func (l *Loop) Synced() <-chan struct{} {
+	l.init()
+	return l.synced
 }
 
 // mayClaim is whether the replay that must come first is done.

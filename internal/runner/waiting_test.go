@@ -19,6 +19,7 @@ import (
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/fake"
+	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 )
@@ -41,6 +42,34 @@ func (c *stepClock) Now() time.Time {
 // After never fires: every test here calls Sweep itself, so the loop's own
 // timing is not what is under test and a firing timer would only race it.
 func (c *stepClock) After(time.Duration) <-chan time.Time { return make(chan time.Time) }
+
+// closedReady is a connection that has already synced, which is what every
+// test here wants unless it is about the start-up gate itself.
+func closedReady() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+// restartedLoop is a second Loop for the same runner and the same hub
+// credential: the next process, which has not synced yet.
+func (e *env) restartedLoop(t *testing.T, capacity int) *Loop {
+	t.Helper()
+	id, err := e.paths.RunnerID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := hubclient.New(e.url, e.cred)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := drivableDoc(id, capacity)
+	return &Loop{
+		Connection: "hub", RunnerID: id, Hub: c, Store: e.store, Pool: NewPool(doc.Capacity),
+		Capabilities: func() v1.Capabilities { return doc }, Clock: e.clock,
+		Rand: func() float64 { return 0.5 }, Log: slog.New(slog.DiscardHandler),
+	}
+}
 
 // byHome scripts the fake harness by which account home the turn was given,
 // which is the only thing that distinguishes one turn of a failover from the
@@ -74,7 +103,7 @@ func waitingRow(t *testing.T, e *env, id string) db.Run {
 // test moves.
 func (e *env) resumer(x *Exec, pool *Pool, clock Clock) *Resumer {
 	r := &Resumer{Store: e.store, Pool: pool, Exec: x, Clock: clock,
-		Config: x.Config, Data: e.paths.Data, Live: map[string]bool{"hub": true},
+		Config: x.Config, Data: e.paths.Data, Live: map[string]<-chan struct{}{"hub": closedReady()},
 		Log: slog.New(slog.DiscardHandler)}
 	x.Ended = r.Wake
 	return r
@@ -659,7 +688,7 @@ func TestAParkedRunOfAConnectionThisProcessDoesNotServeIsLeftAlone(t *testing.T)
 	}))
 	r := e.resumer(x2, NewPool(v1.Capacity{Total: 1}), &stepClock{now: reset.Add(time.Hour)})
 	// This process serves another hub entirely; "hub" has no loop here.
-	r.Live = map[string]bool{"other": true}
+	r.Live = map[string]<-chan struct{}{"other": closedReady()}
 	r.Sweep(ctx)
 	x2.Wait()
 
@@ -954,7 +983,7 @@ func TestAParkedRunOfADroppedConnectionStillTimesOutOnItsCap(t *testing.T) {
 	waitingRow(t, e, "a")
 
 	r := e.resumer(x, l.Pool, &stepClock{now: time.Now().Add(45 * time.Minute)})
-	r.Live = map[string]bool{"other": true}
+	r.Live = map[string]<-chan struct{}{"other": closedReady()}
 	r.Sweep(ctx)
 
 	res, ok := outboxResult(t, e, "a")
@@ -963,6 +992,35 @@ func TestAParkedRunOfADroppedConnectionStillTimesOutOnItsCap(t *testing.T) {
 	}
 	if got := localRun(t, e, "a").State; got == string(v1.RunWaiting) {
 		t.Error("the run is still waiting; its session and workdir can never be collected")
+	}
+}
+
+// And before the cap runs out, the sweep comes back for it when the cap
+// runs out — not up to a minute later. "Bounded by the cap its hub gave it"
+// is the claim beside the gate; a run with a second left on it being looked
+// at again in sixty is not that.
+func TestADroppedConnectionsRunIsLookedAtAgainWhenItsCapRunsOut(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
+
+	run := testRun("a", "s1")
+	run.MaxWaitMS = (30 * time.Minute).Milliseconds()
+	l := e.loop(t, 1)
+	e.enqueue(t, run)
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	// Twenty-nine minutes in: a minute of the cap is left.
+	r := e.resumer(x, l.Pool, &stepClock{now: time.Now().Add(29 * time.Minute)})
+	r.Live = map[string]<-chan struct{}{"other": closedReady()}
+	next := r.Sweep(ctx)
+
+	waitingRow(t, e, "a")
+	if next <= 0 || next > time.Minute+time.Second {
+		t.Errorf("the sweep asked to come back in %v, want about the minute left on the cap", next)
 	}
 }
 
@@ -1066,5 +1124,56 @@ func TestACancelThatCouldNotBeWrittenStillStopsTheRunFromResuming(t *testing.T) 
 	res, ok := outboxResult(t, e, "a")
 	if !ok || res.State != v1.RunCancelled {
 		t.Fatalf("result = %+v, %v, want the cancel recorded once the store worked again", res, ok)
+	}
+}
+
+// A restart must not start a parked run before its hub has said a word.
+// The loops are all constructed before any of them syncs, so the first
+// sweep of a new process would otherwise pass the connection gate and run a
+// turn — for a run the hub may have cancelled while the runner was away, or
+// declared lost on a lapsed lease, which decision 0023 makes final. Either
+// way the turn is work nobody will accept.
+func TestAParkedRunIsNotResumedBeforeItsConnectionHasSynced(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A new process: a fresh loop that has not synced, and everything else
+	// about the run due.
+	restarted := e.restartedLoop(t, 1)
+	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"},
+	}))
+	r := e.resumer(x2, restarted.Pool, &stepClock{now: reset.Add(resumeSkew + time.Second)})
+	r.Live = map[string]<-chan struct{}{"hub": restarted.Synced()}
+
+	r.Sweep(ctx)
+	x2.Wait()
+	waitingRow(t, e, "a")
+	if got, _ := x2.Adapters.Lookup("claude"); len(got.(*fake.Adapter).Starts) != 0 {
+		t.Fatal("a turn was run before the hub had answered this process once")
+	}
+
+	// Once it has synced, the same sweep resumes it.
+	restarted.Executor = x2
+	mustSync(t, restarted)
+	r.Sweep(ctx)
+	x2.Wait()
+	if res, ok := outboxResult(t, e, "a"); !ok || res.State != v1.RunSucceeded {
+		t.Fatalf("result = %+v, %v — the run should resume once its connection has synced", res, ok)
 	}
 }

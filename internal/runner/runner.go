@@ -248,14 +248,16 @@ func (s *server) run(ctx context.Context) error {
 		// that stops leaves the runs in hand to finish, and only exit now
 		// kills them.
 		s.resumer.Runs = ctx
-		// And only the connections this process actually serves. A
-		// connection dropped at start-up — an unreadable credential, a
-		// Recover that failed — has no loop renewing leases and no reporter
-		// delivering results, so its parked runs stay parked until a process
-		// that can finish them picks them up.
-		live := map[string]bool{}
+		// And only the connections this process actually serves, each not
+		// before its own first sync. A connection dropped at start-up — an
+		// unreadable credential, a Recover that failed — has no loop
+		// renewing leases and no reporter delivering results, so its parked
+		// runs stay parked until a process that can finish them picks them
+		// up; and one that has a loop still has nothing to say about its
+		// runs until the hub has answered it once.
+		live := map[string]<-chan struct{}{}
 		for _, l := range s.loops {
-			live[l.Connection] = true
+			live[l.Connection] = l.Synced()
 		}
 		s.resumer.Live = live
 		bg.Go(func() { s.resumer.Run(lctx) })

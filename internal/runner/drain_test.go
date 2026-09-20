@@ -433,7 +433,7 @@ func (e *env) server(l *Loop, x *Exec, d *Drain, wait time.Duration) *server {
 	// Wired as Serve wires them, so a test that drives the server drives the
 	// parked runs and the login probe too.
 	res := &Resumer{Store: e.store, Pool: l.Pool, Exec: x, Drain: d,
-		Config: x.Config, Data: e.paths.Data, Live: map[string]bool{l.Connection: true},
+		Config: x.Config, Data: e.paths.Data, Live: map[string]<-chan struct{}{l.Connection: l.Synced()},
 		Log: slog.New(slog.DiscardHandler)}
 	l.Resumer = res
 	x.Ended = res.Wake
