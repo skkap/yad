@@ -848,9 +848,12 @@ line here is a reviewed change.
   a secret say how to retire it as well as how to close it: a chmod stops the
   next reader and not the one who already read it. They are warnings and never change
   its exit code — absence and misconfiguration are both facts it reports, and a
-  diagnostic that refused to run would answer a question nobody asked. The
-  places an exposure would actually leak still refuse on their own
-  (`config.ReadSecret`, `control.checkDir`).
+  diagnostic that refused to run would answer a question nobody asked. Some of
+  what it reports is refused elsewhere and some is not: `config.ReadSecret`
+  refuses an exposed credential or admin token, and `control.checkDir` refuses
+  an exposed **data** directory before binding the socket. Nothing refuses an
+  exposed `state.db`, `hub.db` or `config.toml`, and nothing else looks at the
+  config directory — which is why doctor is where an owner hears about those.
 - The operator-facing version of this section is
   [docs/run-it-safely.md](docs/run-it-safely.md).
 

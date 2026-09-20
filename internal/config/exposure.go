@@ -45,12 +45,13 @@ const otherUsers os.FileMode = 0o077
 // mode is worth a warning of its own rather than being left to the directory
 // check above it, and the next action for that file.
 //
-// fix is per-file because the chmod is not the whole answer for the three that
-// hold a secret — a connection's credential, the hub admin token and hub.db. A
-// chmod stops the next reader; it does nothing about the one who already read
-// it, and a secret that has been readable by others must be assumed leaked
-// (the premise ReadSecret already refuses on). Telling an owner only to chmod
-// a leaked credential leaves them feeling finished while still using it.
+// fix is per-file, and deliberately not derived from a flag, because the chmod
+// is not the whole answer for an entry that holds a secret: it stops the next
+// reader and does nothing about the one who already read it, and a secret that
+// has been readable by others must be assumed leaked. An owner told only to
+// chmod a leaked credential feels finished while still using it. Which entries
+// those are is the list below and not this comment — a count here is one more
+// thing to leave stale.
 type privateFile struct {
 	path string
 	why  string
@@ -58,13 +59,20 @@ type privateFile struct {
 }
 
 // privateFiles are the files this profile keeps between runs that no other user
-// should reach: the secrets, the identity a hub keys its sessions by, and the
-// two stores. Ephemeral files are deliberately absent — the control socket, the
-// lock, the logs and a run's grant files are all inside the data directory
-// whose reachability is checked as a whole, and a grant file is deleted when
-// its run ends. An explicit list rather than a walk of the directory, because
-// config.toml is legitimately world-readable and a check that cried wolf over
-// it would be turned off.
+// should reach. Each entry says what is at stake and what to do about it,
+// because those differ: an identity is closed, a secret is closed and then
+// retired.
+//
+// Ephemeral files are deliberately absent. The control socket, the lock, the
+// logs and a run's grant files live inside the data directory whose
+// reachability is checked as a whole, and a grant file is deleted when its run
+// ends. SQLite's -wal and -shm are the exception to that, and are here: they
+// are created with the database's own mode, so a database that drifted to 0644
+// hands the same bits to the sidecar holding everything not yet checkpointed.
+//
+// An explicit list rather than a walk, so that adding a file to the profile is
+// a decision about whether an owner should hear about it rather than something
+// a directory listing decides.
 func privateFiles(p Paths) []privateFile {
 	runnerID := filepath.Join(p.Config, "runner-id")
 	admin := p.HubAdminToken()
@@ -96,6 +104,21 @@ func privateFiles(p Paths) []privateFile {
 		// waiting now.
 		{p.HubDB(), "it holds every run this hub has been given, with its grants, in plaintext", "chmod 600 " + shellArg(p.HubDB()) + " stops the next reader, but not the one who already read it, so rotate every secret any run's grants have carried"},
 	}
+	// SQLite creates -wal and -shm with the database's mode, measured rather
+	// than assumed: open a 0644 database and both sidecars come out 0644, and
+	// the -wal holds everything not yet checkpointed — for the hub, grants. A
+	// clean close removes them, so this only ever fires while a runner is up,
+	// which is exactly when it matters. Derived from the two databases so a
+	// third store cannot arrive without them.
+	for _, db := range []string{p.StateDB(), p.HubDB()} {
+		for _, ext := range []string{"-wal", "-shm"} {
+			files = append(files, privateFile{
+				db + ext,
+				"SQLite gave it " + filepath.Base(db) + "'s mode, and it holds what that database has not yet checkpointed",
+				"chmod 600 " + shellArg(db+ext) + ", and fix " + shellArg(db) + " too or the next start hands the mode straight back",
+			})
+		}
+	}
 	// Credentials are one file per connection and named by the owner, so they
 	// can only be found by reading the directory. ReadDir sorts by name, which
 	// is what keeps two runs on an unchanged machine printing the same thing.
@@ -126,9 +149,14 @@ func privateFiles(p Paths) []privateFile {
 // Every one is a warning and none is an error: `yad doctor` is what an owner
 // runs to find out what is wrong with a machine, and a diagnostic that refuses
 // to run because the machine is misconfigured tells them nothing they could act
-// on. The places where an exposure would actually leak refuse on their own —
-// ReadSecret will not hand out a credential others can read, and the control
-// server will not bind a socket in a directory others can reach.
+// on.
+//
+// Some of what it reports is refused elsewhere and some is not. ReadSecret will
+// not hand out a credential or an admin token others can read, and the control
+// server will not bind its socket in a data directory others can reach. Nothing
+// refuses an exposed state.db, hub.db or config.toml, and nothing looks at the
+// config directory at all — which is the reason to report them here rather than
+// a reason not to.
 //
 // A file that is not there is not an exposure: a fresh profile has no
 // credentials and no store, and that is the machine this runs on most.
@@ -167,14 +195,15 @@ func Exposures(p Paths) []string {
 			out = append(out, fmt.Sprintf("the %s directory %s is %v — another user on this machine can reach what is in it; chmod 700 %s", d.what, d.path, fi.Mode().Perm(), shellArg(d.path)))
 		}
 		// A 0700 directory owned by somebody else passes the mode check and is
-		// still theirs to read and replace. control.checkDir already refuses
-		// this before binding the socket; reporting it here is the same rule
-		// one step earlier, so an owner meets it in doctor rather than in a
-		// daemon that will not start.
+		// still theirs to read and replace. control.checkDir makes the same
+		// comparison, but only ever on the data directory — control.Claim is
+		// its one caller — so for the data directory this is the daemon's
+		// refusal met earlier, and for the config directory it is the only
+		// place an owner hears it at all.
 		//
-		// The real uid, not the effective one the root check above reads:
-		// this has to be the same comparison control.checkDir makes, or
-		// doctor would call a profile clean that the daemon then refuses.
+		// The real uid, not the effective one the root check above reads,
+		// because that is the comparison checkDir makes: doctor must not call
+		// a data directory clean that the daemon then refuses.
 		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
 			out = append(out, fmt.Sprintf("the %s directory %s belongs to uid %d, not to you (%d) — run yad as its owner, or point %s at a directory of your own", d.what, d.path, st.Uid, os.Getuid(), map[string]string{"config": "YAD_CONFIG_DIR", "data": "YAD_DATA_DIR"}[d.what]))
 		}

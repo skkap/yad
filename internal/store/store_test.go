@@ -227,3 +227,31 @@ func TestMigrationNumbering(t *testing.T) {
 		}
 	}
 }
+
+// SQLite creates the -wal and -shm sidecars with the database's own mode, so a
+// database that has drifted to 0644 hands the same bits to the file holding
+// everything not yet checkpointed — which for the hub's store is a run's
+// grants. config.Exposures reports the sidecars for that reason, and this is
+// where the reason is measured rather than asserted. A clean close removes
+// them, so the window is exactly while a runner is up.
+func TestSidecarsTakeTheDatabaseMode(t *testing.T) {
+	s, file := open(t)
+	s.Close()
+	if err := os.Chmod(file, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(context.Background(), file)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	for _, ext := range []string{"-wal", "-shm"} {
+		fi, err := os.Stat(file + ext)
+		if err != nil {
+			t.Fatalf("no %s sidecar: %v", ext, err)
+		}
+		if fi.Mode().Perm() != 0o644 {
+			t.Errorf("%s is %v; if SQLite has stopped copying the database's mode, config.Exposures no longer needs to report it", ext, fi.Mode().Perm())
+		}
+	}
+}

@@ -292,7 +292,10 @@ harnesses it already reported:
    and replace, which is why the owning uid is compared too; the control server
    already refuses to bind a socket in one.)
 3. **The profile's long-lived files**: `config.toml`, `runner-id`, each
-   `credentials/<connection>`, `hub-admin-token`, `state.db` and `hub.db`.
+   `credentials/<connection>`, `hub-admin-token`, `state.db` and `hub.db` — and
+   each database's `-wal` and `-shm`, because SQLite creates those with the
+   database's own mode and the `-wal` holds whatever is not yet checkpointed.
+   They exist only while a runner is up, which is exactly when it matters.
 
 The rule for a file is the one `config.ReadSecret` already enforces before it
 will hand out a credential — no group or other bits — rather than a literal
@@ -355,9 +358,14 @@ profile default — config /tmp/yad/config
 **These are warnings, and `yad doctor` still exits 0.** It is the command you
 run to find out what is wrong with a machine; one that refused to report the
 harnesses because a directory mode was wrong would be answering a question
-nobody asked. The places where the exposure would actually leak refuse on their
-own: `ReadSecret` will not hand out a credential others can read, and the
-control server will not bind its socket in a directory others can reach.
+nobody asked.
+
+Some of what it reports is refused elsewhere and some is not, and the second
+group is why it is worth running. `ReadSecret` will not hand out a credential
+or an admin token others can read, and the control server will not bind its
+socket in a **data** directory others can reach. Nothing refuses an exposed
+`state.db`, `hub.db` or `config.toml`, and nothing but `yad doctor` looks at the
+config directory at all.
 
 **A `chmod` is only ever half the answer for a secret.** It stops the next
 reader; it does nothing about whoever already read the file, and a secret that

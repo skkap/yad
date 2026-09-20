@@ -317,8 +317,8 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 }
 
 // A secret that has been readable by others must be assumed leaked, which a
-// chmod does not undo — so the files that hold one say how to retire it, and
-// the files that do not are left with the chmod alone. Getting this wrong is
+// chmod does not undo — so an entry that holds one says how to retire it, and
+// an entry that does not is left with the chmod alone. Getting this wrong is
 // worse than saying nothing: an owner does the chmod, feels finished, and goes
 // on using a credential they were just told to distrust. The test asserts the
 // correspondence rather than a count, so adding a file to either group cannot
@@ -333,14 +333,18 @@ func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 	write(t, p.HubDB(), 0o644)
 	write(t, filepath.Join(p.Config, "runner-id"), 0o644)
 	write(t, p.StateDB(), 0o644)
+	// A sidecar is not itself a secret to retire: it is closed, and the
+	// database beside it is what carries the rotation.
+	write(t, p.HubDB()+"-wal", 0o644)
 
 	for _, line := range Exposures(p) {
 		// Match the path this line is about, not the prose after it: the
 		// runner-id line mentions the word "credentials" while being about a
 		// file that is not one.
 		path, _, _ := strings.Cut(line, " is -rw")
-		// hub.db holds a queued run's grants in plaintext; state.db does not,
-		// because Loop.record strips them before writing.
+		// The hub's store keeps every run it was given, grants and all, and
+		// nothing clears them; the runner's does not, because Loop.record
+		// strips them before writing. That is why one of the two is a secret.
 		secret := strings.Contains(path, "credentials") || strings.HasSuffix(path, "hub-admin-token") ||
 			strings.HasSuffix(path, "hub.db")
 		rotates := strings.Contains(line, "not the one who already read it")
