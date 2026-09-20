@@ -293,9 +293,12 @@ harnesses it already reported:
    already refuses to bind a socket in one.)
 3. **The profile's long-lived files**: `config.toml`, `runner-id`, each
    `credentials/<connection>`, `hub-admin-token`, `state.db` and `hub.db` — and
-   each database's `-wal` and `-shm`, because SQLite creates those with the
-   database's own mode and the `-wal` holds whatever is not yet checkpointed.
-   They exist only while a runner is up, which is exactly when it matters.
+   each database's `-wal` and `-shm`. SQLite creates those with the database's
+   own mode, so a database that drifted to `0644` hands the same bits to them;
+   the `-wal` holds the pages the database has not taken yet, so an exposed
+   `hub.db-wal` gives up the same grants `hub.db` does. A clean shutdown
+   removes them. **A killed runner does not**, so they can be sitting there
+   when no runner is running at all.
 
 The rule for a file is the one `config.ReadSecret` already enforces before it
 will hand out a credential — no group or other bits — rather than a literal

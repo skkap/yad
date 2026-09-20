@@ -323,6 +323,8 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 // on using a credential they were just told to distrust. The test asserts the
 // correspondence rather than a count, so adding a file to either group cannot
 // silently put it in the wrong one.
+var secretBase = map[string]bool{"hub-admin-token": true, "hub.db": true, "hub.db-wal": true}
+
 func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 	old := geteuid
 	geteuid = func() int { return 501 }
@@ -333,20 +335,24 @@ func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 	write(t, p.HubDB(), 0o644)
 	write(t, filepath.Join(p.Config, "runner-id"), 0o644)
 	write(t, p.StateDB(), 0o644)
-	// A sidecar is not itself a secret to retire: it is closed, and the
-	// database beside it is what carries the rotation.
 	write(t, p.HubDB()+"-wal", 0o644)
+	write(t, p.HubDB()+"-shm", 0o644)
+	write(t, p.StateDB()+"-wal", 0o644)
 
 	for _, line := range Exposures(p) {
 		// Match the path this line is about, not the prose after it: the
 		// runner-id line mentions the word "credentials" while being about a
 		// file that is not one.
 		path, _, _ := strings.Cut(line, " is -rw")
-		// The hub's store keeps every run it was given, grants and all, and
-		// nothing clears them; the runner's does not, because Loop.record
-		// strips them before writing. That is why one of the two is a secret.
-		secret := strings.Contains(path, "credentials") || strings.HasSuffix(path, "hub-admin-token") ||
-			strings.HasSuffix(path, "hub.db")
+		// Spelled out rather than derived, because the correspondence is what
+		// is under test: deriving the expectation the same way the code does
+		// would make this pass for any rule at all. The hub's store keeps
+		// every run it was given, grants and all, and nothing clears them, so
+		// it and the -wal that carries its uncheckpointed pages give up a
+		// secret. The runner's store does not — Loop.record strips grants
+		// before writing — and a -shm is an index into a -wal, not data.
+		secret := strings.Contains(path, "credentials"+string(os.PathSeparator)) ||
+			secretBase[filepath.Base(path)]
 		rotates := strings.Contains(line, "not the one who already read it")
 		if secret != rotates {
 			t.Errorf("secret=%v but rotation advice=%v:\n%s", secret, rotates, line)
@@ -458,5 +464,60 @@ func TestTheSandboxWarningClaimsOnlyWhatItChecked(t *testing.T) {
 	}
 	if !strings.Contains(got, "every harness this runner runs has root") {
 		t.Errorf("the warning dropped the fact it does establish:\n%s", got)
+	}
+}
+
+// SQLite gives -wal and -shm the database's own mode
+// (store.TestSidecarsTakeTheDatabaseMode), and an uncleaned exit leaves them
+// behind — so an exposed hub.db has two more files beside it giving up the
+// same grants. The correspondence test above cannot catch the sidecars going
+// missing from privateFiles: it only judges the lines Exposures happened to
+// return, so deleting the loop would leave it passing on the database alone.
+func TestSidecarsAreReportedBesideTheirDatabase(t *testing.T) {
+	old := geteuid
+	geteuid = func() int { return 501 }
+	t.Cleanup(func() { geteuid = old })
+	p := paths(t)
+	for _, f := range []string{p.HubDB(), p.HubDB() + "-wal", p.HubDB() + "-shm", p.StateDB(), p.StateDB() + "-wal"} {
+		write(t, f, 0o644)
+	}
+	got := Exposures(p)
+	for _, want := range []string{p.HubDB(), p.HubDB() + "-wal", p.HubDB() + "-shm", p.StateDB(), p.StateDB() + "-wal"} {
+		var found bool
+		for _, line := range got {
+			if strings.HasPrefix(line, want+" is ") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s was not reported:\n%s", want, strings.Join(got, "\n"))
+		}
+	}
+	for _, line := range got {
+		switch {
+		// The -wal carries the database's pages, so it gives up what the
+		// database gives up. The -shm is the wal-index: saying it holds
+		// uncheckpointed run data would send an owner rotating over a file
+		// that has none.
+		case strings.HasPrefix(line, p.HubDB()+"-wal is "):
+			if !strings.Contains(line, "rotate every secret") || !strings.Contains(line, "not yet checkpointed") {
+				t.Errorf("the hub -wal does not carry the database's own remedy:\n%s", line)
+			}
+		case strings.HasPrefix(line, p.HubDB()+"-shm is "):
+			if strings.Contains(line, "rotate") || strings.Contains(line, "not yet checkpointed") {
+				t.Errorf("the -shm claims to hold run data:\n%s", line)
+			}
+		case strings.HasPrefix(line, p.StateDB()+"-wal is "):
+			if strings.Contains(line, "rotate") {
+				t.Errorf("the runner store's -wal asks for a rotation it has no secret for:\n%s", line)
+			}
+		}
+		// Whichever file it is about, fixing it alone is not enough: the next
+		// open copies the database's mode back onto the sidecar.
+		if strings.Contains(line, "-wal is ") || strings.Contains(line, "-shm is ") {
+			if !strings.Contains(line, "hands the mode straight back") {
+				t.Errorf("a sidecar's fix does not send the owner to the database:\n%s", line)
+			}
+		}
 	}
 }

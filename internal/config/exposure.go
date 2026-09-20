@@ -21,6 +21,17 @@ import (
 // YAD_DATA_DIR="/Volumes/My Disk/yad" the unquoted advice runs
 // `chmod 700 /Volumes/My` and leaves the exposure open. A next action that
 // does not work is the defect this whole file is about.
+// closeAnd is a next action: the chmod, plus the rotation when what is behind
+// the file is a secret. Nothing derives the rotation from the path, so a file
+// that holds a secret and one that does not cannot be told apart by accident.
+func closeAnd(path, rotate string) string {
+	fix := "chmod 600 " + shellArg(path)
+	if rotate == "" {
+		return fix
+	}
+	return fix + " stops the next reader, but not the one who already read it, so " + rotate
+}
+
 func shellArg(s string) string {
 	if s != "" && !strings.ContainsAny(s, " \t\n\v\\\"'`$&|;<>()*?[]{}!#~=%") {
 		return s
@@ -66,9 +77,11 @@ type privateFile struct {
 // Ephemeral files are deliberately absent. The control socket, the lock, the
 // logs and a run's grant files live inside the data directory whose
 // reachability is checked as a whole, and a grant file is deleted when its run
-// ends. SQLite's -wal and -shm are the exception to that, and are here: they
-// are created with the database's own mode, so a database that drifted to 0644
-// hands the same bits to the sidecar holding everything not yet checkpointed.
+// ends. SQLite's -wal and -shm are the exception and are here: they take the
+// database's own mode, so a database that drifted to 0644 hands the same bits
+// to the file holding the pages it has not taken yet — and a clean close
+// removes them, but an uncleaned exit does not. A killed runner leaves them on
+// disk, which is the same state the start-up grant sweep exists for.
 //
 // An explicit list rather than a walk, so that adding a file to the profile is
 // a decision about whether an owner should hear about it rather than something
@@ -93,31 +106,36 @@ func privateFiles(p Paths) []privateFile {
 		// refuses: revoke only touches hub.db, so create refuses while this
 		// file is still here, and deleting it is the step between.
 		{admin, "it is the admin token for this machine's hub", "chmod 600 " + shellArg(admin) + " stops the next reader, but not the one who already read it, so revoke it (`yad hub admin-token list`, then revoke), delete " + shellArg(admin) + ", and `yad hub admin-token create` again"},
-		// The runner's own store holds no grant: Loop.record strips them
-		// before writing, so a run is stored without the secrets it carried.
-		{p.StateDB(), "it holds every run's events, which carry what the harness did", "chmod 600 " + shellArg(p.StateDB())},
-		// The hub's store is the opposite, and it keeps them: a run's spec is
-		// written once with its grants (hub/store/migrations/0001) and no
-		// query clears it — FinishRun sets state, reason and the lease, and
-		// nothing deletes a run. So every grant this hub was ever given is
-		// still in the file, and the advice cannot be limited to the runs
-		// waiting now.
-		{p.HubDB(), "it holds every run this hub has been given, with its grants, in plaintext", "chmod 600 " + shellArg(p.HubDB()) + " stops the next reader, but not the one who already read it, so rotate every secret any run's grants have carried"},
 	}
-	// SQLite creates -wal and -shm with the database's mode, measured rather
-	// than assumed: open a 0644 database and both sidecars come out 0644, and
-	// the -wal holds everything not yet checkpointed — for the hub, grants. A
-	// clean close removes them, so this only ever fires while a runner is up,
-	// which is exactly when it matters. Derived from the two databases so a
-	// third store cannot arrive without them.
-	for _, db := range []string{p.StateDB(), p.HubDB()} {
-		for _, ext := range []string{"-wal", "-shm"} {
-			files = append(files, privateFile{
-				db + ext,
-				"SQLite gave it " + filepath.Base(db) + "'s mode, and it holds what that database has not yet checkpointed",
-				"chmod 600 " + shellArg(db+ext) + ", and fix " + shellArg(db) + " too or the next start hands the mode straight back",
-			})
-		}
+	// Each store contributes its own entry and its two sidecars together, from
+	// one description, so a sidecar cannot end up saying something different
+	// from the database it belongs to — which is what happened when the two
+	// were written apart.
+	//
+	// rotate is empty for a store that gives up no secret. The runner's holds
+	// no grant: Loop.record strips them before writing. The hub's is the
+	// opposite and keeps them — a run's spec is written once with its grants
+	// (hub/store/migrations/0001) and no query clears it, FinishRun settling
+	// only state, reason and the lease — so every grant that hub was ever
+	// given is still there, the current queue included and not only it.
+	for _, st := range []struct{ path, holds, rotate string }{
+		{p.StateDB(), "every run's events, which carry what the harness did", ""},
+		{p.HubDB(), "every run this hub has been given, with its grants, in plaintext", "rotate every secret any run's grants have carried"},
+	} {
+		base := filepath.Base(st.path)
+		files = append(files, privateFile{st.path, "it holds " + st.holds, closeAnd(st.path, st.rotate)})
+		// SQLite creates both with the database's own mode — measured in
+		// store.TestSidecarsTakeTheDatabaseMode, and not narrowed by the
+		// umask. The -wal carries the pages the database has not taken yet, so
+		// it gives up whatever the database would; the -shm is the index into
+		// the -wal and holds no run data, and is reported because its mode is
+		// the database's and says so.
+		files = append(files,
+			privateFile{st.path + "-wal", "SQLite gave it " + base + "'s mode, and it holds the pages " + base + " has not yet checkpointed — so it gives up " + st.holds,
+				closeAnd(st.path+"-wal", st.rotate) + ", and fix " + shellArg(st.path) + " too or the next start hands the mode straight back"},
+			privateFile{st.path + "-shm", "SQLite gave it " + base + "'s mode; it indexes " + base + "-wal and holds no run data itself, so the mode is what to fix",
+				"chmod 600 " + shellArg(st.path+"-shm") + ", and fix " + shellArg(st.path) + " too or the next start hands the mode straight back"},
+		)
 	}
 	// Credentials are one file per connection and named by the owner, so they
 	// can only be found by reading the directory. ReadDir sorts by name, which

@@ -233,7 +233,13 @@ func TestMigrationNumbering(t *testing.T) {
 // everything not yet checkpointed — which for the hub's store is a run's
 // grants. config.Exposures reports the sidecars for that reason, and this is
 // where the reason is measured rather than asserted. A clean close removes
-// them, so the window is exactly while a runner is up.
+// them; an uncleaned exit does not, so a killed runner leaves them on disk —
+// the same state the start-up grant sweep exists for.
+//
+// The exact 0644 is deliberate and not umask-dependent: SQLite copies the
+// database's mode onto the sidecar rather than creating it fresh, so a
+// restrictive umask does not narrow it. Checked under umask 022, 027 and 077
+// on darwin, and under 022 and 077 on linux/arm64 — the platform CI runs.
 func TestSidecarsTakeTheDatabaseMode(t *testing.T) {
 	s, file := open(t)
 	s.Close()
