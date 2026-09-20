@@ -705,13 +705,23 @@ func (l *Loop) Recover(ctx context.Context) error {
 		l.Log.Warn("a previous process held this run and no process of it is left; reporting it lost", "connection", l.Connection, "run", r.ID, "state", r.State)
 		msg := fmt.Sprintf("the runner stopped while the run was %s, and a run is never run twice; resume its session with a new run", r.State)
 		err := l.Store.Tx(ctx, func(q *db.Queries) error {
-			last, err := q.LastEventSeq(ctx, db.LastEventSeqParams{Connection: l.Connection, RunID: r.ID})
+			last, at, err := lastSpooled(ctx, q, l.Connection, r.ID)
 			if err != nil {
 				return err
 			}
+			// What the run cost, from its own row, measured to the last
+			// moment anything is known to have been true of it. A run
+			// reported lost is the one a hub can only ask "how much?"
+			// about, and this used to answer with nothing: no duration, no
+			// wait, no switches, and — because runs.spent carries usage —
+			// zero tokens for a run that may have spent an account's whole
+			// window before the runner stopped.
+			prog := progressOf(r, floorOf(r, at), l.Log)
 			body, err := json.Marshal(v1.Result{
 				State: v1.RunLost, LastSeq: last,
-				Error: &v1.RunError{Class: ClassRunnerRestarted, Message: msg},
+				Error:   &v1.RunError{Class: ClassRunnerRestarted, Message: msg},
+				Usage:   v1.RunUsage{ByModel: prog.spent.Usage},
+				Metrics: prog.metrics(floorOf(r, at)),
 			})
 			if err != nil {
 				return err
@@ -739,6 +749,44 @@ func (l *Loop) Recover(ctx context.Context) error {
 	}
 	l.recovered = true
 	return nil
+}
+
+// floorOf is the latest moment a run is known to have still been going: the
+// last event it spooled, or the last write to its row, whichever is later.
+//
+// Not now. A run whose process is gone stopped at some unknown moment before
+// this one started, and measuring it to now would report how long the
+// machine was off rather than how long the run took — a laptop shut for
+// twelve hours would report a twelve-hour run, and a hub charting duration
+// would be charting downtime. There is no safe side to err on for a
+// duration, only accurate and inaccurate, so this takes the two real
+// observations available and errs short. The protocol says the number is a
+// floor for a lost run (protocol/v1.Metrics).
+func floorOf(r db.Run, lastEvent time.Time) time.Time {
+	at := time.UnixMilli(r.UpdatedAt)
+	if lastEvent.After(at) {
+		return lastEvent
+	}
+	return at
+}
+
+// lastSpooled is the run's highest event number and the moment that event
+// carries. A run that spooled nothing answers zero and the zero time.
+func lastSpooled(ctx context.Context, q *db.Queries, connection, runID string) (int64, time.Time, error) {
+	row, err := q.LastEvent(ctx, db.LastEventParams{Connection: connection, RunID: runID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, time.Time{}, nil
+	}
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	var ev v1.Event
+	if err := json.Unmarshal([]byte(row.Body), &ev); err != nil {
+		// The number is still right; only the moment is lost, and the row's
+		// own updated_at stands in for it.
+		return row.Seq, time.Time{}, nil
+	}
+	return row.Seq, ev.At, nil
 }
 
 // withdrawOrphan drops a run a previous process claimed and never began to
