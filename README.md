@@ -49,11 +49,11 @@ store, the process supervisor, config and profiles. `yad hub` keeps its own
 store and serves register and sync: `yad hub token create` issues a one-time
 registration token, `yad connect <url> --token -` registers a runner, and `yad
 daemon start --foreground` syncs with every connected hub. The adapter that
-drives Claude Code is built and tested against recorded streams. Nothing hands
-it a run yet: the executor that does is the rest of E2, so a runner advertises
-no free capacity and claims nothing, and the events, result and deregister
-calls still answer `not_implemented`. The build order is `ARCHITECTURE.md §9`;
-the epics and tasks are in Zumino, project `yad/dev`.
+drives Claude Code is built and tested against recorded streams, and the
+executor hands it runs: a runner advertises the capacity it has free, claims
+what its hubs offer within it, and reports events and results back. The build
+order is `ARCHITECTURE.md §9`; the epics and tasks are in Zumino, project
+`yad/dev`.
 
 ## Install
 

@@ -48,8 +48,10 @@ type Options struct {
 // now: runs in hand are killed where they stand and stay held, for the next
 // start to report lost.
 //
-// Sharing capacity fairly between hubs is epic E7; here each sync takes
-// whatever is free when it starts.
+// The capacity pool is shared round-robin (decision 0005): each sync takes
+// the free units its connection's turn gives it, under the owner's cap on
+// that connection, so a hub with a long queue cannot crowd out a quieter one
+// and an idle connection's turn is not held against the busy ones.
 func Serve(ctx context.Context, o Options) error {
 	if o.Drain == nil {
 		o.Drain = NewDrain()
@@ -89,7 +91,8 @@ func Serve(ctx context.Context, o Options) error {
 	// Runs before the store closes: a status read after it would fail.
 	defer o.Monitor.attach(nil, nil, nil)
 
-	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{}}
+	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, pool: pool,
+		log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{}}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -107,6 +110,8 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	for _, conn := range o.Config.Connections {
 		o.Monitor.starting(conn.Name)
+		// In config order, so the turns go round the ring the owner wrote.
+		pool.Join(conn.Name, conn.Cap)
 		cred, err := o.Paths.Credential(conn.Name)
 		if err != nil {
 			sv.fail(conn.Name, err)
@@ -179,6 +184,7 @@ type server struct {
 	drain     *Drain
 	wait      time.Duration
 	store     *store.Store
+	pool      *Pool
 	exec      *Exec
 	sessions  *Collector
 	loops     []*Loop
@@ -193,6 +199,9 @@ type server struct {
 // fail records a connection that stopped, and says so now: the others keep
 // the process running, so the return value may be hours away.
 func (s *server) fail(conn string, err error) {
+	// A connection nothing is syncing takes no work, so its turn at the
+	// capacity goes to the connections that can.
+	s.pool.Pass(conn)
 	s.log.Error("connection stopped", "connection", conn, "err", err)
 	s.monitor.failed(conn, err, time.Now(), ConnStopped)
 	s.mu.Lock()
@@ -241,6 +250,7 @@ func (s *server) run(ctx context.Context) error {
 		wg.Go(func() {
 			defer stop()
 			defer close(ended[i])
+			defer l.Pool.Pass(l.Connection)
 			if err := l.Run(lctx); err != nil {
 				s.fail(l.Connection, err)
 			}
