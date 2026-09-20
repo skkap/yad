@@ -1031,8 +1031,9 @@ const (
 // it runs on the harness's own login — and there is simply no account to name;
 // it never reaches the cap either, having no reports to exceed it. A harness
 // whose accounts are all limited or need a login is Ready false, and there a
-// capped list of limited accounts is the honest answer with no contradiction
-// to remove.
+// capped list of accounts none of which can run is the honest answer with no
+// contradiction to remove. Limited and needs_login are different states
+// (DOMAIN.md) and this case covers both, so neither name will do for it.
 //
 // The head is never reordered. Only the final slot can differ from a plain
 // truncation, so what a hub loses to the cap stays one account of the owner's

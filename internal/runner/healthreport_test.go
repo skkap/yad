@@ -248,8 +248,8 @@ func TestNoRingMeansNoRecentErrors(t *testing.T) {
 }
 
 // Health rides every sync, so its size is paid for on every one of them. The
-// caps bound the block; ready is computed before them, so a hub is never told
-// a harness is unusable because the account that could run was past the cap.
+// caps bound the block, and a hub is never told a harness is unusable because
+// the accounts that could run were past the cap.
 func TestAccountsAndWindowsAreCappedAndReadyIsNot(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -262,11 +262,21 @@ func TestAccountsAndWindowsAreCappedAndReadyIsNot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Every account the cap would keep needs login; the only one that can run
-	// is past it. Readiness has to see it — this test is about that — and
-	// since capAccounts also gives it the last slot, what it proves now is
-	// the narrower half: Ready is computed before the cap, not after.
-	// TestTheAccountCarryingTheWorkIsNamedEvenPastTheCap covers the slot.
+	// The first sixteen need login; the four past the cap have no store row
+	// at all, and an account the store has never heard of reads free. So four
+	// accounts can run and every one of them is past what a plain truncation
+	// would keep.
+	//
+	// What this establishes is the end-to-end claim and not an ordering:
+	// a harness whose free accounts all sit past the cap is still reported
+	// ready, with the cap and the window cap both holding. It cannot prove
+	// that Ready is computed before capAccounts rather than after, and since
+	// the last-slot replacement neither can anything else — capAccounts puts
+	// the account Soonest chose into the list whenever there is one, so
+	// "a free account among all reports" and "a free account among those
+	// reported" became the same condition and a Ready derived from either
+	// reads the same. The ordering survives in the code as the clearer way to
+	// write it, not as a thing a mutation could break.
 	for _, label := range labels[:maxHealthAccounts] {
 		if err := account.SetState(ctx, e.store.Queries, "claude", label, v1.AccountNeedsLogin, e.clock.Now()); err != nil {
 			t.Fatal(err)
@@ -301,6 +311,12 @@ func TestAccountsAndWindowsAreCappedAndReadyIsNot(t *testing.T) {
 	// The last slot is the exception, and the test below is about it.
 	if hh.Accounts[0].Label != labels[0] || hh.Accounts[maxHealthAccounts-2].Label != labels[maxHealthAccounts-2] {
 		t.Errorf("accounts kept = %q…%q, want the head of the owner's order", hh.Accounts[0].Label, hh.Accounts[maxHealthAccounts-2].Label)
+	}
+	// The fixture claim above, asserted rather than described: with all four
+	// free accounts undated, Soonest breaks the tie on the owner's order and
+	// takes labels[16], which lands in the last slot.
+	if got := hh.Accounts[maxHealthAccounts-1].Label; got != labels[maxHealthAccounts] {
+		t.Errorf("last slot is %q, want the free account Soonest chose, %q", got, labels[maxHealthAccounts])
 	}
 }
 
