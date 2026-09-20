@@ -164,8 +164,12 @@ type Loop struct {
 	// than asking again, so what the hub is told and what this runner then
 	// does cannot disagree. accountsRead tells "none configured" from "the
 	// read failed"; the second reports no harness health at all.
-	accounts     []account.Account
-	accountsRead bool
+	accounts []account.Account
+	// accountsTried is whether this sync has attempted the read, which is
+	// what stops a second caller retrying it; accountsErr is why it failed,
+	// which is what tells "no accounts configured" from "could not ask".
+	accountsTried bool
+	accountsErr   error
 	// cancelled are parked runs the hub asked to stop whose terminal result
 	// could not be written. The intent lives nowhere else: the transaction
 	// leaves the row exactly as it was, which is what keeps the run's grants
@@ -310,8 +314,8 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	//
 	// Dropped again at the end, so the field is never a stale answer to
 	// somebody outside a sync — health asked on its own loads afresh.
-	l.accounts, l.accountsRead = nil, false
-	defer func() { l.accounts, l.accountsRead = nil, false }()
+	l.accounts, l.accountsTried, l.accountsErr = nil, false, nil
+	defer func() { l.accounts, l.accountsTried, l.accountsErr = nil, false, nil }()
 	l.loadAccounts(ctx)
 	// Capacity for the parked runs that are due, taken before the hub is
 	// asked so it is out of the free capacity the request advertises.
@@ -327,6 +331,13 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	// The units are only held here; what becomes of each run is decided
 	// after the hub's answer, and a unit held for one that turns out not to
 	// run is given back at the end of the same sync.
+	// **This must stay above anything that puts res.Free() on the wire.**
+	// Nothing enforces it but these lines' order: Take decrements what
+	// Free reports, so a request built before the hold advertises capacity
+	// this runner has already reserved, the hub fills it, and the fix
+	// below is undone without a line of it changing — silently, with every
+	// test still green, because no test can see an ordering nothing
+	// asserts. DEV-83 is to make the wrong order fail to compile.
 	reserved := l.holdWaiting(held, res)
 	defer func() {
 		for _, release := range reserved {
@@ -795,8 +806,7 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 	ready := map[string]bool{}
 	defer func() { l.harnessReady = ready }()
 	l.loadAccounts(ctx)
-	accounts, ok := l.accounts, l.accountsRead
-	if !ok {
+	if l.accountsErr != nil {
 		// Reporting every account free because the read failed would be the
 		// one direction that costs something: the hub keeps offering runs for
 		// a harness whose accounts cannot take them, and each is refused after
@@ -804,6 +814,7 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		// that did not get one, and health carries no harnesses when empty.
 		return nil
 	}
+	accounts := l.accounts
 	var out []v1.HarnessHealth
 	for _, hr := range doc.Harnesses {
 		// The predicate a claim uses, not a copy of part of it: a harness

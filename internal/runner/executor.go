@@ -1004,7 +1004,15 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 		}
 		return q.PutOutbox(ctx, db.PutOutboxParams{Connection: c.Connection, RunID: c.Run.RunID, Body: string(body), NextAttemptAt: now})
 	})
-	if err != nil {
+	switch {
+	case errors.Is(err, errNoLongerWaiting):
+		// Not a failure and not a retry: the extra statement refused the
+		// transaction because something else has already settled this run.
+		// Logged as an error it reads as a storage fault on a run that is
+		// in fact running perfectly well, which on an unattended runner is
+		// what an operator is woken by.
+		return err
+	case err != nil:
 		log.Error("result not recorded; the run stays held", "err", err)
 		return err
 	}

@@ -27,11 +27,13 @@ import (
 // Here there is nothing to restate. A claim *is* an answer to a sync, and so
 // is a resume: it runs inside SyncOnce, so it cannot precede a sync, cannot
 // run before Recover or while draining, takes its capacity from the same
-// reservation a claim does, and always has a reporter to deliver its result
-// — not because each was checked, but because there is no code path on which
-// they are false. It may outlive its loop, and is meant to: runsOn starts
-// every run on the server's context, so a connection that stops leaves the
-// runs in hand to finish.
+// reservation a claim does, and cannot *start* on a connection with no
+// reporter to deliver its result — not because each was checked, but
+// because there is no code path on which they are false. Starting is the
+// whole of that last one: a resumed run may well outlive its loop, and is
+// meant to, since runsOn starts every run on the server's context so a
+// connection that stops leaves the runs in hand to finish — and a loop that
+// stops takes its reporter with it.
 //
 // It costs one sync interval. A run that comes due a moment after a sync
 // waits for the next one: 15 s by default, bounded 5–60 s, and a number the
@@ -51,17 +53,32 @@ const resumeSkew = 5 * time.Second
 // first calls it and everyone after reads what it left, so there is no
 // order to get wrong — and no second reading of the same question within
 // one sync.
+//
+// Once means once *attempted*, not once succeeded. A read that failed and
+// then succeeded on the next caller within the same sync would be the
+// disagreement this exists to prevent: holdWaiting would have run against
+// no accounts while health and the resume used real ones, so a run
+// holdWaiting judged not due would fall back to competing with the hub's
+// offers for its unit. A sync that cannot see the accounts sees none of
+// them, all the way through.
 func (l *Loop) loadAccounts(ctx context.Context) {
-	if l.accountsRead {
+	if l.accountsTried {
 		return
 	}
+	l.accountsTried = true
 	accounts, err := account.Load(ctx, l.Store.Queries, l.Data, l.Config)
 	if err != nil {
-		l.Log.Warn("could not read account states; this sync reports no harness health and resumes nothing",
+		// What is actually lost is the early resume: a run whose account
+		// freed *before* its resume time waits for the next sync. One whose
+		// resume time has passed is due on the clock alone and still runs,
+		// so "resumes nothing" would send an operator looking for a stuck
+		// run that is not stuck.
+		l.accountsErr = err
+		l.Log.Warn("could not read account states; this sync reports no harness health, and a parked run whose account freed before its resume time waits for the next sync",
 			"connection", l.Connection, "err", err)
 		return
 	}
-	l.accounts, l.accountsRead = accounts, true
+	l.accounts = accounts
 }
 
 // holdWaiting takes a unit of this sync's reservation for each parked run

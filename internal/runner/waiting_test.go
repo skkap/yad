@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -1281,5 +1282,136 @@ func TestEndingAParkedRunRefusesOneThatIsNoLongerWaiting(t *testing.T) {
 	}
 	if res, ok := outboxResult(t, e, "a"); ok {
 		t.Errorf("a terminal result was written for a running run: %+v", res)
+	}
+}
+
+// endsWith is an executor whose End always fails the given way: the
+// collector losing the race to a connection's own sync, on demand.
+type endsWith struct {
+	Executor
+	err error
+}
+
+func (e endsWith) End(context.Context, Claim, db.Run, v1.RunState, *v1.RunError, time.Time) error {
+	return e.err
+}
+
+// The collector lists a parked run whose cap has run out and its
+// connection's sync resumes it before the write lands. The guard refuses
+// the write, which is right, and the run is then running perfectly well:
+// saying it timed out is false, and on an unattended runner it is what an
+// operator reads in the morning.
+func TestTheCollectorSaysNothingWhenItLosesTheRace(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
+
+	run := testRun("a", "s1")
+	run.MaxWaitMS = (30 * time.Minute).Milliseconds()
+	l := e.loop(t, 1)
+	e.enqueue(t, run)
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	var logged bytes.Buffer
+	c := collectorFor(e, x)
+	// Still waiting when it is listed; gone by the time the write happens.
+	c.Runs = endsWith{Executor: x, err: errNoLongerWaiting}
+	c.Log = slog.New(slog.NewJSONHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	c.Clock = &stepClock{now: time.Now().Add(45 * time.Minute)}
+	if err := c.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logged.String(), "it is timed out") {
+		t.Errorf("the collector announced a timeout it did not write:\n%s", logged.String())
+	}
+
+	// And when the write does land, it does say so.
+	logged.Reset()
+	c.Runs = x
+	if err := c.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logged.String(), "it is timed out") {
+		t.Errorf("the collector timed a run out and said nothing:\n%s", logged.String())
+	}
+}
+
+// A run that stopped waiting is not a storage fault. Reported as one, an
+// unattended runner logs ERROR for the ordinary outcome of two goroutines
+// racing over a parked run — which is the thing an operator is woken by.
+func TestEndingARunThatStoppedWaitingIsNotLoggedAsAFailure(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, logged := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	row := waitingRow(t, e, "a")
+	if err := e.store.SetRunState(ctx, db.SetRunStateParams{
+		State: string(v1.RunRunning), UpdatedAt: time.Now().UnixMilli(), Connection: "hub", ID: "a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	logged.Reset()
+
+	claim, err := claimFor(row, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := x.End(ctx, claim, row, v1.RunTimedOut, &v1.RunError{Class: ClassMaxWait, Message: "too long"}, time.Now()); err == nil {
+		t.Fatal("a run that had stopped waiting was ended anyway")
+	}
+	for _, said := range []string{"result not recorded", "the run stays held"} {
+		if strings.Contains(logged.String(), said) {
+			t.Errorf("a refused write was logged as %q:\n%s", said, logged.String())
+		}
+	}
+}
+
+// A sync that cannot read its account states reads them once, not once per
+// caller — a second read that succeeded where the first failed would leave
+// holdWaiting judging against no accounts while health and the resume used
+// real ones, which is the disagreement the single read exists to prevent.
+//
+// And it says what is actually lost. A run whose resume time has passed is
+// due on the clock alone and still runs; only the early resume, on an
+// account that freed before that time, waits for the next sync.
+func TestASyncThatCannotReadItsAccountsReadsThemOnceAndSaysWhatIsLost(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	broken, err := store.Open(ctx, e.paths.StateDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken.Close()
+
+	var logged bytes.Buffer
+	l := &Loop{Connection: "hub", Store: broken, Data: e.paths.Data, Config: accountConfig("work"),
+		Log: slog.New(slog.NewJSONHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+	l.init()
+	l.loadAccounts(ctx)
+	l.loadAccounts(ctx)
+
+	if l.accountsErr == nil {
+		t.Fatal("the read did not fail; the rest of this test proves nothing")
+	}
+	if n := strings.Count(logged.String(), "could not read account states"); n != 1 {
+		t.Errorf("the failed read was reported %d times in one sync, want once:\n%s", n, logged.String())
+	}
+	if strings.Contains(logged.String(), "resumes nothing") {
+		t.Errorf("the warning says the sync resumes nothing:\n%s", logged.String())
+	}
+	// The claim the message must not make: a run past its resume time is
+	// due without any account being consulted.
+	past := time.Now().Add(-time.Hour)
+	row := db.Run{ResumesAt: sql.NullInt64{Int64: past.UnixMilli(), Valid: true}}
+	if !l.due(row, v1.Run{Harness: "claude"}, time.Now()) {
+		t.Error("a run an hour past its resume time is not due with no account states; the warning would be right and the code wrong")
 	}
 }

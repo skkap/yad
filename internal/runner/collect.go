@@ -90,8 +90,6 @@ func (c *Collector) expireWaits(ctx context.Context, now time.Time) error {
 		if err != nil {
 			continue
 		}
-		c.Log.Warn("a parked run waited longer than its hub allowed; it is timed out",
-			"connection", row.Connection, "run", row.ID, "waited_ms", waited, "max_wait_ms", run.MaxWaitMS)
 		if err := c.Runs.End(ctx, claim, row, v1.RunTimedOut,
 			&v1.RunError{Class: ClassMaxWait, Message: maxWaitMessage(waited, run.MaxWaitMS)}, now); err != nil {
 			// Including the run having stopped waiting since it was listed,
@@ -99,6 +97,11 @@ func (c *Collector) expireWaits(ctx context.Context, now time.Time) error {
 			// not worth a line in the log.
 			continue
 		}
+		// After, not before. Said before the write, it announces a timeout
+		// for every run this sweep merely looked at — including the ones
+		// its own connection resumed a moment earlier, which are running.
+		c.Log.Warn("a parked run waited longer than its hub allowed; it is timed out",
+			"connection", row.Connection, "run", row.ID, "waited_ms", waited, "max_wait_ms", run.MaxWaitMS)
 		c.Runs.Forget(row.Connection, row.ID)
 	}
 	return nil
