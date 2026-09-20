@@ -655,3 +655,61 @@ func TestASweepThatFailsNamesNoGrant(t *testing.T) {
 		t.Errorf("the failure line names a grant:\n%s", got)
 	}
 }
+
+// The cleanup at the end of every ordinary run is held to the rule sweepGrants
+// is: a RemoveAll that fails must not put a grant's name in the log. The sweep
+// runs only after a crash, so this branch is the one that runs far more often.
+func TestAFailedGrantCleanupNamesNoGrant(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root unlinks through a directory's missing write bit, so the cleanup would succeed")
+	}
+	e := newEnv(t)
+	l := e.loop(t, 1)
+	run := testRun("a", "s1")
+	run.Grants = []v1.Grant{{Name: "AWS_SECRET_ACCESS_KEY", Value: "file-secret", As: v1.GrantFile}}
+	e.enqueue(t, run)
+	var (
+		mu  sync.Mutex
+		dir string
+	)
+	ad := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, kv := range s.Env {
+			if p, ok := strings.CutPrefix(kv, "AWS_SECRET_ACCESS_KEY="); ok {
+				dir = filepath.Dir(p)
+			}
+		}
+		// Taken while the run still holds its grant file, so the cleanup that
+		// follows cannot unlink it — the branch a read-only mount or an
+		// immutable flag reaches in the field.
+		if dir != "" {
+			if err := os.Chmod(dir, 0o500); err != nil {
+				t.Error(err)
+			}
+		}
+		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
+	}}
+	var logged strings.Builder
+	x := e.executor(ad)
+	x.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	claimAndRun(t, l, x)
+
+	mu.Lock()
+	defer mu.Unlock()
+	t.Cleanup(func() {
+		if dir != "" {
+			os.Chmod(dir, 0o700)
+		}
+	})
+	if dir == "" {
+		t.Fatal("the run was never given a file grant")
+	}
+	got := logged.String()
+	if !strings.Contains(got, "grant files not removed") {
+		t.Fatalf("a cleanup that could not finish said nothing:\n%s", got)
+	}
+	if strings.Contains(got, "AWS_SECRET_ACCESS_KEY") || strings.Contains(got, "file-secret") {
+		t.Errorf("the failure line names a grant:\n%s", got)
+	}
+}

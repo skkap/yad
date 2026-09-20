@@ -400,7 +400,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	}
 	e.setState(bg, c, v1.RunPreparing)
 	// The claim checked the run already; checked again here because this is
-	// where a grant's name becomes a variable and a file (decision 0024).
+	// where a grant's name becomes a variable and a file (decision 0038).
 	if err := run.Validate(); err != nil {
 		fail(ClassRefused, "the run is invalid: "+err.Error())
 		return

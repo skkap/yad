@@ -212,9 +212,10 @@ func (h *scriptedHub) Result(_ context.Context, runID string, res v1.Result) err
 	return nil
 }
 
-// A hub is untrusted input. Whatever it offers, the runner claims only what
-// it can drive, in sessions it can resume, within its capacity — and tells the
-// hub why it refused the rest.
+// Whatever a hub offers, the runner claims only what it can drive, in sessions
+// it can resume, within its capacity — and tells the hub why it refused the
+// rest. Not because the hub is an attacker (0038), but because this runner is
+// the one that has to run it.
 func TestRefusesWhatItCannotRun(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
