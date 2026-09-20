@@ -69,6 +69,7 @@ const (
 	flawTakesAnyEvents     = "events are taken for any run from anyone"
 	flawTakesAnyResult     = "a second, different terminal state replaces the first"
 	flawShortInterval      = "the sync interval named is a second"
+	flawShortLease         = "the lease named is shorter than the interval named beside it"
 	flawUngatedControl     = "a steer goes to a runner that never advertised one"
 	flawNoNextAction       = "errors say what went wrong and not what to do"
 	flawRenewsEverything   = "every run's lease is renewed, listed or not"
@@ -242,6 +243,9 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	}
 	now := time.Now()
 	res := v1.SyncResponse{NextSyncMS: f.ms(f.interval), LeaseMS: int(f.lease / time.Millisecond)}
+	if f.flaw == flawShortLease {
+		res.LeaseMS = f.ms(f.interval) / 2
+	}
 	if f.flaw == flawShortInterval {
 		res.NextSyncMS = 1000
 	}

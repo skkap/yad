@@ -66,6 +66,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawTakesAnyEvents, check: "events/not-held", want: Failed},
 		{flaw: flawTakesAnyResult, check: "result/conflict", want: Failed},
 		{flaw: flawShortInterval, check: "sync/timings", want: Failed},
+		{flaw: flawShortLease, check: "sync/lease-outlasts-the-interval", want: Failed},
 		{flaw: flawUngatedControl, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawNoNextAction, check: "errors/next-action", want: Failed},
 		{flaw: flawRenewsEverything, check: "lease/lapse", leaseWait: time.Minute, want: Failed},

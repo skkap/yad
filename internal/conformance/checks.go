@@ -192,10 +192,16 @@ func checks() []check {
 		run:     checkOffersWithinCapacity,
 	}, {
 		id:      "sync/timings",
-		rule:    "Timings belong to the hub: the sync interval it names is between 5 s and 60 s, and the lease it names is at least as long as one interval, or a run is lost between two syncs that were both on time.",
+		rule:    "Timings belong to the hub: the sync interval it names is between 5 s and 60 s.",
 		section: sectionSync + " (Timings)",
 		needs:   credential,
 		run:     checkTimings,
+	}, {
+		id:      "sync/lease-outlasts-the-interval",
+		rule:    "The lease a hub names is never shorter than the interval it names beside it: a shorter one lapses on a runner that synced exactly when it was asked to, so the hub takes back the runs of a runner doing everything right.",
+		section: sectionSync + " (Lease)",
+		needs:   credential,
+		run:     checkLeaseOutlastsTheInterval,
 	}, {
 		id:      "versioning/controls-are-gated",
 		rule:    "Neither side uses what the other did not advertise: drain, close_session, steer and interrupt go only to a runner whose capability document advertises each by name, and this runner advertises none.",

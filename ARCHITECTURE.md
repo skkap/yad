@@ -215,7 +215,12 @@ plain-text 404 or 405.
 - **Sessions stay put.** The first claim in a session binds it to that runner;
   its later runs are offered to that runner alone, one at a time.
 - **Lease.** Every sync renews the lease on every run it lists. A run whose lease
-  lapses (default: four missed intervals) is **lost** on the hub's side.
+  lapses (default: four missed intervals) is **lost** on the hub's side. The
+  lease a hub names is never shorter than the interval it names beside it: a
+  shorter one lapses on a runner that synced exactly when it was asked to, so
+  the hub takes back the runs of a runner doing everything right. The four
+  intervals are the default and one interval is the floor — they do not
+  compete, and a hub may hold to fewer than four as long as it holds to one.
 - **Timings belong to the hub**: default interval 15 s, bounded 5–60 s; the
   runner adds ±10 % jitter and backs off 1 s → 30 s on errors.
 

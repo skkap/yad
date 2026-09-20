@@ -239,12 +239,21 @@ func checkClaimByListing(ctx context.Context, s *session) error {
 
 func checkTimings(_ context.Context, s *session) error {
 	for _, t := range s.timings {
-		switch {
-		case t.interval < v1MinInterval || t.interval > v1MaxInterval:
+		if t.interval < v1MinInterval || t.interval > v1MaxInterval {
 			return brokenf("answering %s the hub named a sync interval of %s, outside the %s to %s the protocol bounds it to",
 				t.call, t.interval, v1MinInterval, v1MaxInterval)
-		case t.lease < t.interval:
-			return brokenf("answering %s the hub named a lease of %s and a sync interval of %s, so a run would be lost between two syncs that were both on time",
+		}
+	}
+	return nil
+}
+
+// checkLeaseOutlastsTheInterval is its own check rather than a second arm of
+// the one above, so that the failure points at the sentence the rule is
+// written in rather than at the section next to it.
+func checkLeaseOutlastsTheInterval(_ context.Context, s *session) error {
+	for _, t := range s.timings {
+		if t.lease < t.interval {
+			return brokenf("answering %s the hub named a lease of %s beside a sync interval of %s, so a runner syncing exactly when it was asked to would find its runs taken back — the lease lapses before the sync that would renew it",
 				t.call, t.lease, t.interval)
 		}
 	}
