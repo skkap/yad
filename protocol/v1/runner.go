@@ -76,6 +76,34 @@ type AccountReport struct {
 	// added within v1 never breaks an older runner.
 	State        AccountState `json:"state,omitempty" enum:"free,limited,needs_login"`
 	LimitedUntil *time.Time   `json:"limited_until,omitempty"`
+	// Windows is every usage window the harness last told the runner about,
+	// whether or not the account is at a limit: a hub seeing one at 96% knows
+	// why a runner will stop claiming soon, and one at 100% with a reset says
+	// why it has stopped (decision 0039).
+	//
+	// Reported from every run, so a window is as fresh as the last turn that
+	// ran on the account and no fresher. Absent means no run has yet heard a
+	// window from this harness, never that the account has no limits.
+	Windows []AccountWindow `json:"windows,omitempty"`
+}
+
+// AccountWindow is one usage window of one account, as its harness names it:
+// Claude's `five_hour` and `seven_day`, Codex's `primary` and `secondary`.
+//
+// The names are each harness's own and are deliberately not unified. DOMAIN.md
+// defines a usage limit as "Claude's five-hour and weekly limits, Codex's
+// primary and secondary windows" — the vocabulary is harness-specific in the
+// domain model, and a name invented here would be a third vocabulary that
+// matches neither harness's own reporting.
+type AccountWindow struct {
+	Name string `json:"name" doc:"The window as its harness names it: five_hour or seven_day for Claude, primary or secondary for Codex."`
+	// UsedPercent is 0-100. The unit is in the name because the harnesses
+	// disagree: Codex reports a percentage and Claude a 0-1 fraction, and a
+	// factor of a hundred is invisible in a number alone.
+	UsedPercent float64 `json:"used_percent" doc:"How much of the window is used, 0-100."`
+	// ResetsAt is absent when the harness reported the window's use without
+	// saying when it refills.
+	ResetsAt *time.Time `json:"resets_at,omitempty" doc:"When the window refills, if the harness said."`
 }
 
 // HostTool is a non-harness executable a run may need — git, gh, docker.

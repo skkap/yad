@@ -386,3 +386,65 @@ func TestASessionIsBoundByItsFirstRun(t *testing.T) {
 		t.Errorf("%d starts; the refused run must not start the harness", len(h.Starts))
 	}
 }
+
+// With no [workdirs] roots configured, a path source under the owner's home
+// directory is taken — where decision 0033 refused every folder source, 0038
+// makes the home directory the root. Outside it is still refused, and a runner
+// with no home to resolve reaches nothing rather than everything.
+func TestPathSourceDefaultsToTheOwnersHome(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		inHome  bool // the source is under the home directory
+		noHome  bool // the runner has no home directory
+		started bool
+	}{
+		{name: "under the owner's home", inHome: true, started: true},
+		{name: "outside the owner's home", inHome: false, started: false},
+		{name: "a runner with no home directory", inHome: true, noHome: true, started: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, elsewhere := t.TempDir(), t.TempDir()
+			dir := filepath.Join(elsewhere, "project")
+			if tc.inHome {
+				dir = filepath.Join(home, "project")
+			}
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.noHome {
+				home = ""
+			}
+			t.Setenv("HOME", home)
+			e := newEnv(t)
+			l := e.loop(t, 1)
+			h := fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}})
+			run := testRun("a", "s1")
+			run.Sources = []v1.Source{{Path: dir}}
+			// The owner has configured no roots: config.Default() is what the
+			// executor builds its workdir manager from.
+			x := e.executor(h)
+			if len(x.Config.Workdirs.Roots) != 0 {
+				t.Fatalf("the test's own config lists roots: %v", x.Config.Workdirs.Roots)
+			}
+			runOne(t, e, l, x, run)
+
+			r := hubResult(t, e, "a")
+			if !tc.started {
+				if r.State != v1.RunFailed || r.Error == nil || r.Error.Class != workdir.ClassSourceRefused {
+					t.Fatalf("result %+v (error %+v), want the source refused", r, r.Error)
+				}
+				if len(h.Starts) != 0 {
+					t.Errorf("the harness started for a refused source: %v", h.Starts)
+				}
+				return
+			}
+			if r.State != v1.RunSucceeded {
+				t.Fatalf("result %+v (error %+v)", r, r.Error)
+			}
+			real, _ := filepath.EvalSymlinks(dir)
+			if len(h.Starts) != 1 || !strings.HasPrefix(h.Starts[0].Workdir, real) {
+				t.Errorf("the harness ran in %v, not in the path source %s", h.Starts, real)
+			}
+		})
+	}
+}

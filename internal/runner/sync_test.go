@@ -212,9 +212,11 @@ func (h *scriptedHub) Result(_ context.Context, runID string, res v1.Result) err
 	return nil
 }
 
-// A hub is untrusted input. Whatever it offers, the runner claims only what
-// it can drive, in sessions it can resume, within its capacity — and tells the
-// hub why it refused the rest.
+// Whatever a hub offers, the runner claims only what it can drive, in sessions
+// it can resume, within its capacity — and says why it refused what it will
+// never take. A run it merely has no room for is neither claimed nor refused:
+// it is left for the hub to offer again. The checking is not because a hub is
+// an attacker (0038), but because this runner is the one that has to run it.
 func TestRefusesWhatItCannotRun(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -230,14 +232,21 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	live.Session.Mode = v1.SessionLive
 	noModel := testRun("no-model", "s-nm")
 	noModel.Model = ""
-	// A reserved grant is refused whole, never run with it stripped.
+	// A grant that would break the run is refused whole, never run with it
+	// stripped, and the deny list is not escaped by case (decision 0038).
 	loader := testRun("loader", "s-ld")
 	loader.Grants = []v1.Grant{{Name: "LD_PRELOAD", Value: "/evil.so", As: v1.GrantEnv}}
-	baseURL := testRun("base-url", "s-bu")
-	baseURL.Grants = []v1.Grant{{Name: "ZUMINO_TOKEN", Value: "t", As: v1.GrantEnv}, {Name: "ANTHROPIC_BASE_URL", Value: "https://attacker", As: v1.GrantEnv}}
-	proxy := testRun("proxy", "s-px")
-	proxy.Grants = []v1.Grant{{Name: "HTTPS_PROXY", Value: "https://attacker", As: v1.GrantFile}}
-	h := &scriptedHub{offer: []v1.Run{codex, unknown, reused, live, noModel, loader, baseURL, proxy, testRun("ok", "s-ok"), testRun("over", "s-over")}}
+	lowerHome := testRun("lower-home", "s-lh")
+	lowerHome.Grants = []v1.Grant{{Name: "ZUMINO_TOKEN", Value: "t", As: v1.GrantEnv}, {Name: "home", Value: "/tmp", As: v1.GrantFile}}
+	// Names decision 0024 refused and 0038 accepts: this is the run that is
+	// claimed and started, grants and all.
+	ok := testRun("ok", "s-ok")
+	ok.Grants = []v1.Grant{
+		{Name: "ANTHROPIC_BASE_URL", Value: "https://hub", As: v1.GrantEnv},
+		{Name: "AWS_SECRET_ACCESS_KEY", Value: "k", As: v1.GrantFile},
+		{Name: "http_proxy", Value: "http://p", As: v1.GrantEnv},
+	}
+	h := &scriptedHub{offer: []v1.Run{codex, unknown, reused, live, noModel, loader, lowerHome, ok, testRun("over", "s-over")}}
 	doc := drivableDoc("r", 1)
 	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
 		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
@@ -246,7 +255,7 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	want := map[string]string{
 		"codex": "not one this runner can drive", "unknown-session": "does not hold session",
 		"reused-session": "already has a session", "live": "live sessions", "no-model": "model is required",
-		"loader": "LD_", "base-url": "ANTHROPIC_", "proxy": "not named as a secret",
+		"loader": "LD_", "lower-home": "HOME",
 	}
 	for id, msg := range want {
 		r, ok := h.results[id]

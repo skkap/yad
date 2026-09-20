@@ -56,7 +56,14 @@ func (e *noFreeAccountError) Error() string {
 		case v1.AccountNeedsLogin:
 			needsLogin = append(needsLogin, a.Label)
 		case v1.AccountLimited:
-			limited = append(limited, a.Label)
+			// The reset is the next action for a limited account: nobody has
+			// to do anything, and this says when it ends. A limit with no
+			// reset is one nothing dated, and says so rather than a time.
+			at := "at an undated usage limit"
+			if a.LimitedUntil != nil {
+				at = "at a usage limit until " + a.LimitedUntil.UTC().Format(time.RFC3339)
+			}
+			limited = append(limited, a.Label+" "+at)
 		}
 	}
 	msg := "no free " + e.harness + " account on this runner"
@@ -64,7 +71,7 @@ func (e *noFreeAccountError) Error() string {
 		msg += " — " + list(needsLogin) + " need login: run `yad account add " + e.harness + " " + needsLogin[0] + "` at the machine"
 	}
 	if len(limited) > 0 {
-		msg += " — " + list(limited) + " at a usage limit"
+		msg += " — " + list(limited)
 	}
 	return msg
 }
@@ -148,4 +155,72 @@ func (e *Exec) setRunAccount(ctx context.Context, c Claim, label string) {
 	if err != nil {
 		e.Log.Warn("could not record the run's account", "connection", c.Connection, "run", c.Run.RunID, "err", err)
 	}
+}
+
+// recordUsage writes what the turn learned about the account's subscription
+// windows, and parks the account when the turn stopped because one of them was
+// exhausted (decision 0039, "limits are reported").
+//
+// The distinction it exists to keep (DOMAIN.md, "Usage limit"): only a usage
+// limit — a window the account has spent, with a reset — reaches Limit and
+// parks anything. Transient API throttling the harness retried by itself is a
+// rate limit; it arrives as Outcome.APIRetries, is reported as a metric, and
+// is deliberately not read here. Parking a working account for five hours
+// because the API answered 429 once and the harness carried on is the failure
+// this function is shaped to avoid.
+//
+// Moving the run to another account, and waiting when none is free, are
+// DEV-28's. This marks the account and no more.
+func (e *Exec) recordUsage(ctx context.Context, a account.Account, out adapter.Outcome, log *slog.Logger) {
+	now := time.Now()
+	// Windows first, and whatever the turn's outcome: a turn that succeeded
+	// still heard how much of each window it left, which is what lets a hub
+	// see an account running low rather than only one that has run out.
+	if len(out.Windows) > 0 {
+		if err := account.SetWindows(ctx, e.Store.Queries, a.Harness, a.Label, accountWindows(out.Windows), now); err != nil {
+			log.Warn("could not record the account's usage windows", "err", err)
+		}
+	}
+	if out.Limit == nil {
+		return
+	}
+	// A harness that reported a limit without a reset is dated from its own
+	// windows where it can be: the turn's, then what earlier runs recorded for
+	// this account. A window at 100% says when the account comes back, and
+	// that beats any constant. account.SetLimit dates what is left.
+	reset := out.Limit.ResetAt
+	if reset.IsZero() {
+		reset = account.RefillAt(now, accountWindows(out.Windows), a.Windows)
+	}
+	if err := account.SetLimit(ctx, e.Store.Queries, a.Harness, a.Label, reset, now); err != nil {
+		log.Warn("could not record the account's usage limit", "err", err)
+		return
+	}
+	// The window and the reset, never the account's contents. A reset the
+	// harness did not give is logged as absent rather than as the zero time,
+	// which would read as 1970 to whoever is looking.
+	attrs := []any{"window", out.Limit.Window}
+	if out.Limit.ResetAt.IsZero() {
+		attrs = append(attrs, "resets_at", "not reported")
+	} else {
+		attrs = append(attrs, "resets_at", out.Limit.ResetAt.UTC())
+	}
+	log.Info("the account is at a usage limit; it is skipped until its window resets", attrs...)
+}
+
+// accountWindows is the adapter's windows as the protocol reports them. The
+// adapters already normalise each harness's scale to 0-100, so this only moves
+// a zero reset time to an absent one: a window whose reset the harness did not
+// give must not read as refilling at the epoch.
+func accountWindows(ws []adapter.Window) []v1.AccountWindow {
+	out := make([]v1.AccountWindow, 0, len(ws))
+	for _, w := range ws {
+		aw := v1.AccountWindow{Name: w.Name, UsedPercent: w.UsedPercent}
+		if !w.ResetAt.IsZero() {
+			at := w.ResetAt.UTC()
+			aw.ResetsAt = &at
+		}
+		out = append(out, aw)
+	}
+	return out
 }

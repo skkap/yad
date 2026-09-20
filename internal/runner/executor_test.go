@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -294,52 +295,144 @@ func TestExecutorFailuresAreResults(t *testing.T) {
 }
 
 // Grants reach the harness in its environment or as 0600 files, never in the
-// spec a hub could read back, and the files are gone when the run ends.
+// spec a hub could read back, and the files are gone however the run ends. The
+// names are ones decision 0024 refused and 0038 accepts.
 func TestGrantsAreDeliveredAndDestroyed(t *testing.T) {
+	for _, state := range []v1.RunState{v1.RunSucceeded, v1.RunFailed, v1.RunCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			e := newEnv(t)
+			l := e.loop(t, 1)
+			run := testRun("a", "s1")
+			run.Grants = []v1.Grant{
+				{Name: "ZUMINO_TOKEN", Value: "env-secret", As: v1.GrantEnv},
+				{Name: "ANTHROPIC_BASE_URL", Value: "https://env-secret-url", As: v1.GrantEnv},
+				{Name: "DATABASE_URL", Value: "file-secret", As: v1.GrantFile},
+			}
+			e.enqueue(t, run)
+			var (
+				mu       sync.Mutex
+				seen     adapter.Spec
+				fileBody string
+				fileMode os.FileMode
+			)
+			ad := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+				mu.Lock()
+				defer mu.Unlock()
+				seen = s
+				for _, kv := range s.Env {
+					if path, ok := strings.CutPrefix(kv, "DATABASE_URL="); ok {
+						b, _ := os.ReadFile(path)
+						fi, _ := os.Stat(path)
+						fileBody, fileMode = string(b), fi.Mode().Perm()
+					}
+				}
+				return fake.Script{Outcome: adapter.Outcome{State: state}}
+			}}
+			claimAndRun(t, l, e.executor(ad))
+
+			mu.Lock()
+			defer mu.Unlock()
+			for _, want := range []string{"ZUMINO_TOKEN=env-secret", "ANTHROPIC_BASE_URL=https://env-secret-url"} {
+				if !contains(seen.Env, want) {
+					t.Errorf("env grant %q missing from %v", want, seen.Env)
+				}
+			}
+			if fileBody != "file-secret" || fileMode != 0o600 {
+				t.Errorf("file grant = %q at %v", fileBody, fileMode)
+			}
+			if _, err := os.Stat(filepath.Join(e.paths.Data, "grants", "hub", "a")); !os.IsNotExist(err) {
+				t.Errorf("grant files outlived the run: %v", err)
+			}
+			for _, s := range []string{localRun(t, e, "a").Spec} {
+				if strings.Contains(s, "secret") {
+					t.Error("a grant reached the runner's database")
+				}
+			}
+		})
+	}
+}
+
+// The fourth way a run ends: the runner is killed. A deferred cleanup cannot
+// run through a SIGKILL, so the grant files are still on disk — 0600 files
+// holding what a hub sent — and the next start is what deletes them.
+//
+// A SIGKILL cannot be staged in this process, so the leftovers are put back at
+// the directory the executor itself chose for a real run with a real file
+// grant: the path under test is the one a crash would leave, not one the test
+// made up.
+func TestGrantFilesAreSweptAfterACrash(t *testing.T) {
 	e := newEnv(t)
 	l := e.loop(t, 1)
 	run := testRun("a", "s1")
-	run.Grants = []v1.Grant{
-		{Name: "ZUMINO_TOKEN", Value: "env-secret", As: v1.GrantEnv},
-		{Name: "DEPLOY_KEY", Value: "file-secret", As: v1.GrantFile},
-	}
+	run.Grants = []v1.Grant{{Name: "DEPLOY_KEY", Value: "file-secret", As: v1.GrantFile}}
 	e.enqueue(t, run)
 	var (
-		mu       sync.Mutex
-		seen     adapter.Spec
-		fileBody string
-		fileMode os.FileMode
+		mu   sync.Mutex
+		path string
 	)
 	ad := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
 		mu.Lock()
 		defer mu.Unlock()
-		seen = s
 		for _, kv := range s.Env {
-			if path, ok := strings.CutPrefix(kv, "DEPLOY_KEY="); ok {
-				b, _ := os.ReadFile(path)
-				fi, _ := os.Stat(path)
-				fileBody, fileMode = string(b), fi.Mode().Perm()
+			if p, ok := strings.CutPrefix(kv, "DEPLOY_KEY="); ok {
+				path = p
 			}
 		}
 		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
 	}}
 	claimAndRun(t, l, e.executor(ad))
-
 	mu.Lock()
 	defer mu.Unlock()
-	if !contains(seen.Env, "ZUMINO_TOKEN=env-secret") {
-		t.Errorf("env grant missing from %v", seen.Env)
+	if path == "" {
+		t.Fatal("the run was never given a file grant")
 	}
-	if fileBody != "file-secret" || fileMode != 0o600 {
-		t.Errorf("file grant = %q at %v", fileBody, fileMode)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(e.paths.Data, "grants", "hub", "a")); !os.IsNotExist(err) {
-		t.Errorf("grant files outlived the run: %v", err)
+	if err := os.WriteFile(path, []byte("file-secret"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	for _, s := range []string{localRun(t, e, "a").Spec} {
-		if strings.Contains(s, "secret") {
-			t.Error("a grant reached the runner's database")
-		}
+
+	// A start that claims nothing still sweeps: the runner has no connection,
+	// and the context has already ended.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var logged strings.Builder
+	cfg := config.Default()
+	if err := Serve(ctx, Options{
+		Paths: e.paths, Config: cfg, RunnerID: "r",
+		Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
+		Log:          slog.New(slog.NewTextHandler(&logged, nil)),
+	}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	// The owner is told that secrets sat on disk after their run ended — by
+	// count alone, since a grant's name says as much about a hub as its value.
+	if !strings.Contains(logged.String(), "files=1") {
+		t.Errorf("the sweep said nothing about what it deleted:\n%s", logged.String())
+	}
+	if strings.Contains(logged.String(), "DEPLOY_KEY") || strings.Contains(logged.String(), "file-secret") {
+		t.Errorf("the sweep logged a grant's name or value:\n%s", logged.String())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("a grant file a crash left is still on disk at %s: %v", path, err)
+	}
+	if _, err := os.Stat(filepath.Join(e.paths.Data, "grants")); !os.IsNotExist(err) {
+		t.Errorf("the grants directory outlived the sweep: %v", err)
+	}
+
+	// An ordinary start — nothing left behind — says nothing: the line is a
+	// signal, and a signal every start carries is noise.
+	logged.Reset()
+	if err := Serve(ctx, Options{
+		Paths: e.paths, Config: cfg, RunnerID: "r",
+		Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
+		Log:          slog.New(slog.NewTextHandler(&logged, nil)),
+	}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	if strings.Contains(logged.String(), "grant") {
+		t.Errorf("a start with nothing to sweep still said something:\n%s", logged.String())
 	}
 }
 
@@ -453,9 +546,10 @@ func TestTextIsCapped(t *testing.T) {
 	}
 }
 
-// A reserved grant that reaches the executor anyway — a claim path that forgot
-// to check — is refused there, before anything is delivered or started.
-func TestExecutorRefusesReservedGrants(t *testing.T) {
+// A grant that would break the run and reaches the executor anyway — a claim
+// path that forgot to check — is refused there, before anything is delivered
+// or started.
+func TestExecutorRefusesGrantsThatWouldBreakTheRun(t *testing.T) {
 	e := newEnv(t)
 	ad := fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}})
 	x := e.executor(ad)
@@ -517,5 +611,115 @@ func TestStartAtIsHonoured(t *testing.T) {
 				t.Errorf("result %+v", res)
 			}
 		})
+	}
+}
+
+// The sweep's failure line is held to the same rule as its success line: a
+// grant's name never reaches the log. os.RemoveAll returns a *fs.PathError
+// naming the file it could not unlink, so the raw error is the leak — the
+// directory and the reason are what the owner acts on.
+func TestASweepThatFailsNamesNoGrant(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root unlinks through a directory's missing write bit, so the sweep would succeed")
+	}
+	e := newEnv(t)
+	dir := filepath.Join(e.paths.Data, "grants", "hub", "a")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "AWS_SECRET_ACCESS_KEY"), []byte("file-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Unlinking a child needs write permission on its directory, so this is
+	// a sweep that cannot finish — the branch a read-only mount or an
+	// immutable flag reaches in the field.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	var logged strings.Builder
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Serve(ctx, Options{
+		Paths: e.paths, Config: config.Default(), RunnerID: "r",
+		Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
+		Log:          slog.New(slog.NewTextHandler(&logged, nil)),
+	}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	got := logged.String()
+	if !strings.Contains(got, "delete them by hand") {
+		t.Fatalf("a sweep that could not finish said nothing:\n%s", got)
+	}
+	if strings.Contains(got, "AWS_SECRET_ACCESS_KEY") || strings.Contains(got, "file-secret") {
+		t.Errorf("the failure line names a grant:\n%s", got)
+	}
+}
+
+// The cleanup at the end of every ordinary run is held to the rule sweepGrants
+// is: a RemoveAll that fails must not put a grant's name in the log. This is
+// the branch that runs whenever a run ends, and it is the last word on these
+// files whenever the reason it failed outlives the process — the sweep at the
+// next start does the same RemoveAll and fails the same way on a read-only
+// mount or a permission this one could not get past. What the sweep recovers
+// is a cleanup that never ran at all, or one whose reason has since cleared.
+func TestAFailedGrantCleanupNamesNoGrant(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root unlinks through a directory's missing write bit, so the cleanup would succeed")
+	}
+	e := newEnv(t)
+	l := e.loop(t, 1)
+	run := testRun("a", "s1")
+	run.Grants = []v1.Grant{{Name: "AWS_SECRET_ACCESS_KEY", Value: "file-secret", As: v1.GrantFile}}
+	e.enqueue(t, run)
+	var (
+		mu  sync.Mutex
+		dir string
+	)
+	ad := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, kv := range s.Env {
+			if p, ok := strings.CutPrefix(kv, "AWS_SECRET_ACCESS_KEY="); ok {
+				dir = filepath.Dir(p)
+			}
+		}
+		// Taken while the run still holds its grant file, so the cleanup that
+		// follows cannot unlink it — the branch a read-only mount or an
+		// immutable flag reaches in the field.
+		if dir != "" {
+			if err := os.Chmod(dir, 0o500); err != nil {
+				t.Error(err)
+			}
+		}
+		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
+	}}
+	var logged strings.Builder
+	x := e.executor(ad)
+	x.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	// Registered before the run, not after: a run that fails early leaves the
+	// directory at 0500, and t.TempDir's own cleanup cannot remove it.
+	t.Cleanup(func() {
+		filepath.WalkDir(filepath.Join(e.paths.Data, "grants"), func(p string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				os.Chmod(p, 0o700)
+			}
+			return nil
+		})
+	})
+	claimAndRun(t, l, x)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if dir == "" {
+		t.Fatal("the run was never given a file grant")
+	}
+	got := logged.String()
+	if !strings.Contains(got, "grant files not removed") {
+		t.Fatalf("a cleanup that could not finish said nothing:\n%s", got)
+	}
+	if strings.Contains(got, "AWS_SECRET_ACCESS_KEY") || strings.Contains(got, "file-secret") {
+		t.Errorf("the failure line names a grant:\n%s", got)
 	}
 }

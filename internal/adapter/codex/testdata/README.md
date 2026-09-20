@@ -25,6 +25,7 @@ exhausting an account or a context window:
 | Fixture | The run |
 |---|---|
 | `usage-limit` | the turn fails `usageLimitExceeded` after a snapshot with the primary window full |
+| `usage-limit-weekly` | `usage-limit` with the secondary (10080-minute) window full instead, and the primary at 58% |
 | `usage-limit-unnamed` | the same with no snapshot: the adapter asks `account/rateLimits/read` |
 | `prompt-too-long` | the turn fails `contextWindowExceeded` |
 

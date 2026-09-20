@@ -1,6 +1,13 @@
 -- Every hub-issued id (session, run) is addressed together with its
 -- connection; see the note at the top of migrations/0001_init.sql.
 
+-- ASCII only in this file, comments included. sqlc 1.31.1 rewrites each query
+-- using byte offsets it computed over runes, so one multi-byte character
+-- anywhere above a query truncates that query's text and every later one:
+-- `SELECT *` arrives at its parser as `SELECharness` and generation fails
+-- naming queries nobody touched. The repo's prose uses an em dash; here it
+-- costs an afternoon. (Confirmed by adding one and removing it again, DEV-27.)
+
 -- name: CreateSession :exec
 INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at)
 VALUES (?, ?, ?, ?, ?, ?, ?);
@@ -143,9 +150,37 @@ WHERE r.connection = ? ORDER BY r.created_at;
 -- name: OutboxDepth :one
 SELECT count(*) FROM outbox;
 
+-- A usage limit: the account is at one until its window resets. The state and
+-- the reset are written together because they are one fact: a limited account
+-- with no reset is a park nothing ends, and a reset with no state is a limit
+-- nobody acts on.
 -- name: SetAccountLimit :exec
-INSERT INTO accounts (harness, label, limited_until) VALUES (?, ?, ?)
-ON CONFLICT (harness, label) DO UPDATE SET limited_until = excluded.limited_until;
+INSERT INTO accounts (harness, label, state, limited_until, updated_at) VALUES (?, ?, 'limited', ?, ?)
+ON CONFLICT (harness, label) DO UPDATE SET state = excluded.state, limited_until = excluded.limited_until, updated_at = excluded.updated_at;
+
+-- One window's latest use and reset. An upsert per window rather than a
+-- rewrite of a whole snapshot, so two turns finishing on the same account at
+-- once cannot lose each other's windows: capacity is a shared pool and nothing
+-- reserves an account.
+--
+-- The row keeps the most recently *recorded* snapshot, not the most recently
+-- observed one. updated_at is when the turn ended, which is the only time any
+-- caller has: a window carries its use and its reset and never the moment the
+-- harness said them. So this resolves two turns racing to write - the one that
+-- started earlier and arrived later no longer wins - and does not resolve two
+-- turns that observed at different moments, since a long turn can observe
+-- early and still end last.
+--
+-- One consequence worth knowing before changing it: the comparison is against
+-- a wall clock, and :exec discards the row count. A clock stepped backwards
+-- silently skips every window write for an account written just before the
+-- step, until the clock passes the stored stamp. That is confined to what a
+-- hub is shown - SetAccountLimit carries no such WHERE, so parking an account
+-- still works, and RefillAt ignores a reset that has already passed.
+-- name: SetAccountWindow :exec
+INSERT INTO account_windows (harness, label, name, used_percent, resets_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT (harness, label, name) DO UPDATE SET used_percent = excluded.used_percent, resets_at = excluded.resets_at, updated_at = excluded.updated_at
+WHERE excluded.updated_at >= account_windows.updated_at;
 
 -- name: ListAccounts :many
 SELECT * FROM accounts WHERE harness = ? ORDER BY label;
@@ -162,8 +197,18 @@ ON CONFLICT (harness, label) DO UPDATE SET state = excluded.state, updated_at = 
 -- name: ListAllAccounts :many
 SELECT * FROM accounts ORDER BY harness, label;
 
+-- Every window this runner has heard of, across accounts: what the health
+-- report and `yad account list` read, grouped by account in Go.
+-- name: ListAllAccountWindows :many
+SELECT * FROM account_windows ORDER BY harness, label, name;
+
 -- name: DeleteAccount :exec
 DELETE FROM accounts WHERE harness = ? AND label = ?;
+
+-- An account's windows go with the account. Left behind, they would be
+-- reported against a label the owner re-added for a different subscription.
+-- name: DeleteAccountWindows :exec
+DELETE FROM account_windows WHERE harness = ? AND label = ?;
 
 -- name: TakeSlot :exec
 INSERT INTO slots (repo, slot, connection, session_id) VALUES (?, ?, ?, ?);

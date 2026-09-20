@@ -359,8 +359,11 @@ func TestRefusedSources(t *testing.T) {
 		t.Errorf("a refused run left caches: %v", caches)
 	}
 
+	// A manager with no roots reaches nothing — the owner's home directory is
+	// the default a runner builds one with, not something this layer invents
+	// (config.WorkdirsConfig.EffectiveRoots).
 	f.m.Roots = nil
-	if _, _, err := f.prepare("s9", v1.Source{Path: f.root}); class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "allowed none") {
+	if _, _, err := f.prepare("s9", v1.Source{Path: f.root}); class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "may reach none") {
 		t.Errorf("a path with no roots configured: %v", err)
 	}
 }

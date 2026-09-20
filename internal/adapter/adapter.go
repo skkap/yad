@@ -82,13 +82,35 @@ type Outcome struct {
 	// Limit is set when the turn stopped on a usage limit. The runner, not the
 	// adapter, decides whether to fail over or wait.
 	Limit *Limit
+	// Windows is every usage window the harness mentioned during the turn,
+	// with the latest use and reset it gave for each. Set whether or not the
+	// turn hit a limit — both harnesses report their windows as they go, and
+	// a runner that only looked at them on a failure would know an account's
+	// headroom only once it had run out.
+	//
+	// A window the turn never heard about is absent rather than zero: zero
+	// use is what a fresh window reads, and the two must not be confused.
+	Windows []Window
 	// APIRetries counts transient rate-limit retries the harness did itself.
+	// A rate limit is not a usage limit (DOMAIN.md): it never sets Limit and
+	// never costs the account its state.
 	APIRetries int
 }
 
 // Limit is a usage limit hit by the account a turn ran on.
 type Limit struct {
-	Window  string // "five_hour", "weekly", "primary", "secondary" — the harness's name
+	Window  string // "five_hour", "seven_day", "primary", "secondary" — the harness's name
+	ResetAt time.Time
+}
+
+// Window is one usage window of the account a turn ran on. The name is the
+// harness's own, as DOMAIN.md's definition of a usage limit already is.
+type Window struct {
+	Name string
+	// UsedPercent is 0-100, whatever scale the harness reported: Codex gives
+	// a percentage and Claude a 0-1 fraction, and the adapters convert.
+	UsedPercent float64
+	// ResetAt is zero when the harness gave the window's use without a reset.
 	ResetAt time.Time
 }
 

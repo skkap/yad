@@ -505,7 +505,7 @@ type ended struct {
 // turn/completed has not succeeded.
 func (t *translator) outcome(e ended) adapter.Outcome {
 	t.text.Flush()
-	o := adapter.Outcome{NativeSessionID: t.thread, APIRetries: t.retries}
+	o := adapter.Outcome{NativeSessionID: t.thread, APIRetries: t.retries, Windows: t.windows()}
 	if t.counted {
 		model := t.model
 		if model == "" {
@@ -611,6 +611,30 @@ func (t *translator) limit() *adapter.Limit {
 	l.Window = best.name
 	l.ResetAt = resetOf(best.w)
 	return l
+}
+
+// windows is every window Codex named during the turn, with its latest use
+// and reset — reported whether or not the turn hit a limit, so a hub can see
+// an account's headroom before it runs out rather than only once it has.
+//
+// Codex names its windows primary and secondary and their durations vary by
+// plan, so the names are kept as they are, exactly as limit keeps them.
+func (t *translator) windows() []adapter.Window {
+	if t.limits == nil {
+		return nil
+	}
+	var out []adapter.Window
+	for _, n := range []struct {
+		name string
+		w    *window
+	}{{"primary", t.limits.Primary}, {"secondary", t.limits.Secondary}} {
+		if n.w == nil {
+			continue
+		}
+		// Codex already reports a percentage, so nothing is scaled here.
+		out = append(out, adapter.Window{Name: n.name, UsedPercent: float64(n.w.UsedPercent), ResetAt: resetOf(n.w)})
+	}
+	return out
 }
 
 func resetOf(w *window) time.Time {

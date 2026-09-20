@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -99,6 +100,21 @@ type rateLimitInfo struct {
 	Status        string `json:"status"`
 	ResetsAt      int64  `json:"resetsAt"`
 	RateLimitType string `json:"rateLimitType"`
+	// UnifiedWindows is every window's use and reset at once, keyed by the
+	// window's own name (`five_hour`, `seven_day`). Claude sends it on every
+	// rate_limit_event, including the ones that say the turn was allowed,
+	// which is what lets a runner report headroom before it runs out.
+	UnifiedWindows map[string]unifiedWindow `json:"unifiedWindows"`
+	// Utilization is the one window named by RateLimitType, for a Claude that
+	// sends no unifiedWindows.
+	Utilization *float64 `json:"utilization"`
+}
+
+// unifiedWindow is one entry of unifiedWindows. Utilization is a 0-1 fraction;
+// the protocol reports 0-100, and recordWindows converts.
+type unifiedWindow struct {
+	ResetsAt    int64   `json:"resetsAt"`
+	Utilization float64 `json:"utilization"`
 }
 
 type controlRequest struct {
@@ -131,6 +147,9 @@ type translator struct {
 	// result answered a turn Claude had more input for.
 	takenAfter bool
 	limit      *adapter.Limit
+	// windows: the latest use and reset per window name, merged across every
+	// rate_limit_event of the turn.
+	windows    map[string]adapter.Window
 	apiRetries int
 	mismatch   string
 	// interruptTaken: Claude has acknowledged one of our interrupts. A result
@@ -189,6 +208,7 @@ func (t *translator) line(raw []byte) reaction {
 	case "system":
 		t.system(&f)
 	case "rate_limit_event":
+		t.recordWindows(f.RateLimitInfo)
 		if i := f.RateLimitInfo; i != nil && i.Status == "allowed" {
 			t.limit = nil
 		}
@@ -403,7 +423,7 @@ type ended struct {
 // `is_error` — prompt_too_long arrives exactly that way.
 func (t *translator) outcome(e ended) adapter.Outcome {
 	t.flush()
-	o := adapter.Outcome{NativeSessionID: t.session, APIRetries: t.apiRetries}
+	o := adapter.Outcome{NativeSessionID: t.session, APIRetries: t.apiRetries, Windows: t.windowList()}
 	r := t.result
 	if r != nil {
 		o.FinalText = r.Result
@@ -522,6 +542,58 @@ var legacyLimit = regexp.MustCompile(`usage limit reached\|(\d+)`)
 
 func isUsageLimit(r *frame) bool {
 	return (r.APIErrorStatus != nil && *r.APIErrorStatus == 429) || legacyLimit.MatchString(r.Result)
+}
+
+// recordWindows keeps the latest use and reset for every window Claude names.
+// It runs on every rate_limit_event, not only a rejection: an account's
+// headroom is worth reporting before it is gone, and the events that say the
+// turn was allowed are the only ones most runs ever see.
+func (t *translator) recordWindows(i *rateLimitInfo) {
+	if i == nil {
+		return
+	}
+	set := func(name string, resetsAt int64, utilization float64) {
+		if name == "" {
+			return
+		}
+		if t.windows == nil {
+			t.windows = map[string]adapter.Window{}
+		}
+		// Claude reports a 0-1 fraction and the protocol a percentage.
+		//
+		// Rounded to two decimal places of percent because the multiplication
+		// is not exact in binary: 0.29 becomes 28.999999999999996, which a
+		// hub would carry in its JSON and show to somebody. Two places keep
+		// everything claude has been seen to send (it reports the fraction to
+		// four) and are more than anything routes on.
+		w := adapter.Window{Name: name, UsedPercent: math.Round(utilization*10000) / 100}
+		if resetsAt > 0 {
+			w.ResetAt = time.Unix(resetsAt, 0).UTC()
+		}
+		t.windows[name] = w
+	}
+	for name, w := range i.UnifiedWindows {
+		set(name, w.ResetsAt, w.Utilization)
+	}
+	// A Claude that sends no unifiedWindows still names one window and how
+	// much of it is used; without this that release reports no windows at all.
+	if len(i.UnifiedWindows) == 0 && i.Utilization != nil {
+		set(i.RateLimitType, i.ResetsAt, *i.Utilization)
+	}
+}
+
+// windowList is the turn's windows in name order, so two runs of the same
+// stream produce the same report.
+func (t *translator) windowList() []adapter.Window {
+	if len(t.windows) == 0 {
+		return nil
+	}
+	out := make([]adapter.Window, 0, len(t.windows))
+	for _, w := range t.windows {
+		out = append(out, w)
+	}
+	slices.SortFunc(out, func(a, b adapter.Window) int { return strings.Compare(a.Name, b.Name) })
+	return out
 }
 
 func legacyReset(s string) time.Time {

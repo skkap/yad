@@ -135,7 +135,8 @@ plain-text 404 or 405.
 ```
 → { runner_id, fingerprint, capabilities?,        // document only when asked
     health: { load, free_capacity: {total, by_harness}, disk_free_bytes,
-              harnesses: [{id, ready, accounts: [{label, state?, limited_until?}]}],
+              harnesses: [{id, ready, accounts: [{label, state?, limited_until?,
+                            windows?: [{name, used_percent, resets_at?}]}]}],
               spool_depth, outbox_depth, recent_errors[], draining? },
     runs: [{ run_id, state, resumes_at?, reason? }],    // every run held
     closed_sessions: [{ session_id, reason, closed_at }] }  // until answered
@@ -153,6 +154,13 @@ plain-text 404 or 405.
   whether a harness has a free account, or no accounts at all, in which case it
   runs on the harness's own login. A harness with no accounts is a state, not a
   failure.
+- **Account windows**: each account's usage windows, by the harness's own name
+  — Claude's `five_hour` and `seven_day`, Codex's `primary` and `secondary` —
+  with `used_percent` (0-100, whatever scale the harness reported) and
+  `resets_at` where it said. Reported from every run, limit or not, so a hub
+  sees an account running low before it runs out. Absent means no run has yet
+  heard a window, never that the account has no limits; a window the harness
+  did not mention keeps its last value rather than reading zero.
 - **Control kinds**: `cancel`, `interrupt`, `steer`, `close_session`, `drain`,
   `report_capabilities`, `update` (reserved —
   [0018](docs/decisions/0018-no-self-update-in-v1.md)).
@@ -218,6 +226,11 @@ plain-text 404 or 405.
 ```
 
 `session.mode = "live"` is reserved and refused until a runner advertises it.
+A grant's `name` is any valid environment variable name except `PATH`, `HOME`,
+`LD_*` and `DYLD_*` in any case, no two grants share a name, and no two `file`
+grants have names differing only by case — one file on a case-folding
+filesystem. The schema cannot say any of that, so both sides check it and a run
+breaking it is refused whole (`Run.Validate`, decision 0038).
 
 ### Run states
 
@@ -493,9 +506,11 @@ for `codex`); the suite never runs a real harness.
   exclusive on it, shared on the directories above it;
   several lie side by side under the workdir. No sources → an empty directory.
   Hub strings are checked before git sees them, git never prompts, and a local
-  source must resolve inside the owner's `[workdirs] roots` — none configured,
-  none taken
-  ([0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md)).
+  source must resolve inside the owner's `[workdirs] roots` — with none
+  configured, the owner's home directory
+  ([0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md),
+  [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A
+  runner with no home directory to resolve reaches nothing.
   `internal/workdir` does all of it; the executor calls `Prepare` on the
   session's directory in `preparing`, spools what it reports as the run's
   first events, and fails the run with `source_refused`, `source_failed` or
@@ -557,7 +572,26 @@ for `codex`); the suite never runs a real harness.
   the harness's own default home and reports no accounts. It is never an error
   that stops a runner registering.
 - **Detection**: Codex publishes `account/rateLimits/updated` with each window's
-  use and reset; Claude reports a limit in its result with a reset time.
+  use and reset; Claude reports a limit in its result with a reset time, and
+  carries every window's use and reset in each `rate_limit_event`
+  (`unifiedWindows`), including the ones that say the turn was allowed.
+- **Never a rate limit.** Transient API throttling the harness retries by
+  itself — Claude's `system/api_retry`, Codex's `willRetry` error — is a rate
+  limit, not a usage limit (DOMAIN.md). It is counted as `api_retries` in the
+  result's metrics and changes no account's state. A 429 that survived every
+  one of the harness's own retries and ended the turn is an exhausted account
+  and is treated as a usage limit. It carries no reset, so one is taken from
+  the soonest window the harness called full and still to reset
+  (`internal/account.RefillAt`) — a full window whose reset has already passed
+  is the residue of a limit already over and says nothing about this one — and
+  only failing that from a short constant
+  (`internal/account.limitWithoutReset`), which also covers a reset the harness
+  itself gave in the past. An undated limit is a park nothing ends, and a long
+  guess idles an account the owner pays for.
+- **The reset is the authority.** An account's `limited_until` decides whether
+  it is limited; the stored `state` is derived from it at every read, so a
+  limit that has passed needs no writer to come along and clear it
+  (`internal/account.stateOf`).
 - **On a limit**: mark the account limited until its reset → the free account
   whose window resets soonest ([0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)) → resume the same session with a continuation turn. None free →
   the run becomes **waiting** with `resumes_at`, holds no process, and survives a
@@ -614,7 +648,7 @@ disk_floor = "5GiB"   # below this free under the workdirs, idle sessions go; "0
 wait = "30m"   # how long a drain lets runs finish before cancelling them — 0029
 
 [workdirs]
-roots         = ["/home/me/src"]  # where path sources and local git URLs may point — 0033; none = refused
+roots         = ["/home/me/src"]  # where path sources and local git URLs may point — 0033; unset = your home directory (0038)
 git_timeout   = "10m"
 setup_timeout = "15m"
 ```
@@ -777,18 +811,29 @@ line here is a reviewed change.
 
 - The runner runs as an ordinary user, never root; the service units say so.
 - Tokens: `0600` files, never logged, never printed, never in argv, never in an
-  event. Grants are deleted when their run ends. An `env` grant is `NAME=value`
+  event. Grants are deleted when their run ends — including by the next start,
+  after a crash that skipped the deletion. An `env` grant is `NAME=value`
   in the harness's environment; a `file` grant is a `0600` file whose path is
-  in `NAME`. A grant is named as the secret it is — upper case, ending in
-  `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD` or `_CREDENTIAL(S)` — and never a
-  reserved name or in a loader, runtime or harness namespace (`LD_*`,
-  `NODE_*`, `ANTHROPIC_*`, `IS_SANDBOX` …). `protocol/v1` checks it; a run
-  carrying one that fails is refused by the hub and by the runner, never run
-  with it stripped — [0024](docs/decisions/0024-grants-are-named-as-secrets.md).
-  Superseded by [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)
-  and changing with DEV-30: any valid name except `PATH`, `HOME`, `LD_*` and
-  `DYLD_*`.
-  The service API never returns a grant.
+  in `NAME`, in a directory of the run's own under `<data>/grants` — never in
+  the checkout the harness works in, though a run whose `path` source is the
+  owner's home directory has the data directory somewhere beneath it. A grant's
+  name is any valid environment variable name
+  (`[A-Za-z_][A-Za-z0-9_]*`, which is also a plain file name) except four that
+  would break the run rather than attack it: `PATH`, `HOME`, `LD_*` and
+  `DYLD_*`, matched whatever their case. Two `file` grants whose names differ
+  only by case are refused too: on a case-folding filesystem they are one file,
+  written in order, so the second truncates the first and both names end up
+  pointing at the second grant's value. `protocol/v1`
+  checks it; a run carrying one that fails is refused by the hub and by the
+  runner, never run with it
+  stripped — [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md),
+  which supersedes 0024's secret-shaped suffix and its reserved namespaces.
+  A name the owner rather than the hub decides keeps its own guard, which is
+  not a naming rule: `IS_SANDBOX` is an acceptable grant name and the Claude
+  adapter still strips it from the run's environment (0015).
+  Filtering names never protected the machine: the brief could ask the harness
+  for the same secret, and it auto-approves. The service API never returns a
+  grant.
 - Three secret kinds, never interchangeable: registration token, runner
   credential, admin token. The protocol accepts only the first two, the service
   API only the third.
@@ -800,9 +845,12 @@ line here is a reviewed change.
   never passed to a shell, never an instruction to the runner.
 - A run's sources are argv, never a shell: https and ssh only, no remote
   helpers, no leading `-`, no password in a URL, and nothing on the machine
-  outside the owner's `[workdirs] roots` —
-  [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md); with
-  no roots set they will default to the home directory (0038, DEV-30).
+  outside the owner's `[workdirs] roots`, which default to the owner's home
+  directory when unset —
+  [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md),
+  [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md). Those
+  guards prevent bugs, not attacks: the trust boundary is the machine and its
+  owner.
 - `claude -p` loads a repository's `.claude/settings.json` hooks and `.mcp.json`
   servers without a trust prompt. With auto-approve that is no worse than the run
   itself — which is exactly why a runner belongs on a machine you would let the

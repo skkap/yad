@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -168,7 +169,7 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "HARNESS\tLABEL\tSTATE\tSINCE\tHOME")
+	fmt.Fprintln(tw, "HARNESS\tLABEL\tSTATE\tWINDOWS\tSINCE\tHOME")
 	for _, a := range accounts {
 		since := "—"
 		if !a.UpdatedAt.IsZero() {
@@ -178,7 +179,7 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 		if a.State == v1.AccountLimited && a.LimitedUntil != nil {
 			state += " until " + a.LimitedUntil.Local().Format(time.RFC3339)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Harness, a.Label, state, since, a.Home)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Harness, a.Label, state, windowsColumn(a.Windows), since, a.Home)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -189,6 +190,25 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 		}
 	}
 	return nil
+}
+
+// windowsColumn is each usage window as the owner reads it: the harness's own
+// name for the window, how much of it is spent and when it refills. An em dash
+// for an account no run has been through yet — no window heard is not a window
+// at zero.
+func windowsColumn(ws []v1.AccountWindow) string {
+	if len(ws) == 0 {
+		return "—"
+	}
+	parts := make([]string, 0, len(ws))
+	for _, w := range ws {
+		p := fmt.Sprintf("%s %.0f%%", w.Name, w.UsedPercent)
+		if w.ResetsAt != nil {
+			p += " until " + w.ResetsAt.Local().Format(time.RFC3339)
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // accountRemove deletes an account's harness home and forgets the account.
@@ -357,6 +377,9 @@ func forgetState(ctx context.Context, p config.Paths, id, label string) error {
 		return err
 	}
 	defer st.Close()
+	if err := st.DeleteAccountWindows(ctx, db.DeleteAccountWindowsParams{Harness: id, Label: label}); err != nil {
+		return err
+	}
 	return st.DeleteAccount(ctx, db.DeleteAccountParams{Harness: id, Label: label})
 }
 
