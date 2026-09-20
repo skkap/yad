@@ -533,3 +533,43 @@ func TestEverySyncCarriesEveryHealthField(t *testing.T) {
 		t.Errorf("a free account carries limited_until = %v", a.LimitedUntil)
 	}
 }
+
+// Why a health report can say no free capacity on a runner that has plenty,
+// which nothing asserted until an end-to-end test went flaky on it.
+//
+// A sync made before the runner may claim carries an empty reservation:
+// SyncOnce builds one with emptyReservation and only replaces it by reserving
+// from the pool when mayClaim is true, and mayClaim is false until ClaimAfter
+// closes — which is what a previous process left owed going out before new
+// work comes in (decision 0030). The runner keeps syncing meanwhile so the
+// leases on the runs it holds renew, and those syncs honestly advertise
+// nothing, because a hub that offered work against them would be offering it
+// to a runner that is not claiming yet.
+//
+// So a hub really can hold health saying Total: 0 for a runner whose capacity
+// is four, and it is right to offer that runner nothing until the next sync.
+func TestSyncsBeforeTheReplayAdvertiseNoCapacity(t *testing.T) {
+	e := newEnv(t)
+	hub := &scriptedHub{}
+	l := e.loop(t, 4)
+	l.Hub = hub
+	e.collector(l)
+	claim := make(chan struct{})
+	l.ClaimAfter = claim
+
+	mustSync(t, l)
+	if got := hub.syncs[0].Health.FreeCapacity.Total; got != 0 {
+		t.Errorf("a sync before the replay advertised %d free; want none", got)
+	}
+	// The rest of health is reported as usual — the runner is not idle, it is
+	// only not claiming, and a hub still needs to see why.
+	if hub.syncs[0].Health.DiskFreeBytes == 0 || len(hub.syncs[0].Health.Harnesses) == 0 {
+		t.Errorf("health from that sync is otherwise empty: %+v", hub.syncs[0].Health)
+	}
+
+	close(claim)
+	mustSync(t, l)
+	if got := hub.syncs[1].Health.FreeCapacity.Total; got != 4 {
+		t.Errorf("a sync after the replay advertised %d free; want the whole pool, 4", got)
+	}
+}
