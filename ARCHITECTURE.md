@@ -658,7 +658,8 @@ run's hub-side state adds two before the protocol's: `queued` and `offered`.
 ## §5 The local surface
 
 ```
-yad doctor                         what is installed, and what YAD can drive
+yad doctor                         what is installed, what YAD can drive, and what about
+                                   this machine or profile is reachable by other users
 yad harnesses [--json]             the capability document, as a hub receives it
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
 yad disconnect <name>
@@ -840,6 +841,15 @@ line here is a reviewed change.
   servers without a trust prompt. With auto-approve that is no worse than the run
   itself — which is exactly why a runner belongs on a machine you would let the
   repository run code on.
+- `yad doctor` warns on the three exposures an owner can fix: running as root,
+  a config or data directory with group or other permissions, and a profile file
+  another user can read (`config.Exposures`). They are warnings and never change
+  its exit code — absence and misconfiguration are both facts it reports, and a
+  diagnostic that refused to run would answer a question nobody asked. The
+  places an exposure would actually leak still refuse on their own
+  (`config.ReadSecret`, `control.checkDir`).
+- The operator-facing version of this section is
+  [docs/run-it-safely.md](docs/run-it-safely.md).
 
 ## §9 Build order
 

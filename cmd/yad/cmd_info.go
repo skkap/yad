@@ -73,6 +73,16 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 			fmt.Fprintf(w, "\nwarning: %s — %s\n", d.Label, warn)
 		}
 	}
+	// How the machine is set up, not what is installed on it, so these carry no
+	// harness label — and they are printed here rather than folded into the
+	// --json capability document, which is what a hub receives and has no
+	// business learning a directory's mode. They never change the exit code:
+	// the guide these back (docs/run-it-safely.md) tells an owner to run
+	// `yad doctor`, and one that failed on a group-readable directory would
+	// stop reporting the harnesses they ran it for.
+	for _, warn := range config.Exposures(g.paths) {
+		fmt.Fprintf(w, "\nwarning: %s\n", warn)
+	}
 	fmt.Fprintf(w, "\nprofile %s — config %s\n", g.paths.Profile, g.paths.Config)
 	// Each way to reach zero has a different next action, and telling someone
 	// with both CLIs installed to install them is worse than saying nothing.

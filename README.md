@@ -30,16 +30,22 @@ HARNESS             STATUS      VERSION                PATH
 Claude Code         ready       2.1.278 (Claude Code)  /Users/me/.local/bin/claude
 Codex               ready       codex-cli 0.147.0      /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
+GitHub Copilot CLI  —
+OpenCode            —
 Cursor Agent        no adapter  2025.09.12-4852336     /Users/me/.local/bin/cursor-agent
 
 profile default — config /Users/me/.config/yad
 2 harness(es) this runner can be given work for.
 ```
 
-Claude Code and Codex are `ready`: each has an adapter. The others are
-recognised — reported so the gap is visible, and refused as the target of a
-run. A Codex whose app-server protocol differs from the one this yad was built
-against is still `ready`, with a `warning:` line under the table saying so.
+Every harness in the catalog gets a row, whether or not it is here. Claude Code
+and Codex are `ready`: each has an adapter. `no adapter` is installed and
+recognised — reported so the gap is visible, and refused as the target of a run.
+`—` is simply not installed on this machine, which is a fact worth printing
+rather than a row worth hiding. A Codex whose app-server protocol differs from
+the one this yad was built against is still `ready`, with a `warning:` line
+under the table saying so — as are the things about the machine itself that
+[docs/run-it-safely.md](docs/run-it-safely.md) covers.
 
 ## Status
 
@@ -137,6 +143,12 @@ A runner auto-approves everything its harness does — nobody is there to answer
 prompt. Run it on a machine, VM or container you would let an unknown repository
 execute code on, never on a laptop holding credentials you care about, and one
 runner per trust domain: personal and work are two runners.
+
+The rest of this section is the short version. The guide is
+**[docs/run-it-safely.md](docs/run-it-safely.md)** — what a run can actually do
+on the machine you give it, why a profile separates YAD's state but not the
+machine (so each profile wants its own OS user), what turning a harness's own
+guardrails back on costs, and the three things `yad doctor` now warns about.
 
 You trust the hubs you connect, and YAD does not police what they send
 ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A hub
