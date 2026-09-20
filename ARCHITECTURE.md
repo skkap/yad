@@ -831,6 +831,7 @@ line here is a reviewed change.
 | `github.com/danielgtaylor/huma/v2` | typed operations for `yad hub`, and the OpenAPI document they generate |
 | `sqlc` (tool, not linked) | typed queries from SQL |
 | `staticcheck` (tool, not linked) | the lint bar in `CHECKS.md` |
+| `oasdiff` (tool, not linked) | the breaking-change check on both OpenAPI documents ([0017](docs/decisions/0017-protocol-types-are-the-source.md), [0022](docs/decisions/0022-hub-service-api-beside-the-protocol.md)). Pinned rather than installed per machine because a gate is worth only as much as its verdict is reproducible, and two boxes answering differently is the failure. v1.32.1 brings roughly thirty indirect modules — cobra, viper, afero and the rest of a CLI's furniture — into `go.sum`; none is linked into `yad`, and that price is named here rather than glossed |
 
 ## §7 Testing
 
