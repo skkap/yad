@@ -155,7 +155,11 @@ func TestExposures(t *testing.T) {
 			},
 			want: []string{"runner-id", "hub-admin-token", "state.db", "hub.db",
 				`connection "a"`, `connection "b"`,
-				"`yad hub admin-token list`, then revoke"},
+				// The same file is the default token for a remote hub too, so
+				// the advice must send the owner to the hub that issued it
+				// rather than straight at this machine's hub.db.
+				"revoke it at the hub that issued it",
+				"`yad hub admin-token list` then revoke"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -320,37 +324,47 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 // chmod does not undo — so an entry that holds one says how to retire it, and
 // an entry that does not is left with the chmod alone. Getting this wrong is
 // worse than saying nothing: an owner does the chmod, feels finished, and goes
-// on using a credential they were just told to distrust. The test asserts the
-// correspondence rather than a count, so adding a file to either group cannot
-// silently put it in the wrong one.
-var secretBase = map[string]bool{"hub-admin-token": true, "hub.db": true, "hub.db-wal": true}
+// on using a credential they were just told to distrust.
+//
+// The fixture is built from privateFiles itself, so every entry the code has
+// is judged. An earlier version wrote a hand-picked few, which meant a new
+// entry was covered only if whoever added it also remembered this test — and
+// hub.db-wal went a whole round with the wrong advice because it did not.
+// secretBase names the entries whose warning must carry a rotation, by base
+// name. Spelled out rather than derived, because the correspondence is what is
+// under test: deriving the expectation the way the code does would make the
+// test pass for any rule at all. A -shm indexes a -wal and holds no run data,
+// so it is not here even when its database is.
+var secretBase = map[string]bool{
+	"hub-admin-token": true,
+	"hub.db":          true, "hub.db-wal": true,
+	// The runner's store keeps no grant, but an event body is whatever the
+	// harness printed and nothing deletes one.
+	"state.db": true, "state.db-wal": true,
+}
 
 func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 	old := geteuid
 	geteuid = func() int { return 501 }
 	t.Cleanup(func() { geteuid = old })
 	p := paths(t)
+	// Every entry the code actually has, not a hand-picked few: Exposures
+	// prints a line only for a file that exists, so an entry with no file here
+	// is an entry this test never judges. Adding one to privateFiles without
+	// adding it to secretBase now fails rather than passing unseen.
 	write(t, filepath.Join(p.Config, "credentials", "yashiki"), 0o644)
-	write(t, p.HubAdminToken(), 0o644)
-	write(t, p.HubDB(), 0o644)
-	write(t, filepath.Join(p.Config, "runner-id"), 0o644)
-	write(t, p.StateDB(), 0o644)
-	write(t, p.HubDB()+"-wal", 0o644)
-	write(t, p.HubDB()+"-shm", 0o644)
-	write(t, p.StateDB()+"-wal", 0o644)
+	for _, f := range privateFiles(p) {
+		write(t, f.path, 0o644)
+	}
+	if n := len(privateFiles(p)); n < 9 {
+		t.Fatalf("privateFiles returned %d entries; the fixture below is meant to cover the whole list", n)
+	}
 
 	for _, line := range Exposures(p) {
 		// Match the path this line is about, not the prose after it: the
 		// runner-id line mentions the word "credentials" while being about a
 		// file that is not one.
 		path, _, _ := strings.Cut(line, " is -rw")
-		// Spelled out rather than derived, because the correspondence is what
-		// is under test: deriving the expectation the same way the code does
-		// would make this pass for any rule at all. The hub's store keeps
-		// every run it was given, grants and all, and nothing clears them, so
-		// it and the -wal that carries its uncheckpointed pages give up a
-		// secret. The runner's store does not — Loop.record strips grants
-		// before writing — and a -shm is an index into a -wal, not data.
 		secret := strings.Contains(path, "credentials"+string(os.PathSeparator)) ||
 			secretBase[filepath.Base(path)]
 		rotates := strings.Contains(line, "not the one who already read it")
@@ -469,20 +483,22 @@ func TestTheSandboxWarningClaimsOnlyWhatItChecked(t *testing.T) {
 
 // SQLite gives -wal and -shm the database's own mode
 // (store.TestSidecarsTakeTheDatabaseMode), and an uncleaned exit leaves them
-// behind — so an exposed hub.db has two more files beside it giving up the
-// same grants. The correspondence test above cannot catch the sidecars going
-// missing from privateFiles: it only judges the lines Exposures happened to
-// return, so deleting the loop would leave it passing on the database alone.
+// behind — so an exposed hub.db has two more files beside it, of which the
+// -wal gives up the same grants and the -shm gives up nothing but its mode.
+// That distinction is the point: saying both leak would send an owner rotating
+// over a wal-index.
 func TestSidecarsAreReportedBesideTheirDatabase(t *testing.T) {
 	old := geteuid
 	geteuid = func() int { return 501 }
 	t.Cleanup(func() { geteuid = old })
 	p := paths(t)
-	for _, f := range []string{p.HubDB(), p.HubDB() + "-wal", p.HubDB() + "-shm", p.StateDB(), p.StateDB() + "-wal"} {
+	stores := []string{p.HubDB(), p.HubDB() + "-wal", p.HubDB() + "-shm",
+		p.StateDB(), p.StateDB() + "-wal", p.StateDB() + "-shm"}
+	for _, f := range stores {
 		write(t, f, 0o644)
 	}
 	got := Exposures(p)
-	for _, want := range []string{p.HubDB(), p.HubDB() + "-wal", p.HubDB() + "-shm", p.StateDB(), p.StateDB() + "-wal"} {
+	for _, want := range stores {
 		var found bool
 		for _, line := range got {
 			if strings.HasPrefix(line, want+" is ") {
@@ -508,8 +524,18 @@ func TestSidecarsAreReportedBesideTheirDatabase(t *testing.T) {
 				t.Errorf("the -shm claims to hold run data:\n%s", line)
 			}
 		case strings.HasPrefix(line, p.StateDB()+"-wal is "):
-			if strings.Contains(line, "rotate") {
-				t.Errorf("the runner store's -wal asks for a rotation it has no secret for:\n%s", line)
+			// The runner's store keeps no grant, so this must not promise a
+			// rotation of grants — but an event body is whatever the harness
+			// printed, so it does carry the conditional warning.
+			if strings.Contains(line, "any run's grants") {
+				t.Errorf("the runner store's -wal claims grants it never holds:\n%s", line)
+			}
+			if !strings.Contains(line, "if a run ever printed a credential") {
+				t.Errorf("the runner store's -wal drops what it can hold:\n%s", line)
+			}
+		case strings.HasPrefix(line, p.StateDB()+"-shm is "):
+			if strings.Contains(line, "rotate") || strings.Contains(line, "printed a credential") {
+				t.Errorf("the runner store's -shm claims to hold run data:\n%s", line)
 			}
 		}
 		// Whichever file it is about, fixing it alone is not enough: the next

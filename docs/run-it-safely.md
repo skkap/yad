@@ -308,15 +308,24 @@ it `0600`: it names the hubs this runner connects to and the accounts it holds.
 It carries no secret, so the mode is the whole of its fix — it is not asked to
 be rotated.
 
-Each file says what is at stake and what to do, and those differ. `runner-id`
-is an identity rather than a secret — a hub refuses to re-register an id
-without a token minted for that runner — so closing the file is the whole of
-its fix, and so it is for `config.toml`, which names hubs and accounts but
-carries no secret. `state.db` holds runs without their grants, which the runner
-strips before writing. `hub.db`, a connection's credential and the hub admin token do
-hold secrets, so each of those asks for the rotation as well as the mode. The
-admin token's line names the delete between `revoke` and `create`, because
-`revoke` only touches `hub.db` and `create` refuses while the file is there.
+Each file says what is at stake and what to do, and those differ — which is
+why the warning is worth reading rather than skimming for the `chmod`. An
+identity is closed and that is the end of it: `runner-id` cannot be used to
+take a runner over, because a hub refuses to re-register an id without a token
+minted for that runner, and `config.toml` names hubs and accounts but carries
+no secret.
+
+A file behind which there is a secret is closed **and** the secret retired, and
+what that means is different every time. A connection's credential is revoked
+at the hub and `yad connect` run again. The admin token is revoked at whichever
+hub issued it — the same file is the default token for submitting to a remote
+hub, so it is not always this machine's — and if it is a hub this machine
+serves, the file has to be deleted between `revoke` and `create`, because
+`revoke` only touches the database and `create` refuses while the file is still
+there. `hub.db` means every grant any run ever carried. `state.db` is the
+conditional one: it keeps no grant, because the runner strips them before
+writing, but an event body is whatever the harness printed and nothing ever
+deletes one — so if a run printed a credential, it is still in there.
 
 Here is what it looks like on a profile with a group-readable data directory and
 a world-readable credential:
@@ -373,10 +382,12 @@ config directory at all.
 **A `chmod` is only ever half the answer for a secret.** It stops the next
 reader; it does nothing about whoever already read the file, and a secret that
 has been readable by others must be assumed leaked — which is the same premise
-`config.ReadSecret` refuses on. So each of the three warnings that names a
-secret — a connection's credential, this machine's hub admin token, and
-`hub.db` — asks for the rotation as well as the mode, and names the sequence
-that actually works for that one.
+`config.ReadSecret` refuses on. So a warning about a file that holds a secret
+asks for the rotation as well as the mode, and names the sequence that works
+for that particular one. **Read the warning rather than counting them here**:
+which files those are is decided in `config.privateFiles`, and a list repeated
+in prose is a list that goes stale — this sentence said "three" for a round
+after `hub.db-wal` made it four.
 
 That is also the one place this diagnostic cannot keep you honest: **the chmod
 alone silences the warning.** `yad doctor` can see a file's mode; it cannot see

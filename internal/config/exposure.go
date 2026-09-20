@@ -15,15 +15,10 @@ import (
 	"syscall"
 )
 
-// shellArg quotes a path so the command a warning prints can be pasted and
-// run. A profile directory comes from YAD_CONFIG_DIR, YAD_DATA_DIR, XDG_* or
-// $HOME and none of those is constrained to shell-safe characters: under
-// YAD_DATA_DIR="/Volumes/My Disk/yad" the unquoted advice runs
-// `chmod 700 /Volumes/My` and leaves the exposure open. A next action that
-// does not work is the defect this whole file is about.
 // closeAnd is a next action: the chmod, plus the rotation when what is behind
-// the file is a secret. Nothing derives the rotation from the path, so a file
-// that holds a secret and one that does not cannot be told apart by accident.
+// the file is a secret. The rotation is passed in rather than derived from the
+// path, so a file that holds a secret and one that does not cannot be told
+// apart by accident.
 func closeAnd(path, rotate string) string {
 	fix := "chmod 600 " + shellArg(path)
 	if rotate == "" {
@@ -32,6 +27,12 @@ func closeAnd(path, rotate string) string {
 	return fix + " stops the next reader, but not the one who already read it, so " + rotate
 }
 
+// shellArg quotes a path so the command a warning prints can be pasted and
+// run. A profile directory comes from YAD_CONFIG_DIR, YAD_DATA_DIR, XDG_* or
+// $HOME and none of those is constrained to shell-safe characters: under
+// YAD_DATA_DIR="/Volumes/My Disk/yad" the unquoted advice runs
+// `chmod 700 /Volumes/My` and leaves the exposure open. A next action that
+// does not work is the defect this whole file is about.
 func shellArg(s string) string {
 	if s != "" && !strings.ContainsAny(s, " \t\n\v\\\"'`$&|;<>()*?[]{}!#~=%") {
 		return s
@@ -105,21 +106,36 @@ func privateFiles(p Paths) []privateFile {
 		// The sequence `yad hub admin-token create` itself prints when it
 		// refuses: revoke only touches hub.db, so create refuses while this
 		// file is still here, and deleting it is the step between.
-		{admin, "it is the admin token for this machine's hub", "chmod 600 " + shellArg(admin) + " stops the next reader, but not the one who already read it, so revoke it (`yad hub admin-token list`, then revoke), delete " + shellArg(admin) + ", and `yad hub admin-token create` again"},
+		// Not necessarily this machine's hub: the same file is the default
+		// token for submitting to any --hub or $YAD_HUB_URL (cmd_hub_run.go,
+		// ARCHITECTURE.md §4), so naming `yad hub admin-token` alone would
+		// point a remote hub's owner at a local hub.db that never issued it.
+		// The delete is named because revoke only touches the database, and
+		// create refuses while the file is still there.
+		{admin, "it is an admin token for a hub's service API", "chmod 600 " + shellArg(admin) + " stops the next reader, but not the one who already read it, so revoke it at the hub that issued it — for a hub this machine serves that is `yad hub admin-token list` then revoke, delete " + shellArg(admin) + ", and `yad hub admin-token create` again"},
 	}
 	// Each store contributes its own entry and its two sidecars together, from
 	// one description, so a sidecar cannot end up saying something different
 	// from the database it belongs to — which is what happened when the two
 	// were written apart.
 	//
-	// rotate is empty for a store that gives up no secret. The runner's holds
-	// no grant: Loop.record strips them before writing. The hub's is the
-	// opposite and keeps them — a run's spec is written once with its grants
-	// (hub/store/migrations/0001) and no query clears it, FinishRun settling
-	// only state, reason and the lease — so every grant that hub was ever
-	// given is still there, the current queue included and not only it.
+	// What each store gives up differs, so each names its own rotation rather
+	// than sharing one or going without.
+	//
+	// The runner's holds no grant — Loop.record strips them before writing —
+	// but its events carry tool results, which are whatever the harness
+	// printed, and no query ever deletes an event body: AckEvents and
+	// DropEvents only flip `acked`. So a run that printed a credential left it
+	// there. That is conditional, and the advice says so rather than telling
+	// an owner to rotate something that may not exist.
+	//
+	// The hub's is unconditional and keeps grants outright: a run's spec is
+	// written once with them (hub/store/migrations/0001) and no query clears
+	// it, FinishRun settling only state, reason and the lease — so every grant
+	// that hub was ever given is still there, the current queue included and
+	// not only it.
 	for _, st := range []struct{ path, holds, rotate string }{
-		{p.StateDB(), "every run's events, which carry what the harness did", ""},
+		{p.StateDB(), "every run's events, which carry what the harness did and anything it printed", "if a run ever printed a credential, its events still hold it — treat that one as exposed too"},
 		{p.HubDB(), "every run this hub has been given, with its grants, in plaintext", "rotate every secret any run's grants have carried"},
 	} {
 		base := filepath.Base(st.path)
