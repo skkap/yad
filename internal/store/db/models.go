@@ -16,6 +16,15 @@ type Account struct {
 	UpdatedAt    int64
 }
 
+type AccountWindow struct {
+	Harness     string
+	Label       string
+	Name        string
+	UsedPercent float64
+	ResetsAt    sql.NullInt64
+	UpdatedAt   int64
+}
+
 type Event struct {
 	Connection string
 	RunID      string

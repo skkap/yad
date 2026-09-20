@@ -135,7 +135,8 @@ plain-text 404 or 405.
 ```
 → { runner_id, fingerprint, capabilities?,        // document only when asked
     health: { load, free_capacity: {total, by_harness}, disk_free_bytes,
-              harnesses: [{id, ready, accounts: [{label, state?, limited_until?}]}],
+              harnesses: [{id, ready, accounts: [{label, state?, limited_until?,
+                            windows?: [{name, used_percent, resets_at?}]}]}],
               spool_depth, outbox_depth, recent_errors[], draining? },
     runs: [{ run_id, state, resumes_at?, reason? }],    // every run held
     closed_sessions: [{ session_id, reason, closed_at }] }  // until answered
@@ -153,6 +154,13 @@ plain-text 404 or 405.
   whether a harness has a free account, or no accounts at all, in which case it
   runs on the harness's own login. A harness with no accounts is a state, not a
   failure.
+- **Account windows**: each account's usage windows, by the harness's own name
+  — Claude's `five_hour` and `seven_day`, Codex's `primary` and `secondary` —
+  with `used_percent` (0-100, whatever scale the harness reported) and
+  `resets_at` where it said. Reported from every run, limit or not, so a hub
+  sees an account running low before it runs out. Absent means no run has yet
+  heard a window, never that the account has no limits; a window the harness
+  did not mention keeps its last value rather than reading zero.
 - **Control kinds**: `cancel`, `interrupt`, `steer`, `close_session`, `drain`,
   `report_capabilities`, `update` (reserved —
   [0018](docs/decisions/0018-no-self-update-in-v1.md)).
@@ -549,7 +557,26 @@ for `codex`); the suite never runs a real harness.
   the harness's own default home and reports no accounts. It is never an error
   that stops a runner registering.
 - **Detection**: Codex publishes `account/rateLimits/updated` with each window's
-  use and reset; Claude reports a limit in its result with a reset time.
+  use and reset; Claude reports a limit in its result with a reset time, and
+  carries every window's use and reset in each `rate_limit_event`
+  (`unifiedWindows`), including the ones that say the turn was allowed.
+- **Never a rate limit.** Transient API throttling the harness retries by
+  itself — Claude's `system/api_retry`, Codex's `willRetry` error — is a rate
+  limit, not a usage limit (DOMAIN.md). It is counted as `api_retries` in the
+  result's metrics and changes no account's state. A 429 that survived every
+  one of the harness's own retries and ended the turn is an exhausted account
+  and is treated as a usage limit. It carries no reset, so one is taken from
+  the soonest window the harness called full and still to reset
+  (`internal/account.RefillAt`) — a full window whose reset has already passed
+  is the residue of a limit already over and says nothing about this one — and
+  only failing that from a short constant
+  (`internal/account.limitWithoutReset`), which also covers a reset the harness
+  itself gave in the past. An undated limit is a park nothing ends, and a long
+  guess idles an account the owner pays for.
+- **The reset is the authority.** An account's `limited_until` decides whether
+  it is limited; the stored `state` is derived from it at every read, so a
+  limit that has passed needs no writer to come along and clear it
+  (`internal/account.stateOf`).
 - **On a limit**: mark the account limited until its reset → the free account
   whose window resets soonest ([0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)) → resume the same session with a continuation turn. None free →
   the run becomes **waiting** with `resumes_at`, holds no process, and survives a

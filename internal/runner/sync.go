@@ -675,10 +675,20 @@ func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
 // reason, and having no accounts at all is not.
 //
 // The states come from account.Load — the same call pickAccount makes, so what
-// health reports and what a claim would actually do cannot disagree. Building
-// them here from store rows instead was how an account whose home had been
-// deleted came out free in health while the capability document, built from
-// Load in the same sync, called it needs_login.
+// health reports and what a claim would actually do are read from one answer
+// rather than derived twice. Building them here from store rows instead was
+// how an account whose home had been deleted came out free in health while the
+// capability document, built from Load in the same sync, called it
+// needs_login.
+//
+// One seam remains and is deliberate: Report re-derives a limit's expiry
+// against the clock at the moment it is called, so a limit that ends between
+// this function's Load and its Reports leaves an account reported free beside
+// a harness whose readiness was computed from the same Load and still says
+// not ready. It lasts until the next sync and errs towards a hub being told
+// the runner can do less than it can, which is the harmless direction. The
+// re-derivation is worth that: it is what stops an Account built anywhere
+// else reporting a state Load would not.
 func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 	doc := l.Capabilities()
 	accounts, err := account.Load(ctx, l.Store.Queries, l.Data, l.Config)

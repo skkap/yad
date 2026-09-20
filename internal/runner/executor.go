@@ -535,6 +535,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		res.Error.Class = hubClass(res.Error.Class, spec.NativeSessionID != "")
 	}
 	if hasAccount {
+		e.recordUsage(bg, acct, out, log)
 		e.checkLogin(bg, acct, bin, res, log)
 	}
 	if res.State == v1.RunCancelled && w.cancelled {

@@ -16,8 +16,30 @@ components:
             - limited
             - needs_login
           type: string
+        windows:
+          items:
+            $ref: "#/components/schemas/AccountWindow"
+          type: array
       required:
         - label
+      type: object
+    AccountWindow:
+      additionalProperties: true
+      properties:
+        name:
+          description: "The window as its harness names it: five_hour or seven_day for Claude, primary or secondary for Codex."
+          type: string
+        resets_at:
+          description: When the window refills, if the harness said.
+          format: date-time
+          type: string
+        used_percent:
+          description: How much of the window is used, 0-100.
+          format: double
+          type: number
+      required:
+        - name
+        - used_percent
       type: object
     Ack:
       additionalProperties: true
