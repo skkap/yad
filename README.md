@@ -30,16 +30,22 @@ HARNESS             STATUS      VERSION                PATH
 Claude Code         ready       2.1.278 (Claude Code)  /Users/me/.local/bin/claude
 Codex               ready       codex-cli 0.147.0      /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
+GitHub Copilot CLI  —
+OpenCode            —
 Cursor Agent        no adapter  2025.09.12-4852336     /Users/me/.local/bin/cursor-agent
 
 profile default — config /Users/me/.config/yad
 2 harness(es) this runner can be given work for.
 ```
 
-Claude Code and Codex are `ready`: each has an adapter. The others are
-recognised — reported so the gap is visible, and refused as the target of a
-run. A Codex whose app-server protocol differs from the one this yad was built
-against is still `ready`, with a `warning:` line under the table saying so.
+Every harness in the catalog gets a row, whether or not it is here. Claude Code
+and Codex are `ready`: each has an adapter. `no adapter` is installed and
+recognised — reported so the gap is visible, and refused as the target of a run.
+`—` is simply not installed on this machine, which is a fact worth printing
+rather than a row worth hiding. A Codex whose app-server protocol differs from
+the one this yad was built against is still `ready`, with a `warning:` line
+under the table saying so — as are the things about the machine itself that
+[docs/run-it-safely.md](docs/run-it-safely.md) covers.
 
 ## Status
 
@@ -138,6 +144,12 @@ prompt. Run it on a machine, VM or container you would let an unknown repository
 execute code on, never on a laptop holding credentials you care about, and one
 runner per trust domain: personal and work are two runners.
 
+The rest of this section is the short version. The guide is
+**[docs/run-it-safely.md](docs/run-it-safely.md)** — what a run can actually do
+on the machine you give it, why a profile separates YAD's state but not the
+machine (so each profile wants its own OS user), what turning a harness's own
+guardrails back on costs, and the three things `yad doctor` now warns about.
+
 You trust the hubs you connect, and YAD does not police what they send
 ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A hub
 writes the brief, and a brief can tell the harness to read any file or send any
@@ -155,8 +167,9 @@ prompt, the logs or the events, as `NAME=value` or a `0600` file under the
 runner's data directory rather than in the checkout, and it is deleted when the
 run ends — or at the next start, if the runner was killed before it could. A
 folder source is taken only inside `[workdirs] roots` in `config.toml`; with
-none listed that is your home directory, so list the directories runs may use if
-you want them to reach less.
+none listed that is your home directory. List the directories a hub may have
+checked out if you want it to name fewer — `roots` chooses the material a
+workdir is built from, and does not confine the harness once the run starts.
 
 Claude Code runs with `--permission-mode bypassPermissions` unless
 `permission_mode` under `[harness.claude]` in `config.toml` says otherwise.
@@ -165,9 +178,11 @@ Claude refuses that mode as root; run the runner as an ordinary user.
 Codex runs with approval policy `never` and sandbox `danger-full-access` unless
 `approval` and `sandbox` under `[harness.codex]` say otherwise
 ([0036](docs/decisions/0036-codex-runs-unsandboxed-and-never-asks-unless-the-owner-says.md)).
-`sandbox = "workspace-write"` keeps what Codex writes inside the run's workdir,
-and keeps it off the network, so a run cannot push or install. A policy that
-asks for approval is answered no: nobody is there to say yes.
+`sandbox = "workspace-write"` keeps Codex off the network, so a run cannot push
+or install. It narrows what Codex may write but does not confine it to the
+workdir — `/tmp` and `$TMPDIR` stay writable by default
+([docs/run-it-safely.md](docs/run-it-safely.md)). A policy that asks for
+approval is answered no: nobody is there to say yes.
 
 ## Run it as a service
 

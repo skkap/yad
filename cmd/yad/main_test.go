@@ -55,9 +55,23 @@ func noTools(t *testing.T) {
 	}
 }
 
+// privateDir is a temporary directory only its owner can reach. t.TempDir()
+// hands back a 0755 one — it creates each test's numbered subdirectory with
+// MkdirAll(0o777) — and a profile directory in that mode is an exposure
+// `yad doctor` now reports, which every test but the one about exposures wants
+// out of the way. A real profile is 0700: config.Paths.Ensure makes it so.
+func privateDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func yad(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
-	t.Setenv("YAD_CONFIG_DIR", t.TempDir())
+	t.Setenv("YAD_CONFIG_DIR", privateDir(t))
 	t.Setenv("YAD_DATA_DIR", shortDir(t))
 	noHostTools(t)
 	var out, errb bytes.Buffer
@@ -257,7 +271,7 @@ func TestDoctorPrintsTheWholeHarnessError(t *testing.T) {
 			if err := os.WriteFile(bin, []byte(tc.body), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("YAD_CONFIG_DIR", t.TempDir())
+			t.Setenv("YAD_CONFIG_DIR", privateDir(t))
 			t.Setenv("YAD_DATA_DIR", shortDir(t))
 			noHostTools(t) // and empties PATH
 			if tc.viaPATH {
@@ -321,5 +335,67 @@ func TestTruncateCutsOnARuneBoundary(t *testing.T) {
 				t.Errorf("truncate(%q, %d) = %q, which is not valid UTF-8", tc.s, tc.n, got)
 			}
 		})
+	}
+}
+
+// The three things docs/run-it-safely.md tells an owner to care about reach
+// them through `yad doctor`, and none of them stops it running: a
+// group-readable data directory is a fact it reports, exactly like a harness
+// that is not installed. The root case cannot be reached from here — no test
+// suite may run as root — and is covered in internal/config.
+func TestDoctorWarnsAboutAnExposedProfile(t *testing.T) {
+	cfgDir, dataDir := privateDir(t), shortDir(t)
+	t.Setenv("YAD_CONFIG_DIR", cfgDir)
+	t.Setenv("YAD_DATA_DIR", dataDir)
+	noTools(t)
+	if err := os.Chmod(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cred := filepath.Join(cfgDir, "credentials", "yashiki")
+	if err := os.MkdirAll(filepath.Dir(cred), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cred, []byte("secret-credential-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(cred, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var o, e bytes.Buffer
+	if code := run(context.Background(), []string{"doctor"}, &o, &e); code != 0 {
+		t.Fatalf("doctor refused to run on an exposed profile: exit %d: %s", code, e.String())
+	}
+	out := o.String()
+	for _, want := range []string{
+		"warning: the data directory " + dataDir + " is -rwxr-xr-x",
+		"chmod 700 " + dataDir,
+		"warning: " + cred + " is -rw-r--r--",
+		"chmod 600 " + cred,
+		// It is still the diagnostic it was: the warnings are additions, not a
+		// replacement for what an owner ran it to see.
+		"No drivable harness",
+		"profile default",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in:\n%s", want, out)
+		}
+	}
+	// Never the secret itself: doctor prints a mode, not a credential.
+	if strings.Contains(out, "secret-credential-value") || strings.Contains(e.String(), "secret-credential-value") {
+		t.Errorf("doctor printed the credential:\n%s%s", out, e.String())
+	}
+	if !utf8.ValidString(out) || strings.ContainsRune(out, utf8.RuneError) {
+		t.Errorf("doctor printed a broken rune:\n%q", out)
+	}
+}
+
+// A profile nobody has touched is what `yad doctor` mostly runs on, and it must
+// say nothing about exposure there — a diagnostic that warns on a clean machine
+// teaches its reader to skip the warnings.
+func TestDoctorIsQuietOnAPrivateProfile(t *testing.T) {
+	code, out, _ := yad(t, "doctor")
+	if code != 0 || strings.Contains(out, "chmod") {
+		t.Errorf("exit %d:\n%s", code, out)
 	}
 }

@@ -673,7 +673,8 @@ run's hub-side state adds two before the protocol's: `queued` and `offered`.
 ## §5 The local surface
 
 ```
-yad doctor                         what is installed, and what YAD can drive
+yad doctor                         what is installed, what YAD can drive, and what about
+                                   this machine or profile is reachable by other users
 yad harnesses [--json]             the capability document, as a hub receives it
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
 yad disconnect <name>
@@ -855,6 +856,21 @@ line here is a reviewed change.
   servers without a trust prompt. With auto-approve that is no worse than the run
   itself — which is exactly why a runner belongs on a machine you would let the
   repository run code on.
+- `yad doctor` warns on the three exposures an owner can fix: running as root,
+  a config or data directory another user can reach — by its mode, or by owning
+  it, the same pair `control.checkDir` refuses before it binds the socket — and
+  a profile file another user can read (`config.Exposures`). The files that hold
+  a secret say how to retire it as well as how to close it: a chmod stops the
+  next reader and not the one who already read it. They are warnings and never change
+  its exit code — absence and misconfiguration are both facts it reports, and a
+  diagnostic that refused to run would answer a question nobody asked. Some of
+  what it reports is refused elsewhere and some is not: `config.ReadSecret`
+  refuses an exposed credential or admin token, and `control.checkDir` refuses
+  an exposed **data** directory before binding the socket. Nothing refuses an
+  exposed `state.db`, `hub.db` or `config.toml`, and nothing else looks at the
+  config directory — which is why doctor is where an owner hears about those.
+- The operator-facing version of this section is
+  [docs/run-it-safely.md](docs/run-it-safely.md).
 
 ## §9 Build order
 

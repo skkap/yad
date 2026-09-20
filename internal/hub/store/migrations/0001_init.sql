@@ -2,9 +2,11 @@
 -- runner on one machine are two parties that trust each other no more than
 -- two machines would. Times are unix milliseconds, as in the runner's store.
 --
--- Secrets are stored only as SHA-256 hashes. Both kinds are 256 random bits,
--- so a fast hash is enough — there is no password to brute-force — and a
--- leaked database gives nobody a token or a credential.
+-- All three secret kinds — registration token, runner credential, admin token
+-- — are stored only as SHA-256 hashes. Each is 256 random bits, so a fast hash
+-- is enough: there is no password to brute-force, and a leaked database gives
+-- none of the three back. It does give up a run's grants, which are plaintext
+-- inside runs.spec below; see the note there.
 
 CREATE TABLE registration_tokens (
     hash       TEXT PRIMARY KEY,
@@ -53,7 +55,10 @@ CREATE TABLE runs (
     harness    TEXT NOT NULL,
     model      TEXT NOT NULL,
     -- The run exactly as it will be offered — brief, sources and grants — as
-    -- JSON. Grants are the hub's to hold until the run ends.
+    -- JSON. Nothing clears this: FinishRun settles a run's state and no query
+    -- deletes one, so every grant this hub has been given stays in the file.
+    -- Narrowing that is a decision, not a patch; an exposed hub.db is exposed
+    -- secrets and `yad doctor` says so.
     spec       TEXT NOT NULL,
     state      TEXT NOT NULL CHECK (state IN (
         'queued', 'offered',
