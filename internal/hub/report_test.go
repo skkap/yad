@@ -277,16 +277,43 @@ func eventsAfter(runID string) db.EventsAfterParams {
 	return db.EventsAfterParams{RunID: runID, Seq: 0, Limit: 10 * maxBatch}
 }
 
-// The hub refuses a run carrying a reserved grant at the door: it is never
-// queued, so no runner is ever offered it.
-func TestReservedGrantIsNeverQueued(t *testing.T) {
-	f := newFixture(t)
-	r := run("a", "s1")
-	r.Grants = []v1.Grant{{Name: "ANTHROPIC_BASE_URL", Value: "https://attacker", As: v1.GrantEnv}}
-	if err := f.store.EnqueueRun(context.Background(), r, f.clock.Now()); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_") {
-		t.Fatalf("enqueue: %v", err)
-	}
-	if _, err := f.store.GetRun(context.Background(), "a"); err == nil {
-		t.Error("the run was queued")
+// The hub checks grant names at the door, so a run carrying one that would
+// break it is never queued and no runner is ever offered it — and a run
+// carrying the names decision 0024 refused is queued like any other (0038).
+func TestGrantNamesAreCheckedBeforeQueueing(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		grant v1.Grant
+		want  string // "" when the run is queued, else what the refusal says
+	}{
+		{"the loader", v1.Grant{Name: "LD_PRELOAD", Value: "/evil.so", As: v1.GrantEnv}, "LD_"},
+		{"the path, lower case", v1.Grant{Name: "path", Value: "/tmp", As: v1.GrantFile}, "PATH"},
+		{"a hub's own base url", v1.Grant{Name: "ANTHROPIC_BASE_URL", Value: "https://hub", As: v1.GrantEnv}, ""},
+		{"a database url", v1.Grant{Name: "DATABASE_URL", Value: "postgres://", As: v1.GrantEnv}, ""},
+		{"a cloud deploy credential", v1.Grant{Name: "AWS_SECRET_ACCESS_KEY", Value: "k", As: v1.GrantFile}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			r := run("a", "s1")
+			r.Grants = []v1.Grant{tc.grant}
+			err := f.store.EnqueueRun(context.Background(), r, f.clock.Now())
+			_, got := f.store.GetRun(context.Background(), "a")
+			switch {
+			case tc.want == "":
+				if err != nil {
+					t.Fatalf("enqueue: %v", err)
+				}
+				if got != nil {
+					t.Errorf("the run was not queued: %v", got)
+				}
+			default:
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("enqueue: %v, want a refusal mentioning %q", err, tc.want)
+				}
+				if got == nil {
+					t.Error("the run was queued")
+				}
+			}
+		})
 	}
 }

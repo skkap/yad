@@ -638,3 +638,32 @@ func TestGHFromProse(t *testing.T) {
 		})
 	}
 }
+
+// A probe whose deadline fires reports the timeout, never the exit status of
+// the child its own kill produced. supervise.Run decides TimedOut in a select
+// between the deadline, the leader's exit and the pipe's EOF; a child that
+// reaches EOF first settles that select before the deadline exists, so Run
+// blocks in Wait, the deadline kills the child there, and the capture comes
+// back with a kill for an error and TimedOut false. Holding stdout instead
+// leaves all three ready at once and the choice random — green on an idle
+// machine, red on a loaded one, which is how CI found this in both packages
+// (DEV-69). The rule itself is decidable and is tested in
+// harness.TestProbeTimedOutIsTheDeadlinesCall.
+func TestATimedOutProbeIsNeverReportedAsAnExit(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		// PATH is empty inside isolate, so sleep is named in full.
+		{"closes stdout, then hangs", "exec 1>&-\n/bin/sleep 60\n"},
+		{"hangs holding stdout", "/bin/sleep 60\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := probeTimeout
+			probeTimeout = 250 * time.Millisecond
+			t.Cleanup(func() { probeTimeout = old })
+
+			d := hanging(t, "git", tc.body)
+			if !strings.Contains(d.Error, "no answer to `git --version`") {
+				t.Errorf("Error = %q, want the timeout rather than the child's fate", d.Error)
+			}
+		})
+	}
+}
