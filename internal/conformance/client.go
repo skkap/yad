@@ -85,7 +85,15 @@ type answer struct {
 // and those three are what the checks read.
 type client struct {
 	base string
-	http *http.Client
+	// redactedBase is base with its credentials taken out, and the two differ
+	// only when the connection URL carries any. A transport error quotes the
+	// URL it dialled — `Post "http://<token>@host/v1/…": dial tcp …` — and
+	// Go's own stripping covers the password and leaves the username, which
+	// is where a URL-shaped credential usually sits. Replacing the base URL
+	// whole cannot mis-fire the way a bare word would: `runner` as a username
+	// would otherwise redact the word "runner" everywhere in the report.
+	redactedBase string
+	http         *http.Client
 	// seen is every answer in order, for the checks that judge all of them —
 	// the error envelope, and the controls a hub may send.
 	seen []*answer
@@ -101,7 +109,8 @@ type client struct {
 
 func newClient(base string, known ...string) *client {
 	c := &client{
-		base: strings.TrimRight(base, "/"),
+		base:         strings.TrimRight(base, "/"),
+		redactedBase: redactedURL(strings.TrimRight(base, "/")),
 		http: &http.Client{
 			Timeout: requestTimeout,
 			// Go keeps the Authorization header across a same-host redirect
@@ -141,6 +150,9 @@ func (c *client) learn(secret string) {
 // needles, and no pattern matching: a redactor with false positives is one
 // somebody switches off.
 func (c *client) hide(text string) string {
+	if c.redactedBase != c.base {
+		text = strings.ReplaceAll(text, c.base, c.redactedBase)
+	}
 	text = c.hideKnown(text)
 	for _, secret := range c.known {
 		if needle := encoded(secret); needle != "" {

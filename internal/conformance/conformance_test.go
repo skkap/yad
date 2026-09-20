@@ -593,6 +593,32 @@ func TestASecretTheHubSentIsNotPrinted(t *testing.T) {
 	}
 }
 
+// A credential in the connection URL reaches the report by a route neither the
+// header line nor the known-secrets list covers: a transport error quotes the
+// URL it dialled, and Go strips the password from that and keeps the username,
+// which is where a URL-shaped credential usually sits.
+func TestACredentialInTheURLIsNotPrintedByATransportError(t *testing.T) {
+	t.Parallel()
+	// Port 1: nothing is listening, so every call fails at the transport and
+	// every failure carries the URL.
+	const secret = "sk-secret-token-abc"
+	rep, err := Run(context.Background(), Options{BaseURL: "http://" + secret + "@127.0.0.1:1/v1", Token: fakeToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := outcome(t, rep, "errors/unknown-path"); o.Status != Failed {
+		t.Fatalf("errors/unknown-path was %s against a hub that is not listening, so no transport error was printed", label(o.Status))
+	}
+	var out strings.Builder
+	rep.Print(&out)
+	if strings.Contains(out.String(), secret) {
+		t.Errorf("the credential in the URL is in the report:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "127.0.0.1:1") {
+		t.Errorf("the report no longer says which address it could not reach:\n%s", out.String())
+	}
+}
+
 // The refusal a bad connection URL earns is printed before there is a report
 // to redact, and a URL is a place people are handed credentials.
 func TestARefusedURLIsQuotedWithoutItsCredentials(t *testing.T) {

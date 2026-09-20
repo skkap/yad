@@ -10,6 +10,21 @@
 // for would not be checkable by it. `yad hub` is checked against it like any
 // other hub, over HTTP on a local listener, in internal/hub's own tests.
 //
+// What it will not print. The report is written to a terminal and kept in
+// whatever log ran it, so nothing in it is a secret: the registration token
+// and the credential this suite was given are removed from every sentence and
+// every body, a register answer that succeeded is described rather than shown
+// because its credential may be under a name only that hub knows, and the
+// secrets a hub *sends* — a grant's value, a password inside a run's source
+// URL, credentials in the connection URL — are removed too, by learning them
+// or by taking them out of the URL.
+//
+// The bound on that: a hub is free to write anything into an error message, an
+// error code or a run id, including a secret belonging to some other run this
+// suite was never offered and cannot know. Nothing here can catch that, and
+// nothing here pretends to — what this guards is every secret the protocol
+// carries and every secret the suite has held.
+//
 // A failure names the rule in a sentence and the part of §2 it is written in,
 // because the person reading it is implementing a hub and does not have this
 // repository open. "expected 409, got 200" tells them nothing.
