@@ -160,8 +160,12 @@ func progressOf(row db.Run, until time.Time, log *slog.Logger) progress {
 	}
 	if row.Spent.Valid && row.Spent.String != "" {
 		if err := json.Unmarshal([]byte(row.Spent.String), &p.spent); err != nil {
-			// The run still gets its terminal state; only what it cost is
-			// lost, and saying nothing is better than saying a wrong number.
+			// Cleared, not left as it fell. json.Unmarshal fills what it
+			// parsed before it failed, so without this the result ships
+			// half a decode while the line below says it ships none of it.
+			// Saying nothing is better than saying a wrong number, and the
+			// two have to agree.
+			p.spent = spent{}
 			log.Warn("what the run's turns cost could not be read; its result carries none of it",
 				"connection", row.Connection, "run", row.ID, "err", err)
 		}

@@ -120,7 +120,7 @@ components:
       additionalProperties: true
       properties:
         account_switches:
-          description: "How many turns of this run started on a different account than the turn before them. Counted by what a move costs rather than by what caused it: each one spends a cache-cold turn because the prompt cache does not follow the account, and a run resumed onto a different account pays that whether or not a failover put it there. A run parked five times and resumed on the same account each time reports 0; a run that goes A to B and back to A reports 2."
+          description: How many turns of this run started on a different account than the turn before them. Counted by what a move costs rather than by what caused it, so a run resumed onto a different account after waiting counts the same as one a failover moved. A run parked five times and resumed on the same account each time reports 0; a run that goes A to B and back to A reports 2. The cost is expected to be one cache-cold turn, because prompt caches are documented as isolated per account -- but no cross-account resume has been measured, so that price is inferred rather than observed.
           format: int64
           type: integer
         api_retries:
@@ -132,7 +132,7 @@ components:
           format: int64
           type: integer
         duration_ms:
-          description: "How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more."
+          description: "How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more. A lost run's other figures are likewise only what the runner had durably recorded: its counters and usage are whatever its last pause wrote down, so zeros there mean nothing was written rather than nothing happened."
           format: int64
           type: integer
         first_event_ms:

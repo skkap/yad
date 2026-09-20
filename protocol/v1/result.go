@@ -23,6 +23,15 @@ type RunUsage struct {
 // Every figure covers the whole run, however many turns and however many
 // accounts it took — not the last turn. The exception is first_event_ms,
 // which is one turn's by design; its own comment says why.
+//
+// A run reported **lost** is the one case where less is known, and the
+// difference is worth stating rather than leaving a hub to infer it. Nobody
+// watched that run stop, so its figures are what the runner had durably
+// recorded, not what happened: duration_ms and waited_ms come from its
+// stored timestamps and are floors, while the counters and the usage are
+// whatever its last pause wrote down. A run that changed accounts and was
+// then lost without pausing reports zeros for the counters, and that means
+// "nothing was written down" rather than "nothing happened".
 type Metrics struct {
 	// DurationMS is how long the run took, from the moment it first reached
 	// preparing.
@@ -33,7 +42,7 @@ type Metrics struct {
 	// been alive for it — its last spooled event, or the last write to its
 	// row. The real duration is that or more. Measuring to the restart
 	// instead would report how long the machine was off.
-	DurationMS int64 `json:"duration_ms" doc:"How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more."`
+	DurationMS int64 `json:"duration_ms" doc:"How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more. A lost run's other figures are likewise only what the runner had durably recorded: its counters and usage are whatever its last pause wrote down, so zeros there mean nothing was written rather than nothing happened."`
 	// FirstEventMS is how long the harness took to say anything, measured
 	// from the start of the turn that answered — deliberately not from the
 	// start of the run. A run parked five hours on a usage limit and then
@@ -62,12 +71,18 @@ type Metrics struct {
 	// AccountSwitches is how many turns of this run started on a different
 	// account than the turn before them.
 	//
-	// Defined by cost rather than by cause. Each move spends one cache-cold
-	// turn, because the prompt cache does not follow the account
-	// (decision 0013), and a run resumed onto a different account after
-	// waiting pays that whether or not a failover put it there — so a
-	// resume that lands elsewhere counts. Two consequences worth stating: a
-	// run parked five times and resumed on the same account each time
-	// reports 0, and a run that goes A to B and back to A reports 2.
-	AccountSwitches int `json:"account_switches" doc:"How many turns of this run started on a different account than the turn before them. Counted by what a move costs rather than by what caused it: each one spends a cache-cold turn because the prompt cache does not follow the account, and a run resumed onto a different account pays that whether or not a failover put it there. A run parked five times and resumed on the same account each time reports 0; a run that goes A to B and back to A reports 2."`
+	// Defined by cost rather than by cause: a run resumed onto a different
+	// account after waiting is counted the same as one a failover moved,
+	// because what the two have in common is what the move costs. Two
+	// consequences worth stating: a run parked five times and resumed on
+	// the same account each time reports 0, and a run that goes A to B and
+	// back to A reports 2.
+	//
+	// The cost is expected to be one cache-cold turn. That is an inference
+	// and not a measurement: prompt caches are documented as isolated per
+	// account, no cross-account resume has been measured, and decision 0013
+	// tracks the gap as DEV-58. The count is worth having either way — it
+	// is how many times the run changed accounts — but a hub pricing it
+	// should know the price is not yet observed.
+	AccountSwitches int `json:"account_switches" doc:"How many turns of this run started on a different account than the turn before them. Counted by what a move costs rather than by what caused it, so a run resumed onto a different account after waiting counts the same as one a failover moved. A run parked five times and resumed on the same account each time reports 0; a run that goes A to B and back to A reports 2. The cost is expected to be one cache-cold turn, because prompt caches are documented as isolated per account -- but no cross-account resume has been measured, so that price is inferred rather than observed."`
 }

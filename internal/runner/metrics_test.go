@@ -1,9 +1,12 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -224,5 +227,28 @@ func TestAParkThatResumesOnTheSameAccountIsNotASwitch(t *testing.T) {
 	}
 	if res.Metrics.AccountSwitches != 0 {
 		t.Errorf("account_switches = %d, want 0 — the run came back on the account it left", res.Metrics.AccountSwitches)
+	}
+}
+
+// A `spent` blob that will not decode must leave nothing behind.
+// json.Unmarshal fills what it parsed before it failed, so a half-decoded
+// row would ship half a number under a log line saying it shipped none of
+// it — and half a usage figure is worse than no usage figure, because a hub
+// cannot tell it from a whole one.
+func TestAnUnreadableSpentLeavesNoHalfDecodedNumbers(t *testing.T) {
+	// Valid JSON as far as the counters, then a type error: exactly what a
+	// truncated or hand-edited row looks like to the decoder.
+	row := db.Run{
+		Connection: "hub", ID: "a",
+		Spent: sql.NullString{Valid: true, String: `{"tool_calls":7,"api_retries":2,"usage":"not an object"}`},
+	}
+	var logged bytes.Buffer
+	p := progressOf(row, time.Now(), slog.New(slog.NewJSONHandler(&logged, nil)))
+
+	if p.spent.ToolCalls != 0 || p.spent.APIRetries != 0 || len(p.spent.Usage) != 0 {
+		t.Errorf("a failed decode left %+v behind; the run's result would carry part of a number", p.spent)
+	}
+	if !strings.Contains(logged.String(), "carries none of it") {
+		t.Errorf("the failure was not reported:\n%s", logged.String())
 	}
 }
