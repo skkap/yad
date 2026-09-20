@@ -213,9 +213,10 @@ func (h *scriptedHub) Result(_ context.Context, runID string, res v1.Result) err
 }
 
 // Whatever a hub offers, the runner claims only what it can drive, in sessions
-// it can resume, within its capacity — and tells the hub why it refused the
-// rest. Not because the hub is an attacker (0038), but because this runner is
-// the one that has to run it.
+// it can resume, within its capacity — and says why it refused what it will
+// never take. A run it merely has no room for is neither claimed nor refused:
+// it is left for the hub to offer again. The checking is not because a hub is
+// an attacker (0038), but because this runner is the one that has to run it.
 func TestRefusesWhatItCannotRun(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

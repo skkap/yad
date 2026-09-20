@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -657,8 +658,10 @@ func TestASweepThatFailsNamesNoGrant(t *testing.T) {
 }
 
 // The cleanup at the end of every ordinary run is held to the rule sweepGrants
-// is: a RemoveAll that fails must not put a grant's name in the log. The sweep
-// runs only after a crash, so this branch is the one that runs far more often.
+// is: a RemoveAll that fails must not put a grant's name in the log. This is
+// the branch that runs whenever a run ends; the sweep runs at every start, and
+// is what finally removes the files this one could not — after a crash, and
+// after a failure like this one too.
 func TestAFailedGrantCleanupNamesNoGrant(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root unlinks through a directory's missing write bit, so the cleanup would succeed")
@@ -693,15 +696,20 @@ func TestAFailedGrantCleanupNamesNoGrant(t *testing.T) {
 	var logged strings.Builder
 	x := e.executor(ad)
 	x.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	// Registered before the run, not after: a run that fails early leaves the
+	// directory at 0500, and t.TempDir's own cleanup cannot remove it.
+	t.Cleanup(func() {
+		filepath.WalkDir(filepath.Join(e.paths.Data, "grants"), func(p string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				os.Chmod(p, 0o700)
+			}
+			return nil
+		})
+	})
 	claimAndRun(t, l, x)
 
 	mu.Lock()
 	defer mu.Unlock()
-	t.Cleanup(func() {
-		if dir != "" {
-			os.Chmod(dir, 0o700)
-		}
-	})
 	if dir == "" {
 		t.Fatal("the run was never given a file grant")
 	}
