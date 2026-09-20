@@ -42,6 +42,7 @@ ALTER TABLE runs ADD COLUMN had_grants INTEGER NOT NULL DEFAULT 0;
 -- many processes it took, and protocol/v1's Result says its usage covers the
 -- whole of it -- so a turn that ran before a park must still be in the total
 -- the hub is finally told, and the hub's wall_clock_ms must not start again
--- at zero on the other side. Null for a run that has taken one turn: there is
--- nothing carried over yet.
+-- at zero on the other side. Every park writes it, even one before the run's
+-- first turn, which stores an empty object; null means the row was never
+-- parked by a yad that had this column.
 ALTER TABLE runs ADD COLUMN spent TEXT;

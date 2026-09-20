@@ -157,15 +157,6 @@ func (r *Resumer) Sweep(ctx context.Context) time.Duration {
 func (r *Resumer) consider(ctx context.Context, row db.Run, accounts []account.Account) time.Duration {
 	now := r.Clock.Now()
 	log := r.Log.With("connection", row.Connection, "run", row.ID)
-	if r.Live != nil && !r.Live[row.Connection] {
-		// This process has no loop and no reporter for that connection — its
-		// credential could not be read, its Recover failed, or the owner
-		// took it out of the configuration. Running the turn would spend
-		// tokens on a run whose lease nothing here renews and whose result
-		// nothing here delivers, so the hub would lose it, give it to
-		// another runner, and this machine would run it twice.
-		return 0
-	}
 	var run v1.Run
 	if err := json.Unmarshal([]byte(row.Spec), &run); err != nil {
 		// Unreadable, so it can never run and never resume: ending it is the
@@ -180,19 +171,49 @@ func (r *Resumer) consider(ctx context.Context, row db.Run, accounts []account.A
 		r.end(ctx, row, v1.RunTimedOut, &v1.RunError{Class: ClassMaxWait, Message: maxWaitMessage(waited, run.MaxWaitMS)}, now)
 		return 0
 	}
+	// Only past the two ways a parked run ends without running, so a run of
+	// a connection this process cannot serve is still bounded by the cap its
+	// hub gave it. What is left over — a run of a connection the owner
+	// removed from the configuration and that carries no cap — stays
+	// waiting, holding its session and workdir out of collection, as every
+	// other held run of a removed connection already does; clearing up after
+	// one is `yad disconnect` (epic E7, cmd/yad/cmd_later.go).
+	if r.Live != nil && !r.Live[row.Connection] {
+		// This process has no loop and no reporter for that connection — its
+		// credential could not be read, its Recover failed, or the owner
+		// took it out of the configuration. Running the turn would spend
+		// tokens on a run whose lease nothing here renews and whose result
+		// nothing here delivers, so the hub would lose it, give it to
+		// another runner, and this machine would run it twice.
+		return 0
+	}
 	due := now
 	if row.ResumesAt.Valid {
 		due = time.UnixMilli(row.ResumesAt.Int64).Add(resumeSkew)
 	}
 	// The resume time is the earliest reset known when the run parked, and
 	// it is a floor rather than the whole answer: an account can become
-	// usable before it. The owner finishes a login and LoginProbe frees the
-	// account, or `yad account add` adds one. ARCHITECTURE's run-state
+	// usable before it. The way that happens is the owner finishing a login
+	// in a home, which LoginProbe notices — and only that. A `yad account
+	// add` of a *new* label does not reach a running daemon at all: the
+	// config is the one it started with, and account.Load enumerates only
+	// the labels in it. ARCHITECTURE's run-state
 	// diagram says the arrow out of waiting is "limit resets / account
 	// frees", and without this only the first half of that is true — a run
 	// would sit out the remaining hours beside a working account, and one
 	// with a max_wait could time out while that account ran newer work.
 	if wait := due.Sub(now); wait > 0 {
+		// Inside the skew, nothing is early. resumes_at is the earliest
+		// limited_until among the harness's accounts, and account.stateOf
+		// reads that account free the instant the moment passes, with no
+		// skew of its own — so for resumeSkew after the reset a free account
+		// and a not-yet-due run are the *same* reset seen through two
+		// clocks. Resuming on that reading is exactly what the skew exists
+		// to prevent: the harness's clock is its own, the turn comes back
+		// with the same limit, and the run pays a cache-cold turn for it.
+		if wait <= resumeSkew {
+			return wait
+		}
 		if _, free := account.Soonest(accounts, row.Harness, now); !free {
 			return capWait(wait, run, waited)
 		}
@@ -289,7 +310,6 @@ func waitingFor(row db.Run, now time.Time) int64 {
 // result reports it, and then the executor writes the terminal state and the
 // result together as it does for any other run.
 func (r *Resumer) end(ctx context.Context, row db.Run, state v1.RunState, rerr *v1.RunError, now time.Time) {
-	r.Exec.forget(row.Connection, row.ID)
 	c, err := claimFor(row, nil)
 	if err != nil {
 		// Only reachable for a spec that would not parse, which is how this
@@ -298,7 +318,15 @@ func (r *Resumer) end(ctx context.Context, row db.Run, state v1.RunState, rerr *
 		c = Claim{Connection: row.Connection, Run: v1.Run{RunID: row.ID, Harness: row.Harness}, Release: func() {}}
 		c.Run.Session = v1.SessionRef{ID: row.SessionID}
 	}
-	r.Exec.finishParked(ctx, c, row, state, rerr, now)
+	if err := r.Exec.finishParked(ctx, c, row, state, rerr, now); err != nil {
+		return
+	}
+	// Only now. The transaction leaves the row exactly as it was when it
+	// fails, so forgetting the claim first would leave a run still `waiting`
+	// whose grants this process no longer holds — and the next sweep reports
+	// it lost as grants_lost, which decision 0023 makes final, so the state
+	// the hub actually asked for could never be sent.
+	r.Exec.forget(row.Connection, row.ID)
 }
 
 // finishParked writes the terminal state and result of a run that ended while
@@ -309,7 +337,7 @@ func (r *Resumer) end(ctx context.Context, row db.Run, state v1.RunState, rerr *
 // failure of the result leaves a row still `waiting` whose resumes_at the
 // wait's end has already cleared — which reads as due now, so the next sweep
 // runs a turn for a run that was cancelled or timed out.
-func (e *Exec) finishParked(ctx context.Context, c Claim, row db.Run, state v1.RunState, rerr *v1.RunError, now time.Time) {
+func (e *Exec) finishParked(ctx context.Context, c Claim, row db.Run, state v1.RunState, rerr *v1.RunError, now time.Time) error {
 	e.init()
 	prog := progress{started: now, waitedMS: row.WaitedMs + waitingFor(row, now), switches: int(row.AccountSwitches)}
 	if row.StartedAt.Valid {
@@ -321,7 +349,7 @@ func (e *Exec) finishParked(ctx context.Context, c Claim, row db.Run, state v1.R
 				"connection", c.Connection, "run", c.Run.RunID, "err", err)
 		}
 	}
-	e.finishWith(ctx, c, v1.Result{
+	return e.finishWith(ctx, c, v1.Result{
 		State: state, LastSeq: e.lastSeq(ctx, c), Error: rerr,
 		Usage:   v1.RunUsage{ByModel: prog.spent.Usage},
 		Metrics: prog.metrics(now),
@@ -347,7 +375,6 @@ func (r *Resumer) CancelWaiting(ctx context.Context, connection, runID string) b
 	}
 	now := r.Clock.Now()
 	r.Log.Info("the run was waiting for a free account and is cancelled", "connection", connection, "run", runID)
-	r.Exec.forget(connection, runID)
 	c, cerr := claimFor(row, nil)
 	if cerr != nil {
 		c = Claim{Connection: connection, Run: v1.Run{RunID: runID, Harness: row.Harness, Session: v1.SessionRef{ID: row.SessionID}}, Release: func() {}}
@@ -355,6 +382,12 @@ func (r *Resumer) CancelWaiting(ctx context.Context, connection, runID string) b
 	// No error, as for any run the hub cancelled: the hub asked, so it knows
 	// why, and a runner that invented a reason here would be the only one of
 	// the two making something up.
-	r.Exec.finishParked(ctx, c, row, v1.RunCancelled, nil, now)
+	if err := r.Exec.finishParked(ctx, c, row, v1.RunCancelled, nil, now); err != nil {
+		// Still parked, and still this process's to resume or cancel. The
+		// hub repeats a cancel until the run ends (decision 0025), so the
+		// next sync tries again.
+		return false
+	}
+	r.Exec.forget(connection, runID)
 	return true
 }

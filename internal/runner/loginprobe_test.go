@@ -38,11 +38,18 @@ func TestANeedsLoginAccountReturnsToServiceOnceTheOwnerLogsIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := probeFor(t, e, cfg)
+	// The wake is what stops a run parked on a five-hour reset sitting out
+	// the rest of it beside the account the owner has just logged in.
+	woke := 0
+	p.Freed = func() { woke++ }
 
 	// Still logged out: the probe finds nothing and changes nothing. Without
 	// this the test would pass on a probe that frees every account it sees.
 	if freed := p.Sweep(ctx); freed != 0 {
 		t.Fatalf("the probe freed %d accounts while the home has no login", freed)
+	}
+	if woke != 0 {
+		t.Errorf("the probe woke the resumer %d times over an account it did not free", woke)
 	}
 	if got := accountState(t, e, "work"); got != v1.AccountNeedsLogin {
 		t.Fatalf("the account is %q, want needs_login", got)
@@ -57,6 +64,9 @@ func TestANeedsLoginAccountReturnsToServiceOnceTheOwnerLogsIn(t *testing.T) {
 	}
 	if got := accountState(t, e, "work"); got != v1.AccountFree {
 		t.Errorf("the account is %q, want free", got)
+	}
+	if woke != 1 {
+		t.Errorf("the probe told the resumer %d times, want once — a parked run waits up to a minute longer for each one it misses", woke)
 	}
 	// And a run would now take it.
 	accounts, err := account.Load(ctx, e.store.Queries, e.paths.Data, cfg)

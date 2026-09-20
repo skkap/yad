@@ -19,6 +19,7 @@ import (
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/fake"
+	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 )
 
@@ -430,10 +431,15 @@ func TestCancellingAWaitingRunEndsIt(t *testing.T) {
 // ARCHITECTURE's run-state diagram says the way out of waiting is "limit
 // resets / account frees". The second half is the one a fixed resume time
 // cannot express: the run parks on the earliest reset known at the time, and
-// an account that becomes usable before it — the owner finishes a login, or
-// adds an account — has to bring the run back early. Otherwise a run sits out
-// four more hours beside a working account, and one with a max_wait times out
-// while that account runs newer work.
+// the owner then finishes a login in an already-configured account's home,
+// which LoginProbe notices. Otherwise the run sits out four more hours beside
+// a working account, and one with a max_wait times out while that account
+// runs newer work.
+//
+// A login of a configured account, not `yad account add` of a new one: a
+// running daemon enumerates the labels in the configuration it started with,
+// so a new label reaches it only at a restart. That is why spare is in cfg
+// from the start here and only its login arrives late.
 func TestAFreedAccountBringsAParkedRunBackBeforeItsResumeTime(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -775,5 +781,237 @@ func TestNoShippedFileEndsARunsWaitOutsideATransaction(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// What a run spent is true whatever the run then became. A cancel arriving
+// during the turn after a move does not undo the tokens the first account
+// burned, and the result the hub is finally told has to carry them — it is
+// the only report of what the run cost.
+//
+// The asymmetry this pins: a run cancelled a moment *before* its turn starts
+// already reported the earlier turns' usage, through the cancelled-early
+// path. One cancelled a moment after must not report less.
+func TestACancelledRunStillReportsWhatTheAccountBeforeItSpent(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	for _, label := range []string{"work", "personal"} {
+		plantCredential(t, e.paths.Data, label)
+	}
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	first := limitScript("five_hour", reset, "native-1")
+	first.Outcome.Usage = map[string]v1.Usage{"opus": {Model: "opus", Input: 100, Output: 50}}
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work", "personal"), byHome(map[string]fake.Script{
+		"work": first,
+		// The turn the cancel lands in: it never answers on its own.
+		"personal": {Hang: true, Outcome: adapter.Outcome{NativeSessionID: "native-1"}},
+	}))
+	started(t, l, x)
+	eventually(t, "the run reaches the second account", func() bool {
+		return localRun(t, e, "a").Account.String == "personal"
+	})
+	if view, err := e.api(t).Cancel(ctx, "a"); err != nil || view.CancelRequestedAt == nil {
+		t.Fatalf("cancel: %+v %v", view, err)
+	}
+	mustSync(t, l)
+	ended(t, x)
+
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunCancelled {
+		t.Fatalf("result = %+v, %v, want cancelled", res, ok)
+	}
+	got := res.Usage.ByModel["opus"]
+	if want := (v1.Usage{Model: "opus", Input: 100, Output: 50}); got != want {
+		t.Errorf("usage = %+v, want %+v — the cancel does not undo what the first account spent", got, want)
+	}
+}
+
+// first_event_ms answers "why is the harness slow" (ARCHITECTURE.md §2). A
+// run parked for hours and then answering in milliseconds is not a slow
+// harness, and reporting the park here would count the same wait twice —
+// once as waited_ms and once as time to first token.
+func TestFirstEventMSMeasuresTheTurnAndNotTheWaitBeforeIt(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The park is milliseconds old in wall-clock terms, and the three hours
+	// live only in the resumer's clock — so the row is backdated to make the
+	// wait real. Without this the two readings of first_event_ms, from the
+	// run's start and from the turn's, are the same number.
+	long := time.Now().Add(-3 * time.Hour).UnixMilli()
+	if _, err := e.store.DB.ExecContext(ctx,
+		`UPDATE runs SET started_at = ?, waiting_since = ? WHERE connection = 'hub' AND id = 'a'`, long, long); err != nil {
+		t.Fatal(err)
+	}
+	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Events:  []v1.Event{{Kind: v1.EventText, Text: "here at once"}},
+		Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"},
+	}))
+	e.resumer(x2, NewPool(v1.Capacity{Total: 1}), &stepClock{now: time.Now()}).Sweep(ctx)
+	x2.Wait()
+
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunSucceeded {
+		t.Fatalf("result = %+v, %v", res, ok)
+	}
+	if res.Metrics.WaitedMS < (3*time.Hour).Milliseconds()-time.Minute.Milliseconds() {
+		t.Fatalf("waited_ms = %d, want about three hours — the rest of this test rests on it", res.Metrics.WaitedMS)
+	}
+	if res.Metrics.FirstEventMS > time.Minute.Milliseconds() {
+		t.Errorf("first_event_ms = %d; the harness answered at once and only the park was long",
+			res.Metrics.FirstEventMS)
+	}
+}
+
+// resumeSkew exists because the reset came from the harness, whose clock is
+// its own: a turn started a moment early gets the same limit back and costs a
+// whole cache-cold turn. The early-resume path must not walk around it.
+//
+// The window is not hypothetical. resumes_at is the earliest limited_until
+// among the harness's accounts, and account.stateOf reads that same account
+// free the instant the moment passes — with no skew — so for resumeSkew after
+// a reset, "an account is free" and "the run is not due" are the same reset
+// seen through two clocks.
+func TestTheEarlyResumeDoesNotWalkAroundTheSkewOnTheRunsOwnReset(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	// The reset is one second ago: the account reads free, and the run is
+	// due in four more seconds. Both are the same moment.
+	just := time.Now().Add(-time.Second)
+	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: just.UnixMilli(), Valid: true}, UpdatedAt: time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.SetRunWaiting(ctx, db.SetRunWaitingParams{
+		ResumesAt:    sql.NullInt64{Int64: just.UnixMilli(), Valid: true},
+		WaitingSince: sql.NullInt64{Int64: time.Now().Add(-time.Hour).UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(), Connection: "hub", ID: "a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"},
+	}))
+	r := e.resumer(x2, NewPool(v1.Capacity{Total: 1}), &stepClock{now: time.Now()})
+	next := r.Sweep(ctx)
+	x2.Wait()
+
+	waitingRow(t, e, "a")
+	if _, ok := outboxResult(t, e, "a"); ok {
+		t.Error("the run was resumed inside the skew; the harness's own clock has not reached the reset")
+	}
+	if next <= 0 || next > resumeSkew {
+		t.Errorf("the sweep asked to come back in %s, want within the skew", next)
+	}
+}
+
+// A run this process cannot finish is still bounded by the cap its hub gave
+// it. The connection gate stops it being executed; it must not also stop it
+// ending, or the run holds its session and workdir out of collection for
+// ever and the hub never hears the timed_out it asked for.
+func TestAParkedRunOfADroppedConnectionStillTimesOutOnItsCap(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
+
+	run := testRun("a", "s1")
+	run.MaxWaitMS = (30 * time.Minute).Milliseconds()
+	l := e.loop(t, 1)
+	e.enqueue(t, run)
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	r := e.resumer(x, l.Pool, &stepClock{now: time.Now().Add(45 * time.Minute)})
+	r.Live = map[string]bool{"other": true}
+	r.Sweep(ctx)
+
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunTimedOut {
+		t.Fatalf("result = %+v, %v, want timed_out even though this process cannot run it", res, ok)
+	}
+	if got := localRun(t, e, "a").State; got == string(v1.RunWaiting) {
+		t.Error("the run is still waiting; its session and workdir can never be collected")
+	}
+}
+
+// The claim, and the grants in it, are given up only once the terminal
+// result has actually landed. The transaction leaves the row exactly as it
+// was when it fails, so a claim forgotten first leaves a run still `waiting`
+// whose grants this process no longer holds — and the next sweep reports it
+// `lost` with class grants_lost, which decision 0023 makes final, so the
+// state the hub asked for could never be sent afterwards.
+//
+// The failure is injected by giving the executor a store handle that is
+// closed: the resumer's own reads still work, and only the write fails.
+func TestAFailedResultKeepsTheParkedClaimSoTheCancelCanBeTriedAgain(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	run := testRun("a", "s1")
+	run.Grants = []v1.Grant{{Name: "TOKEN", Value: "s3cret", As: v1.GrantEnv}}
+	l := e.loop(t, 1)
+	e.enqueue(t, run)
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	before := waitingRow(t, e, "a")
+
+	// A second handle on the same file, closed: every write through it
+	// fails, and the resumer reads through the env's own open one.
+	broken, err := store.Open(ctx, e.paths.StateDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken.Close()
+	x.Store = broken
+	r := e.resumer(x, l.Pool, &stepClock{now: time.Now()})
+
+	if r.CancelWaiting(ctx, "hub", "a") {
+		t.Error("CancelWaiting reported the run cancelled; its result was never recorded")
+	}
+	x.Store = e.store
+
+	after := waitingRow(t, e, "a")
+	if after.ResumesAt != before.ResumesAt || after.WaitingSince != before.WaitingSince {
+		t.Errorf("the row moved: resumes_at %v→%v, waiting_since %v→%v",
+			before.ResumesAt, after.ResumesAt, before.WaitingSince, after.WaitingSince)
+	}
+	// And the claim is still here, so the retry the hub sends can end the
+	// run properly instead of finding it grantless.
+	if _, ok := x.takeParked("hub", "a"); !ok {
+		t.Error("the parked claim was given up for a result that did not land; the retry would report grants_lost")
 	}
 }

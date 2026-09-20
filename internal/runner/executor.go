@@ -923,6 +923,15 @@ func (e *Exec) result(out adapter.Outcome, w watch, prog *progress) v1.Result {
 		State: out.State, FinalText: out.FinalText, Error: out.Error, LastSeq: w.lastSeq,
 		Metrics: metrics,
 	}
+	// Before any return below, not after them. What the run spent is true
+	// whatever the run then became, and the tokens of a turn that already
+	// finished on another account are not undone by a cancel arriving during
+	// the next one. Assigned after the early return, a run cancelled a
+	// moment after its turn started reported no usage while one cancelled a
+	// moment before — through stoppedEarly — reported all of it.
+	if len(prog.spent.Usage) > 0 {
+		res.Usage.ByModel = prog.spent.Usage
+	}
 	// A watchdog that stopped the turn has the last word even when the hub
 	// asked for an interrupt too: the case below says timed_out.
 	stoppedByHub := (w.cancelled || w.interrupted) && w.stopped == ""
@@ -932,9 +941,6 @@ func (e *Exec) result(out adapter.Outcome, w watch, prog *progress) v1.Result {
 		// own; that is the cancel, not a crash.
 		res.State, res.Error, res.FinalText = v1.RunCancelled, nil, ""
 		return res
-	}
-	if len(prog.spent.Usage) > 0 {
-		res.Usage.ByModel = prog.spent.Usage
 	}
 	switch {
 	case w.stopped != "":
@@ -951,7 +957,7 @@ func (e *Exec) result(out adapter.Outcome, w watch, prog *progress) v1.Result {
 // in the outbox before the first attempt to send it and a crash between the
 // two cannot leave a finished run with nothing owed.
 func (e *Exec) finish(ctx context.Context, c Claim, res v1.Result) {
-	e.finishWith(ctx, c, res, nil)
+	_ = e.finishWith(ctx, c, res, nil)
 }
 
 // finishWith is finish with one more statement inside the same transaction,
@@ -959,7 +965,7 @@ func (e *Exec) finish(ctx context.Context, c Claim, res v1.Result) {
 // parked run's is the case: ending its wait writes away the resume time that
 // keeps it from being started again, so a wait ended beside a result that
 // was not recorded leaves a run every later sweep executes.
-func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func(*db.Queries) error) {
+func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func(*db.Queries) error) error {
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	res.FinalText, _ = capBytes(res.FinalText, maxTextBytes)
 	if res.Error != nil {
@@ -970,7 +976,7 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 	body, err := json.Marshal(res)
 	if err != nil {
 		log.Error("result not recorded", "err", err)
-		return
+		return err
 	}
 	var reason sql.NullString
 	if res.Error != nil {
@@ -996,13 +1002,14 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 	})
 	if err != nil {
 		log.Error("result not recorded; the run stays held", "err", err)
-		return
+		return err
 	}
 	log.Info("run finished", "state", res.State, "last_seq", res.LastSeq)
 	e.report(c.Connection)
 	if e.Ended != nil {
 		e.Ended()
 	}
+	return nil
 }
 
 func (e *Exec) setState(ctx context.Context, c Claim, s v1.RunState) {

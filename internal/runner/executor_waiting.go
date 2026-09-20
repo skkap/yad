@@ -43,9 +43,15 @@ type spent struct {
 	ToolCalls  int                 `json:"tool_calls,omitempty"`
 	APIRetries int                 `json:"api_retries,omitempty"`
 	Stalls     int                 `json:"stalls,omitempty"`
-	// FirstEventMS is measured from the run's own start, not from the turn
-	// that produced the event, and is only ever set once: first_event_ms is
-	// how long the run took to say anything.
+	// FirstEventMS is how long the first turn that answered took to answer,
+	// measured from that turn's own start, and is only ever set once.
+	//
+	// Not from the run's start, which would be the natural reading of "the
+	// whole run is one run" and is wrong here: a run that parked for five
+	// hours and then answered in two seconds would report five hours to
+	// first token, with the wait counted a second time beside waited_ms. The
+	// metric answers "why is the harness slow" (ARCHITECTURE.md §2), and
+	// neither a park nor a repository clone is the harness being slow.
 	FirstEventMS int64 `json:"first_event_ms,omitempty"`
 	// ExecutedMS is how long earlier turns held a process. It is what the
 	// hub's wall_clock_ms is spent against, and it deliberately excludes
@@ -65,7 +71,7 @@ func (p *progress) absorb(out adapter.Outcome, w watch, turnStarted time.Time, n
 	p.spent.Stalls += w.stalls
 	if !p.spent.Answered && w.firstEventMS >= 0 {
 		p.spent.Answered = true
-		p.spent.FirstEventMS = max(turnStarted.Add(time.Duration(w.firstEventMS)*time.Millisecond).Sub(p.started).Milliseconds(), 0)
+		p.spent.FirstEventMS = w.firstEventMS
 	}
 	for model, u := range out.Usage {
 		if p.spent.Usage == nil {
@@ -175,7 +181,10 @@ func (e *Exec) setStarted(ctx context.Context, c Claim, at time.Time) {
 // It parks only when a reset ends the wait. Every account needing a login is
 // not a wait, it is a job for the owner, and a run parked on it would sit
 // until someone noticed; that case falls through to the caller, which refuses
-// the run and names the command to run.
+// the run and names the command to run. A needs-login account that the owner
+// then logs in does bring a parked run back early — LoginProbe frees it and
+// the Resumer sees it — but it cannot be what a run is parked on, because
+// nothing can say when that will happen.
 func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64, reason string) bool {
 	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config)
 	if err != nil {

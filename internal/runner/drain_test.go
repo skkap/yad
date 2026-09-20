@@ -438,7 +438,7 @@ func (e *env) server(l *Loop, x *Exec, d *Drain, wait time.Duration) *server {
 	l.Resumer = res
 	x.Ended = res.Wake
 	return &server{drain: d, wait: wait, store: e.store, exec: x, loops: []*Loop{l}, resumer: res,
-		probe:     &LoginProbe{Store: e.store, Config: x.Config, Data: e.paths.Data, Log: slog.New(slog.DiscardHandler)},
+		probe:     &LoginProbe{Store: e.store, Config: x.Config, Data: e.paths.Data, Freed: res.Wake, Log: slog.New(slog.DiscardHandler)},
 		reporters: map[string]*Reporter{l.Connection: rep}, log: slog.New(slog.DiscardHandler)}
 }
 

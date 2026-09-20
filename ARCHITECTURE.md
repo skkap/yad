@@ -610,9 +610,11 @@ for `codex`); the suite never runs a real harness.
   has served, the accounts it has been through, and what its turns so far cost.
   `internal/runner.Resumer`, one per process, picks it up when the reset passes
   **or as soon as an account is free**, which is the other half of the arrow in
-  §2: an owner finishing a login, or `yad account add`, frees an account long
-  before the reset the run was parked on, and the resumer reads account state on
-  every sweep rather than trusting the moment it wrote. It resumes only runs of
+  §2: an owner finishing a login in an account's home frees it long before the
+  reset the run was parked on, and the resumer reads account state on every
+  sweep rather than trusting the moment it wrote. A login is the only way that
+  happens to a running daemon — `yad account add` of a new label reaches it only
+  at a restart, since the account list is the configuration it started with. It resumes only runs of
   connections this process actually serves — one whose credential would not read,
   or whose `Recover` failed, has no loop renewing leases and no reporter
   delivering results, so its parked runs wait for a process that can finish them.
