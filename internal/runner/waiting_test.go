@@ -995,10 +995,10 @@ func TestAParkedRunOfADroppedConnectionStillTimesOutOnItsCap(t *testing.T) {
 	}
 }
 
-// And before the cap runs out, the sweep comes back for it when the cap
-// runs out — not up to a minute later. "Bounded by the cap its hub gave it"
-// is the claim beside the gate; a run with a second left on it being looked
-// at again in sixty is not that.
+// And while the cap is still running, the sweep comes back for it exactly
+// when the cap runs out — not up to a minute later. "Bounded by the cap its
+// hub gave it" is the claim beside the gate, and a run with a second left on
+// it being looked at again in sixty is not that.
 func TestADroppedConnectionsRunIsLookedAtAgainWhenItsCapRunsOut(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

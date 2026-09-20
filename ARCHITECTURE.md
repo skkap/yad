@@ -618,11 +618,17 @@ for `codex`); the suite never runs a real harness.
   reset the run was parked on, and the resumer reads account state on every
   sweep rather than trusting the moment it wrote. A login is the only way that
   happens to a running daemon — `yad account add` of a new label reaches it only
-  at a restart, since the account list is the configuration it started with. It resumes only runs of
-  connections this process actually serves — one whose credential would not read,
-  or whose `Recover` failed, has no loop renewing leases and no reporter
-  delivering results, so its parked runs wait for a process that can finish them.
-  A restart is not a second path
+  at a restart, since the account list is the configuration it started with.
+
+  It resumes a run only for a connection this process both **serves and has
+  heard from**. One whose credential would not read, or whose `Recover` failed,
+  has no loop renewing leases and no reporter delivering results, so its parked
+  runs wait for a process that can finish them. And one that has a loop is
+  still not resumed from until that loop has completed a sync: every loop is
+  constructed before any of them syncs, and a run parked across an outage long
+  enough to lapse its lease is already `lost` on the hub's side
+  ([0023](docs/decisions/0023-lost-stands-against-a-late-result.md)), or carries
+  a cancel that arrives in that first sync's answer. A restart is not a second path
   but the same one, which is why `kill -9` costs it nothing and why
   [0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md)'s
   report-lost pass skips a waiting run. The one thing the row cannot hold is the
