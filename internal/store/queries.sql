@@ -107,7 +107,7 @@ UPDATE runs SET started_at = ?, updated_at = ? WHERE connection = ? AND id = ? A
 -- silently resets.
 -- name: SetRunWaiting :exec
 UPDATE runs SET state = 'waiting', resumes_at = ?, waiting_since = ?, account_switches = ?,
-  reason = ?, updated_at = ? WHERE connection = ? AND id = ?;
+  spent = ?, reason = ?, updated_at = ? WHERE connection = ? AND id = ?;
 
 -- End the current wait, folding it into the total. Called by whoever takes
 -- the run out of waiting, before it runs again or times out, so the wait in

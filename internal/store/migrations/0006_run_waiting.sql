@@ -35,3 +35,13 @@ ALTER TABLE runs ADD COLUMN account_switches INTEGER NOT NULL DEFAULT 0;
 -- Without this the row could not say that, and the run would silently start
 -- without the secrets it was given.
 ALTER TABLE runs ADD COLUMN had_grants INTEGER NOT NULL DEFAULT 0;
+
+-- What the run's earlier turns cost, as JSON: usage per model, tool calls,
+-- API retries, stalls, the first event's offset and the milliseconds already
+-- spent with a process. A run is one run however many accounts and however
+-- many processes it took, and protocol/v1's Result says its usage covers the
+-- whole of it -- so a turn that ran before a park must still be in the total
+-- the hub is finally told, and the hub's wall_clock_ms must not start again
+-- at zero on the other side. Null for a run that has taken one turn: there is
+-- nothing carried over yet.
+ALTER TABLE runs ADD COLUMN spent TEXT;

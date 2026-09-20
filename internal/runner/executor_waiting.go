@@ -16,12 +16,97 @@ import (
 // progress is what a run keeps across its turns and across a park. Every
 // field is read from the run's row rather than from memory, because a parked
 // run may be picked up by a process that never saw the first turn.
+//
+// The rule it exists to keep: a run is one run however many accounts and
+// however many processes it took. Its duration covers the whole of it, its
+// usage covers every turn (protocol/v1.Result says so), and the hub's
+// wall-clock cap is a cap on the run rather than a fresh budget per account.
 type progress struct {
 	// started is when the run first reached preparing, so duration_ms
 	// measures the run rather than its last attempt.
 	started  time.Time
 	waitedMS int64
 	switches int
+	// account is the last account a turn of this run ran on. A resumed run
+	// that takes a different one has moved, and that move counts exactly as
+	// an in-turn move does.
+	account string
+	spent   spent
+}
+
+// spent is what a run's earlier turns cost, carried across a park as JSON in
+// the run's row. A result built from the last turn alone would tell a hub
+// that a run which spent an account's whole five-hour window used only what
+// the turn after it did.
+type spent struct {
+	Usage      map[string]v1.Usage `json:"usage,omitempty"`
+	ToolCalls  int                 `json:"tool_calls,omitempty"`
+	APIRetries int                 `json:"api_retries,omitempty"`
+	Stalls     int                 `json:"stalls,omitempty"`
+	// FirstEventMS is measured from the run's own start, not from the turn
+	// that produced the event, and is only ever set once: first_event_ms is
+	// how long the run took to say anything.
+	FirstEventMS int64 `json:"first_event_ms,omitempty"`
+	// ExecutedMS is how long earlier turns held a process. It is what the
+	// hub's wall_clock_ms is spent against, and it deliberately excludes
+	// waiting: a run parked for five hours has used none of its cap, or
+	// max_wait_ms and wall_clock_ms would be two names for one limit.
+	ExecutedMS int64 `json:"executed_ms,omitempty"`
+	// Set is what tells an unset FirstEventMS of 0 from a turn that really
+	// answered within a millisecond.
+	Answered bool `json:"answered,omitempty"`
+}
+
+// absorb folds a finished turn into what the run has spent.
+func (p *progress) absorb(out adapter.Outcome, w watch, turnStarted time.Time, now time.Time) {
+	p.spent.ExecutedMS += max(now.Sub(turnStarted).Milliseconds(), 0)
+	p.spent.ToolCalls += w.toolCalls
+	p.spent.APIRetries += out.APIRetries
+	p.spent.Stalls += w.stalls
+	if !p.spent.Answered && w.firstEventMS >= 0 {
+		p.spent.Answered = true
+		p.spent.FirstEventMS = max(turnStarted.Add(time.Duration(w.firstEventMS)*time.Millisecond).Sub(p.started).Milliseconds(), 0)
+	}
+	for model, u := range out.Usage {
+		if p.spent.Usage == nil {
+			p.spent.Usage = map[string]v1.Usage{}
+		}
+		p.spent.Usage[model] = addUsage(p.spent.Usage[model], u)
+	}
+}
+
+// addUsage sums two turns' usage for one model. Cost is summed only when at
+// least one side reported it; a nil stays nil, because a harness that gives
+// no price must not be read as having charged nothing.
+func addUsage(a, b v1.Usage) v1.Usage {
+	model := a.Model
+	if model == "" {
+		model = b.Model
+	}
+	out := v1.Usage{
+		Model: model, Input: a.Input + b.Input, Output: a.Output + b.Output,
+		CacheRead: a.CacheRead + b.CacheRead, CacheWrite: a.CacheWrite + b.CacheWrite,
+	}
+	if a.CostUSD != nil || b.CostUSD != nil {
+		total := 0.0
+		if a.CostUSD != nil {
+			total += *a.CostUSD
+		}
+		if b.CostUSD != nil {
+			total += *b.CostUSD
+		}
+		out.CostUSD = &total
+	}
+	return out
+}
+
+// wallClockLeft is what remains of the hub's cap for the next turn, and
+// whether there is a cap at all. Zero or less means the run has used it up.
+func (p *progress) wallClockLeft(run v1.Run) (time.Duration, bool) {
+	if run.WallClockMS <= 0 {
+		return 0, false
+	}
+	return time.Duration(run.WallClockMS-p.spent.ExecutedMS) * time.Millisecond, true
 }
 
 // progress reads what earlier turns of this run recorded. A row that cannot
@@ -38,7 +123,17 @@ func (e *Exec) progress(ctx context.Context, c Claim) progress {
 	if r.StartedAt.Valid {
 		p.started = time.UnixMilli(r.StartedAt.Int64)
 	}
-	p.waitedMS, p.switches = r.WaitedMs, int(r.AccountSwitches)
+	p.waitedMS, p.switches, p.account = r.WaitedMs, int(r.AccountSwitches), r.Account.String
+	if r.Spent.Valid && r.Spent.String != "" {
+		if err := json.Unmarshal([]byte(r.Spent.String), &p.spent); err != nil {
+			// The turns already taken are lost to the metrics, and nothing
+			// else reads this: the run continues rather than failing over a
+			// number.
+			e.Log.Warn("what the run's earlier turns cost could not be read; its usage and counters start again from zero",
+				"connection", c.Connection, "run", c.Run.RunID, "err", err)
+			p.spent = spent{}
+		}
+	}
 	return p
 }
 
@@ -99,9 +194,9 @@ func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64
 	if c.Run.MaxWaitMS > 0 && prog.waitedMS >= c.Run.MaxWaitMS {
 		e.finish(ctx, c, v1.Result{
 			State: v1.RunTimedOut, LastSeq: *lastSeq,
-			Error: &v1.RunError{Class: ClassMaxWait, Message: maxWaitMessage(prog.waitedMS, c.Run.MaxWaitMS)},
-			Metrics: v1.Metrics{DurationMS: time.Since(prog.started).Milliseconds(),
-				WaitedMS: prog.waitedMS, AccountSwitches: prog.switches},
+			Error:   &v1.RunError{Class: ClassMaxWait, Message: maxWaitMessage(prog.waitedMS, c.Run.MaxWaitMS)},
+			Usage:   v1.RunUsage{ByModel: prog.spent.Usage},
+			Metrics: prog.metrics(now),
 		})
 		return true
 	}
@@ -109,13 +204,20 @@ func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64
 	if e.spool(ctx, c, &ev, *lastSeq+1) {
 		*lastSeq = ev.Seq
 	}
+	// Written with the park rather than after every turn: a run that moves
+	// and then finishes reports these from memory, and one that parks is the
+	// only one another process has to read them back for.
+	var carried sql.NullString
+	if body, merr := json.Marshal(prog.spent); merr == nil {
+		carried = sql.NullString{String: string(body), Valid: true}
+	} else {
+		log.Warn("what this run's turns have cost could not be recorded; its usage restarts if another process resumes it", "err", merr)
+	}
 	err = e.Store.SetRunWaiting(ctx, db.SetRunWaitingParams{
-		ResumesAt:    sql.NullInt64{Int64: at.UnixMilli(), Valid: true},
-		WaitingSince: sql.NullInt64{Int64: now.UnixMilli(), Valid: true},
-		// Written with the park rather than after every move: a run that
-		// switches and then finishes reports the count from memory, and one
-		// that parks is the only one another process has to read it back for.
+		ResumesAt:       sql.NullInt64{Int64: at.UnixMilli(), Valid: true},
+		WaitingSince:    sql.NullInt64{Int64: now.UnixMilli(), Valid: true},
 		AccountSwitches: int64(prog.switches),
+		Spent:           carried,
 		Reason:          sql.NullString{String: reason, Valid: true},
 		UpdatedAt:       now.UnixMilli(),
 		Connection:      c.Connection, ID: c.Run.RunID,
@@ -149,19 +251,29 @@ func maxWaitMessage(waited, cap int64) string {
 // noteMove puts the move into the run's own event stream, where whoever is
 // watching the run can see why it changed accounts. Labels and a reset time:
 // nothing else about an account leaves this machine.
-func (e *Exec) noteMove(ctx context.Context, c Claim, lastSeq *int64, from, to account.Account, limit *adapter.Limit) {
-	text := "the account " + from.Label + " is at a usage limit"
+func (e *Exec) noteMove(ctx context.Context, c Claim, lastSeq *int64, from, to string, limit *adapter.Limit) {
+	text := "the account " + from + " is at a usage limit"
 	if limit != nil && limit.Window != "" {
 		text += " on its " + limit.Window + " window"
 	}
 	if limit != nil && !limit.ResetAt.IsZero() {
 		text += " until " + limit.ResetAt.UTC().Format(time.RFC3339)
 	}
-	text += "; the run continues on " + to.Label + " in the same session"
+	text += "; the run continues on " + to + " in the same session"
 	ev := v1.Event{Kind: v1.EventStatus, Status: "account_switch", Text: text}
 	if e.spool(ctx, c, &ev, *lastSeq+1) {
 		*lastSeq = ev.Seq
 		e.report(c.Connection)
+	}
+}
+
+// metrics is the whole run's metrics, not the last turn's: every turn it has
+// taken, plus the waits between them.
+func (p *progress) metrics(now time.Time) v1.Metrics {
+	return v1.Metrics{
+		DurationMS: max(now.Sub(p.started).Milliseconds(), 0), FirstEventMS: p.spent.FirstEventMS,
+		ToolCalls: p.spent.ToolCalls, APIRetries: p.spent.APIRetries, Stalls: p.spent.Stalls,
+		WaitedMS: p.waitedMS, AccountSwitches: p.switches,
 	}
 }
 

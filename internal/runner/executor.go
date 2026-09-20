@@ -380,7 +380,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	lastSeq := e.lastSeq(bg, c)
 	fail := func(class, msg string) {
 		e.finish(bg, c, v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: class, Message: msg}, LastSeq: lastSeq,
-			Metrics: v1.Metrics{DurationMS: time.Since(prog.started).Milliseconds(), WaitedMS: prog.waitedMS, AccountSwitches: prog.switches}})
+			Usage: v1.RunUsage{ByModel: prog.spent.Usage}, Metrics: prog.metrics(time.Now())})
 	}
 	// A run stopped before its harness is up is cancelled with nothing
 	// spawned: no process, no events, and the session as it was.
@@ -390,9 +390,10 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			return false
 		}
 		log.Info("run cancelled before it started")
+		m := prog.metrics(time.Now())
+		m.CancelLatencyMS = latency(at)
 		e.finish(bg, c, v1.Result{State: v1.RunCancelled, Error: runnerStopped(a.stoppedByRunner()), LastSeq: lastSeq,
-			Metrics: v1.Metrics{DurationMS: time.Since(prog.started).Milliseconds(), CancelLatencyMS: latency(at),
-				WaitedMS: prog.waitedMS, AccountSwitches: prog.switches}})
+			Usage: v1.RunUsage{ByModel: prog.spent.Usage}, Metrics: m})
 		return true
 	}
 
@@ -511,13 +512,34 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	// logged and carried on from, and without this the run would be handed
 	// back the account it just exhausted, for ever.
 	tried := map[string]bool{}
+	// lastLimit is what moved the run off the previous account, so the move
+	// event can name the window that ran out. Nil on the first turn and on a
+	// turn after a park, where the wait's own event already said why.
+	var lastLimit *adapter.Limit
 	for {
+		turnLog := log
+		if hasAccount {
+			turnLog = log.With("account", acct.Label)
+		}
 		var home string
 		if hasAccount {
 			if home, err = account.Ensure(e.Data, run.Harness, acct.Label); err != nil {
 				fail(ClassPrepare, "the account's harness home could not be prepared: "+err.Error())
 				return
 			}
+			// One place counts a move, so that the two kinds are counted the
+			// same way: a limit that moves the run in this loop, and a run
+			// that parked on one account and was resumed on another. The
+			// second is the one that used to be missed — the resumed run
+			// reads its last account back from its row, so a process that
+			// never saw the first turn still knows it moved.
+			if prog.account != "" && prog.account != acct.Label {
+				prog.switches++
+				e.noteMove(bg, c, &lastSeq, prog.account, acct.Label, lastLimit)
+				turnLog.Info("the run continues on another account in the same session",
+					"from_account", prog.account, "account_switches", prog.switches)
+			}
+			prog.account = acct.Label
 			e.setRunAccount(bg, c, acct.Label)
 			// The label and nothing else. Which account ran a turn is how an
 			// owner tells two subscriptions' work apart, and the label is the
@@ -527,10 +549,6 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 				lastSeq = ev.Seq
 				e.report(c.Connection)
 			}
-		}
-		turnLog := log
-		if hasAccount {
-			turnLog = log.With("account", acct.Label)
 		}
 		// Built fresh each turn: the home variable belongs to this account,
 		// and appending it to env would carry the last account's home into
@@ -544,6 +562,22 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		}
 
 		if stoppedEarly() {
+			return
+		}
+		// The cap is the run's, and earlier turns have already spent part of
+		// it. A run that has none left does not get one more turn to find
+		// that out in.
+		wallLeft, capped := prog.wallClockLeft(run)
+		if capped && wallLeft <= 0 {
+			turnLog.Warn("the run has used its wall-clock cap across its turns; it is not started again")
+			e.finish(bg, c, v1.Result{
+				State: v1.RunTimedOut, LastSeq: lastSeq,
+				Error: &v1.RunError{Class: ClassWallClock, Message: fmt.Sprintf(
+					"the run reached its wall-clock cap of %s across the accounts it ran on and was stopped",
+					time.Duration(run.WallClockMS)*time.Millisecond)},
+				Usage:   v1.RunUsage{ByModel: prog.spent.Usage},
+				Metrics: prog.metrics(time.Now()),
+			})
 			return
 		}
 		turnStarted := time.Now()
@@ -570,7 +604,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		e.setState(bg, c, v1.RunRunning)
 		turnLog.Info("run started", "harness", run.Harness, "model", run.Model, "workdir", prep.Dir)
 
-		w := e.stream(bg, c, a, turn, cancel, native, spec.NativeSessionID != "", turnStarted, lastSeq)
+		w := e.stream(bg, c, a, turn, cancel, native, spec.NativeSessionID != "", turnStarted, lastSeq, wallLeft)
 		out := turn.Wait()
 		cancel()
 		lastSeq = w.lastSeq
@@ -589,7 +623,11 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			turnLog.Warn("run killed with the runner; the next start reports it lost")
 			return
 		}
-		res := e.result(out, w, prog.started)
+		// Folded in before the result is built, so the result is the whole
+		// run's rather than this turn's — and so a park that follows carries
+		// this turn's cost with it.
+		prog.absorb(out, w, turnStarted, time.Now())
+		res := e.result(out, w, &prog)
 		if res.Error != nil {
 			res.Error.Class = hubClass(res.Error.Class, spec.NativeSessionID != "")
 		}
@@ -617,11 +655,12 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 				turnLog.Error("the account at a usage limit was offered to this run again; it is not moved a second time",
 					"next_account", next.Label)
 			case ok:
-				prog.switches++
-				e.noteMove(bg, c, &lastSeq, acct, next, out.Limit)
-				turnLog.Info("the account is at a usage limit; the run continues on another account in the same session",
-					"next_account", next.Label, "account_switches", prog.switches)
-				acct = next
+				// The move itself — the count, the event and the log line —
+				// happens at the top of the next turn, where a move across a
+				// park is counted by the same code.
+				turnLog.Info("the account is at a usage limit; the run moves to another account",
+					"next_account", next.Label)
+				acct, lastLimit = next, out.Limit
 				continue
 			case perr != nil && e.park(bg, c, &prog, &lastSeq, perr.Error()):
 				return
@@ -629,7 +668,6 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			// No account free and no reset to wait for: the limit is this
 			// run's answer after all, and the result already says so.
 		}
-		res.Metrics.WaitedMS, res.Metrics.AccountSwitches = prog.waitedMS, prog.switches
 		e.finish(bg, c, res)
 		return
 	}
@@ -670,19 +708,22 @@ type watch struct {
 }
 
 // stream spools the turn's events until it closes them, under the two
-// watchdogs and the hub's controls. A cancel or a watchdog climbs the cancel
+// watchdogs and the hub's controls. wallLeft is what remains of the run's
+// wall-clock cap, not the cap itself: the cap belongs to the run, so a run
+// that took three turns across two accounts gets one budget between them
+// rather than a fresh one each time (DOMAIN.md, "Watchdog"). A cancel or a watchdog climbs the cancel
 // ladder: interrupt, which keeps the session resumable; SIGTERM to the
 // process group Grace later; SIGKILL TermGrace after that. Events keep being
 // spooled all the way down, so what the harness says as it stops is kept.
-func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.Turn, kill context.CancelFunc, native string, resumed bool, started time.Time, lastSeq int64) watch {
+func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.Turn, kill context.CancelFunc, native string, resumed bool, started time.Time, lastSeq int64, wallLeft time.Duration) watch {
 	w := watch{firstEventMS: -1, native: native, lastSeq: lastSeq}
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	idleFor := e.inactivity(c.Run)
 	idle := time.NewTimer(idleFor)
 	defer idle.Stop()
 	var wall <-chan time.Time
-	if c.Run.WallClockMS > 0 {
-		t := time.NewTimer(time.Duration(c.Run.WallClockMS) * time.Millisecond)
+	if wallLeft > 0 {
+		t := time.NewTimer(wallLeft)
 		defer t.Stop()
 		wall = t.C
 	}
@@ -761,6 +802,7 @@ func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.T
 			stop(ClassInactivity, fmt.Sprintf("the harness produced no event for %s and was stopped", idleFor))
 		case <-wall:
 			stop(ClassWallClock, fmt.Sprintf("the run reached its wall-clock cap of %s and was stopped", time.Duration(c.Run.WallClockMS)*time.Millisecond))
+
 		case <-term:
 			term = nil
 			log.Warn("the harness did not stop when interrupted; sending SIGTERM to its process group")
@@ -865,19 +907,21 @@ func capBytes(s string, n int) (string, bool) {
 	return s[:cut], true
 }
 
-// result turns the adapter's outcome into the protocol's terminal report. A
+// result turns the adapter's outcome into the protocol's terminal report,
+// with the metrics and usage of the whole run rather than of its last turn. A
 // watchdog's verdict wins over whatever the stopped harness said last. A
 // cancel's does not: the harness's own answer, when it had one before the
 // cancel reached it, stands (decision 0025); only a turn that ended without
 // one is cancelled.
-func (e *Exec) result(out adapter.Outcome, w watch, started time.Time) v1.Result {
+func (e *Exec) result(out adapter.Outcome, w watch, prog *progress) v1.Result {
+	// From prog, not from this turn: it has already absorbed this turn, and
+	// it is the only thing that knows about the ones before it — on another
+	// account, or in another process.
+	metrics := prog.metrics(time.Now())
+	metrics.CancelLatencyMS = w.latency
 	res := v1.Result{
 		State: out.State, FinalText: out.FinalText, Error: out.Error, LastSeq: w.lastSeq,
-		Metrics: v1.Metrics{
-			DurationMS: time.Since(started).Milliseconds(), FirstEventMS: max(w.firstEventMS, 0),
-			ToolCalls: w.toolCalls, APIRetries: out.APIRetries, Stalls: w.stalls,
-			CancelLatencyMS: w.latency,
-		},
+		Metrics: metrics,
 	}
 	// A watchdog that stopped the turn has the last word even when the hub
 	// asked for an interrupt too: the case below says timed_out.
@@ -889,8 +933,8 @@ func (e *Exec) result(out adapter.Outcome, w watch, started time.Time) v1.Result
 		res.State, res.Error, res.FinalText = v1.RunCancelled, nil, ""
 		return res
 	}
-	if len(out.Usage) > 0 {
-		res.Usage.ByModel = out.Usage
+	if len(prog.spent.Usage) > 0 {
+		res.Usage.ByModel = prog.spent.Usage
 	}
 	switch {
 	case w.stopped != "":
@@ -907,6 +951,15 @@ func (e *Exec) result(out adapter.Outcome, w watch, started time.Time) v1.Result
 // in the outbox before the first attempt to send it and a crash between the
 // two cannot leave a finished run with nothing owed.
 func (e *Exec) finish(ctx context.Context, c Claim, res v1.Result) {
+	e.finishWith(ctx, c, res, nil)
+}
+
+// finishWith is finish with one more statement inside the same transaction,
+// for a caller whose bookkeeping must land exactly when the result does. A
+// parked run's is the case: ending its wait writes away the resume time that
+// keeps it from being started again, so a wait ended beside a result that
+// was not recorded leaves a run every later sweep executes.
+func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func(*db.Queries) error) {
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	res.FinalText, _ = capBytes(res.FinalText, maxTextBytes)
 	if res.Error != nil {
@@ -933,7 +986,13 @@ func (e *Exec) finish(ctx context.Context, c Claim, res v1.Result) {
 		if err := q.TouchSession(ctx, db.TouchSessionParams{LastUsedAt: now, Connection: c.Connection, ID: c.Run.Session.ID}); err != nil {
 			return err
 		}
-		return q.PutOutbox(ctx, db.PutOutboxParams{Connection: c.Connection, RunID: c.Run.RunID, Body: string(body), NextAttemptAt: now})
+		if err := q.PutOutbox(ctx, db.PutOutboxParams{Connection: c.Connection, RunID: c.Run.RunID, Body: string(body), NextAttemptAt: now}); err != nil {
+			return err
+		}
+		if also == nil {
+			return nil
+		}
+		return also(q)
 	})
 	if err != nil {
 		log.Error("result not recorded; the run stays held", "err", err)

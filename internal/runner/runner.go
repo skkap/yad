@@ -93,8 +93,8 @@ func Serve(ctx context.Context, o Options) error {
 	// One per process, not one per connection: the runs parked on a usage
 	// limit draw on the same capacity pool as everything else, and a parked
 	// run must be picked up once however many hubs this runner serves.
-	sv.resumer = &Resumer{Store: st, Pool: pool, Drain: o.Drain, Log: o.Log}
-	sv.probe = &LoginProbe{Store: st, Config: o.Config, Data: o.Paths.Data, Log: o.Log}
+	sv.resumer = &Resumer{Store: st, Pool: pool, Drain: o.Drain, Config: o.Config, Data: o.Paths.Data, Log: o.Log}
+	sv.probe = &LoginProbe{Store: st, Config: o.Config, Data: o.Paths.Data, Log: o.Log, Freed: sv.resumer.Wake}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -248,6 +248,16 @@ func (s *server) run(ctx context.Context) error {
 		// that stops leaves the runs in hand to finish, and only exit now
 		// kills them.
 		s.resumer.Runs = ctx
+		// And only the connections this process actually serves. A
+		// connection dropped at start-up — an unreadable credential, a
+		// Recover that failed — has no loop renewing leases and no reporter
+		// delivering results, so its parked runs stay parked until a process
+		// that can finish them picks them up.
+		live := map[string]bool{}
+		for _, l := range s.loops {
+			live[l.Connection] = true
+		}
+		s.resumer.Live = live
 		bg.Go(func() { s.resumer.Run(lctx) })
 	}
 	bg.Go(func() { s.probe.Run(lctx) })

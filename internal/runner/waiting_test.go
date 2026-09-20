@@ -3,8 +3,12 @@ package runner
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -68,7 +72,9 @@ func waitingRow(t *testing.T, e *env, id string) db.Run {
 // resumer is a Resumer over the env, as Serve builds one, with a clock the
 // test moves.
 func (e *env) resumer(x *Exec, pool *Pool, clock Clock) *Resumer {
-	r := &Resumer{Store: e.store, Pool: pool, Exec: x, Clock: clock, Log: slog.New(slog.DiscardHandler)}
+	r := &Resumer{Store: e.store, Pool: pool, Exec: x, Clock: clock,
+		Config: x.Config, Data: e.paths.Data, Live: map[string]bool{"hub": true},
+		Log: slog.New(slog.DiscardHandler)}
 	x.Ended = r.Wake
 	return r
 }
@@ -418,5 +424,356 @@ func TestCancellingAWaitingRunEndsIt(t *testing.T) {
 	}
 	if got := localRun(t, e, "a").State; got != string(v1.RunCancelled) {
 		t.Errorf("local state = %s, want cancelled", got)
+	}
+}
+
+// ARCHITECTURE's run-state diagram says the way out of waiting is "limit
+// resets / account frees". The second half is the one a fixed resume time
+// cannot express: the run parks on the earliest reset known at the time, and
+// an account that becomes usable before it — the owner finishes a login, or
+// adds an account — has to bring the run back early. Otherwise a run sits out
+// four more hours beside a working account, and one with a max_wait times out
+// while that account runs newer work.
+func TestAFreedAccountBringsAParkedRunBackBeforeItsResumeTime(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	plantCredential(t, e.paths.Data, "spare")
+	// spare needs a login, so it is no use when the run parks.
+	if err := account.SetState(ctx, e.store.Queries, "claude", "spare", v1.AccountNeedsLogin, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	reset := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
+
+	cfg := accountConfig("work", "spare")
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	ad := byHome(map[string]fake.Script{
+		"work":  limitScript("five_hour", reset, "native-1"),
+		"spare": {Outcome: adapter.Outcome{State: v1.RunSucceeded, FinalText: "on the spare", NativeSessionID: "native-1"}},
+	})
+	x, _ := e.accountExecutor(t, cfg, ad)
+	claimAndRun(t, l, x)
+	row := waitingRow(t, e, "a")
+	if !time.UnixMilli(row.ResumesAt.Int64).Equal(reset) {
+		t.Fatalf("resumes_at = %s, want the five-hour reset %s", time.UnixMilli(row.ResumesAt.Int64), reset)
+	}
+
+	// The clock stays well before the reset. Only the account becoming
+	// usable can move the run.
+	clock := &stepClock{now: time.Now().Add(10 * time.Minute)}
+	r := e.resumer(x, l.Pool, clock)
+	if next := r.Sweep(ctx); next <= 0 {
+		t.Fatal("the sweep did not leave the parked run for later; nothing had freed yet")
+	}
+	waitingRow(t, e, "a")
+
+	// The owner logs spare in by hand and the probe frees it.
+	p := probeFor(t, e, cfg)
+	p.Freed = r.Wake
+	if freed := p.Sweep(ctx); freed != 1 {
+		t.Fatalf("the probe freed %d accounts, want 1", freed)
+	}
+
+	r.Sweep(ctx)
+	x.Wait()
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunSucceeded {
+		t.Fatalf("result = %+v, %v — a free account should have brought the run back", res, ok)
+	}
+	if res.FinalText != "on the spare" {
+		t.Errorf("final text = %q, want the turn on the account that came back", res.FinalText)
+	}
+	if res.Metrics.AccountSwitches != 1 {
+		t.Errorf("account_switches = %d, want 1 — the run came back on another account", res.Metrics.AccountSwitches)
+	}
+}
+
+// A run is one run however many accounts and however many processes it took.
+// protocol/v1.Result says its usage covers the whole of it, so a result built
+// from the last turn alone would tell a hub that a run which spent an
+// account's entire window used only what the turn after it did.
+func TestAMovedRunReportsWhatEveryTurnCost(t *testing.T) {
+	e := newEnv(t)
+	for _, label := range []string{"work", "personal"} {
+		plantCredential(t, e.paths.Data, label)
+	}
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	first := limitScript("five_hour", reset, "native-1")
+	first.Events = []v1.Event{{Kind: v1.EventToolCall, Tool: &v1.ToolEvent{ID: "t1", Name: "Bash", Input: "ls"}}}
+	first.Outcome.Usage = map[string]v1.Usage{"opus": {Model: "opus", Input: 100, Output: 50, CacheRead: 9}}
+	first.Outcome.APIRetries = 2
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work", "personal"), byHome(map[string]fake.Script{
+		"work": first,
+		"personal": {
+			Events: []v1.Event{{Kind: v1.EventToolCall, Tool: &v1.ToolEvent{ID: "t2", Name: "Bash", Input: "pwd"}}},
+			Outcome: adapter.Outcome{State: v1.RunSucceeded, FinalText: "done", NativeSessionID: "native-1",
+				APIRetries: 1, Usage: map[string]v1.Usage{"opus": {Model: "opus", Input: 7, Output: 3}}},
+		},
+	}))
+	claimAndRun(t, l, x)
+
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunSucceeded {
+		t.Fatalf("result = %+v, %v", res, ok)
+	}
+	got := res.Usage.ByModel["opus"]
+	if want := (v1.Usage{Model: "opus", Input: 107, Output: 53, CacheRead: 9}); got != want {
+		t.Errorf("usage = %+v, want %+v — both turns", got, want)
+	}
+	if res.Metrics.ToolCalls != 2 {
+		t.Errorf("tool_calls = %d, want 2 — one per turn", res.Metrics.ToolCalls)
+	}
+	if res.Metrics.APIRetries != 3 {
+		t.Errorf("api_retries = %d, want 3 — 2 on the first account and 1 on the second", res.Metrics.APIRetries)
+	}
+}
+
+// The same, across a park and a restart: the pre-park turn's cost is in the
+// run's row, so a process that never saw it still reports it.
+func TestAResumedRunReportsWhatTheTurnBeforeTheParkCost(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	first := limitScript("five_hour", reset, "native-1")
+	first.Events = []v1.Event{{Kind: v1.EventToolCall, Tool: &v1.ToolEvent{ID: "t1", Name: "Bash", Input: "ls"}}}
+	first.Outcome.Usage = map[string]v1.Usage{"opus": {Model: "opus", Input: 100, Output: 50}}
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(first))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	// A new process, and the reset has passed.
+	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1",
+			Usage: map[string]v1.Usage{"opus": {Model: "opus", Input: 7, Output: 3}}},
+	}))
+	e.resumer(x2, NewPool(v1.Capacity{Total: 1}), &stepClock{now: reset.Add(resumeSkew + time.Second)}).Sweep(ctx)
+	x2.Wait()
+
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunSucceeded {
+		t.Fatalf("result = %+v, %v", res, ok)
+	}
+	got := res.Usage.ByModel["opus"]
+	if want := (v1.Usage{Model: "opus", Input: 107, Output: 53}); got != want {
+		t.Errorf("usage = %+v, want %+v — the turn before the park counts too", got, want)
+	}
+	if res.Metrics.ToolCalls != 1 {
+		t.Errorf("tool_calls = %d, want 1 — from the turn before the park", res.Metrics.ToolCalls)
+	}
+}
+
+// The hub's wall-clock cap is a cap on the run, not a budget handed out
+// afresh to each account it tries (DOMAIN.md, "Watchdog"). Two turns that
+// each fit inside the cap must not add up to twice it.
+//
+// The second turn here would finish comfortably inside a fresh cap and does
+// not fit in what the first left, so the run's state is what tells the two
+// readings apart.
+func TestTheWallClockCapIsSharedBetweenAccountsRatherThanRenewed(t *testing.T) {
+	e := newEnv(t)
+	for _, label := range []string{"work", "personal"} {
+		plantCredential(t, e.paths.Data, label)
+	}
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	first := limitScript("five_hour", reset, "native-1")
+	// One event, 500ms in: the first turn spends most of the cap and then
+	// ends on the limit rather than on the watchdog.
+	first.Events = []v1.Event{{Kind: v1.EventText, Text: "working"}}
+	first.Delay = 500 * time.Millisecond
+
+	run := testRun("a", "s1")
+	run.WallClockMS = 600
+	l := e.loop(t, 1)
+	e.enqueue(t, run)
+	x, _ := e.accountExecutor(t, accountConfig("work", "personal"), byHome(map[string]fake.Script{
+		"work": first,
+		"personal": {
+			Events:  []v1.Event{{Kind: v1.EventText, Text: "still working"}},
+			Delay:   300 * time.Millisecond,
+			Outcome: adapter.Outcome{State: v1.RunSucceeded, FinalText: "done", NativeSessionID: "native-1"},
+		},
+	}))
+	claimAndRun(t, l, x)
+
+	res, ok := outboxResult(t, e, "a")
+	if !ok {
+		t.Fatal("no result")
+	}
+	if res.State != v1.RunTimedOut {
+		t.Fatalf("state = %s, want timed_out — the second turn had ~100ms of the 600ms cap left, not another 600ms", res.State)
+	}
+	if res.Error == nil || res.Error.Class != ClassWallClock {
+		t.Errorf("error = %+v, want the wall-clock class", res.Error)
+	}
+}
+
+// The resumer is one per process and lists every connection's parked runs,
+// but this process only serves the connections whose loop and reporter it
+// started. Running a turn for any other one spends tokens on a run whose
+// lease nothing here renews and whose result nothing here delivers: the hub
+// loses it, gives it to another runner, and the work is done twice.
+func TestAParkedRunOfAConnectionThisProcessDoesNotServeIsLeftAlone(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	// The reset has passed and the account is usable again, so the only
+	// thing standing between this run and a turn is the connection check.
+	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{State: v1.RunSucceeded},
+	}))
+	r := e.resumer(x2, NewPool(v1.Capacity{Total: 1}), &stepClock{now: reset.Add(time.Hour)})
+	// This process serves another hub entirely; "hub" has no loop here.
+	r.Live = map[string]bool{"other": true}
+	r.Sweep(ctx)
+	x2.Wait()
+
+	waitingRow(t, e, "a")
+	if _, ok := outboxResult(t, e, "a"); ok {
+		t.Error("a run of a connection this process does not serve was ended by it")
+	}
+	if got, _ := x2.Adapters.Lookup("claude"); len(got.(*fake.Adapter).Starts) != 0 {
+		t.Error("a turn was run for a connection with no reporter to deliver its result")
+	}
+}
+
+// A drain leaves a parked run exactly as it is, for the next process. The
+// claim this process was keeping has to go back in the map with it: without
+// that, the sweep a few seconds later finds no held claim, reads the run as
+// one an earlier process parked, and ends it as grants_lost in the middle of
+// a drain it was supposed to sit out.
+func TestADrainLeavesAParkedRunAndTheClaimItWasKeeping(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	run := testRun("a", "s1")
+	run.Grants = []v1.Grant{{Name: "TOKEN", Value: "s3cret", As: v1.GrantEnv}}
+	l := e.loop(t, 1)
+	e.enqueue(t, run)
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	r := e.resumer(x, l.Pool, &stepClock{now: reset.Add(resumeSkew + time.Second)})
+	r.Drain = NewDrain()
+	r.Drain.Begin("test")
+	// Twice: the first sweep is the one that takes the claim out of the map,
+	// and the second is what the runner does on every run that ends while it
+	// drains.
+	r.Sweep(ctx)
+	r.Sweep(ctx)
+
+	waitingRow(t, e, "a")
+	if res, ok := outboxResult(t, e, "a"); ok {
+		t.Fatalf("a draining runner ended the parked run as %s; it should stay parked for the next process", res.State)
+	}
+}
+
+// EndRunWait clears resumes_at, and a waiting row with no resumes_at reads as
+// due right now. So ending a run's wait and writing what it became have to be
+// one transaction: apart, a failure of the second leaves a row still
+// `waiting` and permanently due, and the next sweep runs a turn for a run
+// that was cancelled, or timed out, or is already running.
+//
+// This is the mechanism the two call sites rest on — that a failure after
+// EndRunWait inside a transaction takes EndRunWait with it.
+func TestEndingAWaitRollsBackWithTheWriteBesideIt(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	before := waitingRow(t, e, "a")
+
+	failed := errors.New("the write beside it failed")
+	err := e.store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.EndRunWait(ctx, db.EndRunWaitParams{Now: time.Now().UnixMilli(), Connection: "hub", ID: "a"}); err != nil {
+			return err
+		}
+		return failed
+	})
+	if !errors.Is(err, failed) {
+		t.Fatalf("Tx = %v, want the injected failure", err)
+	}
+
+	after := waitingRow(t, e, "a")
+	if after.ResumesAt != before.ResumesAt {
+		t.Errorf("resumes_at = %v, want %v — a rolled-back wait must not leave the run due", after.ResumesAt, before.ResumesAt)
+	}
+	if after.WaitingSince != before.WaitingSince || after.WaitedMs != before.WaitedMs {
+		t.Errorf("the wait moved: since %v→%v, waited %d→%d",
+			before.WaitingSince, after.WaitingSince, before.WaitedMs, after.WaitedMs)
+	}
+}
+
+// And the backstop that the call sites use it that way. Matching the source
+// is not a proof — a call reached some other way is beyond what reading it
+// can see — but it is the write someone would actually add: a bare
+// Store.EndRunWait beside a best-effort state write reads perfectly
+// reasonable and reintroduces exactly the defect above.
+func TestNoShippedFileEndsARunsWaitOutsideATransaction(t *testing.T) {
+	// q is the transaction's own Queries, which is the only receiver allowed;
+	// anything else is a handle that commits on its own.
+	loose := regexp.MustCompile(`(?:[A-Za-z_][A-Za-z0-9_.]*)\.EndRunWait\(`)
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir() && (d.Name() == ".git" || d.Name() == "testdata"):
+			return fs.SkipDir
+		case d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go"):
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range loose.FindAllIndex(raw, -1) {
+			if strings.HasPrefix(string(raw[m[0]:m[1]]), "q.") {
+				continue
+			}
+			line := 1 + strings.Count(string(raw[:m[0]]), "\n")
+			t.Errorf("%s:%d calls %s outside a transaction; ending a wait clears resumes_at, so it must commit with whatever the run became",
+				path, line, string(raw[m[0]:m[1]]))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

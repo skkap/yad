@@ -592,7 +592,13 @@ for `codex`); the suite never runs a real harness.
   Each move costs one cache-cold turn
   ([0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md)), which
   is why the soonest-resetting account is preferred and stayed on rather than
-  ping-ponged between. `account_switches` counts the moves.
+  ping-ponged between. `account_switches` counts the moves — including one made
+  across a park, since the run reads the account it last ran on back from its
+  row. A run is **one run** however many accounts and however many processes it
+  took: `usage`, `tool_calls`, `api_retries`, `stalls` and `first_event_ms` cover
+  every turn, and `wall_clock_ms` is one budget spent across them rather than
+  handed out afresh per account. Waiting is not spent against it — `max_wait_ms`
+  caps that, and two names for one limit would leave one of them meaningless.
 - **Choosing among free accounts**: soonest refill first, counting only windows
   the account has spent something of — an untouched window has no quota to waste
   (`internal/account.Soonest`). The owner's list names which accounts take part
@@ -601,8 +607,16 @@ for `codex`); the suite never runs a real harness.
   reset among that harness's limited accounts. It holds no process **and no
   goroutine**: the run's goroutine ends, its capacity and any path-source lock go
   back, and everything it had is in its row — when it first started, the wait it
-  has served, the accounts it has been through. `internal/runner.Resumer`, one
-  per process, picks it up when the reset passes; a restart is not a second path
+  has served, the accounts it has been through, and what its turns so far cost.
+  `internal/runner.Resumer`, one per process, picks it up when the reset passes
+  **or as soon as an account is free**, which is the other half of the arrow in
+  §2: an owner finishing a login, or `yad account add`, frees an account long
+  before the reset the run was parked on, and the resumer reads account state on
+  every sweep rather than trusting the moment it wrote. It resumes only runs of
+  connections this process actually serves — one whose credential would not read,
+  or whose `Recover` failed, has no loop renewing leases and no reporter
+  delivering results, so its parked runs wait for a process that can finish them.
+  A restart is not a second path
   but the same one, which is why `kill -9` costs it nothing and why
   [0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md)'s
   report-lost pass skips a waiting run. The one thing the row cannot hold is the

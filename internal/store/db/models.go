@@ -60,6 +60,7 @@ type Run struct {
 	WaitingSince    sql.NullInt64
 	AccountSwitches int64
 	HadGrants       int64
+	Spent           sql.NullString
 }
 
 type Session struct {

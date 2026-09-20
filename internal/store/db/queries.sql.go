@@ -331,7 +331,7 @@ func (q *Queries) FreeSlots(ctx context.Context, arg FreeSlotsParams) error {
 }
 
 const getRun = `-- name: GetRun :one
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants FROM runs WHERE connection = ? AND id = ?
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs WHERE connection = ? AND id = ?
 `
 
 type GetRunParams struct {
@@ -360,6 +360,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.WaitingSince,
 		&i.AccountSwitches,
 		&i.HadGrants,
+		&i.Spent,
 	)
 	return i, err
 }
@@ -610,7 +611,7 @@ func (q *Queries) ListAllAccounts(ctx context.Context) ([]Account, error) {
 }
 
 const listAllHeldRuns = `-- name: ListAllHeldRuns :many
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants FROM runs
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs
 WHERE state IN ('claimed', 'preparing', 'running', 'waiting')
 ORDER BY created_at
 `
@@ -643,6 +644,7 @@ func (q *Queries) ListAllHeldRuns(ctx context.Context) ([]Run, error) {
 			&i.WaitingSince,
 			&i.AccountSwitches,
 			&i.HadGrants,
+			&i.Spent,
 		); err != nil {
 			return nil, err
 		}
@@ -658,7 +660,7 @@ func (q *Queries) ListAllHeldRuns(ctx context.Context) ([]Run, error) {
 }
 
 const listHeldRuns = `-- name: ListHeldRuns :many
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants FROM runs
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs
 WHERE connection = ? AND state IN ('claimed', 'preparing', 'running', 'waiting')
 ORDER BY created_at
 `
@@ -690,6 +692,7 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 			&i.WaitingSince,
 			&i.AccountSwitches,
 			&i.HadGrants,
+			&i.Spent,
 		); err != nil {
 			return nil, err
 		}
@@ -705,7 +708,7 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 }
 
 const listReportingRuns = `-- name: ListReportingRuns :many
-SELECT r.connection, r.id, r.session_id, r.harness, r.model, r.state, r.spec, r.account, r.resumes_at, r.reason, r.created_at, r.updated_at, r.started_at, r.waited_ms, r.waiting_since, r.account_switches, r.had_grants FROM runs r JOIN outbox o ON o.connection = r.connection AND o.run_id = r.id
+SELECT r.connection, r.id, r.session_id, r.harness, r.model, r.state, r.spec, r.account, r.resumes_at, r.reason, r.created_at, r.updated_at, r.started_at, r.waited_ms, r.waiting_since, r.account_switches, r.had_grants, r.spent FROM runs r JOIN outbox o ON o.connection = r.connection AND o.run_id = r.id
 WHERE r.connection = ? ORDER BY r.created_at
 `
 
@@ -739,6 +742,7 @@ func (q *Queries) ListReportingRuns(ctx context.Context, connection string) ([]R
 			&i.WaitingSince,
 			&i.AccountSwitches,
 			&i.HadGrants,
+			&i.Spent,
 		); err != nil {
 			return nil, err
 		}
@@ -824,7 +828,7 @@ func (q *Queries) ListSessions(ctx context.Context) ([]ListSessionsRow, error) {
 }
 
 const listWaitingRuns = `-- name: ListWaitingRuns :many
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants FROM runs WHERE state = 'waiting' ORDER BY created_at, connection, id
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs WHERE state = 'waiting' ORDER BY created_at, connection, id
 `
 
 // Every parked run, across connections: the resumer is one per process, not
@@ -857,6 +861,7 @@ func (q *Queries) ListWaitingRuns(ctx context.Context) ([]Run, error) {
 			&i.WaitingSince,
 			&i.AccountSwitches,
 			&i.HadGrants,
+			&i.Spent,
 		); err != nil {
 			return nil, err
 		}
@@ -1208,13 +1213,14 @@ func (q *Queries) SetRunState(ctx context.Context, arg SetRunStateParams) error 
 
 const setRunWaiting = `-- name: SetRunWaiting :exec
 UPDATE runs SET state = 'waiting', resumes_at = ?, waiting_since = ?, account_switches = ?,
-  reason = ?, updated_at = ? WHERE connection = ? AND id = ?
+  spent = ?, reason = ?, updated_at = ? WHERE connection = ? AND id = ?
 `
 
 type SetRunWaitingParams struct {
 	ResumesAt       sql.NullInt64
 	WaitingSince    sql.NullInt64
 	AccountSwitches int64
+	Spent           sql.NullString
 	Reason          sql.NullString
 	UpdatedAt       int64
 	Connection      string
@@ -1230,6 +1236,7 @@ func (q *Queries) SetRunWaiting(ctx context.Context, arg SetRunWaitingParams) er
 		arg.ResumesAt,
 		arg.WaitingSince,
 		arg.AccountSwitches,
+		arg.Spent,
 		arg.Reason,
 		arg.UpdatedAt,
 		arg.Connection,
