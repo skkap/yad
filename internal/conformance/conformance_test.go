@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,12 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		// One answer naming a run twice has not shown that a dropped offer
 		// comes back, so the rule is unproven rather than kept.
 		{flaw: flawOffersTwiceOver, check: "sync/offer-is-repeated", want: Skipped},
+		{flaw: flawStrictEventFields, check: "events/unknown-fields-ignored", want: Failed},
+		{flaw: flawCredentialMisnamed, check: "register/exchange", want: Failed},
+		{flaw: flawKeepsOneOffer, check: "sync/offer-is-repeated", want: Skipped},
+		// A hub setting a version floor is exercising a right §2 grants it,
+		// so the suite says what happened and checks nothing further.
+		{flaw: flawVersionFloorQuotes, check: "register/exchange", want: Skipped},
 		{flaw: flawSendsUpdate, check: "versioning/controls-are-gated", want: Passed},
 	} {
 		t.Run(tc.flaw+"/"+tc.check, func(t *testing.T) {
@@ -292,5 +299,105 @@ func TestASecretQuotedBackIsNotPrinted(t *testing.T) {
 	}
 	if strings.Contains(out.String(), fakeToken) {
 		t.Errorf("the registration token is in the report, quoted inside an error message:\n%s", out.String())
+	}
+}
+
+// A hub that stops answering is a finding about the hub. Only this suite's own
+// context ending means the suite was stopped — and a check that says so while
+// nothing failed is a run that exits 0 over a hub that stalled.
+func TestAStalledHubIsNotAnInterruption(t *testing.T) {
+	t.Parallel()
+	s := &session{opts: Options{Harness: DefaultHarness}, offered: map[string]v1.Run{}}
+	timedOut := check{
+		id: "probe", rule: "A rule.", section: sectionCalls,
+		run: func(context.Context, *session) error {
+			return fmt.Errorf("Post \"http://hub.example/v1/runners/x/sync\": context deadline exceeded (Client.Timeout exceeded): %w", context.DeadlineExceeded)
+		},
+	}
+	if got := s.make(context.Background(), timedOut); got.Status != Failed {
+		t.Errorf("a hub that did not answer inside the request timeout was %s, not failed: %s", label(got.Status), got.Detail)
+	}
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := s.make(stopped, timedOut); got.Status != Skipped {
+		t.Errorf("a check the suite was stopped in was %s, not skipped", label(got.Status))
+	}
+}
+
+// A secret a hub wrote with escapes is the same secret. Matching the decoded
+// text is what makes that true whatever encoder the hub used — and the suite's
+// own re-marshalling escapes what it did not redact, so matching the encoded
+// text would leave a second secret beyond reach.
+func TestAnEscapedSecretIsStillFound(t *testing.T) {
+	t.Parallel()
+	// Characters Go's own encoder escapes, which another hub's may not.
+	const token = "tok-a&b<c>d-0123456789"
+	f, url := newFake(t, flawEchoesTheToken)
+	f.token = token
+	rep, err := Run(context.Background(), Options{BaseURL: url, Token: token, LeaseWait: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := outcome(t, rep, "errors/next-action"); o.Status != Failed {
+		t.Fatalf("errors/next-action was %s, so the answer quoting the token was never printed", label(o.Status))
+	}
+	var out strings.Builder
+	rep.Print(&out)
+	for _, form := range []string{token, encoded(token)} {
+		if form != "" && strings.Contains(out.String(), form) {
+			t.Errorf("the token is in the report as %q:\n%s", form, out.String())
+		}
+	}
+}
+
+// The fields v1 puts a secret in are redacted whatever the hub put there: a
+// hub is not obliged to send a string, and a walk that only replaces strings
+// prints an object holding a credential.
+func TestASecretIsRedactedWhateverItsShape(t *testing.T) {
+	t.Parallel()
+	c := newClient("http://hub.example/v1")
+	for _, body := range []string{
+		`{"runner_credential":{"value":"cred-abcdef"}}`,
+		`{"runner_credential":12345678}`,
+		`{"runs":[{"grants":[{"name":"TOKEN","as":"env","value":{"inner":"grant-abcdef"}}]}]}`,
+	} {
+		text, read := c.redacted([]byte(body))
+		switch {
+		case !read:
+			t.Errorf("%s could not be read", body)
+		case strings.Contains(text, "abcdef") || strings.Contains(text, "12345678"):
+			t.Errorf("the secret survived redaction: %s -> %s", body, text)
+		}
+	}
+}
+
+// The escaping a hub chooses is its own, and the set of forms is unbounded —
+// \u0074 is a legal encoding of "t". Only reading the body as JSON collapses
+// them all, which is why the secrets are taken out of the decoded strings
+// rather than searched for in the text.
+func TestASecretEscapedBeyondGuessingIsStillFound(t *testing.T) {
+	t.Parallel()
+	_, url := newFake(t, flawExoticEscape)
+	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken, LeaseWait: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := outcome(t, rep, "errors/next-action"); o.Status != Failed {
+		t.Fatalf("errors/next-action was %s, so the answer quoting the token was never printed", label(o.Status))
+	}
+	var out strings.Builder
+	rep.Print(&out)
+	flat := strings.Join(strings.Fields(out.String()), " ")
+	if !strings.Contains(flat, "has been used") {
+		t.Fatalf("the report does not carry the refusal that quotes the token, so it proves nothing:\n%s", out.String())
+	}
+	// Both forms: the token as it is, and the form the hub wrote it in. A
+	// report carrying \u0066\u0061… has printed the token to anyone who can
+	// read four characters of JSON, and asserting only the raw form would
+	// pass while it did.
+	for _, form := range []string{fakeToken, escapeEvery(fakeToken)} {
+		if strings.Contains(out.String(), form) {
+			t.Errorf("the token is in the report as %q:\n%s", form, out.String())
+		}
 	}
 }

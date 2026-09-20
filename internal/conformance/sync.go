@@ -127,10 +127,10 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 	// Ask for work, listing nothing each time: every run offered is therefore
 	// one the next sync did not list, which is the state the rule is about.
 	var (
-		answers  [][]string // the runs each answer offered, in order, without repeats within one
-		seen     []string   // every run offered so far, so a repeat is one from an earlier answer
-		repeated bool
-		last     *answer
+		answers [][]string // the runs each answer offered, in order, without repeats within one
+		seen    []string   // every run offered so far, so a repeat is one from an earlier answer
+		back    []string   // the runs that did come back after a sync that did not list them
+		last    *answer
 	)
 	for i := 0; i < offerSyncs; i++ {
 		res, a, err := s.syncOK(ctx, runsWanted)
@@ -147,14 +147,15 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 		}
 		for _, id := range ids {
 			if slices.Contains(seen, id) {
-				repeated = true
+				if !slices.Contains(back, id) {
+					back = append(back, id)
+				}
 				continue
 			}
 			seen = append(seen, id)
 		}
 		answers = append(answers, ids)
-		s.offeredAtOnce = max(s.offeredAtOnce, len(ids))
-		if repeated && len(ids) >= runsWanted {
+		if len(back) == len(seen) && len(ids) >= runsWanted {
 			break
 		}
 	}
@@ -168,14 +169,22 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 	case first < 0:
 		return skipf("the hub offered no run for harness %s in %d syncs, so the rules that need one could not be checked; queue one or two runs for that harness and run the suite again",
 			s.opts.Harness, offerSyncs)
-	case repeated:
+	// Every run the hub dropped, not one of them: seeing A come back says
+	// nothing about B, and a hub that re-offers one run for ever while losing
+	// the other keeps the rule for A alone.
+	case len(back) == len(answers[first]) && subset(answers[first], back):
 		return nil
 	}
 	// What the hub said after the answer that first offered something: how
 	// many syncs followed it, and which runs it had to offer that were not
 	// the ones it had just dropped.
 	dropped, after := answers[first], answers[first+1:]
-	var others []string
+	var missing, others []string
+	for _, id := range dropped {
+		if !slices.Contains(back, id) {
+			missing = append(missing, id)
+		}
+	}
 	for _, ids := range after {
 		for _, id := range ids {
 			if !slices.Contains(dropped, id) {
@@ -189,10 +198,10 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 			strings.Join(dropped, ", "), offerSyncs, s.opts.Harness)
 	case len(others) > 0:
 		return skipf("run %s was offered and not listed, and in the %d sync(s) after it the hub had other runs to offer first (%s), so whether it comes back cannot be told in a bounded number of syncs — §2 names no deadline, and this is not a verdict on the hub. Queue only the runs this suite should use, and run it again: %s",
-			strings.Join(dropped, ", "), len(after), strings.Join(sorted(setOf(others)), ", "), last)
+			strings.Join(missing, ", "), len(after), strings.Join(sorted(setOf(others)), ", "), last)
 	default:
-		return skipf("run %s was offered and not listed, and the hub offered nothing at all in the %d sync(s) after it though this runner declared room for %d. §2 says the hub offers such a run again but names no deadline, so this is not a verdict — read it as a warning instead: a hub that never offers a dropped run again loses every run it drops. %s",
-			strings.Join(dropped, ", "), len(after), runsWanted, last)
+		return skipf("run %s was offered and not listed, and the hub did not offer it again in the %d sync(s) after it though this runner declared room for %d. §2 says the hub offers such a run again but names no deadline, so this is not a verdict — read it as a warning instead: a hub that never offers a dropped run again loses every run it drops. %s",
+			strings.Join(missing, ", "), len(after), runsWanted, last)
 	}
 }
 
@@ -269,6 +278,16 @@ func checkControlsAreGated(_ context.Context, s *session) error {
 }
 
 func sorted(set map[string]bool) []string { return slices.Sorted(maps.Keys(set)) }
+
+// subset reports whether every member of want is in have.
+func subset(want, have []string) bool {
+	for _, id := range want {
+		if !slices.Contains(have, id) {
+			return false
+		}
+	}
+	return true
+}
 
 func setOf(ids []string) map[string]bool {
 	set := map[string]bool{}

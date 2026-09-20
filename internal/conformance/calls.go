@@ -68,8 +68,11 @@ func checkRegister(ctx context.Context, s *session) error {
 		// — and the token is not burned by that refusal. Blaming the hub for
 		// what §2 grants it is the mistake this suite exists not to make.
 		if e, ok := a.envelope(); ok && e.Code == v1.CodeVersionTooOld {
+			// The hub's own words, through the same guard as any body: a hub
+			// that names the token it refused would otherwise put it in the
+			// report by way of a message this suite quotes approvingly.
 			return skipf("this hub refuses yad %s and said so: %s. §2 lets a hub set a version floor, so this is its right and not a fault — run the suite from a build at or above that floor to check the rest",
-				buildinfo.Version, e.Message)
+				buildinfo.Version, s.c.hide(e.Message))
 		}
 		return brokenf("the hub refused the registration token: %s", a)
 	}
@@ -78,7 +81,13 @@ func checkRegister(ctx context.Context, s *session) error {
 		return err
 	}
 	if res.RunnerCredential == "" {
-		return brokenf("the answer carries no runner_credential, so nothing after register can be authenticated: %s", a)
+		// Not printed, unlike every other failure here. A 200 with no
+		// runner_credential is most likely a hub that named the field
+		// something else — so the body holds a credential this suite cannot
+		// recognise, under a key the redaction does not know, and it is the
+		// one answer that must be described rather than shown.
+		return brokenf("the answer carries no runner_credential, so nothing after register can be authenticated: %s -> %d, and the body is not printed because a register answer can carry a credential under any name a hub gives it",
+			a.Call, a.Status)
 	}
 	s.cred = res.RunnerCredential
 	// From here the credential is a secret this suite holds, and no failure
@@ -214,8 +223,8 @@ func checkProtocolHeaderOtherVersion(ctx context.Context, s *session) error {
 	})
 }
 
-// everyCall makes the same request of every call this suite may safely send
-// twice and wants 426 unsupported_protocol from each. Register is left out: it
+// everyCall makes the same request of the sync, events and result calls and
+// wants 426 unsupported_protocol from each. Register is left out: it
 // is the one call the registration token authenticates, and a hub that reads
 // the body before the header would burn the operator's token on a request sent
 // to check a header.

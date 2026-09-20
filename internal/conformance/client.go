@@ -103,26 +103,58 @@ func newClient(base string, known ...string) *client {
 	return c
 }
 
-// shortestSecret is the length below which a string is not treated as one. A
-// secret this short is not a secret, and replacing every occurrence of a short
-// string would take the report apart.
-const shortestSecret = 8
-
 // learn adds a secret this suite holds to what is hidden from the report.
+// Length is not a test of one: the protocol puts no floor on a registration
+// token, and a hub free to issue a six-character one is free to echo it. A
+// short secret that turns a report into a row of redactions is a bad report;
+// a printed token is a worse one.
 func (c *client) learn(secret string) {
-	if len(secret) >= shortestSecret {
+	if secret != "" {
 		c.known = append(c.known, secret)
 	}
 }
 
-// hide removes every secret this suite presented from text, wherever in it
-// they are and whatever the shape around them. It runs before the excerpt is
-// cut, so a secret is removed whole rather than left with its head showing.
+// hide removes every secret this suite presented from text that is no longer
+// JSON — a body that would not parse, and the sentences a check writes around
+// it. It runs before the excerpt is cut, so a secret goes whole rather than
+// leaving its head showing.
+//
+// Each secret is looked for twice: as it is, and as JSON writes it. Go's
+// encoder turns & < > into \u0026 \u003c \u003e, so a body this suite
+// re-marshalled has escaped anything it did not redact — the redaction step
+// itself is what would otherwise put a second secret beyond reach. Two exact
+// needles, and no pattern matching: a redactor with false positives is one
+// somebody switches off.
 func (c *client) hide(text string) string {
+	text = c.hideKnown(text)
+	for _, secret := range c.known {
+		if needle := encoded(secret); needle != "" {
+			text = strings.ReplaceAll(text, needle, redactedText)
+		}
+	}
+	return text
+}
+
+// hideKnown replaces the secrets this suite presented in text as it stands,
+// which for a decoded string is every form a hub could have written.
+func (c *client) hideKnown(text string) string {
 	for _, secret := range c.known {
 		text = strings.ReplaceAll(text, secret, redactedText)
 	}
 	return text
+}
+
+// encoded is a string as JSON writes it, without the quotes.
+func encoded(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil || len(b) < 2 {
+		return ""
+	}
+	quoted := string(b[1 : len(b)-1])
+	if quoted == s {
+		return "" // nothing was escaped; the raw needle already covers it
+	}
+	return quoted
 }
 
 func (c *client) do(ctx context.Context, in call) (*answer, error) {
@@ -185,25 +217,25 @@ const (
 // registerPath is the one call whose answer carries the runner credential.
 const registerPath = "/runners/register"
 
-// redacted is a body with the two secrets v1 carries removed: the runner
-// credential a register answers with, and the value of every grant in a run a
-// sync offers. Half the failures here print the answer that broke the rule,
-// and the answer that breaks "a token registers one runner once" is a 200
-// carrying a working credential — which would then be in the terminal, and in
-// the log of whatever pipeline ran the suite, for as long as that log is kept.
-// CLAUDE.md's guardrail is that a secret is never printed, and a report about
-// a hub's mistakes is not an exception to it.
+// redacted is a body with every secret taken out of it. Half the failures here
+// print the answer that broke the rule, and the answer that breaks "a token
+// registers one runner once" is a 200 carrying a working credential — which
+// would then be in the terminal, and in the log of whatever pipeline ran the
+// suite, for as long as that log is kept. CLAUDE.md's guardrail is that a
+// secret is never printed, and a report about a hub's mistakes is not an
+// exception to it.
+//
 // It returns whether the body could be read at all, because a body that is not
 // JSON is not thereby free of secrets: a UTF-8 BOM before the first brace is
 // enough for encoding/json to refuse a register answer whose first field is the
 // credential, and so is a body over readLimit, which arrives cut mid-object.
 // This is the half of the guard that has to fail closed.
-func redacted(body []byte) (string, bool) {
+func (c *client) redacted(body []byte) (string, bool) {
 	var v any
 	if err := json.Unmarshal(body, &v); err != nil {
 		return string(body), false
 	}
-	if !scrub(v, "") {
+	if !c.scrub(v, "") {
 		return string(body), true
 	}
 	out, err := json.Marshal(v)
@@ -215,24 +247,53 @@ func redacted(body []byte) (string, bool) {
 	return string(out), true
 }
 
-// scrub replaces every secret v1 carries, wherever in the body it is, and
-// reports whether it replaced any. The grant value is matched by the key it
-// sits under rather than by its own name, because "value" alone is a field
-// name any hub might use for something harmless.
-func scrub(v any, under string) bool {
+// scrub takes every secret out of a decoded body and reports whether it took
+// any — which is what decides between re-marshalling the document and printing
+// the hub's own bytes, so a replacement that does not say so is a replacement
+// thrown away.
+//
+// Two kinds of secret. The fields v1 puts one in, whatever the value there
+// turns out to be: a hub is not obliged to send a string, and a credential
+// inside an object under runner_credential is still a credential. And the
+// secrets this suite itself presented, wherever in any string they appear,
+// because a hub that quotes one back inside a message — "the token … is spent"
+// — has put it somewhere no walk by field name will look.
+//
+// Matching the decoded text is what makes the second kind exact: Unmarshal has
+// already collapsed \u0026, \/ and every other escape some encoder chose, so
+// one comparison covers all of them. Matching the encoded text could only ever
+// cover the forms this suite thought of, and the hubs it exists for are written
+// by other people in other languages.
+//
+// The grant value is matched by the key it sits under rather than by its own
+// name, because "value" alone is a field name any hub might use for something
+// harmless.
+func (c *client) scrub(v any, under string) bool {
 	found := false
 	switch t := v.(type) {
 	case map[string]any:
 		for k, child := range t {
-			if _, isString := child.(string); isString && (k == "runner_credential" || under == "grants" && k == "value") {
+			if k == "runner_credential" || under == "grants" && k == "value" {
 				t[k], found = json.RawMessage(redaction), true
 				continue
 			}
-			found = scrub(child, k) || found
+			if text, ok := child.(string); ok {
+				if hidden := c.hideKnown(text); hidden != text {
+					t[k], found = hidden, true
+					continue
+				}
+			}
+			found = c.scrub(child, k) || found
 		}
 	case []any:
-		for _, child := range t {
-			found = scrub(child, under) || found
+		for i, child := range t {
+			if text, ok := child.(string); ok {
+				if hidden := c.hideKnown(text); hidden != text {
+					t[i], found = hidden, true
+					continue
+				}
+			}
+			found = c.scrub(child, under) || found
 		}
 	}
 	return found
@@ -272,7 +333,7 @@ func (a *answer) envelope() (v1.Error, bool) {
 // body to show what happened — with the secrets the protocol carries taken
 // out of it first.
 func (a *answer) String() string {
-	text, read := redacted(a.Body)
+	text, read := a.c.redacted(a.Body)
 	text = a.c.hide(text)
 	if !read && a.secrets {
 		// A proxy's error page would have been worth printing. It is not

@@ -39,6 +39,10 @@ var unchecked = []struct{ rule, section, why string }{{
 	section: sectionEvents + ", " + sectionResult,
 	why:     "it needs two runners at once, and so two registration tokens; this suite holds one. What is checked is the near half: that a run the hub cannot match to the calling runner is refused.",
 }, {
+	rule:    "Whether register refuses a request whose Yad-Protocol header is missing or names another version.",
+	section: sectionCalls,
+	why:     "register is the one call the registration token authenticates, and a hub that reads the body before the header would burn the operator's token on a request this suite sent only to check a header. The rule is checked on every other call.",
+}, {
 	rule:    "Whether the copy of a resent event that the hub keeps is the first one.",
 	section: sectionEvents,
 	why:     "v1 gives a runner no way to read an event back, so nothing outside the hub can see which copy it stored. What is checked is that a resent batch is accepted and acknowledged no further back than before.",

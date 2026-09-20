@@ -131,6 +131,12 @@ func checks() []check {
 		needs:   heldRun,
 		run:     checkEventsIdempotent,
 	}, {
+		id:      "events/unknown-fields-ignored",
+		rule:    "Unknown fields are ignored on every call, not only on sync: a batch of events carrying a field this version of the protocol does not define is accepted.",
+		section: sectionCalls,
+		needs:   heldRun,
+		run:     checkEventsUnknownFields,
+	}, {
 		id:      "events/not-held",
 		rule:    "Only the runner a run was claimed by may append to it: a hub takes no events for a run it cannot match to the calling runner — 403 not_holder, or a not_found for a run it has never heard of.",
 		section: sectionEvents,

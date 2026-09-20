@@ -274,10 +274,16 @@ func (s *session) make(ctx context.Context, ch check) Outcome {
 		out.Status = Passed
 	case errors.As(err, &sk):
 		out.Status, out.Detail = Skipped, sk.reason
-	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+	case ctx.Err() != nil:
 		// The check the signal landed in is not a rule the hub broke, and a
 		// report naming a §2 rule against a hub that did nothing is worse
 		// than one check fewer.
+		//
+		// Judged on this run's own context, never on the error: a hub that
+		// does not answer inside requestTimeout hands back a deadline of the
+		// client's, and calling that "the suite was stopped" would report a
+		// stalled hub as this suite's own interruption — and, since nothing
+		// then failed, exit 0 on it.
 		out.Status, out.Detail = Skipped, "the suite was stopped while this check was being made"
 	default:
 		// A transport error is reported like any other failure: from the
@@ -389,6 +395,14 @@ func (s *session) syncWith(ctx context.Context, req v1.SyncRequest, raw []byte) 
 		return res, a, err
 	}
 	s.syncs = append(s.syncs, syncSeen{call: a.Call, free: req.Health.FreeCapacity.Total, res: res})
+	// Every run the hub offers is recorded here, at the one place every sync
+	// answer passes through: a run offered by any sync is a run a runner would
+	// have had to take or refuse, and the rules about offers are about all of
+	// them rather than about the two this suite goes on to use.
+	for _, r := range res.Runs {
+		s.offered[r.RunID] = r
+	}
+	s.offeredAtOnce = max(s.offeredAtOnce, len(res.Runs))
 	s.note(a.Call, res.NextSyncMS, res.LeaseMS)
 	return res, a, nil
 }

@@ -89,6 +89,17 @@ const (
 	// all: a refusal the suite reads and passes is never printed, so a test
 	// over it would prove nothing about what is printed.
 	flawEchoesTheToken = "a refusal quotes the token it was given, and names no next action"
+	// The floor quotes the token as well, and a version refusal is one §2
+	// grants a hub — so the suite reads it, skips, and prints the hub's own
+	// words rather than a failure.
+	flawVersionFloorQuotes = "the version floor refuses this runner and quotes its token"
+	flawCredentialMisnamed = "the credential comes back under a name of the hub's own"
+	flawStrictEventFields  = "a batch carrying an unknown field is refused"
+	flawKeepsOneOffer      = "of two dropped offers only one is ever offered again"
+	// Not Go's escaping and not this suite's guess at one: every character
+	// of the token written \uXXXX, which is legal JSON that no search for a
+	// form somebody thought of will match.
+	flawExoticEscape = "a refusal quotes the token with every character escaped, and names no next action"
 )
 
 func newFake(t *testing.T, flaw string, queued ...v1.Run) (*fake, string) {
@@ -178,6 +189,11 @@ func (f *fake) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sameRunner := f.flaw == flawSameRunnerReuse && req.Capabilities.RunnerID == f.runner
+	if f.spent && f.flaw == flawExoticEscape {
+		f.writeRaw(w, http.StatusUnauthorized, `{"error":{"code":"unauthorized","message":"the registration token `+
+			escapeEvery(bearer(r))+` has been used","next_action":""}}`)
+		return
+	}
 	if f.spent && f.flaw != flawTokenIsReusable && !sameRunner {
 		// A hub quoting back what it was given: valid JSON, no field any
 		// walk of it would know to redact, and one of the commonest ways a
@@ -189,12 +205,24 @@ func (f *fake) register(w http.ResponseWriter, r *http.Request) {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, message, next)
 		return
 	}
+	if f.flaw == flawVersionFloorQuotes {
+		f.fail(w, http.StatusUnauthorized, v1.CodeVersionTooOld,
+			"this hub runs runners at 9.9.9 or newer; the token "+bearer(r)+" was not spent", "yad upgrade")
+		return
+	}
 	f.spent = true
 	if f.cred == "" {
 		// A second registration keeps the first runner's credential working,
 		// so a hub with the reusable-token flaw still answers everything
 		// after it and the test reads one broken rule rather than a cascade.
 		f.cred, f.runner = "fake-credential", req.Capabilities.RunnerID
+	}
+	if f.flaw == flawCredentialMisnamed {
+		// A hub whose field is called something else: the answer is a 200
+		// carrying a live credential that no walk by field name can find.
+		f.writeRaw(w, http.StatusOK, fmt.Sprintf(`{"credential":%q,"sync_interval_ms":%d,"lease_ms":%d}`,
+			f.cred, f.ms(f.interval), int(f.lease/time.Millisecond)))
+		return
 	}
 	f.write(w, http.StatusOK, v1.RegisterResponse{
 		RunnerCredential: f.cred, SyncIntervalMS: f.ms(f.interval), LeaseMS: int(f.lease / time.Millisecond),
@@ -255,6 +283,11 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 		run := f.runs[id]
 		// An offer this sync did not list was never received (§2, Sync).
 		if run.holder == "" && !run.queued && !listed[id] && f.flaw != flawForgetsOffers && f.flaw != flawOffersTwiceOver {
+			// Except for the one this hub keeps losing: re-offering another
+			// run for ever says nothing about the rule for this one.
+			if f.flaw == flawKeepsOneOffer && id == f.order[len(f.order)-1] {
+				continue
+			}
 			run.queued = true
 		}
 	}
@@ -367,6 +400,12 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the body is not the JSON this call takes", "check it against protocol/v1/openapi.yaml")
 		return false
 	}
+	if f.flaw == flawStrictEventFields {
+		if _, isBatch := body.(*v1.EventBatch); isBatch {
+			f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the batch carries a field this hub does not know", "send only the fields in protocol/v1/openapi.yaml")
+			return false
+		}
+	}
 	if f.flaw == flawKeepsUnknownFields {
 		// A hub whose decoder is strict: exactly what §2's second wire rule
 		// forbids, and what a generated TypeScript client does by default.
@@ -423,4 +462,14 @@ func outcome(t *testing.T, rep *Report, id string) Outcome {
 		t.Fatalf("no check %q in the report", id)
 	}
 	return rep.Outcomes[i]
+}
+
+// escapeEvery writes every character of s as \uXXXX: legal JSON, and a form no
+// search for an encoding somebody anticipated can match.
+func escapeEvery(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		fmt.Fprintf(&b, "\\u%04x", r)
+	}
+	return b.String()
 }

@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/url"
@@ -42,6 +43,35 @@ func checkAckedThrough(ctx context.Context, s *session) error {
 
 func checkEventsIdempotent(ctx context.Context, s *session) error {
 	return s.wantAck(ctx, s.report, seqGap, seqFirst, seqAfter, seqFill, seqGap)
+}
+
+// checkEventsUnknownFields is §2's second wire rule on the call a strict
+// decoder is likeliest to be generated for: a hub permissive on sync and
+// strict on a batch refuses a real runner the moment v1 adds an optional
+// event field, which is the break the rule exists to prevent.
+func checkEventsUnknownFields(ctx context.Context, s *session) error {
+	event, err := withField(v1.Event{
+		Seq: seqFirst, At: time.Now().UTC(), Kind: v1.EventText,
+		Text: "yad conformance: this run was claimed by the conformance suite, which drives no harness",
+	}, "a_field_from_a_later_v1", true)
+	if err != nil {
+		return err
+	}
+	batch, err := json.Marshal(map[string]any{
+		"events":                  []json.RawMessage{event},
+		"a_field_from_a_later_v1": "ignore me",
+	})
+	if err != nil {
+		return err
+	}
+	a, err := s.c.do(ctx, call{path: eventsPath(s.report), bearer: s.cred, raw: batch})
+	if err != nil {
+		return err
+	}
+	if !a.ok() {
+		return brokenf("the batch was refused for carrying a field the hub does not know: %s", a)
+	}
+	return nil
 }
 
 func checkEventsNotHeld(ctx context.Context, s *session) error {
