@@ -14,7 +14,7 @@ import (
 // rule.
 func cmdConformance(ctx context.Context, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("conformance", flag.ContinueOnError)
-	token := fs.String("token", "", "a registration token the hub has issued and nobody has used; - reads it from stdin (see decision 0020)")
+	token := fs.String("token", "", "a registration token the hub has issued for a new runner and nobody has used; one made to re-register an existing runner is refused, and the refusal is the hub's, not a fault of its own; - reads it from stdin (see decision 0020)")
 	harness := fs.String("harness", conformance.DefaultHarness, "the harness id to advertise; queue the hub's runs for it to check the rules that need a run")
 	wait := fs.Duration("lease-wait", conformance.DefaultLeaseWait, "how long to spend waiting a lease out, which is real time and as long as the hub says; 0 skips that rule")
 	pos, err := positional(fs, args, 1, "usage: yad conformance <hub url> --token <token> [--harness id] [--lease-wait d]")

@@ -302,6 +302,16 @@ func (c *client) scrub(v any, under string) (any, bool) {
 				t[k], found = json.RawMessage(redaction), true
 				continue
 			}
+			// A source's URL is the one field v1 carries that holds a secret
+			// inside a larger string a reader still wants: a run's git source
+			// may arrive as https://user:token@host/repo.git, and the host
+			// and path are worth printing while the credentials are not.
+			if text, ok := child.(string); ok && k == "url" {
+				if hidden := redactedURL(text); hidden != text {
+					t[k], found = hidden, true
+					continue
+				}
+			}
 			if scrubbed, ok := c.scrub(child, k); ok {
 				t[k], found = scrubbed, true
 			}

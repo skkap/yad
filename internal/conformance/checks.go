@@ -113,6 +113,12 @@ func checks() []check {
 		needs:   heldRun,
 		run:     checkOfferedRunIsValid,
 	}, {
+		id:      "run/gated-features",
+		rule:    "Neither side uses what the other did not advertise: a run in a live session goes only to a runner advertising live_sessions, and a run whose start_at is still ahead only to one advertising start_at, since any other runner starts it on arrival.",
+		section: sectionVersioning,
+		needs:   heldRun,
+		run:     checkGatedRunsAreNotOffered,
+	}, {
 		id:      "events/credential-required",
 		rule:    "Every call but register is authenticated by the runner credential, on every call and not only on sync: a batch of events for a run this runner holds is refused when the bearer is one the hub never issued, or absent.",
 		section: sectionCalls,

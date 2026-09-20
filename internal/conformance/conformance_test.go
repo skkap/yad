@@ -69,6 +69,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawShortInterval, check: "sync/timings", want: Failed},
 		{flaw: flawShortLease, check: "sync/lease-outlasts-the-interval", want: Failed},
 		{flaw: flawStrictResultFields, check: "result/unknown-fields-ignored", want: Failed},
+		{flaw: flawOffersLiveMode, check: "run/gated-features", want: Failed},
 		{flaw: flawUngatedControl, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawNoNextAction, check: "errors/next-action", want: Failed},
 		{flaw: flawRenewsEverything, check: "lease/lapse", leaseWait: time.Minute, want: Failed},
@@ -436,6 +437,21 @@ func TestASecretIsRedactedWhateverItsShape(t *testing.T) {
 			t.Errorf("the secret survived redaction: %s -> %s", body, text)
 		}
 	}
+	// A password inside a source URL is a secret the hub sent and this suite
+	// can never have learned, so it comes out of the URL rather than off a
+	// list — and the host and path stay, because a run's source is the thing
+	// the reader is trying to see. Asserted here rather than through a report,
+	// where the excerpt can cut the URL off and pass for the wrong reason.
+	const password = "hunter2-0123456789"
+	text, read := c.redacted([]byte(`{"runs":[{"run_id":"r1","sources":[{"git":{"url":"https://runner:` + password + `@git.example/repo.git"}}]}]}`))
+	switch {
+	case !read:
+		t.Error("a run with a git source could not be read")
+	case strings.Contains(text, password):
+		t.Errorf("the password is still in the source URL: %s", text)
+	case !strings.Contains(text, "git.example/repo.git"):
+		t.Errorf("the source URL no longer says which repository it was: %s", text)
+	}
 }
 
 // The escaping a hub chooses is its own, and the set of forms is unbounded —
@@ -545,5 +561,49 @@ func TestAPasswordInTheURLIsNotPrinted(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "hub.example/v1") {
 		t.Errorf("the report no longer says which hub it ran against:\n%s", out.String())
+	}
+}
+
+// Secrets the hub sends, rather than ones this suite presented: a grant's
+// value, which it learns from the run it was offered, and a password inside a
+// source URL, which it can never learn and takes out of the URL instead.
+func TestASecretTheHubSentIsNotPrinted(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ flaw, secret, printedBy string }{
+		{flaw: flawGrantInTheOpen, secret: grantValue, printedBy: "errors/next-action"},
+	} {
+		t.Run(tc.flaw, func(t *testing.T) {
+			t.Parallel()
+			_, url := newFake(t, tc.flaw, fakeRunSpec(0), fakeRunSpec(1))
+			rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The check that prints the answer the secret arrived in — without
+			// it this test would assert that something nobody prints is safe.
+			if o := outcome(t, rep, tc.printedBy); o.Status != Failed {
+				t.Fatalf("%s was %s, so the answer carrying the secret was never printed", tc.printedBy, label(o.Status))
+			}
+			var out strings.Builder
+			rep.Print(&out)
+			if strings.Contains(out.String(), tc.secret) {
+				t.Errorf("%q is in the report:\n%s", tc.secret, out.String())
+			}
+		})
+	}
+}
+
+// The refusal a bad connection URL earns is printed before there is a report
+// to redact, and a URL is a place people are handed credentials.
+func TestARefusedURLIsQuotedWithoutItsCredentials(t *testing.T) {
+	t.Parallel()
+	_, err := Run(context.Background(), Options{BaseURL: "http://runner:hunter2@hub.example/v1", Token: fakeToken})
+	switch {
+	case err == nil:
+		t.Fatal("plain http to another host was accepted")
+	case strings.Contains(err.Error(), "hunter2"):
+		t.Errorf("the password is in the refusal: %v", err)
+	case !strings.Contains(err.Error(), "hub.example"):
+		t.Errorf("the refusal no longer says which URL it refused: %v", err)
 	}
 }

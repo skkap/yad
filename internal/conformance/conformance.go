@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -216,7 +217,11 @@ type timing struct {
 // wrong is in the report, not in the error.
 func Run(ctx context.Context, opts Options) (*Report, error) {
 	if err := config.CheckHubURL(opts.BaseURL); err != nil {
-		return nil, err
+		// The refusal quotes the URL it refused, and a URL is a place people
+		// are handed credentials — `https://runner:secret@hub/v1`. This is
+		// the one error of this suite's that a person sees before anything is
+		// redacted, because it happens before there is a report.
+		return nil, errors.New(strings.ReplaceAll(err.Error(), opts.BaseURL, redactedURL(opts.BaseURL)))
 	}
 	if opts.Token == "" {
 		return nil, errors.New("a registration token is needed: create one on the hub (`yad hub token create`, or the hub's Add runner) and pass it with --token")
@@ -264,9 +269,20 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	return rep, nil
 }
 
-// make runs one check, or says why it could not be made.
-func (s *session) make(ctx context.Context, ch check) Outcome {
-	out := Outcome{ID: ch.id, Rule: ch.rule, Section: ch.section}
+// make runs one check, or says why it could not be made. Whatever it returns,
+// the deferred guard is the last gate before a sentence becomes part of the
+// report, and the only one that covers all of them: a check writes the hub's
+// own strings into its message — an error code, a run id, a control kind, the
+// raw value of a field, the words of a validation failure — and each is a
+// place a hub could have put a secret. Hiding here rather than at each site is
+// what stops the next message anyone adds from being the one that leaks.
+// The result is named so the deferred guard below mutates what is returned
+// rather than a copy of it.
+func (s *session) make(ctx context.Context, ch check) (out Outcome) {
+	out = Outcome{ID: ch.id, Rule: ch.rule, Section: ch.section}
+	// One exit, so the guard at the end of this function covers every sentence
+	// the report can carry and not only the ones a check wrote.
+	defer func() { out.Detail = s.c.hide(out.Detail) }()
 	if reason := s.missing(ch.needs); reason != "" {
 		out.Status, out.Detail = Skipped, reason
 		return out
@@ -297,15 +313,6 @@ func (s *session) make(ctx context.Context, ch check) Outcome {
 		// nonsense are the same finding for the person reading this.
 		out.Status, out.Detail = Failed, err.Error()
 	}
-	// The last gate before a sentence becomes part of the report, and the
-	// only one that covers all of them. A check writes the hub's own strings
-	// into its message — an error code, a run id, a control kind, the raw
-	// value of a field, the words of a validation failure — and each of those
-	// is a place a hub could have put a secret. Hiding them here rather than
-	// at each site is what stops the next message added below from being the
-	// one that leaks: the answer's own printing is already guarded, and this
-	// guards everything written around it.
-	out.Detail = s.c.hide(out.Detail)
 	return out
 }
 
@@ -417,6 +424,13 @@ func (s *session) syncWith(ctx context.Context, req v1.SyncRequest, raw []byte) 
 	for _, r := range res.Runs {
 		s.offered[r.RunID] = r
 		s.offers = append(s.offers, r)
+		// A grant's value is a secret this suite now holds, and a hub that
+		// quotes one back anywhere — in an error, in another run — must not
+		// have it printed. Redacting it by the field it arrived in covers
+		// only the field it arrived in.
+		for _, g := range r.Grants {
+			s.c.learn(g.Value)
+		}
 	}
 	s.offeredAtOnce = max(s.offeredAtOnce, len(res.Runs))
 	s.note(a.Call, res.NextSyncMS, res.LeaseMS)
@@ -505,10 +519,13 @@ func (s *session) claimable() []string {
 // a URL a person may well have been given.
 func redactedURL(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil {
+	if err != nil || u.User == nil {
 		return raw
 	}
-	return u.Redacted()
+	// Both halves, not the password alone: `https://<token>@host/` puts a
+	// credential in the username, and url.Redacted keeps that.
+	u.User = url.User("redacted")
+	return u.String()
 }
 
 // newID is a fresh identifier for this run of the suite, so two suites against

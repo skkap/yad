@@ -161,6 +161,18 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 	// hub has taken it back, and claiming it would be this suite's mistake.
 	s.pick(answers[len(answers)-1])
 
+	// Every run the hub offered except in the last answer: each of those was
+	// offered by one sync and not listed by the next, so the rule is about
+	// all of them. Judging only the first answer's runs would let a hub keep
+	// the rule for the batch it opened with and lose every one after it.
+	var dropped []string
+	for _, ids := range answers[:max(len(answers)-1, 0)] {
+		for _, id := range ids {
+			if !slices.Contains(dropped, id) {
+				dropped = append(dropped, id)
+			}
+		}
+	}
 	first := slices.IndexFunc(answers, func(ids []string) bool { return len(ids) > 0 })
 	switch {
 	case first < 0:
@@ -171,7 +183,7 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 	// the other keeps the rule for A alone. Anything else it offered besides
 	// them is its business — the rule is about the runs it dropped, and a hub
 	// with more to give is keeping it, not breaking it.
-	case len(stillMissing(answers[first], back)) == 0:
+	case len(dropped) > 0 && len(stillMissing(dropped, back)) == 0:
 		return nil
 	}
 	// What the hub said after the answer that first offered something: how
@@ -180,7 +192,7 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 	// The verdict above and the sentence below are the same question asked
 	// once: a pass judged one way and a message written another is how a skip
 	// comes to name no run at all.
-	dropped, after := answers[first], answers[first+1:]
+	after := answers[first+1:]
 	missing := stillMissing(dropped, back)
 	var others []string
 	for _, ids := range after {

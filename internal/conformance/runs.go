@@ -77,10 +77,24 @@ func checkEventsUnknownFields(ctx context.Context, s *session) error {
 // takes it changes nothing — what is being asked is whether a field it does
 // not know is enough to make it refuse.
 func checkResultUnknownFields(ctx context.Context, s *session) error {
-	body, err := withField(v1.Result{
-		State: v1.RunFailed, LastSeq: s.lastSeq,
-		Error: &v1.RunError{Class: "refused", Message: "the yad conformance suite claimed this run to check the protocol and drives no harness"},
-	}, "a_field_from_a_later_v1", true)
+	// One field beside the result's own and one inside its error, because a
+	// hub decodes a nested object with its own schema and may be strict about
+	// only that one.
+	runError, err := withField(v1.RunError{Class: "refused", Message: "the yad conformance suite claimed this run to check the protocol and drives no harness"},
+		"a_field_from_a_later_v1", true)
+	if err != nil {
+		return err
+	}
+	body, err := withField(v1.Result{State: v1.RunFailed, LastSeq: s.lastSeq}, "a_field_from_a_later_v1", true)
+	if err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return err
+	}
+	fields["error"] = runError
+	body, err = json.Marshal(fields)
 	if err != nil {
 		return err
 	}
@@ -88,7 +102,13 @@ func checkResultUnknownFields(ctx context.Context, s *session) error {
 	if err != nil {
 		return err
 	}
-	if !a.ok() {
+	switch {
+	case a.Status == http.StatusConflict:
+		// The hub holds a terminal state this run was never given, which is
+		// what result/conflict reports. Calling that a refusal over an
+		// unknown field would name this rule against a hub keeping it.
+		return skipf("the hub answered 409 conflict: it holds a terminal state for run %s other than the one this runner reported, which result/conflict says more about. Until that is fixed, whether it ignores an unknown field here cannot be told", s.report)
+	case !a.ok():
 		return brokenf("the result was refused for carrying a field the hub does not know: %s", a)
 	}
 	return nil
@@ -171,6 +191,22 @@ func checkResultConflict(ctx context.Context, s *session) error {
 
 func checkEventsAfterTheRunEnds(ctx context.Context, s *session) error {
 	return s.wantAck(ctx, s.report, seqLate, seqLate)
+}
+
+// checkGatedRunsAreNotOffered is the offer side of §2's versioning rule: the
+// two things in a run that only a runner advertising a feature may be given.
+// This runner advertises none, so it must be offered neither.
+func checkGatedRunsAreNotOffered(_ context.Context, s *session) error {
+	for _, run := range s.offers {
+		switch {
+		case run.Session.Mode == v1.SessionLive:
+			return brokenf("the hub offered run %s in a live session, which goes only to a runner advertising live_sessions; this runner advertises no feature at all", run.RunID)
+		case run.StartAt != nil && run.StartAt.After(time.Now()):
+			return brokenf("the hub offered run %s with a start_at still ahead (%s), which goes only to a runner advertising start_at — any other starts it on arrival, which is the one thing that moment exists to prevent",
+				run.RunID, run.StartAt.UTC().Format(time.RFC3339))
+		}
+	}
+	return nil
 }
 
 func checkOfferedRunIsValid(_ context.Context, s *session) error {

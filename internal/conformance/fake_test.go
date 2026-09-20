@@ -75,6 +75,8 @@ const (
 	// The token in the error code rather than the message: a place a check
 	// writes into its own sentence, not one the answer's printing covers.
 	flawTokenInTheCode     = "the code of a refusal is built from the bearer it was given"
+	flawOffersLiveMode     = "a run is offered in a live session to a runner advertising nothing"
+	flawGrantInTheOpen     = "a run's grant value comes back quoted in a later refusal"
 	flawRegistersAnyone    = "anyone registers, and the credential comes back under a name of the hub's own"
 	flawUngatedControl     = "a steer goes to a runner that never advertised one"
 	flawNoNextAction       = "errors say what went wrong and not what to do"
@@ -131,6 +133,9 @@ func newFake(t *testing.T, flaw string, queued ...v1.Run) (*fake, string) {
 	t.Cleanup(srv.Close)
 	return f, srv.URL + "/v1"
 }
+
+// A secret a hub sends rather than one this suite presented.
+const grantValue = "grant-value-0123456789"
 
 func fakeRunSpec(n int) v1.Run {
 	return v1.Run{
@@ -210,6 +215,12 @@ func (f *fake) register(w http.ResponseWriter, r *http.Request) {
 		// walk of it would know to redact, and one of the commonest ways a
 		// token reaches somebody's log.
 		message, next := "that registration token has been used", "ask the hub for a new one"
+		if f.flaw == flawGrantInTheOpen {
+			// The hub quoting back a secret of its own, in a place no field
+			// name would find it and no list of this suite's own secrets
+			// would cover.
+			message, next = "the grant "+grantValue+" was not accepted", ""
+		}
 		if f.flaw == flawEchoesTheToken {
 			message, next = "the registration token "+bearer(r)+" has been used", ""
 		}
@@ -328,6 +339,12 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 		spec := run.spec
 		if f.flaw == flawOffersInvalidRun {
 			spec.Model = ""
+		}
+		if f.flaw == flawOffersLiveMode {
+			spec.Session.Mode = v1.SessionLive
+		}
+		if f.flaw == flawGrantInTheOpen {
+			spec.Grants = []v1.Grant{{Name: "TOKEN", Value: grantValue, As: v1.GrantEnv}}
 		}
 		run.queued, run.expires = false, now.Add(f.lease)
 		run.offers++
