@@ -57,11 +57,22 @@ func TestATransientRetryIsNotAUsageLimit(t *testing.T) {
 }
 
 // The other side of the same recording: a 429 that survived all ten of
-// claude's own retries and ended the turn. Claude gave up rather than carried
-// on, so this one is an exhausted account and not throttling, and it is a
-// usage limit with no reset because a bare 429 carries none.
+// claude's own retries and ended the turn.
+//
+// The adapter classifies it as a usage limit, and that classification is not
+// this change's: isUsageLimit has matched a bare 429 result since the adapter
+// was written (decision 0021), and TestUsageLimit's "429 alone" row has
+// asserted it for as long. What is new is that the class now has a
+// consequence for the account, which is why the path is pinned here.
+//
+// The fixture is named for what was recorded rather than for that reading. Its
+// error text - "You've exceeded your account's rate limit" - was authored by
+// the instrument, so it says nothing about how a real exhausted subscription
+// words itself; what the recording shows is the frame shape, which is ten
+// api_retry frames and then a result carrying api_error_status 429 and no
+// rate_limit_event at all.
 func TestA429ThatSurvivedEveryRetryIsAUsageLimit(t *testing.T) {
-	h := &harness{fixture: recorded(t, "2.1.278", "usage-limit-429")}
+	h := &harness{fixture: recorded(t, "2.1.278", "retries-exhausted-429")}
 	_, out, _ := drive(t, context.Background(), h.spec(t), nil)
 	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassUsageLimit {
 		t.Fatalf("outcome %s (error %+v)", out.State, out.Error)

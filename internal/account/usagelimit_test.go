@@ -2,6 +2,7 @@ package account
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/store"
+	"github.com/skkap/yad/internal/store/db"
 )
 
 // limitEnv is a store with one claude account whose home is on disk, ready for
@@ -72,7 +74,16 @@ func TestStateOfDerivesLimitedFromItsReset(t *testing.T) {
 func TestAnExpiredLimitReadsFreeEverywhere(t *testing.T) {
 	ctx, st, data, cfg := limitEnv(t)
 	past := time.Now().Add(-time.Minute).UTC().Truncate(time.Millisecond)
-	if err := SetLimit(ctx, st.Queries, "claude", "work", past, time.Now()); err != nil {
+	// Written through the store rather than through SetLimit, which now
+	// refuses to date a limit in the past. The row is still reachable - an
+	// older yad wrote one, or the limit simply ran out while the row sat
+	// there - and how it reads is the whole point of this test.
+	err := st.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: past.UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(),
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	// The row itself still says limited: nothing writes the expiry back.
@@ -84,10 +95,11 @@ func TestAnExpiredLimitReadsFreeEverywhere(t *testing.T) {
 		t.Fatalf("stored rows %+v, want one limited row", rows)
 	}
 
-	got, err := Load(ctx, st.Queries, data, cfg)
+	loaded, err := Load(ctx, st.Queries, data, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := loaded
 	if len(got) != 1 {
 		t.Fatalf("got %d accounts, want 1", len(got))
 	}
@@ -234,9 +246,12 @@ func TestAnAccountWithNoRunsReportsNoWindows(t *testing.T) {
 // An undated limit is dated from the account's own windows before any constant
 // is reached: a window the harness called full says when the account comes
 // back, and that is a fact rather than a guess.
-func TestRefillAtTakesTheSoonestFullWindow(t *testing.T) {
-	soon := time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC)
-	later := time.Date(2026, 9, 23, 15, 0, 0, 0, time.UTC)
+func TestRefillAtTakesTheSoonestFullWindowStillToCome(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	soon := now.Add(3 * time.Hour)
+	later := now.Add(3 * 24 * time.Hour)
+	gone := now.Add(-time.Minute)
+	zero := time.Time{}
 	full := func(name string, at *time.Time) v1.AccountWindow {
 		return v1.AccountWindow{Name: name, UsedPercent: 100, ResetsAt: at}
 	}
@@ -253,16 +268,120 @@ func TestRefillAtTakesTheSoonestFullWindow(t *testing.T) {
 		// carries a reset too, and reading it would date the limit from a
 		// window that is not the reason for it.
 		{"a window with headroom is not a reason",
-			[][]v1.AccountWindow{{{Name: "five_hour", UsedPercent: 62, ResetsAt: &soon}}}, time.Time{}},
+			[][]v1.AccountWindow{{{Name: "five_hour", UsedPercent: 62, ResetsAt: &soon}}}, zero},
 		{"a full window the harness did not date",
-			[][]v1.AccountWindow{{full("five_hour", nil)}}, time.Time{}},
-		{"nothing at all", nil, time.Time{}},
+			[][]v1.AccountWindow{{full("five_hour", nil)}}, zero},
+		// The case the whole clock argument exists for: windows outlive the
+		// limits they explain and nothing ages them out, so a full window
+		// whose reset has passed is the ordinary residue of a limit already
+		// over. Dating a new limit from it parks the account for no time.
+		{"a full window whose reset has passed",
+			[][]v1.AccountWindow{{full("five_hour", &gone)}}, zero},
+		{"a full window resetting exactly now",
+			[][]v1.AccountWindow{{full("five_hour", &now)}}, zero},
+		{"a stale window does not win over a live one",
+			[][]v1.AccountWindow{{full("five_hour", &gone), full("seven_day", &later)}}, later},
+		{"a full window dated at the zero time",
+			[][]v1.AccountWindow{{full("five_hour", &zero)}}, zero},
+		{"nothing at all", nil, zero},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := RefillAt(c.sets...)
+			got := RefillAt(now, c.sets...)
 			if !got.Equal(c.want) {
 				t.Errorf("RefillAt = %s, want %s", got, c.want)
 			}
 		})
+	}
+}
+
+// The writer refuses to date a limit in the past, whichever way one reaches
+// it: a reset the harness itself reported behind this machine's clock, or a
+// stale window RefillAt did not catch. A row dated in the past reads free the
+// instant it is written, so the account is offered, fails, and is offered
+// again for every run the hub submits.
+func TestSetLimitRefusesAResetThatHasAlreadyPassed(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		offset time.Duration
+	}{
+		{"a reset a minute ago", -time.Minute},
+		{"a reset exactly now", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, st, data, cfg := limitEnv(t)
+			now := time.Now()
+			if err := SetLimit(ctx, st.Queries, "claude", "work", now.Add(c.offset), now); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load(ctx, st.Queries, data, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got[0].State != v1.AccountLimited {
+				t.Fatalf("state %q, want limited - the account was parked for no time at all", got[0].State)
+			}
+			want := now.Add(limitWithoutReset)
+			if got[0].LimitedUntil == nil {
+				t.Fatal("no reset recorded")
+			}
+			if d := got[0].LimitedUntil.Sub(want); d > time.Second || d < -time.Second {
+				t.Errorf("limited until %s, want about %s - the fallback did not fire", got[0].LimitedUntil, want)
+			}
+		})
+	}
+}
+
+// Two turns observe an account at different moments and can reach the store in
+// either order. The row keeps what the harness said most recently, not what
+// arrived most recently: an older snapshot landing second would make health
+// report use and a reset that have already moved on, which is what the
+// migration's concurrency comment promises it does not.
+func TestAnOlderWindowObservationDoesNotOverwriteANewerOne(t *testing.T) {
+	ctx, st, data, cfg := limitEnv(t)
+	early := time.Now().Add(-time.Minute)
+	late := time.Now()
+	earlyReset := late.Add(time.Hour).UTC().Truncate(time.Millisecond)
+	lateReset := late.Add(2 * time.Hour).UTC().Truncate(time.Millisecond)
+
+	// The later observation lands first, as the slower of two turns does.
+	err := SetWindows(ctx, st.Queries, "claude", "work",
+		[]v1.AccountWindow{{Name: "five_hour", UsedPercent: 80, ResetsAt: &lateReset}}, late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Then the earlier one arrives and must not win.
+	err = SetWindows(ctx, st.Queries, "claude", "work",
+		[]v1.AccountWindow{{Name: "five_hour", UsedPercent: 20, ResetsAt: &earlyReset}}, early)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Load(ctx, st.Queries, data, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := got[0].Report().Windows
+	if len(ws) != 1 {
+		t.Fatalf("windows %+v, want one", ws)
+	}
+	if ws[0].UsedPercent != 80 {
+		t.Errorf("five_hour used %v%%, want the later observation's 80%%", ws[0].UsedPercent)
+	}
+	if ws[0].ResetsAt == nil || !ws[0].ResetsAt.Equal(lateReset) {
+		t.Errorf("five_hour resets %v, want the later observation's %s", ws[0].ResetsAt, lateReset)
+	}
+
+	// An observation at the same moment still writes: two turns can share a
+	// millisecond, and refusing both would leave the window at neither.
+	err = SetWindows(ctx, st.Queries, "claude", "work",
+		[]v1.AccountWindow{{Name: "five_hour", UsedPercent: 91, ResetsAt: &lateReset}}, late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err = Load(ctx, st.Queries, data, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if ws := got[0].Report().Windows; ws[0].UsedPercent != 91 {
+		t.Errorf("five_hour used %v%%, want 91%% from the same-moment write", ws[0].UsedPercent)
 	}
 }

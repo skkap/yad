@@ -162,9 +162,16 @@ ON CONFLICT (harness, label) DO UPDATE SET state = excluded.state, limited_until
 -- rewrite of a whole snapshot, so two turns finishing on the same account at
 -- once cannot lose each other's windows: capacity is a shared pool and nothing
 -- reserves an account.
+--
+-- Latest wins rather than last writer wins. Two turns observe the account at
+-- different moments and may reach this in either order, so without the WHERE
+-- an older snapshot overwrites a newer one and health reports use and a reset
+-- that have already moved on. The row keeps what the harness said most
+-- recently, which is what the comment above promises and the column records.
 -- name: SetAccountWindow :exec
 INSERT INTO account_windows (harness, label, name, used_percent, resets_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT (harness, label, name) DO UPDATE SET used_percent = excluded.used_percent, resets_at = excluded.resets_at, updated_at = excluded.updated_at;
+ON CONFLICT (harness, label, name) DO UPDATE SET used_percent = excluded.used_percent, resets_at = excluded.resets_at, updated_at = excluded.updated_at
+WHERE excluded.updated_at >= account_windows.updated_at;
 
 -- name: ListAccounts :many
 SELECT * FROM accounts WHERE harness = ? ORDER BY label;

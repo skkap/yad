@@ -1003,6 +1003,7 @@ func (q *Queries) SetAccountState(ctx context.Context, arg SetAccountStateParams
 const setAccountWindow = `-- name: SetAccountWindow :exec
 INSERT INTO account_windows (harness, label, name, used_percent, resets_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT (harness, label, name) DO UPDATE SET used_percent = excluded.used_percent, resets_at = excluded.resets_at, updated_at = excluded.updated_at
+WHERE excluded.updated_at >= account_windows.updated_at
 `
 
 type SetAccountWindowParams struct {
@@ -1018,6 +1019,12 @@ type SetAccountWindowParams struct {
 // rewrite of a whole snapshot, so two turns finishing on the same account at
 // once cannot lose each other's windows: capacity is a shared pool and nothing
 // reserves an account.
+//
+// Latest wins rather than last writer wins. Two turns observe the account at
+// different moments and may reach this in either order, so without the WHERE
+// an older snapshot overwrites a newer one and health reports use and a reset
+// that have already moved on. The row keeps what the harness said most
+// recently, which is what the comment above promises and the column records.
 func (q *Queries) SetAccountWindow(ctx context.Context, arg SetAccountWindowParams) error {
 	_, err := q.db.ExecContext(ctx, setAccountWindow,
 		arg.Harness,

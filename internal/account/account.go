@@ -68,8 +68,8 @@ func stateOf(state v1.AccountState, until *time.Time, now time.Time) v1.AccountS
 }
 
 // RefillAt is the soonest a window the harness called full will refill, across
-// the window sets given, and the zero time when none of them is full or none
-// carries a reset.
+// the window sets given, and the zero time when none of them says anything
+// useful about the future.
 //
 // It is how an undated usage limit gets a real date instead of a guessed one.
 // A window at 100% is the harness's own statement that this account is out
@@ -77,14 +77,21 @@ func stateOf(state v1.AccountState, until *time.Time, now time.Time) v1.AccountS
 // with a snapshot on every turn, Claude in every rate_limit_event - so a limit
 // that arrived without a reset is usually explained by a window that did.
 //
+// A window whose reset has already passed is skipped, and that is not an edge
+// case: windows outlive the limits they explain and nothing ages them out, so
+// a full window with an elapsed reset is the ordinary residue of every limit
+// that has already resolved. Answering with one would date a new limit in the
+// past, which parks the account for no time at all - the caller is better
+// served by the zero time, which it knows how to fall back from.
+//
 // Soonest rather than latest: the account is offered again at the first
 // moment it could work. Being early costs one turn that finds the limit still
 // there and re-dates it; being late idles a subscription the owner pays for.
-func RefillAt(sets ...[]v1.AccountWindow) time.Time {
+func RefillAt(now time.Time, sets ...[]v1.AccountWindow) time.Time {
 	var soonest time.Time
 	for _, ws := range sets {
 		for _, w := range ws {
-			if w.UsedPercent < 100 || w.ResetsAt == nil || w.ResetsAt.IsZero() {
+			if w.UsedPercent < 100 || w.ResetsAt == nil || !w.ResetsAt.After(now) {
 				continue
 			}
 			if soonest.IsZero() || w.ResetsAt.Before(soonest) {
@@ -516,8 +523,16 @@ func SetState(ctx context.Context, q *db.Queries, harness, label string, state v
 // account is out of quota, which is the part that must not be lost, and a
 // limit nothing ever ends is a park, not a limit. limitWithoutReset says how
 // long such a limit is taken to last and why.
+//
+// A reset that is not in the future is treated the same as no reset at all,
+// and this is the writer's job rather than each reader's: a moment that has
+// already passed is not a deadline, so a row dated with one reads free the
+// instant it is written and the account is offered again, fails the same way,
+// and is offered again. It reaches here two ways - a stale full window (see
+// RefillAt) and a harness whose clock disagrees with this machine's - and
+// neither is rare enough to leave to whoever reads the row next.
 func SetLimit(ctx context.Context, q *db.Queries, harness, label string, resetAt time.Time, now time.Time) error {
-	if resetAt.IsZero() {
+	if !resetAt.After(now) {
 		resetAt = now.Add(limitWithoutReset)
 	}
 	return q.SetAccountLimit(ctx, db.SetAccountLimitParams{

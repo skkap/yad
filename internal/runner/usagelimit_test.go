@@ -46,7 +46,13 @@ func accountRow(t *testing.T, e *env, label string) (v1.AccountState, *time.Time
 // runner that parks an account for five hours because the API hiccuped once
 // would pass too.
 func TestAUsageLimitParksTheAccountAndATransientRetryDoesNot(t *testing.T) {
-	reset := time.Date(2026, 9, 19, 3, 0, 0, 0, time.UTC)
+	// Relative to now, not a date written into the source. A fixed date is in
+	// the future when it is typed and in the past forever after, and a limit
+	// dated in the past is one SetLimit refuses - so a literal here would
+	// quietly stop testing what this test is named for, and then start
+	// failing. It asserted the defect round 1 found, and passed, for exactly
+	// that reason.
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
 	for _, c := range []struct {
 		name  string
 		out   adapter.Outcome
@@ -270,5 +276,61 @@ func TestAnUndatedLimitIsDatedFromTheTurnsOwnWindows(t *testing.T) {
 	}
 	if until == nil || !until.Equal(refill) {
 		t.Errorf("limited until %v, want the soonest full window's reset %s", until, refill)
+	}
+}
+
+// The defect round 1 found, walked as it reported it: a limit whose reset the
+// harness did not give must not be dated from a window whose reset has already
+// passed.
+//
+// Windows outlive the limits they explain and nothing ages them out, so a full
+// window with an elapsed reset is the ordinary residue of every limit that has
+// already resolved. Dating a new limit from one writes a row that reads free
+// the instant it is written: the account is offered again at once, fails after
+// about three minutes of the harness's own retry ladder, and is offered again,
+// for every run the hub submits.
+//
+// Every test on this branch used a future reset before this one, which is why
+// the whole suite agreed with the code.
+func TestAnUndatedLimitIsNotDatedFromAWindowThatHasAlreadyReset(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	// What an earlier limit left behind: the window that caused it, full, and
+	// its reset now in the past.
+	stale := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	err := account.SetWindows(ctx, e.store.Queries, "claude", "work",
+		[]v1.AccountWindow{{Name: "five_hour", UsedPercent: 100, ResetsAt: &stale}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	started := time.Now()
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
+		Outcome: adapter.Outcome{
+			State: v1.RunFailed,
+			Error: &v1.RunError{Class: adapter.ClassUsageLimit, Message: "429"},
+			// The bare-429 shape this branch recorded: no window, no reset.
+			Limit: &adapter.Limit{},
+		},
+	}))
+	claimAndRun(t, l, x)
+
+	state, until := accountRow(t, e, "work")
+	if state != v1.AccountLimited {
+		t.Fatalf("account state = %q, want limited", state)
+	}
+	if until == nil {
+		t.Fatal("no reset recorded")
+	}
+	if !until.After(started) {
+		t.Fatalf("limited until %s, which is already past: the account is parked for no time and the hub loops through offer-and-fail", until)
+	}
+	// And it is the fallback rather than some other stale value.
+	want := started.Add(30 * time.Minute)
+	if d := until.Sub(want); d > time.Minute || d < -time.Minute {
+		t.Errorf("limited until %s, want about %s", until, want)
 	}
 }

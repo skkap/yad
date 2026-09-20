@@ -101,7 +101,7 @@ var scenarios = []scenario{
 	// them is the whole of DOMAIN.md's usage-limit/rate-limit distinction, and
 	// a stream written by hand agrees with whatever the code already does.
 	{name: "api-retry-then-success", instrument: "retry", prompt: "Reply with exactly: pong"},
-	{name: "usage-limit-429", instrument: "limit", prompt: "Reply with exactly: pong"},
+	{name: "retries-exhausted-429", instrument: "limit", prompt: "Reply with exactly: pong"},
 }
 
 // instrumentServer authors a harness's answers locally: a 429 the client sees
@@ -177,7 +177,7 @@ func TestRecord(t *testing.T) {
 			}
 			var raw bytes.Buffer
 			a := Adapter{Raw: func(adapter.Spec) io.Writer { return &raw }}
-			// Two minutes is a short turn's budget. A limit scenario is
+			// Two minutes is a short turn's budget. An instrument scenario is
 			// claude's own retry ladder instead: ten attempts with a backoff
 			// that reaches forty seconds, about three minutes of waiting in
 			// which nothing is asked of a model.

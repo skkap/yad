@@ -190,7 +190,7 @@ func (e *Exec) recordUsage(ctx context.Context, a account.Account, out adapter.O
 	// that beats any constant. account.SetLimit dates what is left.
 	reset := out.Limit.ResetAt
 	if reset.IsZero() {
-		reset = account.RefillAt(accountWindows(out.Windows), a.Windows)
+		reset = account.RefillAt(now, accountWindows(out.Windows), a.Windows)
 	}
 	if err := account.SetLimit(ctx, e.Store.Queries, a.Harness, a.Label, reset, now); err != nil {
 		log.Warn("could not record the account's usage limit", "err", err)
