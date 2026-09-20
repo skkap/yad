@@ -559,10 +559,13 @@ for `codex`); the suite never runs a real harness.
   result's metrics and changes no account's state. A 429 that survived every
   one of the harness's own retries and ended the turn is an exhausted account
   and is treated as a usage limit. It carries no reset, so one is taken from
-  the soonest window the harness called full (`internal/account.RefillAt`),
-  and only failing that from a short constant
-  (`internal/account.limitWithoutReset`) — an undated limit is a park nothing
-  ends, and a long guess idles an account the owner pays for.
+  the soonest window the harness called full and still to reset
+  (`internal/account.RefillAt`) — a full window whose reset has already passed
+  is the residue of a limit already over and says nothing about this one — and
+  only failing that from a short constant
+  (`internal/account.limitWithoutReset`), which also covers a reset the harness
+  itself gave in the past. An undated limit is a park nothing ends, and a long
+  guess idles an account the owner pays for.
 - **The reset is the authority.** An account's `limited_until` decides whether
   it is limited; the stored `state` is derived from it at every read, so a
   limit that has passed needs no writer to come along and clear it

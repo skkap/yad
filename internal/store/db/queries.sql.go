@@ -1020,11 +1020,20 @@ type SetAccountWindowParams struct {
 // once cannot lose each other's windows: capacity is a shared pool and nothing
 // reserves an account.
 //
-// Latest wins rather than last writer wins. Two turns observe the account at
-// different moments and may reach this in either order, so without the WHERE
-// an older snapshot overwrites a newer one and health reports use and a reset
-// that have already moved on. The row keeps what the harness said most
-// recently, which is what the comment above promises and the column records.
+// The row keeps the most recently *recorded* snapshot, not the most recently
+// observed one. updated_at is when the turn ended, which is the only time any
+// caller has: a window carries its use and its reset and never the moment the
+// harness said them. So this resolves two turns racing to write - the one that
+// started earlier and arrived later no longer wins - and does not resolve two
+// turns that observed at different moments, since a long turn can observe
+// early and still end last.
+//
+// One consequence worth knowing before changing it: the comparison is against
+// a wall clock, and :exec discards the row count. A clock stepped backwards
+// silently skips every window write for an account written just before the
+// step, until the clock passes the stored stamp. That is confined to what a
+// hub is shown - SetAccountLimit carries no such WHERE, so parking an account
+// still works, and RefillAt ignores a reset that has already passed.
 func (q *Queries) SetAccountWindow(ctx context.Context, arg SetAccountWindowParams) error {
 	_, err := q.db.ExecContext(ctx, setAccountWindow,
 		arg.Harness,

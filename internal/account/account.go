@@ -102,11 +102,14 @@ func RefillAt(now time.Time, sets ...[]v1.AccountWindow) time.Time {
 	return soonest
 }
 
-// limitWithoutReset dates a usage limit that neither the harness nor any
-// window it ever reported could date - RefillAt found nothing, so this is a
-// harness that said "out of quota" and no more, on an account no run has yet
-// heard a window from. A bare 429 in a Claude result on a fresh account is the
-// case that reaches it.
+// limitWithoutReset dates a usage limit that nothing could date from the
+// account itself. It is reached whenever no window says anything about the
+// future - none full, none of the full ones dated, or every full one already
+// reset - and whenever the harness's own reset is not in the future either.
+// A bare 429 in a Claude result on an account no run has heard a window from
+// is one example rather than the case: the stale-window residue RefillAt
+// describes above and a harness clock behind this machine's both land here
+// too, on accounts with windows on record.
 //
 // The number is short on purpose, and the instinct to lengthen it is wrong.
 // The two costs are not symmetric:
@@ -542,11 +545,19 @@ func SetLimit(ctx context.Context, q *db.Queries, harness, label string, resetAt
 	})
 }
 
-// SetWindows records the latest use and reset of every window a turn heard
-// about, one upsert each. A window the turn did not hear about keeps what it
-// had: Codex's updates are sparse by design, and a turn that learned only
-// about the primary window must not erase what the last one knew about the
-// secondary.
+// SetWindows records every window a turn heard about, one upsert each, each
+// stamped with now. A window the turn did not hear about keeps what it had:
+// Codex's updates are sparse by design, and a turn that learned only about the
+// primary window must not erase what the last one knew about the secondary.
+//
+// A window already carrying a later stamp is left alone (queries.sql), so a
+// write here is not guaranteed to land and the caller is not told when one
+// does not. What a stale window costs: nothing decides whether an account can
+// run from these - that is the account's state and its limited_until - so a
+// hub is shown a figure one turn out of date. RefillAt does read them, to date
+// an undated limit, and would then read a reset one turn old; it skips one
+// already past, so the error is bounded by how far apart two turns' snapshots
+// of the same window are.
 func SetWindows(ctx context.Context, q *db.Queries, harness, label string, windows []v1.AccountWindow, now time.Time) error {
 	for _, w := range windows {
 		if w.Name == "" {
