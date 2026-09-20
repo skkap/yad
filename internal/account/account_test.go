@@ -134,9 +134,10 @@ func TestEnv(t *testing.T) {
 	}
 }
 
-// The owner's order decides, and an account that cannot run a turn is skipped
-// whether it is limited or needs login.
-func TestFirstTakesTheFirstFreeAccountInTheOwnersOrder(t *testing.T) {
+// With nothing to choose between them on reset times, the owner's order
+// decides, and an account that cannot run a turn is skipped whether it is
+// limited or needs login.
+func TestSoonestFallsBackToTheOwnersOrder(t *testing.T) {
 	soon := time.Now().Add(time.Hour)
 	mk := func(label string, s v1.AccountState) Account {
 		a := Account{Harness: "claude", Label: label, State: s}
@@ -158,7 +159,7 @@ func TestFirstTakesTheFirstFreeAccountInTheOwnersOrder(t *testing.T) {
 		{"no accounts", nil, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := First(c.accounts, "claude")
+			got, ok := Soonest(c.accounts, "claude", time.Now())
 			if c.want == "" {
 				if ok {
 					t.Errorf("took %q from accounts none of which can run", got.Label)
@@ -173,12 +174,12 @@ func TestFirstTakesTheFirstFreeAccountInTheOwnersOrder(t *testing.T) {
 }
 
 // Another harness's accounts are never borrowed.
-func TestFirstStaysWithinItsHarness(t *testing.T) {
+func TestSoonestStaysWithinItsHarness(t *testing.T) {
 	accounts := []Account{
 		{Harness: "codex", Label: "c1", State: v1.AccountFree},
 		{Harness: "claude", Label: "a1", State: v1.AccountNeedsLogin},
 	}
-	if a, ok := First(accounts, "claude"); ok {
+	if a, ok := Soonest(accounts, "claude", time.Now()); ok {
 		t.Errorf("claude took %q, which is a %s account", a.Label, a.Harness)
 	}
 }
@@ -291,7 +292,7 @@ func TestAnAccountWhoseHomeIsGoneNeedsLogin(t *testing.T) {
 	if len(got) != 1 || got[0].State != v1.AccountNeedsLogin {
 		t.Fatalf("accounts = %+v, want the one account needing login", got)
 	}
-	if _, ok := First(got, "claude"); ok {
+	if _, ok := Soonest(got, "claude", time.Now()); ok {
 		t.Error("a run would have been given an account with no home")
 	}
 
@@ -530,5 +531,113 @@ func TestTheTranscriptLinkIsNeverObservedMissing(t *testing.T) {
 	}
 	if at, err := os.Readlink(link); err != nil || at != want {
 		t.Errorf("link is %q (%v), want %s", at, err, want)
+	}
+}
+
+// Decision 0039's ordering, which is the whole of how a run picks among free
+// accounts: the one whose window refills soonest goes first, because the
+// quota left in it is about to be thrown away and the others' is not.
+func TestSoonestPrefersTheAccountWhoseWindowRefillsFirst(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) *time.Time { t := now.Add(d); return &t }
+	free := func(label string, ws ...v1.AccountWindow) Account {
+		return Account{Harness: "claude", Label: label, State: v1.AccountFree, Windows: ws}
+	}
+	for _, c := range []struct {
+		name     string
+		accounts []Account
+		want     string
+	}{
+		{
+			"the sooner refill wins, whatever the owner's order says",
+			[]Account{
+				free("first", v1.AccountWindow{Name: "five_hour", UsedPercent: 30, ResetsAt: at(4 * time.Hour)}),
+				free("second", v1.AccountWindow{Name: "five_hour", UsedPercent: 30, ResetsAt: at(20 * time.Minute)}),
+			},
+			"second",
+		},
+		{
+			// A window at 0% has no quota to waste, so a refill it does not
+			// need must not pull it to the front.
+			"an untouched window does not count as a refill",
+			[]Account{
+				free("first", v1.AccountWindow{Name: "five_hour", UsedPercent: 0, ResetsAt: at(10 * time.Minute)}),
+				free("second", v1.AccountWindow{Name: "five_hour", UsedPercent: 80, ResetsAt: at(2 * time.Hour)}),
+			},
+			"second",
+		},
+		{
+			// A reset already past is the residue of a limit that is over
+			// and says nothing about the future.
+			"an elapsed reset is not a refill to come",
+			[]Account{
+				free("first", v1.AccountWindow{Name: "five_hour", UsedPercent: 90, ResetsAt: at(-time.Hour)}),
+				free("second", v1.AccountWindow{Name: "five_hour", UsedPercent: 90, ResetsAt: at(time.Hour)}),
+			},
+			"second",
+		},
+		{
+			// An account nothing is known about keeps whatever it has; the
+			// one with expiring quota is spent first.
+			"an account with no windows sorts behind one with a refill to come",
+			[]Account{
+				free("first"),
+				free("second", v1.AccountWindow{Name: "five_hour", UsedPercent: 50, ResetsAt: at(time.Hour)}),
+			},
+			"second",
+		},
+		{
+			"with nothing dated at all, the owner's order breaks the tie",
+			[]Account{free("first"), free("second")},
+			"first",
+		},
+		{
+			"a limited account is skipped however soon it refills",
+			[]Account{
+				{Harness: "claude", Label: "first", State: v1.AccountLimited, LimitedUntil: at(time.Hour),
+					Windows: []v1.AccountWindow{{Name: "five_hour", UsedPercent: 100, ResetsAt: at(time.Minute)}}},
+				free("second", v1.AccountWindow{Name: "five_hour", UsedPercent: 10, ResetsAt: at(3 * time.Hour)}),
+			},
+			"second",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := Soonest(c.accounts, "claude", now)
+			if !ok || got.Label != c.want {
+				t.Errorf("took %q (%v), want %q", got.Label, ok, c.want)
+			}
+		})
+	}
+}
+
+// NextFree is what a waiting run's resumes_at is taken from: the earliest
+// reset among the accounts that have one. An account needing a login comes
+// back when the owner acts, which is not a moment anything here can name, so
+// it never dates a wait.
+func TestNextFreeIsTheEarliestResetAndNothingElse(t *testing.T) {
+	now := time.Now()
+	soon, later := now.Add(time.Hour), now.Add(4*time.Hour)
+	limited := func(label string, until *time.Time) Account {
+		return Account{Harness: "claude", Label: label, State: v1.AccountLimited, LimitedUntil: until}
+	}
+	for _, c := range []struct {
+		name     string
+		accounts []Account
+		want     time.Time
+	}{
+		{"the earliest of several", []Account{limited("a", &later), limited("b", &soon)}, soon},
+		{"another harness's resets are not borrowed",
+			[]Account{{Harness: "codex", Label: "c", State: v1.AccountLimited, LimitedUntil: &soon}}, time.Time{}},
+		{"an account needing login dates nothing",
+			[]Account{{Harness: "claude", Label: "a", State: v1.AccountNeedsLogin}}, time.Time{}},
+		{"a limit with no reset dates nothing", []Account{limited("a", nil)}, time.Time{}},
+		{"no accounts", nil, time.Time{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := NextFree(c.accounts, "claude")
+			if !got.Equal(c.want) {
+				t.Errorf("NextFree = %v, want %v", got, c.want)
+			}
+		})
 	}
 }
