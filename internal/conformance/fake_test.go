@@ -72,6 +72,9 @@ const (
 	flawShortInterval      = "the sync interval named is a second"
 	flawShortLease         = "the lease named is shorter than the interval named beside it"
 	flawStrictResultFields = "a result carrying an unknown field is refused"
+	// The token in the error code rather than the message: a place a check
+	// writes into its own sentence, not one the answer's printing covers.
+	flawTokenInTheCode     = "the code of a refusal is built from the bearer it was given"
 	flawRegistersAnyone    = "anyone registers, and the credential comes back under a name of the hub's own"
 	flawUngatedControl     = "a steer goes to a runner that never advertised one"
 	flawNoNextAction       = "errors say what went wrong and not what to do"
@@ -163,7 +166,11 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		guarded = !strings.HasSuffix(path, "/result")
 	}
 	if f.flaw != flawIgnoresProtocol && guarded && r.Header.Get(v1.HeaderProtocol) != v1.Version {
-		f.fail(w, http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol, "this hub speaks protocol 1", "upgrade yad or the hub")
+		code := v1.CodeUnsupportedProtocol
+		if f.flaw == flawTokenInTheCode {
+			code += "_for_" + bearer(r)
+		}
+		f.fail(w, http.StatusUpgradeRequired, code, "this hub speaks protocol 1", "upgrade yad or the hub")
 		return
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")

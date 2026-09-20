@@ -273,6 +273,7 @@ func TestEveryOfferedRunIsValidated(t *testing.T) {
 	takenBack := v1.Run{RunID: "taken-back", Session: v1.SessionRef{ID: "s"}, Harness: DefaultHarness, Brief: v1.Brief{Instruction: "hi"}}
 	s := &session{
 		opts:    Options{Harness: DefaultHarness},
+		c:       newClient("http://hub.example/v1"),
 		offered: map[string]v1.Run{takenBack.RunID: takenBack, "kept": fakeRunSpec(0)},
 		offers:  []v1.Run{takenBack, fakeRunSpec(0)},
 	}
@@ -318,7 +319,7 @@ func TestASecretQuotedBackIsNotPrinted(t *testing.T) {
 // nothing failed is a run that exits 0 over a hub that stalled.
 func TestAStalledHubIsNotAnInterruption(t *testing.T) {
 	t.Parallel()
-	s := &session{opts: Options{Harness: DefaultHarness}, offered: map[string]v1.Run{}}
+	s := &session{opts: Options{Harness: DefaultHarness}, c: newClient("http://hub.example/v1"), offered: map[string]v1.Run{}}
 	timedOut := check{
 		id: "probe", rule: "A rule.", section: sectionCalls,
 		run: func(context.Context, *session) error {
@@ -500,5 +501,49 @@ func TestTheReofferRuleIsAboutTheRunsThatWereDropped(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A check writes the hub's own strings into its sentence — an error code, a
+// run id, a control kind — and each is a place a hub could have put a secret.
+// The answer's printing is guarded; this is about everything written around it.
+func TestASecretInWhatACheckWritesIsNotPrinted(t *testing.T) {
+	t.Parallel()
+	_, url := newFake(t, flawTokenInTheCode, fakeRunSpec(0), fakeRunSpec(1))
+	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The credential, not the token: the protocol-header probes are made with
+	// the credential as the bearer, and it is the code built from it that the
+	// check quotes into its own message.
+	o := outcome(t, rep, "protocol-header/missing")
+	if o.Status != Failed {
+		t.Fatalf("protocol-header/missing was %s, so the code quoting the bearer was never written into a message", label(o.Status))
+	}
+	var out strings.Builder
+	rep.Print(&out)
+	if !strings.Contains(o.Detail, "the error code is") {
+		t.Fatalf("the failure does not quote the hub's code, so it proves nothing: %s", o.Detail)
+	}
+	for _, secret := range []string{"fake-credential", fakeToken} {
+		if strings.Contains(out.String(), secret) {
+			t.Errorf("%q is in the report, quoted inside an error code:\n%s", secret, out.String())
+		}
+	}
+}
+
+// The connection URL is printed at the top of every report, and a person may
+// well have been given one with a password in it.
+func TestAPasswordInTheURLIsNotPrinted(t *testing.T) {
+	t.Parallel()
+	rep := &Report{BaseURL: redactedURL("https://runner:hunter2@hub.example/v1"), Harness: DefaultHarness}
+	var out strings.Builder
+	rep.Print(&out)
+	if strings.Contains(out.String(), "hunter2") {
+		t.Errorf("the password is in the report:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "hub.example/v1") {
+		t.Errorf("the report no longer says which hub it ran against:\n%s", out.String())
 	}
 }

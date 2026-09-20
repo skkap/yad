@@ -242,7 +242,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		fingerprint: fp,
 		offered:     map[string]v1.Run{},
 	}
-	rep := &Report{BaseURL: opts.BaseURL, Harness: opts.Harness}
+	rep := &Report{BaseURL: redactedURL(opts.BaseURL), Harness: opts.Harness}
 	all := checks()
 	for i, ch := range all {
 		rep.Outcomes = append(rep.Outcomes, s.make(ctx, ch))
@@ -297,6 +297,15 @@ func (s *session) make(ctx context.Context, ch check) Outcome {
 		// nonsense are the same finding for the person reading this.
 		out.Status, out.Detail = Failed, err.Error()
 	}
+	// The last gate before a sentence becomes part of the report, and the
+	// only one that covers all of them. A check writes the hub's own strings
+	// into its message — an error code, a run id, a control kind, the raw
+	// value of a field, the words of a validation failure — and each of those
+	// is a place a hub could have put a secret. Hiding them here rather than
+	// at each site is what stops the next message added below from being the
+	// one that leaks: the answer's own printing is already guarded, and this
+	// guards everything written around it.
+	out.Detail = s.c.hide(out.Detail)
 	return out
 }
 
@@ -489,6 +498,17 @@ func (s *session) claimable() []string {
 		}
 	}
 	return ids
+}
+
+// redactedURL is a connection URL with any password in it replaced, because
+// the report prints it at the top and `https://user:secret@hub.example/v1` is
+// a URL a person may well have been given.
+func redactedURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return u.Redacted()
 }
 
 // newID is a fresh identifier for this run of the suite, so two suites against
