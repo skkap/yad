@@ -137,6 +137,49 @@ func TestHealthErrorsAreBounded(t *testing.T) {
 	}
 }
 
+// The ring holds records in the order they arrived, which is not the order
+// they happened: slog stamps a record when the call is made and Recent.add
+// takes its lock afterwards, so two goroutines logging at once land in either
+// order. recent_errors promises newest first with no condition attached, so
+// the order on the wire is the records' own times.
+func TestHealthErrorsAreOrderedByWhenTheyHappened(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration, m string) logfile.Record {
+		return logfile.Record{Time: now.Add(d), Level: slog.LevelWarn, Message: m}
+	}
+	// Arrival order puts the newest record in the middle and the oldest last:
+	// what a delayed handler does to a ring.
+	got := healthErrors([]logfile.Record{
+		at(-3*time.Minute, "second"),
+		at(-time.Minute, "newest"),
+		at(-5*time.Minute, "oldest"),
+	}, now)
+	want := []string{"newest", "second", "oldest"}
+	if len(got) != len(want) {
+		t.Fatalf("recent_errors = %q", got)
+	}
+	for i, w := range want {
+		if !strings.HasSuffix(got[i], w) {
+			t.Errorf("recent_errors[%d] = %q, want it to end in %q", i, got[i], w)
+		}
+	}
+}
+
+// The same hazard where it costs information rather than order: of two copies
+// of one message, the one kept has to be the one that happened later, not the
+// one that reached the ring later.
+func TestARepeatKeepsTheCopyThatHappenedLast(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	got := healthErrors([]logfile.Record{
+		{Time: now.Add(-time.Minute), Level: slog.LevelWarn, Message: "could not reach the hub"},
+		{Time: now.Add(-9 * time.Minute), Level: slog.LevelWarn, Message: "could not reach the hub"},
+	}, now)
+	want := now.Add(-time.Minute).Format(time.RFC3339)
+	if len(got) != 1 || !strings.HasPrefix(got[0], want) {
+		t.Errorf("recent_errors = %q, want one entry stamped %s", got, want)
+	}
+}
+
 // The ring bounds a record at 2 KiB for `yad status`, which is a local read.
 // The wire gets less: five of these is the whole block's worst case.
 func TestALongMessageIsCutForTheWire(t *testing.T) {

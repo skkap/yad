@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"slices"
 	"time"
 	"unicode/utf8"
 
@@ -57,10 +58,27 @@ const (
 // logs every sync, and five copies of one sentence tell a hub less than five
 // different ones do.
 func healthErrors(recs []logfile.Record, now time.Time) []string {
+	// Ordered by the record's own time, because the ring's order is the order
+	// records arrived and that is not the order they happened: slog stamps a
+	// record when the call is made, and Recent.add takes its lock afterwards,
+	// so two goroutines logging at once can land oldest-last. Newest first is
+	// what the field promises, without a condition.
+	//
+	// The copy starts newest-arrival-first and the sort is stable, so records
+	// sharing a timestamp — a clock too coarse to tell them apart — keep the
+	// only other evidence of their order, which is which arrived later.
+	byTime := make([]logfile.Record, len(recs))
+	for i, r := range recs {
+		byTime[len(recs)-1-i] = r
+	}
+	slices.SortStableFunc(byTime, func(a, b logfile.Record) int { return b.Time.Compare(a.Time) })
+
 	var out []string
 	seen := make(map[string]bool, maxHealthErrors)
-	for i := len(recs) - 1; i >= 0 && len(out) < maxHealthErrors; i-- {
-		r := recs[i]
+	for _, r := range byTime {
+		if len(out) == maxHealthErrors {
+			break
+		}
 		if now.Sub(r.Time) > healthErrorWindow {
 			continue
 		}

@@ -513,7 +513,7 @@ func accountLine(accounts []v1.AccountReport) string {
 	}
 	parts := make([]string, 0, len(accounts))
 	for _, a := range accounts {
-		part := cleanLine(a.Label) + " " + string(a.State)
+		part := cleanLine(a.Label) + " " + accountStateWord(a.State)
 		if a.LimitedUntil != nil {
 			part += " until " + a.LimitedUntil.Local().Format(time.DateTime)
 		}
@@ -523,6 +523,32 @@ func accountLine(accounts []v1.AccountReport) string {
 		parts = append(parts, part)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// accountStateWord is how one account's state reads in the listing. Each state
+// of the closed set is written out here rather than printed from the value, so
+// for a state this binary knows, no byte of the answer reaches the terminal at
+// all. The hub validates the enum on the way in, and that is not what protects
+// the operator: `yad hub runners --hub <url>` will talk to any hub, and
+// hubapiclient decodes the answer with encoding/json, which enforces nothing.
+// A state from outside the set is news — the hub is newer than this binary —
+// so it is shown, cleaned.
+//
+// Absent is its own answer and not a blank: state is omitempty because a
+// runner from before the field cannot say (ARCHITECTURE.md §2), and an empty
+// cell beside a label would read as free.
+func accountStateWord(s v1.AccountState) string {
+	switch s {
+	case v1.AccountFree:
+		return "free"
+	case v1.AccountLimited:
+		return "limited"
+	case v1.AccountNeedsLogin:
+		return "needs_login"
+	case "":
+		return "state unknown"
+	}
+	return "state " + cleanLine(string(s))
 }
 
 // busiestWindow is the account's fullest usage window: the one that will stop
