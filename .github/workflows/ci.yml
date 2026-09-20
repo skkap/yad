@@ -7,10 +7,21 @@ on:
 
 # CI is deliberately a subset. Its one advantage over the machine this is
 # written on is that it is a clean Linux box, so it runs what can answer
-# differently there — vet, a build, the suite — and nothing that cannot.
+# differently there — vet, a build, the suite — and, as of the breaking-change
+# check, one thing that does not.
+#
 # gofmt, staticcheck, generated-file drift and the cross-compile matrix give
 # the same answer anywhere; CHECKS.md makes `make check` the bar before a pull
 # request, and that is where they run.
+#
+# The exception is `make check-breaking`, and the reason is not that it answers
+# differently here — it does not. It is that it is the only check in this
+# repository whose failure lands on somebody else: a renamed or deleted field
+# in a released OpenAPI document breaks hubs generated from it, on machines
+# nobody here can reach. Every other check protects the person who ran it, and
+# skipping one costs that person an hour. `make check` is still the bar, and
+# `make check` still cannot bind a contributor who never read CHECKS.md. So
+# this one runs in both places on purpose.
 #
 # There is no sqlc step any more: it existed only for check-generated, which
 # is now local. If a generated file is stale, `make check` says so before the
@@ -20,6 +31,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The breaking-change check compares each document against itself at
+          # the last release tag, and checkout fetches no tags by default. With
+          # a shallow clone it would find no baseline, print that it is inert
+          # and exit 0 — green on every run, a gate only on the laptop. This
+          # line is what makes the step above a real check; release.yml sets it
+          # for the same family of reason.
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
