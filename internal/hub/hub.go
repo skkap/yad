@@ -215,10 +215,10 @@ func (r *recorder) WriteHeader(status int)      { r.status = status }
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
 
 // OpenAPI returns the protocol's generated document as YAML.
-func (h *Hub) OpenAPI() ([]byte, error) { return h.api.OpenAPI().YAML() }
+func (h *Hub) OpenAPI() ([]byte, error) { return constrainSources(h.api.OpenAPI()).YAML() }
 
 // ServiceOpenAPI returns the service API's generated document as YAML.
-func (h *Hub) ServiceOpenAPI() ([]byte, error) { return h.service.OpenAPI().YAML() }
+func (h *Hub) ServiceOpenAPI() ([]byte, error) { return constrainSources(h.service.OpenAPI()).YAML() }
 
 // Config is the OpenAPI frame. Its version is the protocol's, never the
 // binary's, so a yad release that changes no wire type changes no byte of the
