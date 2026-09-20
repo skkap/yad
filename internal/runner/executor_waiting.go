@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/skkap/yad/internal/account"
@@ -252,11 +251,6 @@ func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64
 	return true
 }
 
-func maxWaitMessage(waited, cap int64) string {
-	return fmt.Sprintf("the run waited %s for a free account, past the %s the hub allowed it; offer it again when an account is free",
-		time.Duration(waited)*time.Millisecond, time.Duration(cap)*time.Millisecond)
-}
-
 // noteMove puts the move into the run's own event stream, where whoever is
 // watching the run can see why it changed accounts. Labels and a reset time:
 // nothing else about an account leaves this machine.
@@ -286,6 +280,54 @@ func (p *progress) metrics(now time.Time) v1.Metrics {
 	}
 }
 
+// Parked is a run this process put in waiting, whole. False for one parked
+// by an earlier process: its grants live only in the process that claimed
+// them, so what is left in the store cannot be started.
+func (e *Exec) Parked(connection, runID string) (v1.Run, bool) {
+	e.init()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	run, ok := e.parked[runKey{connection, runID}]
+	return run, ok
+}
+
+// Forget drops the claim this process was keeping for a parked run.
+func (e *Exec) Forget(connection, runID string) {
+	e.init()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.parked, runKey{connection, runID})
+}
+
+// End writes a parked run's terminal state and result, ending its wait in
+// the same transaction, and reads what the run cost back from the row rather
+// than from memory — the process that parked it may be gone.
+//
+// One transaction, because EndRunWait clears resumes_at and a waiting row
+// without one reads as due right now: apart, a failed result would leave a
+// run still waiting and permanently due, and the next sync would run a turn
+// for one that was cancelled or timed out.
+func (e *Exec) End(ctx context.Context, c Claim, row db.Run, state v1.RunState, rerr *v1.RunError, now time.Time) error {
+	e.init()
+	prog := progress{started: now, waitedMS: row.WaitedMs + waitingFor(row, now), switches: int(row.AccountSwitches)}
+	if row.StartedAt.Valid {
+		prog.started = time.UnixMilli(row.StartedAt.Int64)
+	}
+	if row.Spent.Valid && row.Spent.String != "" {
+		if err := json.Unmarshal([]byte(row.Spent.String), &prog.spent); err != nil {
+			e.Log.Warn("what the run's turns cost could not be read; its result carries none of it",
+				"connection", c.Connection, "run", c.Run.RunID, "err", err)
+		}
+	}
+	return e.finishWith(ctx, c, v1.Result{
+		State: state, LastSeq: e.lastSeq(ctx, c), Error: rerr,
+		Usage:   v1.RunUsage{ByModel: prog.spent.Usage},
+		Metrics: prog.metrics(now),
+	}, func(q *db.Queries) error {
+		return q.EndRunWait(ctx, db.EndRunWaitParams{Now: now.UnixMilli(), Connection: row.Connection, ID: row.ID})
+	})
+}
+
 // hold keeps a parked run's claim, grants and all, for a resume in this
 // process. Grants deliberately never reach disk, so this is the only place a
 // parked run's are: a later process finds none and cannot rebuild the run.
@@ -294,44 +336,4 @@ func (e *Exec) hold(c Claim) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.parked[runKey{c.Connection, c.Run.RunID}] = c.Run
-}
-
-// takeParked returns a parked run's claim as this process kept it, and forgets
-// it: whoever takes it is now responsible for ending or re-parking it.
-func (e *Exec) takeParked(connection, runID string) (v1.Run, bool) {
-	e.init()
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	key := runKey{connection, runID}
-	run, ok := e.parked[key]
-	delete(e.parked, key)
-	return run, ok
-}
-
-// forget drops a parked run this process was keeping, without taking it: for
-// a run that ended some other way.
-func (e *Exec) forget(connection, runID string) {
-	e.init()
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	delete(e.parked, runKey{connection, runID})
-}
-
-// claimFor rebuilds a claim from a stored run row, for a run this process did
-// not park itself. release is the capacity it holds, and may be nil.
-//
-// The spec in the store has no grants — Loop.record strips them, because a
-// hub's secrets never touch this machine's disk — so a run that had them
-// cannot be rebuilt here. That is not a silent difference: it would start the
-// harness without the credentials the hub gave it and fail in whatever way
-// the missing secret happens to fail.
-func claimFor(r db.Run, release func()) (Claim, error) {
-	if release == nil {
-		release = func() {}
-	}
-	var run v1.Run
-	if err := json.Unmarshal([]byte(r.Spec), &run); err != nil {
-		return Claim{}, fmt.Errorf("the stored run could not be read: %w", err)
-	}
-	return Claim{Connection: r.Connection, Run: run, Release: release}, nil
 }

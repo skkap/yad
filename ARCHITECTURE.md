@@ -612,32 +612,39 @@ for `codex`); the suite never runs a real harness.
   goroutine**: the run's goroutine ends, its capacity and any path-source lock go
   back, and everything it had is in its row — when it first started, the wait it
   has served, the accounts it has been through, and what its turns so far cost.
-  `internal/runner.Resumer`, one per process, picks it up when the reset passes
-  **or as soon as an account is free**, which is the other half of the arrow in
-  §2: an owner finishing a login in an account's home frees it long before the
-  reset the run was parked on, and the resumer reads account state on every
-  sweep rather than trusting the moment it wrote. A login is the only way that
-  happens to a running daemon — `yad account add` of a new label reaches it only
-  at a restart, since the account list is the configuration it started with.
 
-  It resumes a run only for a connection this process both **serves and has
-  heard from**. One whose credential would not read, or whose `Recover` failed,
-  has no loop renewing leases and no reporter delivering results, so its parked
-  runs wait for a process that can finish them. And one that has a loop is
-  still not resumed from until that loop has completed a sync: every loop is
-  constructed before any of them syncs, and a run parked across an outage long
-  enough to lapse its lease is already `lost` on the hub's side
-  ([0023](docs/decisions/0023-lost-stands-against-a-late-result.md)), or carries
-  a cancel that arrives in that first sync's answer. A restart is not a second path
-  but the same one, which is why `kill -9` costs it nothing and why
+  **It comes back through its own connection's sync loop, and through nothing
+  else.** A claim is an answer to a sync; so is a resume. Running it inside the
+  sync is what makes it impossible for a resumed run to precede a sync, outlive
+  its loop, run before `Recover` or during a drain, take capacity outside the
+  sync's own reservation, or start on a connection with no reporter to deliver
+  its result — not because each is checked, but because there is no code path on
+  which they are false. It was a sweep of its own, and four review rounds each
+  found one clause of "may I start work now?" that the sweep had not restated;
+  a predicate copied by hand drifts from the original. The cost is one sync
+  interval — 15 s by default, bounded 5–60 s, chosen by the hub — against a park
+  measured in hours.
+
+  A restart is therefore not a second path but the same one, which is why
+  `kill -9` costs a waiting run nothing and why
   [0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md)'s
-  report-lost pass skips a waiting run. The one thing the row cannot hold is the
-  run's grants — they live in the process that claimed them and never touch disk
-  — so a waiting run that had them and is picked up by a *later* process is
-  reported `lost` with class `grants_lost` for the hub to send again. A hub's
-  `max_wait_ms` caps the total wait, after which the run is `timed_out` with
-  class `max_wait_exceeded`. A cancel for a waiting run has no turn to interrupt
-  and ends it where it stands.
+  report-lost pass skips it. The sync also decides when the run is due: the
+  resume time is a floor, and an account freed before it — the owner finishing a
+  login, which `internal/runner.LoginProbe` notices — brings the run back at the
+  next sync, which is the "account frees" half of §2's arrow. Within five seconds
+  of the run's own reset nothing counts as early: `limited_until` passing and the
+  run becoming due are one moment seen through two clocks, and acting on it buys
+  a cache-cold turn against a limit that has not really lifted.
+
+  The one thing the row cannot hold is the run's grants — they live in the
+  process that claimed them and never touch disk — so a waiting run that had them
+  and is picked up by a *later* process is reported `lost` with class
+  `grants_lost` for the hub to send again. A hub's `max_wait_ms` caps the total
+  wait, after which the run is `timed_out` with class `max_wait_exceeded`; the
+  collector ends such a run for a connection no loop is serving, which is the
+  only thing in the process that touches a parked run without a sync, and it can
+  only ever end one. A cancel for a waiting run has no turn to interrupt and ends
+  it where it stands.
 - **While every account of a harness is limited or needs login**, the runner
   stops claiming for it: health says `ready: false` and the offer is left
   unclaimed for the hub to place elsewhere, rather than refused — a refusal is

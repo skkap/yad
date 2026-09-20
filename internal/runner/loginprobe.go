@@ -45,11 +45,6 @@ type LoginProbe struct {
 	// Every is how often each needs-login account is asked again; zero is
 	// probeEvery.
 	Every time.Duration
-	// Freed is called when an account goes back into service, so a run
-	// parked on a reset hours away does not sit beside the account the owner
-	// has just logged in. Nil tells nothing, and the parked run waits for
-	// the resumer's own next sweep.
-	Freed func()
 	Clock Clock
 	Log   *slog.Logger
 
@@ -152,9 +147,10 @@ func (p *LoginProbe) probe(ctx context.Context, a account.Account) bool {
 		log.Warn("the account is logged in again and could not be recorded as free; it is asked again at the next sweep", "err", err)
 		return false
 	}
+	// Nothing is told. A run parked on a reset hours away comes back
+	// through its own connection's next sync, which reads account state
+	// anyway, so the account is noticed within one sync interval without
+	// anything here having to know that parked runs exist.
 	log.Info("the account has been logged in again and is back in service")
-	if p.Freed != nil {
-		p.Freed()
-	}
 	return true
 }

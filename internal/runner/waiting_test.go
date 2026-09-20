@@ -43,14 +43,6 @@ func (c *stepClock) Now() time.Time {
 // timing is not what is under test and a firing timer would only race it.
 func (c *stepClock) After(time.Duration) <-chan time.Time { return make(chan time.Time) }
 
-// closedReady is a connection that has already synced, which is what every
-// test here wants unless it is about the start-up gate itself.
-func closedReady() <-chan struct{} {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
-}
-
 // restartedLoop is a second Loop for the same runner and the same hub
 // credential: the next process, which has not synced yet.
 func (e *env) restartedLoop(t *testing.T, capacity int) *Loop {
@@ -99,14 +91,24 @@ func waitingRow(t *testing.T, e *env, id string) db.Run {
 	return r
 }
 
-// resumer is a Resumer over the env, as Serve builds one, with a clock the
-// test moves.
-func (e *env) resumer(x *Exec, pool *Pool, clock Clock) *Resumer {
-	r := &Resumer{Store: e.store, Pool: pool, Exec: x, Clock: clock,
-		Config: x.Config, Data: e.paths.Data, Live: map[string]<-chan struct{}{"hub": closedReady()},
-		Log: slog.New(slog.DiscardHandler)}
-	x.Ended = r.Wake
-	return r
+// syncAt is how a parked run comes back: its connection's own sync, with
+// the loop's clock at the given moment. It returns once the runs that sync
+// started have finished.
+func syncAt(t *testing.T, l *Loop, x *Exec, now time.Time) {
+	t.Helper()
+	l.Executor = x
+	l.Clock = &stepClock{now: now}
+	l.Data, l.Config = x.Data, x.Config
+	mustSync(t, l)
+	x.Wait()
+}
+
+// collectorFor is a Collector over the env, as Serve builds one: the only
+// thing in the process that ends a parked run without a sync, and it never
+// starts one.
+func collectorFor(e *env, x *Exec) *Collector {
+	return &Collector{Store: e.store, Workdirs: filepath.Join(e.paths.Data, "workdirs"),
+		Runs: x, Clock: realClock{}, Log: slog.New(slog.DiscardHandler)}
 }
 
 // eventStatuses is every status event the run spooled, in order.
@@ -295,7 +297,8 @@ func TestAWaitingRunSurvivesTheRunnerBeingKilledAndContinuesAfterTheReset(t *tes
 	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
 		Outcome: adapter.Outcome{State: v1.RunSucceeded, FinalText: "continued", NativeSessionID: "native-1"},
 	}))
-	restarted := &Loop{Connection: "hub", Store: e.store, Executor: x2, Log: slog.New(slog.DiscardHandler)}
+	restarted := e.restartedLoop(t, 1)
+	restarted.Executor = x2
 	if err := restarted.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -316,9 +319,7 @@ func TestAWaitingRunSurvivesTheRunnerBeingKilledAndContinuesAfterTheReset(t *tes
 	}); err != nil {
 		t.Fatal(err)
 	}
-	clock := &stepClock{now: reset.Add(resumeSkew + time.Second)}
-	e.resumer(x2, NewPool(v1.Capacity{Total: 1}), clock).Sweep(ctx)
-	x2.Wait()
+	syncAt(t, restarted, x2, reset.Add(resumeSkew+time.Second))
 
 	res, ok := outboxResult(t, e, "a")
 	if !ok || res.State != v1.RunSucceeded {
@@ -359,7 +360,6 @@ func TestAWaitingRunSurvivesTheRunnerBeingKilledAndContinuesAfterTheReset(t *tes
 // run is timed_out, with the wait it served reported.
 func TestAWaitingRunPastItsMaxWaitIsTimedOut(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
 	plantCredential(t, e.paths.Data, "work")
 	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
 
@@ -371,9 +371,7 @@ func TestAWaitingRunPastItsMaxWaitIsTimedOut(t *testing.T) {
 	claimAndRun(t, l, x)
 	waitingRow(t, e, "a")
 
-	clock := &stepClock{now: time.Now().Add(45 * time.Minute)}
-	r := e.resumer(x, l.Pool, clock)
-	r.Sweep(ctx)
+	syncAt(t, l, x, time.Now().Add(45*time.Minute))
 
 	res, ok := outboxResult(t, e, "a")
 	if !ok || res.State != v1.RunTimedOut {
@@ -396,7 +394,6 @@ func TestAWaitingRunPastItsMaxWaitIsTimedOut(t *testing.T) {
 // rather than left to fail as a missing credential inside the harness.
 func TestAWaitingRunWithGrantsIsReportedLostAfterARestart(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
 	plantCredential(t, e.paths.Data, "work")
 	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
 
@@ -412,9 +409,7 @@ func TestAWaitingRunWithGrantsIsReportedLostAfterARestart(t *testing.T) {
 	x2, logged := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
 		Outcome: adapter.Outcome{State: v1.RunSucceeded},
 	}))
-	clock := &stepClock{now: reset.Add(resumeSkew + time.Second)}
-	e.resumer(x2, l.Pool, clock).Sweep(ctx)
-	x2.Wait()
+	syncAt(t, e.restartedLoop(t, 1), x2, reset.Add(resumeSkew+time.Second))
 
 	res, ok := outboxResult(t, e, "a")
 	if !ok || res.State != v1.RunLost {
@@ -442,7 +437,6 @@ func TestCancellingAWaitingRunEndsIt(t *testing.T) {
 	claimAndRun(t, l, x)
 	waitingRow(t, e, "a")
 
-	l.Resumer = e.resumer(x, l.Pool, &stepClock{now: time.Now()})
 	if view, err := e.api(t).Cancel(ctx, "a"); err != nil || view.CancelRequestedAt == nil {
 		t.Fatalf("cancel: %+v %v", view, err)
 	}
@@ -496,22 +490,17 @@ func TestAFreedAccountBringsAParkedRunBackBeforeItsResumeTime(t *testing.T) {
 
 	// The clock stays well before the reset. Only the account becoming
 	// usable can move the run.
-	clock := &stepClock{now: time.Now().Add(10 * time.Minute)}
-	r := e.resumer(x, l.Pool, clock)
-	if next := r.Sweep(ctx); next <= 0 {
-		t.Fatal("the sweep did not leave the parked run for later; nothing had freed yet")
-	}
+	early := time.Now().Add(10 * time.Minute)
+	syncAt(t, l, x, early)
 	waitingRow(t, e, "a")
 
-	// The owner logs spare in by hand and the probe frees it.
-	p := probeFor(t, e, cfg)
-	p.Freed = r.Wake
-	if freed := p.Sweep(ctx); freed != 1 {
+	// The owner logs spare in by hand and the probe frees it. Nothing tells
+	// the sync loop; its next sync reads account state anyway.
+	if freed := probeFor(t, e, cfg).Sweep(ctx); freed != 1 {
 		t.Fatalf("the probe freed %d accounts, want 1", freed)
 	}
 
-	r.Sweep(ctx)
-	x.Wait()
+	syncAt(t, l, x, early)
 	res, ok := outboxResult(t, e, "a")
 	if !ok || res.State != v1.RunSucceeded {
 		t.Fatalf("result = %+v, %v — a free account should have brought the run back", res, ok)
@@ -596,8 +585,7 @@ func TestAResumedRunReportsWhatTheTurnBeforeTheParkCost(t *testing.T) {
 		Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1",
 			Usage: map[string]v1.Usage{"opus": {Model: "opus", Input: 7, Output: 3}}},
 	}))
-	e.resumer(x2, NewPool(v1.Capacity{Total: 1}), &stepClock{now: reset.Add(resumeSkew + time.Second)}).Sweep(ctx)
-	x2.Wait()
+	syncAt(t, e.restartedLoop(t, 1), x2, reset.Add(resumeSkew+time.Second))
 
 	res, ok := outboxResult(t, e, "a")
 	if !ok || res.State != v1.RunSucceeded {
@@ -657,12 +645,12 @@ func TestTheWallClockCapIsSharedBetweenAccountsRatherThanRenewed(t *testing.T) {
 	}
 }
 
-// The resumer is one per process and lists every connection's parked runs,
-// but this process only serves the connections whose loop and reporter it
-// started. Running a turn for any other one spends tokens on a run whose
-// lease nothing here renews and whose result nothing here delivers: the hub
-// loses it, gives it to another runner, and the work is done twice.
-func TestAParkedRunOfAConnectionThisProcessDoesNotServeIsLeftAlone(t *testing.T) {
+// Nothing in the process starts a parked run except its own connection's
+// sync. That is not a check anywhere — it is that the only code which starts
+// one runs inside SyncOnce — so this pins the property rather than a guard:
+// a connection with no loop has no sync, and the collector, which does sweep
+// every connection, only ever ends a run.
+func TestNothingButASyncStartsAParkedRun(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	plantCredential(t, e.paths.Data, "work")
@@ -674,8 +662,8 @@ func TestAParkedRunOfAConnectionThisProcessDoesNotServeIsLeftAlone(t *testing.T)
 	claimAndRun(t, l, x)
 	waitingRow(t, e, "a")
 
-	// The reset has passed and the account is usable again, so the only
-	// thing standing between this run and a turn is the connection check.
+	// Everything a resume needs is true: the reset has passed, the account
+	// is free, capacity is back. Only the sync is missing.
 	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
 		Harness: "claude", Label: "work",
 		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
@@ -686,27 +674,28 @@ func TestAParkedRunOfAConnectionThisProcessDoesNotServeIsLeftAlone(t *testing.T)
 	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
 		Outcome: adapter.Outcome{State: v1.RunSucceeded},
 	}))
-	r := e.resumer(x2, NewPool(v1.Capacity{Total: 1}), &stepClock{now: reset.Add(time.Hour)})
-	// This process serves another hub entirely; "hub" has no loop here.
-	r.Live = map[string]<-chan struct{}{"other": closedReady()}
-	r.Sweep(ctx)
+	// The one thing in the process that reaches every connection's parked
+	// runs without a sync. It has no cap to expire here, so it does nothing
+	// — and it could do nothing else, because it cannot start a run.
+	if err := collectorFor(e, x2).Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
 	x2.Wait()
 
 	waitingRow(t, e, "a")
 	if _, ok := outboxResult(t, e, "a"); ok {
-		t.Error("a run of a connection this process does not serve was ended by it")
+		t.Error("a parked run ended without its connection's sync")
 	}
 	if got, _ := x2.Adapters.Lookup("claude"); len(got.(*fake.Adapter).Starts) != 0 {
-		t.Error("a turn was run for a connection with no reporter to deliver its result")
+		t.Error("a turn was started without a sync")
 	}
 }
 
-// A drain leaves a parked run exactly as it is, for the next process. The
-// claim this process was keeping has to go back in the map with it: without
-// that, the sweep a few seconds later finds no held claim, reads the run as
-// one an earlier process parked, and ends it as grants_lost in the middle of
-// a drain it was supposed to sit out.
-func TestADrainLeavesAParkedRunAndTheClaimItWasKeeping(t *testing.T) {
+// A drain leaves a parked run exactly as it is, for the next process: a
+// runner on its way down takes on nothing new, and a run that holds no
+// process is the easiest thing in the world to leave. It keeps syncing
+// meanwhile, so the gate has to be in the sync rather than around it.
+func TestADrainLeavesAParkedRunForTheNextProcess(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	plantCredential(t, e.paths.Data, "work")
@@ -719,19 +708,26 @@ func TestADrainLeavesAParkedRunAndTheClaimItWasKeeping(t *testing.T) {
 	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
 	claimAndRun(t, l, x)
 	waitingRow(t, e, "a")
+	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 
-	r := e.resumer(x, l.Pool, &stepClock{now: reset.Add(resumeSkew + time.Second)})
-	r.Drain = NewDrain()
-	r.Drain.Begin("test")
-	// Twice: the first sweep is the one that takes the claim out of the map,
-	// and the second is what the runner does on every run that ends while it
-	// drains.
-	r.Sweep(ctx)
-	r.Sweep(ctx)
+	l.Drain = NewDrain()
+	l.Drain.Begin("test")
+	syncAt(t, l, x, reset.Add(resumeSkew+time.Second))
 
 	waitingRow(t, e, "a")
 	if res, ok := outboxResult(t, e, "a"); ok {
 		t.Fatalf("a draining runner ended the parked run as %s; it should stay parked for the next process", res.State)
+	}
+	// And the claim it was keeping is still here, so the next sync after a
+	// drain that was called off can still start it with its grants.
+	if _, ok := x.Parked("hub", "a"); !ok {
+		t.Error("the drain gave up the parked claim; a resume would report grants_lost")
 	}
 }
 
@@ -894,8 +890,7 @@ func TestFirstEventMSMeasuresTheTurnAndNotTheWaitBeforeIt(t *testing.T) {
 		Events:  []v1.Event{{Kind: v1.EventText, Text: "here at once"}},
 		Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"},
 	}))
-	e.resumer(x2, NewPool(v1.Capacity{Total: 1}), &stepClock{now: time.Now()}).Sweep(ctx)
-	x2.Wait()
+	syncAt(t, e.restartedLoop(t, 1), x2, time.Now())
 
 	res, ok := outboxResult(t, e, "a")
 	if !ok || res.State != v1.RunSucceeded {
@@ -951,24 +946,23 @@ func TestTheEarlyResumeDoesNotWalkAroundTheSkewOnTheRunsOwnReset(t *testing.T) {
 	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
 		Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"},
 	}))
-	r := e.resumer(x2, NewPool(v1.Capacity{Total: 1}), &stepClock{now: time.Now()})
-	next := r.Sweep(ctx)
-	x2.Wait()
+	syncAt(t, e.restartedLoop(t, 1), x2, time.Now())
 
 	waitingRow(t, e, "a")
 	if _, ok := outboxResult(t, e, "a"); ok {
 		t.Error("the run was resumed inside the skew; the harness's own clock has not reached the reset")
 	}
-	if next <= 0 || next > resumeSkew {
-		t.Errorf("the sweep asked to come back in %s, want within the skew", next)
+	if got, _ := x2.Adapters.Lookup("claude"); len(got.(*fake.Adapter).Starts) != 0 {
+		t.Error("a turn was started inside the skew")
 	}
 }
 
-// A run this process cannot finish is still bounded by the cap its hub gave
-// it. The connection gate stops it being executed; it must not also stop it
-// ending, or the run holds its session and workdir out of collection for
-// ever and the hub never hears the timed_out it asked for.
-func TestAParkedRunOfADroppedConnectionStillTimesOutOnItsCap(t *testing.T) {
+// A run this process cannot sync for is still bounded by the cap its hub
+// gave it. Nothing will ever resume it, so if nothing ends it either, it
+// holds its session and workdir out of collection for ever and the hub
+// never hears the timed_out it asked for. That is the collector's job, and
+// the only thing it does to a parked run.
+func TestTheCollectorEndsAParkedRunPastItsCap(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	plantCredential(t, e.paths.Data, "work")
@@ -980,59 +974,43 @@ func TestAParkedRunOfADroppedConnectionStillTimesOutOnItsCap(t *testing.T) {
 	e.enqueue(t, run)
 	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
 	claimAndRun(t, l, x)
-	waitingRow(t, e, "a")
+	before := waitingRow(t, e, "a")
 
-	r := e.resumer(x, l.Pool, &stepClock{now: time.Now().Add(45 * time.Minute)})
-	r.Live = map[string]<-chan struct{}{"other": closedReady()}
-	r.Sweep(ctx)
+	c := collectorFor(e, x)
+	// Not yet: the cap has not run out, and the collector leaves it alone.
+	c.Clock = &stepClock{now: time.Now().Add(10 * time.Minute)}
+	if err := c.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after := waitingRow(t, e, "a"); after.ResumesAt != before.ResumesAt {
+		t.Fatalf("the collector moved a parked run whose cap is still running")
+	}
 
+	c.Clock = &stepClock{now: time.Now().Add(45 * time.Minute)}
+	if err := c.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
 	res, ok := outboxResult(t, e, "a")
 	if !ok || res.State != v1.RunTimedOut {
-		t.Fatalf("result = %+v, %v, want timed_out even though this process cannot run it", res, ok)
+		t.Fatalf("result = %+v, %v, want timed_out", res, ok)
+	}
+	if res.Error == nil || res.Error.Class != ClassMaxWait {
+		t.Errorf("error = %+v, want the class for a wait past its cap", res.Error)
 	}
 	if got := localRun(t, e, "a").State; got == string(v1.RunWaiting) {
 		t.Error("the run is still waiting; its session and workdir can never be collected")
 	}
 }
 
-// And while the cap is still running, the sweep comes back for it exactly
-// when the cap runs out — not up to a minute later. "Bounded by the cap its
-// hub gave it" is the claim beside the gate, and a run with a second left on
-// it being looked at again in sixty is not that.
-func TestADroppedConnectionsRunIsLookedAtAgainWhenItsCapRunsOut(t *testing.T) {
-	e := newEnv(t)
-	ctx := context.Background()
-	plantCredential(t, e.paths.Data, "work")
-	reset := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
-
-	run := testRun("a", "s1")
-	run.MaxWaitMS = (30 * time.Minute).Milliseconds()
-	l := e.loop(t, 1)
-	e.enqueue(t, run)
-	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
-	claimAndRun(t, l, x)
-	waitingRow(t, e, "a")
-
-	// Twenty-nine minutes in: a minute of the cap is left.
-	r := e.resumer(x, l.Pool, &stepClock{now: time.Now().Add(29 * time.Minute)})
-	r.Live = map[string]<-chan struct{}{"other": closedReady()}
-	next := r.Sweep(ctx)
-
-	waitingRow(t, e, "a")
-	if next <= 0 || next > time.Minute+time.Second {
-		t.Errorf("the sweep asked to come back in %v, want about the minute left on the cap", next)
-	}
-}
-
 // The claim, and the grants in it, are given up only once the terminal
 // result has actually landed. The transaction leaves the row exactly as it
 // was when it fails, so a claim forgotten first leaves a run still `waiting`
-// whose grants this process no longer holds — and the next sweep reports it
+// whose grants this process no longer holds — and the next sync reports it
 // `lost` with class grants_lost, which decision 0023 makes final, so the
-// state the hub asked for could never be sent afterwards.
+// state the hub asked for could never be sent.
 //
 // The failure is injected by giving the executor a store handle that is
-// closed: the resumer's own reads still work, and only the write fails.
+// closed: the loop's own reads still work, and only the write fails.
 func TestAFailedResultKeepsTheParkedClaimSoTheCancelCanBeTriedAgain(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -1047,18 +1025,14 @@ func TestAFailedResultKeepsTheParkedClaimSoTheCancelCanBeTriedAgain(t *testing.T
 	claimAndRun(t, l, x)
 	before := waitingRow(t, e, "a")
 
-	// A second handle on the same file, closed: every write through it
-	// fails, and the resumer reads through the env's own open one.
 	broken, err := store.Open(ctx, e.paths.StateDB())
 	if err != nil {
 		t.Fatal(err)
 	}
 	broken.Close()
 	x.Store = broken
-	r := e.resumer(x, l.Pool, &stepClock{now: time.Now()})
-
-	if r.CancelWaiting(ctx, "hub", "a") {
-		t.Error("CancelWaiting reported the run cancelled; its result was never recorded")
+	if l.cancelWaiting(ctx, "a") {
+		t.Error("the cancel reported itself recorded; its result was never written")
 	}
 	x.Store = e.store
 
@@ -1067,9 +1041,9 @@ func TestAFailedResultKeepsTheParkedClaimSoTheCancelCanBeTriedAgain(t *testing.T
 		t.Errorf("the row moved: resumes_at %v→%v, waiting_since %v→%v",
 			before.ResumesAt, after.ResumesAt, before.WaitingSince, after.WaitingSince)
 	}
-	// And the claim is still here, so the retry the hub sends can end the
-	// run properly instead of finding it grantless.
-	if _, ok := x.takeParked("hub", "a"); !ok {
+	// And the claim is still here, so the retry can end the run properly
+	// instead of finding it grantless.
+	if _, ok := x.Parked("hub", "a"); !ok {
 		t.Error("the parked claim was given up for a result that did not land; the retry would report grants_lost")
 	}
 }
@@ -1077,9 +1051,8 @@ func TestAFailedResultKeepsTheParkedClaimSoTheCancelCanBeTriedAgain(t *testing.T
 // A cancel this process could not write down is still a cancel. The
 // transaction leaves the row exactly as it was, which is what keeps the
 // run's grants and its wait — and makes the row indistinguishable from one
-// nobody cancelled. Without somewhere to remember the intent, the next sweep
-// starts a turn for a run the hub asked to stop, in the up-to-a-minute
-// before the hub's next sync repeats it.
+// nobody cancelled. Without somewhere to remember the intent, the next sync
+// starts a turn for a run the hub asked to stop.
 func TestACancelThatCouldNotBeWrittenStillStopsTheRunFromResuming(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -1098,9 +1071,8 @@ func TestACancelThatCouldNotBeWrittenStillStopsTheRunFromResuming(t *testing.T) 
 	}
 	broken.Close()
 	x.Store = broken
-	r := e.resumer(x, l.Pool, &stepClock{now: reset.Add(resumeSkew + time.Second)})
-	if r.CancelWaiting(ctx, "hub", "a") {
-		t.Fatal("CancelWaiting reported success on a store that cannot be written")
+	if l.cancelWaiting(ctx, "a") {
+		t.Fatal("the cancel reported itself recorded on a store that cannot be written")
 	}
 	x.Store = e.store
 
@@ -1113,13 +1085,12 @@ func TestACancelThatCouldNotBeWrittenStillStopsTheRunFromResuming(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	r.Sweep(ctx)
-	x.Wait()
+	syncAt(t, l, x, reset.Add(resumeSkew+time.Second))
 
 	if got, _ := x.Adapters.Lookup("claude"); len(got.(*fake.Adapter).Starts) != 1 {
 		t.Errorf("the harness was started %d times, want the one turn before the cancel", len(got.(*fake.Adapter).Starts))
 	}
-	// And the sweep that could write finished the cancel rather than leaving
+	// And the sync that could write finished the cancel rather than leaving
 	// it to the hub to ask again.
 	res, ok := outboxResult(t, e, "a")
 	if !ok || res.State != v1.RunCancelled {
@@ -1127,53 +1098,43 @@ func TestACancelThatCouldNotBeWrittenStillStopsTheRunFromResuming(t *testing.T) 
 	}
 }
 
-// A restart must not start a parked run before its hub has said a word.
-// The loops are all constructed before any of them syncs, so the first
-// sweep of a new process would otherwise pass the connection gate and run a
-// turn — for a run the hub may have cancelled while the runner was away, or
-// declared lost on a lapsed lease, which decision 0023 makes final. Either
-// way the turn is work nobody will accept.
-func TestAParkedRunIsNotResumedBeforeItsConnectionHasSynced(t *testing.T) {
-	e := newEnv(t)
-	ctx := context.Background()
-	plantCredential(t, e.paths.Data, "work")
-	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
-
-	l := e.loop(t, 1)
-	e.enqueue(t, testRun("a", "s1"))
-	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
-	claimAndRun(t, l, x)
-	waitingRow(t, e, "a")
-	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
-		Harness: "claude", Label: "work",
-		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
-		UpdatedAt:    time.Now().UnixMilli(),
-	}); err != nil {
+// The property the redesign exists for, pinned as a property rather than as
+// a behaviour: only the sync loop starts a run. Four rounds found four
+// clauses of "may I start work now?" missing from a second scheduler, so the
+// answer was to have one place that starts work — and a backstop against
+// somebody adding a second is worth more than another clause.
+//
+// Matching the source is not a proof; a call reached some other way is
+// beyond what reading it can see. It is the write someone would actually
+// add: a sweep that resumes parked runs on a ticker reads perfectly
+// reasonable and is exactly what this branch removed.
+func TestOnlyTheSyncLoopStartsARun(t *testing.T) {
+	// A run begins in exactly one way: Executor.Start, handed a Claim.
+	// Both spellings of that call are matched — through the interface, and
+	// through a concrete executor a second scheduler would hold.
+	starts := regexp.MustCompile(`Executor\.Start\(|\.Start\([A-Za-z_.]+, Claim\{`)
+	entries, err := os.ReadDir(".")
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	// A new process: a fresh loop that has not synced, and everything else
-	// about the run due.
-	restarted := e.restartedLoop(t, 1)
-	x2, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
-		Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"},
-	}))
-	r := e.resumer(x2, restarted.Pool, &stepClock{now: reset.Add(resumeSkew + time.Second)})
-	r.Live = map[string]<-chan struct{}{"hub": restarted.Synced()}
-
-	r.Sweep(ctx)
-	x2.Wait()
-	waitingRow(t, e, "a")
-	if got, _ := x2.Adapters.Lookup("claude"); len(got.(*fake.Adapter).Starts) != 0 {
-		t.Fatal("a turn was run before the hub had answered this process once")
-	}
-
-	// Once it has synced, the same sweep resumes it.
-	restarted.Executor = x2
-	mustSync(t, restarted)
-	r.Sweep(ctx)
-	x2.Wait()
-	if res, ok := outboxResult(t, e, "a"); !ok || res.State != v1.RunSucceeded {
-		t.Fatalf("result = %+v, %v — the run should resume once its connection has synced", res, ok)
+	for _, d := range entries {
+		name := d.Name()
+		switch {
+		case d.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go"):
+			continue
+		// sync.go holds the claim, sync_waiting.go the resume, and
+		// runner.go the wrapper that puts a started run on the server's
+		// context. Every other file in the package must not start a run.
+		case name == "sync.go" || name == "sync_waiting.go" || name == "runner.go":
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loc := starts.FindIndex(raw); loc != nil {
+			line := 1 + strings.Count(string(raw[:loc[0]]), "\n")
+			t.Errorf("%s:%d starts a run outside the sync loop; every clause of \"may I start work now?\" lives there", name, line)
+		}
 	}
 }

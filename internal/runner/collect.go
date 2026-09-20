@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -59,6 +60,43 @@ type CloseResult struct {
 	LiveRun string
 }
 
+// expireWaits ends every parked run whose hub's max_wait has run out. A run
+// whose connection has a loop is normally ended by that loop's own sync
+// first; this is what catches the ones no loop will reach, and running on
+// both is harmless because the two write the same terminal state and only
+// one transaction can be the one that lands.
+func (c *Collector) expireWaits(ctx context.Context, now time.Time) error {
+	if c.Runs == nil {
+		return nil
+	}
+	rows, err := c.Store.ListWaitingRuns(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		var run v1.Run
+		if err := json.Unmarshal([]byte(row.Spec), &run); err != nil {
+			continue // the loop that owns it reports this; a sweep guesses nothing
+		}
+		waited := row.WaitedMs + waitingFor(row, now)
+		if run.MaxWaitMS <= 0 || waited < run.MaxWaitMS {
+			continue
+		}
+		claim, err := claimFor(row, nil)
+		if err != nil {
+			continue
+		}
+		c.Log.Warn("a parked run waited longer than its hub allowed; it is timed out",
+			"connection", row.Connection, "run", row.ID, "waited_ms", waited, "max_wait_ms", run.MaxWaitMS)
+		if err := c.Runs.End(ctx, claim, row, v1.RunTimedOut,
+			&v1.RunError{Class: ClassMaxWait, Message: maxWaitMessage(waited, run.MaxWaitMS)}, now); err != nil {
+			continue // tried again at the next sweep
+		}
+		c.Runs.Forget(row.Connection, row.ID)
+	}
+	return nil
+}
+
 // Collector closes sessions and reclaims their workdirs: on the hub's
 // close_session, the owner's `yad sessions close`, the idle TTL, and disk
 // pressure (decisions 0011 and 0035). A session with a run held — claimed,
@@ -86,6 +124,20 @@ type Collector struct {
 	// after a sweep that reclaimed something: workdir.Manager.Prune. Its
 	// failure is logged and blocks nothing. Nil prunes nothing.
 	Prune func(ctx context.Context) error
+	// Runs ends a parked run whose hub's cap has run out. Nil ends none.
+	//
+	// It is here rather than beside the resuming, because it is the one
+	// thing about a parked run that its own connection's sync loop cannot
+	// do: a connection whose credential would not read, whose Recover
+	// failed, or that the owner took out of the configuration has no loop
+	// to reach it. Left alone such a run holds its session and workdir out
+	// of collection for ever, which is this collector's own business.
+	//
+	// It never starts a run. That distinction is the whole reason a
+	// process-wide sweep is safe here and was not safe for resuming: every
+	// clause of "may I start work now?" belongs to the sync loop, and a
+	// sweep that only ever writes a terminal result has none of them.
+	Runs Executor
 	// DiskFree measures the free space at a path; nil is statfs.
 	DiskFree func(path string) (int64, error)
 	Clock    Clock
@@ -228,6 +280,7 @@ func (c *Collector) Sweep(ctx context.Context) error {
 	if c.DiskFloor > 0 {
 		errs = append(errs, c.relieve(ctx, now))
 	}
+	errs = append(errs, c.expireWaits(ctx, now))
 	left, err := c.Store.UnreclaimedSessions(ctx)
 	if err != nil {
 		return errors.Join(append(errs, err)...)

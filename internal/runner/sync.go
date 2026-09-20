@@ -56,9 +56,21 @@ const (
 //     (store.SetRunState). The loop lists whatever the store holds on every
 //     sync; there is no other channel.
 //   - Control delivers the hub's instructions for runs the executor has.
+//   - Parked, End and Forget are the executor's side of a run waiting on a
+//     usage limit. The run itself is in the store and the loop decides what
+//     becomes of it; these are the parts only the executor has — the claim it
+//     kept in memory, with the grants that never reach disk, and the write of
+//     a terminal result that ends the run's wait in the same transaction.
 type Executor interface {
 	Start(ctx context.Context, c Claim)
 	Control(ctx context.Context, connection string, c v1.Control)
+	// Parked is a run this process put in waiting, whole: false for one
+	// parked by an earlier process, whose grants did not survive.
+	Parked(connection, runID string) (v1.Run, bool)
+	// End writes a parked run's terminal result and ends its wait together.
+	End(ctx context.Context, c Claim, row db.Run, state v1.RunState, rerr *v1.RunError, now time.Time) error
+	// Forget drops the claim this process was keeping for a parked run.
+	Forget(connection, runID string)
 }
 
 // Claim is a run the hub has acknowledged as this runner's. Run carries its
@@ -106,11 +118,6 @@ type Loop struct {
 	// Drain is the runner's way down, shared by every connection: while it
 	// drains, the loop claims nothing and keeps syncing. Nil never drains.
 	Drain *Drain
-	// Resumer holds the runs parked on a usage limit, shared by every
-	// connection. The loop needs it for one thing: a cancel for a run that
-	// is waiting reaches no executor, because a waiting run is in no
-	// executor's hands. Nil holds none.
-	Resumer *Resumer
 	// ClaimAfter, until closed, keeps the loop from claiming: what a previous
 	// process left owed goes out before new work comes in (decision 0030).
 	// Syncs go on meanwhile, so leases renew. Nil claims from the first sync.
@@ -146,20 +153,22 @@ type Loop struct {
 	// idle.
 	quiesced     chan struct{}
 	quiescedOnce sync.Once
-	// synced is closed by the first sync this process completed with the
-	// hub. Anything that starts work from outside the sync loop waits for
-	// it: a claim cannot precede a sync, because a claim *is* an answer to
-	// one, but a resumed run can — and would start before the hub has had
-	// any chance to say the run was cancelled or lost while the runner was
-	// away (decision 0030).
-	synced     chan struct{}
-	syncedOnce sync.Once
 	// recovered is set once the runs a previous process held are settled.
 	recovered bool
 	// harnessReady is what this sync's health said about each harness whose
 	// accounts are all limited or need login, so the claim that follows the
 	// hub's answer acts on the same reading the hub was sent.
 	harnessReady map[string]bool
+	// accounts are the states that reading came from, kept for the same
+	// reason: resuming a parked run early because an account is free must
+	// be the same answer the hub was just given, not a second read of it.
+	accounts []account.Account
+	// cancelled are parked runs the hub asked to stop whose terminal result
+	// could not be written. The intent lives nowhere else: the transaction
+	// leaves the row exactly as it was, which is what keeps the run's grants
+	// and its wait, and a row left untouched is indistinguishable from one
+	// nobody has cancelled.
+	cancelled map[string]bool
 	// echoes are closes the store will not report again — a session this
 	// runner never held, or one reported before — that the hub asked about
 	// since: it is told once more, so it stops asking. Kept in memory: the
@@ -181,7 +190,7 @@ func (l *Loop) init() {
 		l.refused = map[string]v1.Result{}
 		l.echoes = map[string]v1.ClosedSession{}
 		l.quiesced = make(chan struct{})
-		l.synced = make(chan struct{})
+		l.cancelled = map[string]bool{}
 	}
 	if l.Clock == nil {
 		l.Clock = realClock{}
@@ -342,7 +351,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 			}
 		case c.Kind == v1.ControlCancel && l.isPending(c.RunID):
 			l.withdraw(ctx, c.RunID)
-		case c.Kind == v1.ControlCancel && l.Resumer.CancelWaiting(ctx, l.Connection, c.RunID):
+		case c.Kind == v1.ControlCancel && l.cancelWaiting(ctx, c.RunID):
 			// A parked run has no turn to interrupt and no process to
 			// signal, so the executor has nothing to cancel: the Resumer
 			// ends it where it is. A cancel is repeated until the run ends
@@ -369,22 +378,15 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 		}
 	}
 	// What was not claimed goes back before anything else can wait on the hub.
+	// Parked runs come last, after the hub's controls have been acted on
+	// and after its offers: a run already held is this runner's, but a run
+	// the hub is offering now is work it is waiting on an answer about.
+	if !l.Drain.IsDraining() {
+		l.resumeWaiting(ctx, held, res)
+	}
 	res.Close()
 	l.sendRefusals(ctx)
-	// Last, so it means "a sync ran and its answer was acted on" rather than
-	// "a request went out": the hub's controls for this sync, a cancel among
-	// them, have reached the executor by here.
-	l.syncedOnce.Do(func() { close(l.synced) })
 	return out, nil
-}
-
-// Synced is closed once this connection has completed a sync in this
-// process. It is what the Resumer waits for before starting a parked run:
-// the run may have been cancelled, or lost on a lapsed lease, while the
-// runner was away, and the first sync is where either would be heard.
-func (l *Loop) Synced() <-chan struct{} {
-	l.init()
-	return l.synced
 }
 
 // mayClaim is whether the replay that must come first is done.
@@ -755,6 +757,9 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 	// told and what this runner then does come from one answer.
 	ready := map[string]bool{}
 	defer func() { l.harnessReady = ready }()
+	// Cleared first, so a read that fails leaves this sync with no account
+	// states rather than the last one's.
+	l.accounts = nil
 	accounts, err := account.Load(ctx, l.Store.Queries, l.Data, l.Config)
 	if err != nil {
 		// Reporting every account free because the read failed would be the
@@ -765,6 +770,7 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		l.Log.Warn("could not read account states; this sync reports no harness health", "connection", l.Connection, "err", err)
 		return nil
 	}
+	l.accounts = accounts
 	var out []v1.HarnessHealth
 	for _, hr := range doc.Harnesses {
 		// The predicate a claim uses, not a copy of part of it: a harness

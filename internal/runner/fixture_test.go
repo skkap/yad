@@ -18,6 +18,7 @@ import (
 	hubstore "github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/store"
+	"github.com/skkap/yad/internal/store/db"
 )
 
 // fakeClock records every wait the loop asks for and lets it through at once,
@@ -68,6 +69,16 @@ func (e *executor) Control(_ context.Context, _ string, c v1.Control) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.controls = append(e.controls, c)
+}
+
+// The parked-run half of the contract. This fixture records what the loop
+// hands it and holds no runs, so it has none parked and ends none.
+func (e *executor) Parked(string, string) (v1.Run, bool) { return v1.Run{}, false }
+
+func (e *executor) Forget(string, string) {}
+
+func (e *executor) End(context.Context, Claim, db.Run, v1.RunState, *v1.RunError, time.Time) error {
+	return nil
 }
 
 func (e *executor) ids() []string {

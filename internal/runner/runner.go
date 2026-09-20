@@ -90,11 +90,7 @@ func Serve(ctx context.Context, o Options) error {
 	defer o.Monitor.attach(nil, nil, nil)
 
 	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{}}
-	// One per process, not one per connection: the runs parked on a usage
-	// limit draw on the same capacity pool as everything else, and a parked
-	// run must be picked up once however many hubs this runner serves.
-	sv.resumer = &Resumer{Store: st, Pool: pool, Drain: o.Drain, Config: o.Config, Data: o.Paths.Data, Log: o.Log}
-	sv.probe = &LoginProbe{Store: st, Config: o.Config, Data: o.Paths.Data, Log: o.Log, Freed: sv.resumer.Wake}
+	sv.probe = &LoginProbe{Store: st, Config: o.Config, Data: o.Paths.Data, Log: o.Log}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -104,14 +100,9 @@ func Serve(ctx context.Context, o Options) error {
 				r.Wake()
 			}
 		},
-		Ended: func() {
-			sessions.Wake()
-			// A run that ended gave its capacity back, which may be the
-			// capacity a parked run has been waiting for.
-			sv.resumer.Wake()
-		},
+		Ended: sessions.Wake,
 	}
-	sv.resumer.Exec = sv.exec
+	sessions.Runs = sv.exec
 	var executor Executor
 	if o.Adapters != nil {
 		executor = sv.exec
@@ -133,7 +124,7 @@ func Serve(ctx context.Context, o Options) error {
 		sv.loops = append(sv.loops, &Loop{
 			Connection: conn.Name, RunnerID: o.RunnerID, Hub: client, Store: st, Pool: pool,
 			Capabilities: o.Capabilities, Executor: executor, Drain: o.Drain,
-			Config: o.Config, Data: o.Paths.Data, Resumer: sv.resumer,
+			Config: o.Config, Data: o.Paths.Data,
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
 		})
 	}
@@ -192,7 +183,6 @@ type server struct {
 	store     *store.Store
 	exec      *Exec
 	sessions  *Collector
-	resumer   *Resumer
 	probe     *LoginProbe
 	loops     []*Loop
 	reporters map[string]*Reporter
@@ -231,11 +221,10 @@ func (s *server) run(ctx context.Context) error {
 	// Collection starts once the runs a previous process held are settled,
 	// and ends with the loops: the store closes when Serve returns.
 	//
-	// The resumer starts with it, and for the same reason: Recover has just
-	// decided which of the previous process's runs are lost and which were
-	// parked, so the first sweep sees the parked ones and nothing else. Its
-	// runs are on ctx, not on the loops' context, exactly as a claimed run
-	// is — a connection that stops must not kill a run already in hand.
+	// A parked run comes back through its own connection's sync loop, so
+	// nothing here starts one. What the collector adds is the other end:
+	// a parked run whose hub's cap has run out, on a connection no loop is
+	// serving, which no sync will ever reach.
 	//
 	// The login probe is the other half of "says when that ends": a limited
 	// account comes back at its reset, and a needs-login one when the owner
@@ -243,25 +232,6 @@ func (s *server) run(ctx context.Context) error {
 	background := make(chan struct{})
 	var bg sync.WaitGroup
 	bg.Go(func() { s.sessions.Run(lctx) })
-	if s.resumer != nil && s.exec.Adapters != nil {
-		// Runs on ctx for the same reason a claimed run is: a connection
-		// that stops leaves the runs in hand to finish, and only exit now
-		// kills them.
-		s.resumer.Runs = ctx
-		// And only the connections this process actually serves, each not
-		// before its own first sync. A connection dropped at start-up — an
-		// unreadable credential, a Recover that failed — has no loop
-		// renewing leases and no reporter delivering results, so its parked
-		// runs stay parked until a process that can finish them picks them
-		// up; and one that has a loop still has nothing to say about its
-		// runs until the hub has answered it once.
-		live := map[string]<-chan struct{}{}
-		for _, l := range s.loops {
-			live[l.Connection] = l.Synced()
-		}
-		s.resumer.Live = live
-		bg.Go(func() { s.resumer.Run(lctx) })
-	}
 	bg.Go(func() { s.probe.Run(lctx) })
 	go func() { bg.Wait(); close(background) }()
 	defer func() { stopLoops(); <-background }()
