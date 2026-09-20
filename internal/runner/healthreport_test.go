@@ -165,6 +165,30 @@ func TestHealthErrorsAreOrderedByWhenTheyHappened(t *testing.T) {
 	}
 }
 
+// The seed of the sort, which the four lines of comment above it are the only
+// other thing holding in place. Records sharing a Time are the case the stable
+// sort cannot decide, and the copy starts newest-arrival-first so that arrival
+// order — the only other evidence of which happened later — survives. Replace
+// that copy with a plain one and nothing else in this file notices: every
+// other record here carries a distinct Time.
+//
+// Two records at one moment, one message, different levels: whichever level
+// comes back says which copy the dedup kept.
+func TestRecordsSharingATimestampKeepArrivalOrder(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	at := now.Add(-time.Minute)
+	got := healthErrors([]logfile.Record{
+		{Time: at, Level: slog.LevelWarn, Message: "the hub answered slowly"},
+		{Time: at, Level: slog.LevelError, Message: "the hub answered slowly"},
+	}, now)
+	if len(got) != 1 {
+		t.Fatalf("recent_errors = %q, want the repeat collapsed to one", got)
+	}
+	if !strings.Contains(got[0], "ERROR") {
+		t.Errorf("recent_errors = %q; with the timestamps equal the later arrival is the one to keep", got)
+	}
+}
+
 // The same hazard where it costs information rather than order: of two copies
 // of one message, the one kept has to be the one that happened later, not the
 // one that reached the ring later.
@@ -269,10 +293,150 @@ func TestAccountsAndWindowsAreCappedAndReadyIsNot(t *testing.T) {
 	if !hh.Ready {
 		t.Error("a harness with a free account past the cap is reported not ready; the cap must cost detail, not correctness")
 	}
-	// The owner's own order decides what is kept: what a run reaches for
-	// first is what a hub is told about.
-	if hh.Accounts[0].Label != labels[0] || hh.Accounts[maxHealthAccounts-1].Label != labels[maxHealthAccounts-1] {
-		t.Errorf("accounts kept = %q…%q, want the owner's first %d", hh.Accounts[0].Label, hh.Accounts[maxHealthAccounts-1].Label, maxHealthAccounts)
+	// The head of the owner's reporting order is what is kept — not a claim
+	// about which account a run picks, which account.Soonest decides by the
+	// soonest reset with the owner's order only breaking ties (decision 0039).
+	// The last slot is the exception, and the test below is about it.
+	if hh.Accounts[0].Label != labels[0] || hh.Accounts[maxHealthAccounts-2].Label != labels[maxHealthAccounts-2] {
+		t.Errorf("accounts kept = %q…%q, want the head of the owner's order", hh.Accounts[0].Label, hh.Accounts[maxHealthAccounts-2].Label)
+	}
+}
+
+// A hub must never read Ready true above a list in which every account named
+// is limited or needs a login. That is not an incomplete report, it is a
+// self-contradictory one, and a hub operator asking the question E8 exists to
+// answer — why is this runner idle — would read it as a fault in yad.
+//
+// So the account a run would actually take is named whatever position the
+// owner gave it: past the cap it takes the last kept slot.
+func TestTheAccountCarryingTheWorkIsNamedEvenPastTheCap(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	// A limit is judged against the wall clock, not the loop's: account.Load
+	// takes no clock and Report calls time.Now(). A reset dated from the fake
+	// clock is already in the past, so the account reads free and the test
+	// proves nothing — which is what the first draft of this file did.
+	realNow := time.Now()
+	var labels []string
+	for i := range maxHealthAccounts + 4 {
+		labels = append(labels, fmt.Sprintf("acct-%02d", i))
+	}
+	for _, label := range labels {
+		if _, err := account.Ensure(e.paths.Data, "claude", label); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Everything the cap would keep needs login, and everything past it bar
+	// one is limited: the single free account sits at the cap's own boundary.
+	for _, label := range labels[:maxHealthAccounts] {
+		if err := account.SetState(ctx, e.store.Queries, "claude", label, v1.AccountNeedsLogin, e.clock.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, label := range labels[maxHealthAccounts+1:] {
+		if err := account.SetLimit(ctx, e.store.Queries, "claude", label, realNow.Add(time.Hour), realNow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	free := labels[maxHealthAccounts]
+	l := healthLoop(t, e, labels...)
+
+	hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
+	if !hh.Ready || len(hh.Accounts) != maxHealthAccounts {
+		t.Fatalf("harness = ready %v with %d accounts", hh.Ready, len(hh.Accounts))
+	}
+	named := make(map[string]v1.AccountState, len(hh.Accounts))
+	for _, a := range hh.Accounts {
+		named[a.Label] = a.State
+	}
+	if named[free] != v1.AccountFree {
+		t.Errorf("health says ready and names no account that can run: %+v", hh.Accounts)
+	}
+	// The last slot, not the first: the head of the report stays the head of
+	// the owner's own order, and one slot means something specific.
+	if got := hh.Accounts[maxHealthAccounts-1].Label; got != free {
+		t.Errorf("the account carrying the work is at %q; want it in the last slot, %q", got, free)
+	}
+	if hh.Accounts[0].Label != labels[0] {
+		t.Errorf("the report no longer starts at the head of the owner's order: %q", hh.Accounts[0].Label)
+	}
+}
+
+// The overwhelmingly common case, and the one a change like this breaks: with
+// the account a run would take already inside the cap, nothing is replaced,
+// nothing is reordered, and the report is what it was before. A fix that
+// fires when it should not is worse than the case it was written for.
+func TestAnAccountInsideTheCapIsNotMoved(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	// A limit is judged against the wall clock, not the loop's: account.Load
+	// takes no clock and Report calls time.Now(). A reset dated from the fake
+	// clock is already in the past, so the account reads free and the test
+	// proves nothing — which is what the first draft of this file did.
+	realNow := time.Now()
+	var labels []string
+	for i := range maxHealthAccounts + 4 {
+		labels = append(labels, fmt.Sprintf("acct-%02d", i))
+	}
+	for _, label := range labels {
+		if _, err := account.Ensure(e.paths.Data, "claude", label); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Free at the front, so Soonest picks inside the cap; everything else
+	// limited, so there is something past the cap that could have been moved.
+	for _, label := range labels[1:] {
+		if err := account.SetLimit(ctx, e.store.Queries, "claude", label, realNow.Add(time.Hour), realNow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := healthLoop(t, e, labels...)
+
+	hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
+	if !hh.Ready || len(hh.Accounts) != maxHealthAccounts {
+		t.Fatalf("harness = ready %v with %d accounts", hh.Ready, len(hh.Accounts))
+	}
+	for i, a := range hh.Accounts {
+		if a.Label != labels[i] {
+			t.Errorf("account %d is %q, want the owner's order unchanged at %q", i, a.Label, labels[i])
+		}
+	}
+}
+
+// And with nothing that can run, there is no contradiction to remove: sixteen
+// limited rows under Ready false are the honest answer, and the report is the
+// plain head of the owner's order. Soonest returns free accounts only, so this
+// case never reaches the replacement at all.
+func TestNoReplacementWhenNothingCanRun(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	// A limit is judged against the wall clock, not the loop's: account.Load
+	// takes no clock and Report calls time.Now(). A reset dated from the fake
+	// clock is already in the past, so the account reads free and the test
+	// proves nothing — which is what the first draft of this file did.
+	realNow := time.Now()
+	var labels []string
+	for i := range maxHealthAccounts + 4 {
+		labels = append(labels, fmt.Sprintf("acct-%02d", i))
+	}
+	for _, label := range labels {
+		if _, err := account.Ensure(e.paths.Data, "claude", label); err != nil {
+			t.Fatal(err)
+		}
+		if err := account.SetLimit(ctx, e.store.Queries, "claude", label, realNow.Add(time.Hour), realNow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := healthLoop(t, e, labels...)
+
+	hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
+	if hh.Ready {
+		t.Fatal("a harness whose every account is limited is reported ready")
+	}
+	for i, a := range hh.Accounts {
+		if a.Label != labels[i] {
+			t.Errorf("account %d is %q, want the owner's order unchanged at %q", i, a.Label, labels[i])
+		}
 	}
 }
 

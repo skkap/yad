@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -845,8 +846,15 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		// window resets soonest (DEV-28, decision 0039). Either way it is the
 		// claim's own predicate, asked once — what a hub is told and what this
 		// runner then does come from one answer.
-		_, usable := account.Soonest(accounts, hr.ID, l.Clock.Now())
-		hh := v1.HarnessHealth{ID: hr.ID, Ready: len(reports) == 0 || usable, Accounts: capAccounts(reports)}
+		chosen, usable := account.Soonest(accounts, hr.ID, l.Clock.Now())
+		// Empty unless a run could actually start: Soonest returns free
+		// accounts only, so a harness with none configured and one whose
+		// every account is limited both arrive here with nothing to name.
+		running := ""
+		if usable {
+			running = chosen.Label
+		}
+		hh := v1.HarnessHealth{ID: hr.ID, Ready: len(reports) == 0 || usable, Accounts: capAccounts(reports, running)}
 		if !hh.Ready {
 			ready[hr.ID] = false
 		}
@@ -995,21 +1003,47 @@ const (
 )
 
 // capAccounts bounds one harness's accounts, and each account's windows, to
-// the caps above. What is kept is the head of the owner's own order, which is
-// the order account.Reports returns them in.
+// the caps above. What is kept is the head of the owner's reporting order,
+// with one exception: the last slot goes to running — the account a run would
+// actually take — when the cap would otherwise leave it out.
 //
-// That is no longer the order a run picks from: account.Soonest takes the free
-// account whose window resets soonest (DEV-28, decision 0039), and on a
-// harness with more accounts than the cap the one a run uses can be past it
-// and go unnamed. Readiness is unaffected — it is computed over every account
-// before the cap — so what the cap costs is a hub's view of which account is
-// carrying the work, on an owner who has configured more than maxHealthAccounts
-// of them. Raising the cap is the fix if that ever matters; reporting a
-// different head would mean sorting every account of every harness on every
-// sync to tell a hub something it does not route on.
-func capAccounts(reports []v1.AccountReport) []v1.AccountReport {
+// The exception is there because without it the report contradicts itself.
+// The order accounts are reported in is the owner's; the order a run picks
+// from is not, since account.Soonest takes the free account whose window
+// resets soonest and the owner's order only breaks ties (decision 0039). On a
+// harness with more accounts than the cap, the one carrying the work can
+// therefore sit past it — and a hub would receive Ready true above a list in
+// which every account named is limited or needs a login. That is not a
+// partial answer, it is a self-contradictory one, and an operator asking the
+// question E8 exists to answer, why is this runner idle, would read it as a
+// fault in yad rather than as a cap.
+//
+// It costs a scan of a list already in hand, not a sort: Soonest has already
+// chosen, and this only finds where that account was reported.
+//
+// Conditional by construction rather than by a check. Soonest returns free
+// accounts only, so running is empty exactly when nothing can run — a harness
+// with no accounts configured, or one whose accounts are all limited or need a
+// login. Neither replaces anything, and neither should: under Ready false, a
+// capped list of limited accounts is the honest answer and there is no
+// contradiction to remove.
+//
+// The head is never reordered. Only the final slot can differ from a plain
+// truncation, so what a hub loses to the cap stays one account of the owner's
+// order and never the shape of the list.
+func capAccounts(reports []v1.AccountReport, running string) []v1.AccountReport {
 	if len(reports) > maxHealthAccounts {
-		reports = reports[:maxHealthAccounts]
+		kept := reports[:maxHealthAccounts]
+		named := func(r v1.AccountReport) bool { return r.Label == running }
+		if running != "" && !slices.ContainsFunc(kept, named) {
+			if i := slices.IndexFunc(reports[maxHealthAccounts:], named); i >= 0 {
+				// A copy: the last slot is overwritten, and reports is the
+				// caller's view of what account.Reports built.
+				kept = append([]v1.AccountReport(nil), kept...)
+				kept[len(kept)-1] = reports[maxHealthAccounts+i]
+			}
+		}
+		reports = kept
 	}
 	for i, r := range reports {
 		if len(r.Windows) > maxHealthWindows {
