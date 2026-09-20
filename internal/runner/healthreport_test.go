@@ -262,9 +262,11 @@ func TestAccountsAndWindowsAreCappedAndReadyIsNot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Every account named before the cap needs login; the only one that can
-	// run is past it. Readiness has to see it even though health does not
-	// name it.
+	// Every account the cap would keep needs login; the only one that can run
+	// is past it. Readiness has to see it — this test is about that — and
+	// since capAccounts also gives it the last slot, what it proves now is
+	// the narrower half: Ready is computed before the cap, not after.
+	// TestTheAccountCarryingTheWorkIsNamedEvenPastTheCap covers the slot.
 	for _, label := range labels[:maxHealthAccounts] {
 		if err := account.SetState(ctx, e.store.Queries, "claude", label, v1.AccountNeedsLogin, e.clock.Now()); err != nil {
 			t.Fatal(err)
@@ -430,8 +432,12 @@ func TestNoReplacementWhenNothingCanRun(t *testing.T) {
 	l := healthLoop(t, e, labels...)
 
 	hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
-	if hh.Ready {
-		t.Fatal("a harness whose every account is limited is reported ready")
+	// The length first: the loop below is a no-op over a short slice, so
+	// without this a capAccounts that returned nothing on the empty-label
+	// path would leave this test green while the block it is named for is
+	// gone. Its two siblings assert it; this one did not.
+	if hh.Ready || len(hh.Accounts) != maxHealthAccounts {
+		t.Fatalf("harness = ready %v with %d accounts, want not ready with %d", hh.Ready, len(hh.Accounts), maxHealthAccounts)
 	}
 	for i, a := range hh.Accounts {
 		if a.Label != labels[i] {

@@ -836,7 +836,8 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		// Ready is computed from the whole list and the cap is applied after
 		// it, so bounding the block costs a hub detail and never correctness:
 		// an account past the cap still decides whether this harness can take
-		// a run, it is only not named.
+		// a run, and capAccounts gives it the last reported slot rather than
+		// leaving the hub a list nothing in which can run.
 		//
 		// No accounts means the harness runs on its own default home, which
 		// is ready; accounts that all need login or are limited mean it is
@@ -1021,12 +1022,17 @@ const (
 // It costs a scan of a list already in hand, not a sort: Soonest has already
 // chosen, and this only finds where that account was reported.
 //
-// Conditional by construction rather than by a check. Soonest returns free
-// accounts only, so running is empty exactly when nothing can run — a harness
-// with no accounts configured, or one whose accounts are all limited or need a
-// login. Neither replaces anything, and neither should: under Ready false, a
-// capped list of limited accounts is the honest answer and there is no
-// contradiction to remove.
+// Conditional by construction rather than by a check: running is empty exactly
+// when Soonest had nothing to return, and neither case it covers wants a
+// replacement.
+//
+// One of them is ready and the other is not, which is why this is two
+// sentences rather than one. A harness with no accounts configured is ready —
+// it runs on the harness's own login — and there is simply no account to name;
+// it never reaches the cap either, having no reports to exceed it. A harness
+// whose accounts are all limited or need a login is Ready false, and there a
+// capped list of limited accounts is the honest answer with no contradiction
+// to remove.
 //
 // The head is never reordered. Only the final slot can differ from a plain
 // truncation, so what a hub loses to the cap stays one account of the owner's
