@@ -183,6 +183,12 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				res, err := monitor.CloseSession(ctx, conn, id)
 				return control.SessionClose{Outcome: res.Outcome, Reason: string(res.Reason), LiveRun: res.LiveRun}, err
 			},
+			Disconnect: func(ctx context.Context, conn string) (control.Disconnected, error) {
+				res, err := monitor.Disconnect(ctx, conn)
+				log.Warn("connection disconnected by its owner: no longer syncing", "connection", conn,
+					"was_syncing", res.Running, "runs_still_held", res.Runs, "sessions_closed", res.Closed+res.Closing, "err", err)
+				return control.Disconnected{Running: res.Running, Runs: res.Runs, Closed: res.Closed, Closing: res.Closing}, err
+			},
 		})
 	}()
 	defer func() {
@@ -289,7 +295,12 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		if !ok {
 			cs.State = runner.ConnStarting
 		}
-		conn := control.Connection{Name: c.Name, URL: c.URL, State: cs.State, LastError: cs.LastError}
+		if cs.State == runner.ConnGone {
+			// Disconnected since this process read config.toml: it is not a
+			// connection any more, whatever the config in hand still says.
+			continue
+		}
+		conn := control.Connection{Name: c.Name, URL: c.URL, State: cs.State, LastError: cs.LastError, Held: cs.Held, Cap: cs.Cap}
 		if !cs.LastSync.IsZero() {
 			conn.LastSync = &cs.LastSync
 		}

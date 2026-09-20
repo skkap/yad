@@ -178,6 +178,14 @@ plain-text 404 or 405.
   runner lists it in its next sync. An offered run that the next sync does not
   list was never received, and the hub offers it again. The runner takes the
   capacity *before* it syncs, so it can always start what it is offered.
+- **Capacity goes round the hubs** — [0005](docs/decisions/0005-runners-pull-work-by-a-periodic-sync.md).
+  One pool for every connection, dealt one unit at a time around them from
+  where the last unit taken left off, so a hub with a deep queue cannot crowd
+  out a quieter one. A connection that leaves units unused has no work for
+  them and is skipped until its next sync asks again, so one busy hub still
+  fills a pool the others have no queue for. The owner's `cap` on a connection
+  bounds what a sync *asks* for and is checked nowhere else: a run over it is
+  never claimed and then found to be over it.
 - **Start on acknowledgement** — [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md).
   The runner starts a run only after a sync listing it has been answered without
   a `cancel` for it, and syncs again at once when offers arrive, so a run starts
@@ -589,7 +597,7 @@ accounts = ["personal"]
 [[connection]]
 name = "yashiki"
 url  = "https://ashikaga.tail.ts.net/yad/v1"
-cap  = 2
+cap  = 2   # at most this many runs held for this hub at once; absent = only capacity limits it
 
 [sessions]
 idle_ttl   = "336h"   # close sessions idle this long; "0s" keeps them — 0035
@@ -627,7 +635,10 @@ run's hub-side state adds two before the protocol's: `queued` and `offered`.
 yad doctor                         what is installed, and what YAD can drive
 yad harnesses [--json]             the capability document, as a hub receives it
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
-yad disconnect <name>
+yad disconnect <name> [--force]    retire this runner at that hub (which marks the runs it
+                                   holds lost), then remove the credential and the
+                                   connection. A hub that will not answer keeps both,
+                                   unless --force
 yad daemon start|stop|restart|status|logs [-f] [-n N]
                                    the runner process
 yad status [--json]                connections, capacity, runs, sessions and recent

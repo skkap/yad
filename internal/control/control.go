@@ -13,8 +13,9 @@ import (
 
 // Request is what the CLI asks.
 type Request struct {
-	Op string `json:"op"` // "status", "stop" or "close_session"
-	// Connection and Session name the session to close.
+	Op string `json:"op"` // "status", "stop", "close_session" or "disconnect"
+	// Connection names the connection to disconnect, and with Session the
+	// session to close.
 	Connection string `json:"connection,omitempty"`
 	Session    string `json:"session,omitempty"`
 }
@@ -22,10 +23,25 @@ type Request struct {
 // Response is the daemon's answer. Error carries the next action, as every
 // error here does.
 type Response struct {
-	Error  string        `json:"error,omitempty"`
-	PID    int           `json:"pid"`
-	Status *Status       `json:"status,omitempty"`
-	Closed *SessionClose `json:"closed,omitempty"`
+	Error        string        `json:"error,omitempty"`
+	PID          int           `json:"pid"`
+	Status       *Status       `json:"status,omitempty"`
+	Closed       *SessionClose `json:"closed,omitempty"`
+	Disconnected *Disconnected `json:"disconnected,omitempty"`
+}
+
+// Disconnected is what the daemon let go of for `yad disconnect`: the hub has
+// already been told, so this is only the runner's side of it.
+type Disconnected struct {
+	// Running is whether a loop for that connection was still syncing.
+	Running bool `json:"running"`
+	// Runs is how many of that hub's runs this runner still holds. They
+	// finish where they are; the hub has marked them lost.
+	Runs int `json:"runs"`
+	// Closed is how many of that hub's sessions were closed, so their
+	// workdirs are reclaimed; Closing is those waiting on a run to end.
+	Closed  int `json:"closed"`
+	Closing int `json:"closing"`
 }
 
 // SessionClose is what `yad sessions close` did.
@@ -71,8 +87,12 @@ type Capacity struct {
 
 // Connection is one hub as the daemon sees it now.
 type Connection struct {
-	Name        string     `json:"name"`
-	URL         string     `json:"url"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Held is the runs this connection has of the capacity pool, and Cap the
+	// owner's bound on it: 0 is no cap of its own.
+	Held        int        `json:"held"`
+	Cap         int        `json:"cap,omitempty"`
 	State       string     `json:"state"` // starting | syncing | retrying | stopped
 	LastSync    *time.Time `json:"last_sync,omitempty"`
 	LastError   string     `json:"last_error,omitempty"`
