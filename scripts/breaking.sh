@@ -54,9 +54,20 @@ if [ -z "$tag" ]; then
 	# Absence is data, and this is the absence that matters most: a check with
 	# no baseline passes every time, and a silent pass is indistinguishable
 	# from a real one. So it says what it did not do.
-	echo "check-breaking: INERT — no v[0-9]* tag in this repository."
-	echo "check-breaking: nothing has been released, so there is no baseline to compare against and this check proves nothing about ${docs[*]}."
-	echo "check-breaking: it starts guarding the moment the owner pushes the first release tag; nothing else needs to change."
+	#
+	# Two different absences reach this branch and they must not print the same
+	# sentence. Nothing tagged at all is the ordinary one. The other is HEAD
+	# being older than every release — a bisect, an old commit checked out —
+	# where --no-contains excludes all of them and "nothing has been released"
+	# would be flatly untrue with the tags sitting right there.
+	if [ -z "$(git tag --list 'v[0-9]*' | head -n1)" ]; then
+		echo "check-breaking: INERT — no v[0-9]* tag in this repository."
+		echo "check-breaking: nothing has been released, so there is no baseline to compare against and this check proves nothing about ${docs[*]}."
+		echo "check-breaking: it starts guarding the moment the owner pushes the first release tag; nothing else needs to change."
+	else
+		echo "check-breaking: INERT — every v[0-9]* tag contains HEAD, so no release predates this commit (newest is $(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1))."
+		echo "check-breaking: nothing was compared, and this is not evidence that ${docs[*]} are compatible with anything. A commit older than every release has no earlier spec to be held to."
+	fi
 	exit 0
 fi
 
