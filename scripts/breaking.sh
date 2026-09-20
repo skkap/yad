@@ -56,17 +56,26 @@ if [ -z "$tag" ]; then
 	# from a real one. So it says what it did not do.
 	#
 	# Two different absences reach this branch and they must not print the same
-	# sentence. Nothing tagged at all is the ordinary one. The other is HEAD
-	# being older than every release — a bisect, an old commit checked out —
-	# where --no-contains excludes all of them and "nothing has been released"
+	# sentence. Nothing tagged at all is the ordinary one. The other is every
+	# tag being excluded by --no-contains, where "nothing has been released"
 	# would be flatly untrue with the tags sitting right there.
+	#
+	# That second one has more than one cause, which is the trap: HEAD older
+	# than every release (a bisect, an old commit checked out) has genuinely no
+	# earlier spec, but a release published from a strict ancestor of an
+	# earlier release has one and is not comparing against it — DEV-90, left
+	# open because that topology is already shipping older code under a higher
+	# version and wants guarding above this script. So this message says what
+	# it did not do and stops, rather than explaining why: a sentence written
+	# for one topology is how the last two defects in this file got here, and
+	# it must be true in every topology that reaches it.
 	if [ -z "$(git tag --list 'v[0-9]*' | head -n1)" ]; then
 		echo "check-breaking: INERT — no v[0-9]* tag in this repository."
 		echo "check-breaking: nothing has been released, so there is no baseline to compare against and this check proves nothing about ${docs[*]}."
 		echo "check-breaking: it starts guarding the moment the owner pushes the first release tag; nothing else needs to change."
 	else
-		echo "check-breaking: INERT — every v[0-9]* tag contains HEAD, so no release predates this commit (newest is $(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1))."
-		echo "check-breaking: nothing was compared, and this is not evidence that ${docs[*]} are compatible with anything. A commit older than every release has no earlier spec to be held to."
+		echo "check-breaking: INERT — every v[0-9]* tag contains HEAD, so none was usable as a baseline (newest is $(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1))."
+		echo "check-breaking: nothing was compared, and this is not evidence that ${docs[*]} are compatible with anything. If this ran while publishing a release, see DEV-90."
 	fi
 	exit 0
 fi
