@@ -488,6 +488,32 @@ func (q *Queries) IdleSessions(ctx context.Context, arg IdleSessionsParams) ([]S
 	return items, nil
 }
 
+const lastEvent = `-- name: LastEvent :one
+SELECT seq, body FROM events WHERE connection = ? AND run_id = ? ORDER BY seq DESC LIMIT 1
+`
+
+type LastEventParams struct {
+	Connection string
+	RunID      string
+}
+
+type LastEventRow struct {
+	Seq  int64
+	Body string
+}
+
+// The last event a run spooled, whole. The body carries the moment the event
+// was written, which is the latest time anything is known to have been true
+// of a run whose process is gone: runs.updated_at moves only when a column
+// does, so for a turn that streamed for three hours it still says when the
+// run reached running. No rows for a run that never spoke.
+func (q *Queries) LastEvent(ctx context.Context, arg LastEventParams) (LastEventRow, error) {
+	row := q.db.QueryRowContext(ctx, lastEvent, arg.Connection, arg.RunID)
+	var i LastEventRow
+	err := row.Scan(&i.Seq, &i.Body)
+	return i, err
+}
+
 const lastEventSeq = `-- name: LastEventSeq :one
 SELECT CAST(COALESCE(MAX(seq), 0) AS INTEGER) FROM events WHERE connection = ? AND run_id = ?
 `

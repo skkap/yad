@@ -120,27 +120,35 @@ components:
       additionalProperties: true
       properties:
         account_switches:
+          description: How many turns of this run started on a different account than the turn before them. Counted by what a move costs rather than by what caused it, so a run resumed onto a different account after waiting counts the same as one a failover moved. A run parked five times and resumed on the same account each time reports 0; a run that goes A to B and back to A reports 2. The cost is expected to be one cache-cold turn, because prompt caches are documented as isolated per account -- but no cross-account resume has been measured, so that price is inferred rather than observed.
           format: int64
           type: integer
         api_retries:
+          description: Transient throttling the harness retried by itself, across every turn. A usage limit is not one of these.
           format: int64
           type: integer
         cancel_latency_ms:
+          description: From a cancel or interrupt arriving to the turn ending. Absent when nothing asked the run to stop.
           format: int64
           type: integer
         duration_ms:
+          description: "How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more. A lost run's other figures are likewise only what the runner had durably recorded: its counters and usage are whatever its last pause wrote down, so zeros there mean nothing was written rather than nothing happened."
           format: int64
           type: integer
         first_event_ms:
+          description: How long the harness took to say anything, measured from the start of the turn that answered rather than from the start of the run. A run parked on a usage limit and then answering at once is not a slow harness, and the wait is reported separately as waited_ms.
           format: int64
           type: integer
         stalls:
+          description: Times a watchdog found the event stream idle, across every turn.
           format: int64
           type: integer
         tool_calls:
+          description: Tool calls across every turn of the run.
           format: int64
           type: integer
         waited_ms:
+          description: "How long the run spent waiting for a free account, summed over every wait rather than the longest or the last: a run may be parked, resumed, limited again and parked again. This total is also what the run's max_wait_ms is judged against. For a run reported lost while it was parked it is a floor, as duration_ms is."
           format: int64
           type: integer
       required:
