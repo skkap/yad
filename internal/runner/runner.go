@@ -90,6 +90,11 @@ func Serve(ctx context.Context, o Options) error {
 	defer o.Monitor.attach(nil, nil, nil)
 
 	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{}}
+	// One per process, not one per connection: the runs parked on a usage
+	// limit draw on the same capacity pool as everything else, and a parked
+	// run must be picked up once however many hubs this runner serves.
+	sv.resumer = &Resumer{Store: st, Pool: pool, Drain: o.Drain, Log: o.Log}
+	sv.probe = &LoginProbe{Store: st, Config: o.Config, Data: o.Paths.Data, Log: o.Log}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -99,8 +104,14 @@ func Serve(ctx context.Context, o Options) error {
 				r.Wake()
 			}
 		},
-		Ended: sessions.Wake,
+		Ended: func() {
+			sessions.Wake()
+			// A run that ended gave its capacity back, which may be the
+			// capacity a parked run has been waiting for.
+			sv.resumer.Wake()
+		},
 	}
+	sv.resumer.Exec = sv.exec
 	var executor Executor
 	if o.Adapters != nil {
 		executor = sv.exec
@@ -122,7 +133,7 @@ func Serve(ctx context.Context, o Options) error {
 		sv.loops = append(sv.loops, &Loop{
 			Connection: conn.Name, RunnerID: o.RunnerID, Hub: client, Store: st, Pool: pool,
 			Capabilities: o.Capabilities, Executor: executor, Drain: o.Drain,
-			Config: o.Config, Data: o.Paths.Data,
+			Config: o.Config, Data: o.Paths.Data, Resumer: sv.resumer,
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
 		})
 	}
@@ -181,6 +192,8 @@ type server struct {
 	store     *store.Store
 	exec      *Exec
 	sessions  *Collector
+	resumer   *Resumer
+	probe     *LoginProbe
 	loops     []*Loop
 	reporters map[string]*Reporter
 	log       *slog.Logger
@@ -217,12 +230,29 @@ func (s *server) run(ctx context.Context) error {
 	s.loops = loops
 	// Collection starts once the runs a previous process held are settled,
 	// and ends with the loops: the store closes when Serve returns.
-	collected := make(chan struct{})
-	go func() {
-		defer close(collected)
-		s.sessions.Run(lctx)
-	}()
-	defer func() { stopLoops(); <-collected }()
+	//
+	// The resumer starts with it, and for the same reason: Recover has just
+	// decided which of the previous process's runs are lost and which were
+	// parked, so the first sweep sees the parked ones and nothing else. Its
+	// runs are on ctx, not on the loops' context, exactly as a claimed run
+	// is — a connection that stops must not kill a run already in hand.
+	//
+	// The login probe is the other half of "says when that ends": a limited
+	// account comes back at its reset, and a needs-login one when the owner
+	// logs it in, which nothing would otherwise notice.
+	background := make(chan struct{})
+	var bg sync.WaitGroup
+	bg.Go(func() { s.sessions.Run(lctx) })
+	if s.resumer != nil && s.exec.Adapters != nil {
+		// Runs on ctx for the same reason a claimed run is: a connection
+		// that stops leaves the runs in hand to finish, and only exit now
+		// kills them.
+		s.resumer.Runs = ctx
+		bg.Go(func() { s.resumer.Run(lctx) })
+	}
+	bg.Go(func() { s.probe.Run(lctx) })
+	go func() { bg.Wait(); close(background) }()
+	defer func() { stopLoops(); <-background }()
 	var wg sync.WaitGroup
 	ended := make([]chan struct{}, len(s.loops))
 	for i, l := range s.loops {

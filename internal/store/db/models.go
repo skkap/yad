@@ -43,18 +43,23 @@ type Outbox struct {
 }
 
 type Run struct {
-	Connection string
-	ID         string
-	SessionID  string
-	Harness    string
-	Model      string
-	State      string
-	Spec       string
-	Account    sql.NullString
-	ResumesAt  sql.NullInt64
-	Reason     sql.NullString
-	CreatedAt  int64
-	UpdatedAt  int64
+	Connection      string
+	ID              string
+	SessionID       string
+	Harness         string
+	Model           string
+	State           string
+	Spec            string
+	Account         sql.NullString
+	ResumesAt       sql.NullInt64
+	Reason          sql.NullString
+	CreatedAt       int64
+	UpdatedAt       int64
+	StartedAt       sql.NullInt64
+	WaitedMs        int64
+	WaitingSince    sql.NullInt64
+	AccountSwitches int64
+	HadGrants       int64
 }
 
 type Session struct {

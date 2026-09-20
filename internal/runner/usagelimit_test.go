@@ -2,7 +2,9 @@ package runner
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/fake"
+	"github.com/skkap/yad/internal/store/db"
 )
 
 // accountRow is one account's stored state, reset and windows, as the runner
@@ -214,10 +217,12 @@ func TestASucceededRunStillRecordsItsWindows(t *testing.T) {
 	}
 }
 
-// A run offered to a runner whose accounts are all at a usage limit is
-// refused, and the refusal says when each one ends — the next action for a
-// limited account is waiting, so a reason without a time is not one.
-func TestARefusalForALimitedAccountNamesItsReset(t *testing.T) {
+// A run offered while every account of its harness is at a usage limit is
+// not claimed at all: the offer goes back in the hub's queue for a runner
+// that can take it, and this runner's health says until when. Refusing would
+// be worse — a refusal is a terminal result and ends the run everywhere,
+// and there is nothing wrong with the run.
+func TestARunIsNotClaimedWhileEveryAccountIsLimited(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	plantCredential(t, e.paths.Data, "work")
@@ -226,22 +231,26 @@ func TestARefusalForALimitedAccountNamesItsReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := e.loop(t, 1)
+	l.Data, l.Config = e.paths.Data, accountConfig("work")
 	e.enqueue(t, testRun("a", "s1"))
 	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
 		Outcome: adapter.Outcome{State: v1.RunSucceeded},
 	}))
 	claimAndRun(t, l, x)
 
-	res, ok := outboxResult(t, e, "a")
-	if !ok || res.State != v1.RunFailed {
-		t.Fatalf("result = %+v, %v", res, ok)
+	if _, err := e.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "a"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("the run was claimed (%v); every account is limited until %s", err, reset)
 	}
-	if res.Error.Class != hubClass(ClassRefused, false) {
-		t.Errorf("error class = %q, want the class for a run the runner will not take", res.Error.Class)
+	if _, ok := outboxResult(t, e, "a"); ok {
+		t.Error("the runner owes the hub a result for a run it never took")
 	}
-	want := "work at a usage limit until " + reset.Format(time.RFC3339)
-	if !strings.Contains(res.Error.Message, want) {
-		t.Errorf("the refusal is %q, want it to contain %q", res.Error.Message, want)
+	// And the hub was told why, with the moment it ends.
+	h := l.health(ctx, l.Pool.Reserve())
+	if len(h.Harnesses) != 1 || h.Harnesses[0].Ready {
+		t.Fatalf("health harnesses = %+v, want claude not ready", h.Harnesses)
+	}
+	if got := h.Harnesses[0].Accounts[0].LimitedUntil; got == nil || !got.Equal(reset) {
+		t.Errorf("health says limited until %v, want %s", got, reset)
 	}
 }
 

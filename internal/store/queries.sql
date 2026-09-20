@@ -86,14 +86,42 @@ ORDER BY closed_at, id LIMIT sqlc.arg(max);
 UPDATE sessions SET reported_at = ? WHERE connection = ? AND id = ? AND reported_at IS NULL;
 
 -- name: CreateRun :exec
-INSERT INTO runs (connection, id, session_id, harness, model, state, spec, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?);
+INSERT INTO runs (connection, id, session_id, harness, model, state, spec, had_grants, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?, ?);
 
 -- name: GetRun :one
 SELECT * FROM runs WHERE connection = ? AND id = ?;
 
 -- name: SetRunState :exec
 UPDATE runs SET state = ?, resumes_at = ?, reason = ?, updated_at = ? WHERE connection = ? AND id = ?;
+
+-- The moment the run first reached preparing, kept so a run that waited
+-- between two turns still reports the whole of its duration. Written once:
+-- a resumed run is the same run, not a new one.
+-- name: SetRunStarted :exec
+UPDATE runs SET started_at = ?, updated_at = ? WHERE connection = ? AND id = ? AND started_at IS NULL;
+
+-- Park the run on a usage limit. The state, the moment it comes back, when
+-- the wait began and what the run has cost so far, in one statement: a park
+-- missing any of them is a run the resumer cannot finish or a metric that
+-- silently resets.
+-- name: SetRunWaiting :exec
+UPDATE runs SET state = 'waiting', resumes_at = ?, waiting_since = ?, account_switches = ?,
+  reason = ?, updated_at = ? WHERE connection = ? AND id = ?;
+
+-- End the current wait, folding it into the total. Called by whoever takes
+-- the run out of waiting, before it runs again or times out, so the wait in
+-- progress is counted exactly once whichever of the two happens.
+-- name: EndRunWait :exec
+UPDATE runs SET waited_ms = waited_ms + MAX(sqlc.arg(now) - COALESCE(waiting_since, sqlc.arg(now)), 0),
+  waiting_since = NULL, resumes_at = NULL, updated_at = sqlc.arg(now)
+WHERE connection = sqlc.arg(connection) AND id = sqlc.arg(id);
+
+-- Every parked run, across connections: the resumer is one per process, not
+-- one per hub. Ordered oldest first so the run that has waited longest is the
+-- first to take the capacity that frees up.
+-- name: ListWaitingRuns :many
+SELECT * FROM runs WHERE state = 'waiting' ORDER BY created_at, connection, id;
 
 -- name: SetRunAccount :exec
 UPDATE runs SET account = ?, updated_at = ? WHERE connection = ? AND id = ?;

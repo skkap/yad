@@ -430,7 +430,13 @@ func (e *env) server(l *Loop, x *Exec, d *Drain, wait time.Duration) *server {
 	rep := e.reporter(l)
 	l.Drain, l.Executor, l.ClaimAfter = d, x, rep.Replayed()
 	x.Report = func(string) { rep.Wake() }
-	return &server{drain: d, wait: wait, store: e.store, exec: x, loops: []*Loop{l},
+	// Wired as Serve wires them, so a test that drives the server drives the
+	// parked runs and the login probe too.
+	res := &Resumer{Store: e.store, Pool: l.Pool, Exec: x, Drain: d, Log: slog.New(slog.DiscardHandler)}
+	l.Resumer = res
+	x.Ended = res.Wake
+	return &server{drain: d, wait: wait, store: e.store, exec: x, loops: []*Loop{l}, resumer: res,
+		probe:     &LoginProbe{Store: e.store, Config: x.Config, Data: e.paths.Data, Log: slog.New(slog.DiscardHandler)},
 		reporters: map[string]*Reporter{l.Connection: rep}, log: slog.New(slog.DiscardHandler)}
 }
 

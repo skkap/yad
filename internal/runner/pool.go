@@ -107,6 +107,32 @@ func (r *Reservation) Take(h string) (release func(), ok bool) {
 	}, true
 }
 
+// Take takes one unit outside a sync's reservation, for a run that is already
+// this runner's: a parked run coming back holds nothing while it waits, and
+// has to take its capacity again before it can run. It fails when the pool is
+// full or the harness is at its cap, and the caller leaves the run parked.
+func (p *Pool) Take(h string) (release func(), ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.used >= p.total {
+		return nil, false
+	}
+	if cap, capped := p.caps[h]; capped && p.byHarness[h] >= cap {
+		return nil, false
+	}
+	p.used++
+	p.byHarness[h]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			p.used--
+			p.byHarness[h]--
+		})
+	}, true
+}
+
 // putBack undoes a Take whose claim was never recorded: the unit returns to
 // this reservation, so the next offer in the same sync can have it.
 func (r *Reservation) putBack(h string) {

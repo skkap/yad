@@ -106,6 +106,11 @@ type Loop struct {
 	// Drain is the runner's way down, shared by every connection: while it
 	// drains, the loop claims nothing and keeps syncing. Nil never drains.
 	Drain *Drain
+	// Resumer holds the runs parked on a usage limit, shared by every
+	// connection. The loop needs it for one thing: a cancel for a run that
+	// is waiting reaches no executor, because a waiting run is in no
+	// executor's hands. Nil holds none.
+	Resumer *Resumer
 	// ClaimAfter, until closed, keeps the loop from claiming: what a previous
 	// process left owed goes out before new work comes in (decision 0030).
 	// Syncs go on meanwhile, so leases renew. Nil claims from the first sync.
@@ -143,6 +148,10 @@ type Loop struct {
 	quiescedOnce sync.Once
 	// recovered is set once the runs a previous process held are settled.
 	recovered bool
+	// harnessReady is what this sync's health said about each harness whose
+	// accounts are all limited or need login, so the claim that follows the
+	// hub's answer acts on the same reading the hub was sent.
+	harnessReady map[string]bool
 	// echoes are closes the store will not report again — a session this
 	// runner never held, or one reported before — that the hub asked about
 	// since: it is told once more, so it stops asking. Kept in memory: the
@@ -324,6 +333,12 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 			}
 		case c.Kind == v1.ControlCancel && l.isPending(c.RunID):
 			l.withdraw(ctx, c.RunID)
+		case c.Kind == v1.ControlCancel && l.Resumer.CancelWaiting(ctx, l.Connection, c.RunID):
+			// A parked run has no turn to interrupt and no process to
+			// signal, so the executor has nothing to cancel: the Resumer
+			// ends it where it is. A cancel is repeated until the run ends
+			// (decision 0025), and the second one finds it already terminal
+			// and falls through to the executor, which drops it.
 		case c.Kind == v1.ControlCloseSession:
 			l.closeSession(ctx, c.SessionID)
 		case l.Executor != nil:
@@ -392,6 +407,11 @@ func (l *Loop) claim(ctx context.Context, run v1.Run, doc v1.Capabilities, res *
 		l.refuse(run.RunID, reason)
 		return
 	}
+	if l.notClaimable(run.Harness) {
+		l.Log.Warn("every account of this harness is at a usage limit or needs a login; leaving the run for the hub to offer again",
+			"connection", l.Connection, "run", run.RunID, "harness", run.Harness)
+		return
+	}
 	release, ok := res.Take(run.Harness)
 	if !ok {
 		l.Log.Warn("offered past free capacity; leaving it for the hub to offer again", "connection", l.Connection, "run", run.RunID)
@@ -437,6 +457,14 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 		return false, err
 	}
 	now := l.Clock.Now().UnixMilli()
+	// Whether, not how many and never which: the only question anything asks
+	// of it is whether a run parked on a usage limit can be rebuilt by a
+	// later process, and a grant's name says as much about what a hub sent as
+	// its value does.
+	var hadGrants int64
+	if len(run.Grants) > 0 {
+		hadGrants = 1
+	}
 	err = l.Store.Tx(ctx, func(q *db.Queries) error {
 		newSession = false
 		sess, err := q.GetSession(ctx, db.GetSessionParams{Connection: l.Connection, ID: run.Session.ID})
@@ -473,7 +501,7 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 		}
 		return q.CreateRun(ctx, db.CreateRunParams{
 			Connection: l.Connection, ID: run.RunID, SessionID: run.Session.ID, Harness: run.Harness,
-			Model: run.Model, Spec: string(spec), CreatedAt: now, UpdatedAt: now,
+			Model: run.Model, Spec: string(spec), HadGrants: hadGrants, CreatedAt: now, UpdatedAt: now,
 		})
 	})
 	return newSession, err
@@ -581,6 +609,16 @@ func (l *Loop) Recover(ctx context.Context) error {
 	now := l.Clock.Now().UnixMilli()
 	for _, r := range held {
 		if l.isPending(r.ID) {
+			continue
+		}
+		if r.State == string(v1.RunWaiting) {
+			// A waiting run held no process to lose (decision 0013). It is
+			// the one run a restart does not end: everything it was doing is
+			// in its row, the Resumer picks it up from there when its reset
+			// passes, and reporting it lost here would throw away the wait
+			// the persistence exists for. It stays listed in every sync
+			// meanwhile, as it was before the restart.
+			l.Log.Info("a previous process parked this run on a usage limit; it keeps waiting", "connection", l.Connection, "run", r.ID)
 			continue
 		}
 		if r.State == string(v1.RunClaimed) {
@@ -691,6 +729,10 @@ func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
 // else reporting a state Load would not.
 func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 	doc := l.Capabilities()
+	// Rebuilt every sync and read by the claim below, so what the hub was
+	// told and what this runner then does come from one answer.
+	ready := map[string]bool{}
+	defer func() { l.harnessReady = ready }()
 	accounts, err := account.Load(ctx, l.Store.Queries, l.Data, l.Config)
 	if err != nil {
 		// Reporting every account free because the read failed would be the
@@ -712,12 +754,30 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		hh := v1.HarnessHealth{ID: hr.ID, Accounts: account.Reports(accounts, hr.ID)}
 		// No accounts means the harness runs on its own default home, which
 		// is ready; accounts that all need login or are limited mean it is
-		// not. Acting on that — declining to claim — is DEV-28's.
-		_, usable := account.First(accounts, hr.ID)
+		// not, and the claim below leaves such a harness's offers alone.
+		_, usable := account.Soonest(accounts, hr.ID, l.Clock.Now())
 		hh.Ready = len(hh.Accounts) == 0 || usable
+		if !hh.Ready {
+			ready[hr.ID] = false
+		}
 		out = append(out, hh)
 	}
 	return out
+}
+
+// notClaimable says whether every account of this harness is limited or needs
+// a login, as the health this sync sent said. Reading the answer the hub was
+// given, rather than asking again, is what keeps the two from disagreeing:
+// a runner that reports a harness not ready and then claims for it anyway is
+// telling the hub one thing and doing another.
+//
+// Not claiming rather than refusing: a refusal is a terminal result and ends
+// the run for every runner, and there is nothing wrong with this run — only
+// with this machine, for as long as the reset says. Left out of the listing,
+// the offer goes back in the hub's queue.
+func (l *Loop) notClaimable(harness string) bool {
+	ready, ok := l.harnessReady[harness]
+	return ok && !ready
 }
 
 // fatal is an answer no retry can change: the owner has to act.

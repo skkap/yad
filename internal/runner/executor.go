@@ -64,6 +64,14 @@ const (
 	// stopped without finishing it; the next start reports it lost
 	// (decision 0030).
 	ClassRunnerRestarted = "runner_restarted"
+	// ClassMaxWait — the run waited for a free account longer than the hub
+	// allowed it (Run.MaxWaitMS). The state is timed_out.
+	ClassMaxWait = "max_wait_exceeded"
+	// ClassGrantsLost — a run parked on a usage limit was picked up by a
+	// later process, and the grants it was given did not survive: they live
+	// in the process that claimed them and never touch this machine's disk.
+	// The hub offers the run again, with its grants.
+	ClassGrantsLost = "grants_lost"
 	// ClassResumeRejected — the run continued a session and the harness had
 	// no conversation to continue: the transcript is gone. The session's
 	// context cannot come back on this runner; the hub starts a new session
@@ -137,6 +145,11 @@ type Exec struct {
 	once   sync.Once
 	mu     sync.Mutex
 	active map[runKey]*activeRun
+	// parked are the runs this process put in waiting, kept whole — grants
+	// included — so a resume here loses nothing. The row in the store is what
+	// makes a run resumable at all; this only spares a resume in this process
+	// the one thing the row cannot hold.
+	parked map[runKey]v1.Run
 	// idle are waiters closed when the last active run ends.
 	idle []chan struct{}
 	wg   sync.WaitGroup
@@ -228,6 +241,7 @@ func (a *activeRun) cancelledAt() (time.Time, bool) {
 func (e *Exec) init() {
 	e.once.Do(func() {
 		e.active = map[runKey]*activeRun{}
+		e.parked = map[runKey]v1.Run{}
 		if e.Binary == nil {
 			e.Binary = harness.Locate
 		}
@@ -355,13 +369,18 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	bg := context.WithoutCancel(ctx)
 	run := c.Run
 	log := e.Log.With("connection", c.Connection, "run", run.RunID)
-	started := time.Now()
-	// lastSeq is the last event spooled before the harness is up: preparing
-	// the workdir reports what it does, and the harness's events follow on.
-	var lastSeq int64
+	// What the run has cost so far. A run that parked on a usage limit and
+	// came back is the same run: its duration, its wait and the accounts it
+	// has been through carry over, and reading them from the row is the only
+	// way that holds when the run came back in another process.
+	prog := e.progress(bg, c)
+	// lastSeq continues the run's own stream. It is read rather than started
+	// at zero for the same reason: a resumed run already has events, and
+	// numbering the next one 1 would collide with the first and be dropped.
+	lastSeq := e.lastSeq(bg, c)
 	fail := func(class, msg string) {
 		e.finish(bg, c, v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: class, Message: msg}, LastSeq: lastSeq,
-			Metrics: v1.Metrics{DurationMS: time.Since(started).Milliseconds()}})
+			Metrics: v1.Metrics{DurationMS: time.Since(prog.started).Milliseconds(), WaitedMS: prog.waitedMS, AccountSwitches: prog.switches}})
 	}
 	// A run stopped before its harness is up is cancelled with nothing
 	// spawned: no process, no events, and the session as it was.
@@ -372,7 +391,8 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		}
 		log.Info("run cancelled before it started")
 		e.finish(bg, c, v1.Result{State: v1.RunCancelled, Error: runnerStopped(a.stoppedByRunner()), LastSeq: lastSeq,
-			Metrics: v1.Metrics{DurationMS: time.Since(started).Milliseconds(), CancelLatencyMS: latency(at)}})
+			Metrics: v1.Metrics{DurationMS: time.Since(prog.started).Milliseconds(), CancelLatencyMS: latency(at),
+				WaitedMS: prog.waitedMS, AccountSwitches: prog.switches}})
 		return true
 	}
 
@@ -395,10 +415,14 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 				return
 			}
 			// The run's duration is from its start, not from its claim.
-			started = time.Now()
+			prog.started = time.Now()
 		}
 	}
 	e.setState(bg, c, v1.RunPreparing)
+	// Stamped once, on the first preparing: a run that waits between two
+	// turns reports how long the whole of it took, not how long its last
+	// attempt did.
+	e.setStarted(bg, c, prog.started)
 	// The claim checked the run already; checked again here because this is
 	// where a grant's name becomes a variable and a file (decision 0038).
 	if err := run.Validate(); err != nil {
@@ -421,15 +445,21 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	// that before discovering no account can take the turn is work thrown
 	// away on every run a limited runner is offered.
 	//
-	// The owner's order decides; a limited account and one that needs login
-	// are skipped alike. A harness the owner gave no accounts runs on the
-	// harness's own default home, exactly as every installation did before
-	// accounts existed — no accounts is a state, not a failure.
+	// The free account whose window resets soonest goes first (decision
+	// 0039); a limited account and one that needs login are skipped alike. A
+	// harness the owner gave no accounts runs on the harness's own default
+	// home, exactly as every installation did before accounts existed — no
+	// accounts is a state, not a failure.
 	acct, hasAccount, err := e.pickAccount(bg, run.Harness)
 	if err != nil {
+		if e.park(bg, c, &prog, &lastSeq, err.Error()) {
+			return
+		}
 		// A run the runner will not take is refused (§2), not a preparation
 		// that went wrong: nothing was wrong with the run, and a hub may
-		// offer it to a runner whose accounts can take it.
+		// offer it to a runner whose accounts can take it. Reached only when
+		// no reset ends the wait — every account of the harness needs a
+		// login — because a limited one parks the run instead.
 		fail(ClassRefused, err.Error())
 		return
 	}
@@ -456,7 +486,11 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		return
 	}
 	// A path source stays locked until the run is over, so another run on
-	// the same directory waits for this one.
+	// the same directory waits for this one. A run that parks gives the lock
+	// up with everything else it holds: a lock is a property of a live
+	// process, so one held across a park could not survive the restart the
+	// park exists to survive, and holding a directory for five hours while
+	// nothing runs in it is the opposite of what it is for.
 	defer prep.Release()
 	env, cleanup, err := e.grants(c)
 	defer cleanup()
@@ -464,84 +498,141 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassPrepare, err.Error())
 		return
 	}
-	var home string
-	if hasAccount {
-		if home, err = account.Ensure(e.Data, run.Harness, acct.Label); err != nil {
-			fail(ClassPrepare, "the account's harness home could not be prepared: "+err.Error())
+
+	// One turn per account. A usage limit is the one outcome that is not the
+	// run's answer: the account is out of quota, the transcript is the whole
+	// of the session and lives where every account home can read it, so the
+	// work continues on another account in the same session (decision 0013,
+	// measured in DEV-24). Anything else ends the run here.
+	//
+	// tried is the backstop under that loop. What normally ends it is the
+	// store — each limit is recorded before the next account is chosen, so
+	// the pick cannot return the same one — but a write that failed is
+	// logged and carried on from, and without this the run would be handed
+	// back the account it just exhausted, for ever.
+	tried := map[string]bool{}
+	for {
+		var home string
+		if hasAccount {
+			if home, err = account.Ensure(e.Data, run.Harness, acct.Label); err != nil {
+				fail(ClassPrepare, "the account's harness home could not be prepared: "+err.Error())
+				return
+			}
+			e.setRunAccount(bg, c, acct.Label)
+			// The label and nothing else. Which account ran a turn is how an
+			// owner tells two subscriptions' work apart, and the label is the
+			// only thing about an account that may leave this machine.
+			ev := v1.Event{Kind: v1.EventStatus, Status: "account", Text: acct.Label}
+			if e.spool(bg, c, &ev, lastSeq+1) {
+				lastSeq = ev.Seq
+				e.report(c.Connection)
+			}
+		}
+		turnLog := log
+		if hasAccount {
+			turnLog = log.With("account", acct.Label)
+		}
+		// Built fresh each turn: the home variable belongs to this account,
+		// and appending it to env would carry the last account's home into
+		// the next turn's environment.
+		turnEnv := append(append([]string(nil), env...), account.Env(run.Harness, home)...)
+
+		spec := adapter.Spec{
+			RunID: run.RunID, Model: run.Model, Workdir: prep.Dir,
+			SessionID: run.Session.ID, NativeSessionID: native, Brief: run.Brief,
+			Home: home, Env: turnEnv, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
+		}
+
+		if stoppedEarly() {
 			return
 		}
-		env = append(env, account.Env(run.Harness, home)...)
-		e.setRunAccount(bg, c, acct.Label)
-		// The label and nothing else. Which account ran a turn is how an
-		// owner tells two subscriptions' work apart, and the label is the
-		// only thing about an account that may leave this machine.
-		ev := v1.Event{Kind: v1.EventStatus, Status: "account", Text: acct.Label}
-		if e.spool(bg, c, &ev, lastSeq+1) {
-			lastSeq = ev.Seq
-			e.report(c.Connection)
+		turnStarted := time.Now()
+		runCtx, cancel := context.WithCancel(ctx)
+		turn, err := ad.Start(runCtx, spec)
+		if err != nil {
+			cancel()
+			fail(ClassStart, err.Error())
+			return
 		}
-		log = log.With("account", acct.Label)
-	}
+		// Pinned before the first event: an adapter that chooses the id (Claude)
+		// knows it at spawn, and a crash between the spawn and the first line
+		// must not leave the session pointing nowhere (ARCHITECTURE.md §3).
+		if id := turn.NativeSessionID(); id != "" && id != native {
+			e.setNative(bg, c, id)
+			native = id
+		}
+		// From here an interrupt reaches the turn; one that arrived while the
+		// harness started closed cancelled instead, which the stream sees at once.
+		a.mu.Lock()
+		a.started = true
+		a.mu.Unlock()
+		// Running only once the workdir exists and the harness is up (§2).
+		e.setState(bg, c, v1.RunRunning)
+		turnLog.Info("run started", "harness", run.Harness, "model", run.Model, "workdir", prep.Dir)
 
-	spec := adapter.Spec{
-		RunID: run.RunID, Model: run.Model, Workdir: prep.Dir,
-		SessionID: run.Session.ID, NativeSessionID: native, Brief: run.Brief,
-		Home: home, Env: env, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
-	}
+		w := e.stream(bg, c, a, turn, cancel, native, spec.NativeSessionID != "", turnStarted, lastSeq)
+		out := turn.Wait()
+		cancel()
+		lastSeq = w.lastSeq
+		if !w.stopAt.IsZero() {
+			w.latency = latency(w.stopAt)
+		}
+		if out.NativeSessionID != "" && out.NativeSessionID != w.native {
+			e.setNative(bg, c, out.NativeSessionID)
+			w.native = out.NativeSessionID
+		}
+		native = w.native
+		if ctx.Err() != nil && w.stopped == "" && w.stopAt.IsZero() && out.State == v1.RunCancelled {
+			// Killed because the runner is exiting now, not because the run
+			// ended: it stays held, and the next start reports it lost
+			// (decision 0030).
+			turnLog.Warn("run killed with the runner; the next start reports it lost")
+			return
+		}
+		res := e.result(out, w, prog.started)
+		if res.Error != nil {
+			res.Error.Class = hubClass(res.Error.Class, spec.NativeSessionID != "")
+		}
+		if hasAccount {
+			e.recordUsage(bg, acct, out, turnLog)
+			e.checkLogin(bg, acct, bin, res, turnLog)
+		}
+		if res.State == v1.RunCancelled && w.cancelled {
+			res.Error = runnerStopped(a.stoppedByRunner())
+		}
 
-	if stoppedEarly() {
+		// A limit only moves the run when the limit is why the turn ended. A
+		// cancel, an interrupt or a watchdog has already decided the run, and
+		// a harness that reported a limit on its way down is reporting the
+		// account's state, not this run's.
+		if hasAccount && out.Limit != nil && !w.cancelled && !w.interrupted && w.stopped == "" {
+			// recordUsage has just marked the account limited, so the pick
+			// below cannot choose it again: the store is the one place the
+			// exclusion lives, rather than a list of tried accounts here that
+			// would have to be kept in step with it.
+			tried[acct.Label] = true
+			next, ok, perr := e.pickAccount(bg, run.Harness)
+			switch {
+			case ok && tried[next.Label]:
+				turnLog.Error("the account at a usage limit was offered to this run again; it is not moved a second time",
+					"next_account", next.Label)
+			case ok:
+				prog.switches++
+				e.noteMove(bg, c, &lastSeq, acct, next, out.Limit)
+				turnLog.Info("the account is at a usage limit; the run continues on another account in the same session",
+					"next_account", next.Label, "account_switches", prog.switches)
+				acct = next
+				continue
+			case perr != nil && e.park(bg, c, &prog, &lastSeq, perr.Error()):
+				return
+			}
+			// No account free and no reset to wait for: the limit is this
+			// run's answer after all, and the result already says so.
+		}
+		res.Metrics.WaitedMS, res.Metrics.AccountSwitches = prog.waitedMS, prog.switches
+		e.finish(bg, c, res)
 		return
 	}
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	turn, err := ad.Start(runCtx, spec)
-	if err != nil {
-		fail(ClassStart, err.Error())
-		return
-	}
-	// Pinned before the first event: an adapter that chooses the id (Claude)
-	// knows it at spawn, and a crash between the spawn and the first line
-	// must not leave the session pointing nowhere (ARCHITECTURE.md §3).
-	if id := turn.NativeSessionID(); id != "" && id != native {
-		e.setNative(bg, c, id)
-		native = id
-	}
-	// From here an interrupt reaches the turn; one that arrived while the
-	// harness started closed cancelled instead, which the stream sees at once.
-	a.mu.Lock()
-	a.started = true
-	a.mu.Unlock()
-	// Running only once the workdir exists and the harness is up (§2).
-	e.setState(bg, c, v1.RunRunning)
-	log.Info("run started", "harness", run.Harness, "model", run.Model, "workdir", prep.Dir)
-
-	w := e.stream(bg, c, a, turn, cancel, native, spec.NativeSessionID != "", started, lastSeq)
-	out := turn.Wait()
-	if !w.stopAt.IsZero() {
-		w.latency = latency(w.stopAt)
-	}
-	if out.NativeSessionID != "" && out.NativeSessionID != w.native {
-		e.setNative(bg, c, out.NativeSessionID)
-	}
-	if ctx.Err() != nil && w.stopped == "" && w.stopAt.IsZero() && out.State == v1.RunCancelled {
-		// Killed because the runner is exiting now, not because the run
-		// ended: it stays held, and the next start reports it lost
-		// (decision 0030).
-		log.Warn("run killed with the runner; the next start reports it lost")
-		return
-	}
-	res := e.result(out, w, started)
-	if res.Error != nil {
-		res.Error.Class = hubClass(res.Error.Class, spec.NativeSessionID != "")
-	}
-	if hasAccount {
-		e.recordUsage(bg, acct, out, log)
-		e.checkLogin(bg, acct, bin, res, log)
-	}
-	if res.State == v1.RunCancelled && w.cancelled {
-		res.Error = runnerStopped(a.stoppedByRunner())
-	}
-	e.finish(bg, c, res)
 }
 
 // runnerStopped is the error a result carries when the runner, not the hub,

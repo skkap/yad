@@ -228,7 +228,10 @@ claimed ─► preparing ─► running ─► succeeded | failed | cancelled | 
 ```
 
 `preparing` covers the workdir, the setup hook and the account; a run reports
-`running` only once its workdir exists (Multica #3999). Non-terminal states
+`running` only once its workdir exists (Multica #3999). A run also reaches
+`waiting` from `preparing` — no account was free before the turn started — and
+comes back through it either way: the resumed run prepares its workdir again,
+because a park gives up the locks a live process was holding. Non-terminal states
 travel in syncs; the terminal one travels in the result. A finished run whose
 result is not yet acknowledged stays listed, as `running`, so its lease outlasts
 a hub outage — [0023](docs/decisions/0023-lost-stands-against-a-late-result.md).
@@ -551,8 +554,13 @@ for `codex`); the suite never runs a real harness.
   never by reading the failure's wording, because Claude reports a missing
   login and a bad model identically, both inside an object that says
   `subtype: "success"`. A needs-login account is skipped for runs exactly as a
-  limited one is. The way back is the owner's: `yad account add` again.
-  Finishing a login remotely is backlog (DEV-57).
+  limited one is. The way back is the owner's login, by `yad account add` or by
+  the harness's own command in the home: the runner re-asks the harness's login
+  check every few minutes (`internal/runner.LoginProbe`) and the account is back
+  in service when it answers yes. A check that cannot answer — the command
+  missing, a home it could not read, a timeout — leaves the state exactly as it
+  is; an unanswered question is not an answer either way. Finishing a login
+  remotely is backlog (DEV-57).
 - **No accounts is a state.** A harness the owner configured none for runs on
   the harness's own default home and reports no accounts. It is never an error
   that stops a runner registering.
@@ -578,10 +586,36 @@ for `codex`); the suite never runs a real harness.
   limit that has passed needs no writer to come along and clear it
   (`internal/account.stateOf`).
 - **On a limit**: mark the account limited until its reset → the free account
-  whose window resets soonest ([0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)) → resume the same session with a continuation turn. None free →
-  the run becomes **waiting** with `resumes_at`, holds no process, and survives a
-  restart. While every account of a harness is limited, the runner stops claiming
-  for it.
+  whose window resets soonest ([0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)) → resume the same session with a continuation turn, which is the
+  run's own instruction again against the session's native id: the transcript
+  holds the turn that was cut short, and nothing is invented to prompt with.
+  Each move costs one cache-cold turn
+  ([0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md)), which
+  is why the soonest-resetting account is preferred and stayed on rather than
+  ping-ponged between. `account_switches` counts the moves.
+- **Choosing among free accounts**: soonest refill first, counting only windows
+  the account has spent something of — an untouched window has no quota to waste
+  (`internal/account.Soonest`). The owner's list names which accounts take part
+  and breaks ties; it is not a priority order.
+- **None free** → the run becomes **waiting** with `resumes_at`, the earliest
+  reset among that harness's limited accounts. It holds no process **and no
+  goroutine**: the run's goroutine ends, its capacity and any path-source lock go
+  back, and everything it had is in its row — when it first started, the wait it
+  has served, the accounts it has been through. `internal/runner.Resumer`, one
+  per process, picks it up when the reset passes; a restart is not a second path
+  but the same one, which is why `kill -9` costs it nothing and why
+  [0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md)'s
+  report-lost pass skips a waiting run. The one thing the row cannot hold is the
+  run's grants — they live in the process that claimed them and never touch disk
+  — so a waiting run that had them and is picked up by a *later* process is
+  reported `lost` with class `grants_lost` for the hub to send again. A hub's
+  `max_wait_ms` caps the total wait, after which the run is `timed_out` with
+  class `max_wait_exceeded`. A cancel for a waiting run has no turn to interrupt
+  and ends it where it stands.
+- **While every account of a harness is limited or needs login**, the runner
+  stops claiming for it: health says `ready: false` and the offer is left
+  unclaimed for the hub to place elsewhere, rather than refused — a refusal is
+  terminal, and there is nothing wrong with the run.
 
 ## §4 Local state and configuration
 
