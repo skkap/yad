@@ -112,22 +112,32 @@ func RefillAt(now time.Time, sets ...[]v1.AccountWindow) time.Time {
 // too, on accounts with windows on record.
 //
 // The number is short on purpose, and the instinct to lengthen it is wrong.
-// The two costs are not symmetric:
+// The two costs are not symmetric, and failover (DEV-28) made them less
+// symmetric rather than more - which is worth stating, because the reasoning
+// this replaces was anchored on a cost that failover removed. It read: a run
+// routed to a still-limited account fails the hub's work after about three
+// minutes of Claude's own retry ladder, so a short guess is cheap and bounded.
+// There is now somewhere to fail over to, so that run does not fail at all.
+// What each mistake costs on the runner as it now behaves:
 //
 //   - Too long idles an account that may be perfectly good, for the whole
 //     guess. Nothing shortens it; the owner pays for the subscription either
-//     way.
+//     way. On a runner with one account it is worse than idling: the run that
+//     hit the limit is parked on this guess, so it sits past the moment it
+//     could have continued, by however far the guess overshoots.
 //   - Too short costs one turn. The account is offered, the harness says it is
-//     still out, and the limit is re-dated. Claude's own retry ladder takes
-//     about three minutes to reach that answer.
+//     still out, the limit is re-dated from what the harness said this time -
+//     which is usually a real reset - and the run moves to another account or
+//     parks again. No run fails for it.
 //
-// Thirty minutes puts the worst case of being wrong at roughly three minutes
-// of a capacity slot per half hour - about a tenth of one slot, bounded - and
-// caps the idle loss at half an hour. Five hours was considered, on the
-// grounds that it is the shortest window either harness has (DOMAIN.md); it
-// was rejected because that reasoning dates the limit by how long limits
-// usually last rather than by anything this account said, and pays hours for
-// the privilege.
+// So thirty minutes stands: the cheap mistake got cheaper and the dear one
+// got dearer, and any evidence that moves this number moves it down. Five
+// hours was considered, on the grounds that it is the shortest window either
+// harness has (DOMAIN.md); it was rejected because that reasoning dates the
+// limit by how long limits usually last rather than by anything this account
+// said, and pays hours for the privilege. Nothing here is a measurement: it
+// is an argument from what the two mistakes cost, and the measurement that
+// would settle it is how often a harness gives no reset at all.
 const limitWithoutReset = 30 * time.Minute
 
 // Report is the account as a hub sees it. Home is deliberately absent: a path
@@ -479,20 +489,93 @@ func For(accounts []Account, harness string) []Account {
 	return out
 }
 
-// First is the account a run takes: the first in the owner's order that is
-// free. A limited account and one that needs login are skipped alike — neither
-// can run a turn, and neither is an error.
+// Soonest is the account a run takes: of this harness's free accounts, the one
+// whose usage window resets soonest (decision 0039). A limited account and one
+// that needs login are skipped alike — neither can run a turn, and neither is
+// an error.
 //
-// The owner's order is the whole of the choice here. Preferring the free
-// account whose window resets soonest (decision 0039), and moving a run off an
-// account that becomes limited mid-turn, are DEV-28's.
-func First(accounts []Account, harness string) (Account, bool) {
+// Quota about to be refreshed is spent first, so none of it is wasted: an
+// account whose window refills in ten minutes loses whatever is left in it,
+// while one that refills in four hours keeps it. The owner's list names which
+// accounts take part at all and breaks ties; it is not a priority order.
+//
+// An account with nothing to say about its windows sorts last, which is a
+// choice and the opposite is arguable — no windows recorded plausibly means an
+// account nothing has run on, and so the freshest. It sorts last because the
+// ordering is about spending quota that is about to expire: an account whose
+// refill is unknown has no expiring quota to rescue, and leaving it untouched
+// keeps a known-good account in reserve for the moment every dated one is
+// spent.
+func Soonest(accounts []Account, harness string, now time.Time) (Account, bool) {
+	var best Account
+	var at time.Time
+	found := false
 	for _, a := range For(accounts, harness) {
-		if a.State == v1.AccountFree {
-			return a, true
+		if a.State != v1.AccountFree {
+			continue
+		}
+		reset := SoonestReset(now, a.Windows)
+		switch {
+		case !found:
+		case at.IsZero() && reset.IsZero():
+			continue // both undated: the owner's order decides, and best is earlier in it
+		case reset.IsZero():
+			continue
+		case at.IsZero(), reset.Before(at):
+		default:
+			continue
+		}
+		best, at, found = a, reset, true
+	}
+	return best, found
+}
+
+// SoonestReset is the soonest a window of this account refills, and the zero
+// time when nothing it reported says.
+//
+// A window nothing has spent is skipped, and that is the whole difference
+// between this and RefillAt. RefillAt answers "when does a limited account
+// come back", so it reads the windows the harness called full. This answers
+// "whose quota is about to be wasted", which is decision 0039's question when
+// choosing among free accounts, and a window at 0% has no quota to waste — its
+// refill would otherwise pull an untouched account to the front of the queue
+// for having nothing in it.
+//
+// A reset already past is skipped for the reason RefillAt gives: windows
+// outlive the limits they explain, and a stale one says nothing about the
+// future.
+func SoonestReset(now time.Time, windows []v1.AccountWindow) time.Time {
+	var soonest time.Time
+	for _, w := range windows {
+		if w.UsedPercent <= 0 || w.ResetsAt == nil || !w.ResetsAt.After(now) {
+			continue
+		}
+		if soonest.IsZero() || w.ResetsAt.Before(soonest) {
+			soonest = *w.ResetsAt
 		}
 	}
-	return Account{}, false
+	return soonest
+}
+
+// NextFree is the soonest moment one of this harness's accounts could take a
+// run again: the earliest reset among the limited ones. The zero time means
+// nothing here ends on its own — every account needs a login, or there are no
+// accounts — and the caller must not park a run on it.
+//
+// Only limited accounts count. A needs-login account comes back when the owner
+// logs it in, which is not a moment anything here can name; the runner
+// re-probes such an account instead (internal/runner).
+func NextFree(accounts []Account, harness string) time.Time {
+	var soonest time.Time
+	for _, a := range For(accounts, harness) {
+		if a.State != v1.AccountLimited || a.LimitedUntil == nil {
+			continue
+		}
+		if soonest.IsZero() || a.LimitedUntil.Before(soonest) {
+			soonest = *a.LimitedUntil
+		}
+	}
+	return soonest
 }
 
 // Reports is one harness's accounts as a hub sees them, in the owner's order.

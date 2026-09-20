@@ -106,7 +106,7 @@ func TestAnExpiredLimitReadsFreeEverywhere(t *testing.T) {
 	if got[0].State != v1.AccountFree {
 		t.Errorf("Load says %q, want free — the reset has passed", got[0].State)
 	}
-	if _, ok := First(got, "claude"); !ok {
+	if _, ok := Soonest(got, "claude", time.Now()); !ok {
 		t.Error("an account whose limit has passed is not offered a run")
 	}
 	rep := got[0].Report()
@@ -136,7 +136,7 @@ func TestALiveLimitReadsLimitedEverywhere(t *testing.T) {
 	if got[0].LimitedUntil == nil || !got[0].LimitedUntil.Equal(reset) {
 		t.Errorf("limited until %v, want %s", got[0].LimitedUntil, reset)
 	}
-	if _, ok := First(got, "claude"); ok {
+	if _, ok := Soonest(got, "claude", time.Now()); ok {
 		t.Error("a limited account was offered a run")
 	}
 	rep := got[0].Report()
