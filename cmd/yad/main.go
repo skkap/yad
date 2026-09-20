@@ -87,9 +87,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cmdErr = cmdAccount(ctx, g, rest, stdout)
 	case "upgrade":
 		cmdErr = cmdUpgrade(ctx, g, rest, stdout)
-	case "disconnect":
-		cmdErr = cmdDisconnect(ctx, g, rest, stdout)
-	case "conformance":
+	case "disconnect", "conformance":
 		cmdErr = notYet(cmd, rest)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
@@ -126,11 +124,6 @@ usage: yad [--profile name] <command> [flags]
   harnesses [--json]  the capability document, exactly as a hub receives it
   connect <url> --token T [--name n]
                       register this runner with a hub
-  disconnect <name> [--force]
-                      retire this runner at that hub — it marks the runs this
-                      runner holds lost — and remove the credential and the
-                      connection. A hub that will not answer keeps both,
-                      unless --force
   daemon start        the runner, in the background (--foreground in this terminal)
   daemon stop|restart|status
                       stop it gracefully (it drains: no new runs, the ones it
@@ -179,7 +172,7 @@ usage: yad [--profile name] <command> [flags]
                       restarted
   version             version and build
 
-  conformance · account use
+  disconnect · conformance · account use
                       exist, and each says which epic brings it
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.

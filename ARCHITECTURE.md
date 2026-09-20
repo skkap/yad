@@ -108,7 +108,7 @@ below is relative to it, so a hub can mount the protocol anywhere.
 | `POST /runners/{runner}/sync` | the periodic call: state and health in; runs, control messages and the next interval out |
 | `POST /runs/{run}/events` | a batch of events, idempotent by `(run, seq)`; answers `acked_through` |
 | `POST /runs/{run}/result` | the terminal state, idempotent; retried from the outbox until acknowledged |
-| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost, requeues offers it never claimed, and closes its sessions, cancelling the runs waiting in them |
+| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost |
 
 Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
@@ -642,10 +642,7 @@ run's hub-side state adds two before the protocol's: `queued` and `offered`.
 yad doctor                         what is installed, and what YAD can drive
 yad harnesses [--json]             the capability document, as a hub receives it
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
-yad disconnect <name> [--force]    retire this runner at that hub (which marks the runs it
-                                   holds lost), then remove the credential and the
-                                   connection. A hub that will not answer keeps both,
-                                   unless --force
+yad disconnect <name>
 yad daemon start|stop|restart|status|logs [-f] [-n N]
                                    the runner process
 yad status [--json]                connections, capacity, runs, sessions and recent

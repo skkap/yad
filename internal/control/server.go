@@ -30,10 +30,6 @@ type Handler struct {
 	// CloseSession is the owner's close of one session. It records the
 	// close and returns; the workdir goes afterwards.
 	CloseSession func(ctx context.Context, connection, session string) (SessionClose, error)
-	// Disconnect is one stage of `yad disconnect`: DisconnectBegin stops the
-	// connection syncing, before the hub is asked to retire it, and
-	// DisconnectEnd closes its sessions once the hub has.
-	Disconnect func(ctx context.Context, connection, stage string) (Disconnected, error)
 }
 
 // Daemon is one process's hold on its profile: the lock, and the socket.
@@ -185,21 +181,6 @@ func (d *Daemon) answer(ctx context.Context, conn *net.UnixConn, h Handler) {
 			break
 		}
 		res.Closed = &closed
-	case "disconnect":
-		if h.Disconnect == nil {
-			res.Error = "this daemon does not disconnect hubs — `yad daemon restart` after an upgrade"
-			break
-		}
-		if req.Stage != DisconnectBegin && req.Stage != DisconnectEnd {
-			res.Error = fmt.Sprintf("unknown disconnect stage %q — the CLI and the daemon are different yad versions; `yad daemon restart` after an upgrade", strings.TrimSpace(req.Stage))
-			break
-		}
-		gone, err := h.Disconnect(ctx, req.Connection, req.Stage)
-		if err != nil {
-			res.Error = err.Error()
-			break
-		}
-		res.Disconnected = &gone
 	default:
 		res.Error = fmt.Sprintf("unknown request %q — the CLI and the daemon are different yad versions; `yad daemon restart` after an upgrade", strings.TrimSpace(req.Op))
 	}

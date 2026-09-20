@@ -62,8 +62,9 @@ func TestPositional(t *testing.T) {
 
 // Every command that takes a positional argument and a flag must accept the
 // flag last, because that is how people type it and how this repo's own usage
-// lines and error messages write it. `yad disconnect <name> --force` was
-// refused by its own parser while three documents told the operator to run it.
+// lines and error messages write it. `yad account remove <harness> <label>
+// --yes` and `yad hub admin-token revoke <name> --db x` were each refused by
+// their own parser, the second of them for as long as it has existed.
 //
 // The forms below are the documented ones with the flag moved last. None of
 // them can succeed in a bare profile — there is no hub, no daemon and no
@@ -75,11 +76,6 @@ func TestEveryCommandTakesItsFlagsAfterItsPositionals(t *testing.T) {
 		args []string
 		want string // the command's own refusal, which only a parsed flag reaches
 	}{
-		{
-			name: "disconnect",
-			args: []string{"disconnect", "home", "--force"},
-			want: "no connection called",
-		},
 		{
 			// --connection parsed means the id is not looked up in the store;
 			// the daemon is asked for it, and there is none.
@@ -155,7 +151,7 @@ func TestAccountRemoveTakesYesAfterItsPositionals(t *testing.T) {
 // refuse, so a typo is not mistaken for a positional argument.
 func TestAnUnknownFlagAfterAPositionalIsRefused(t *testing.T) {
 	p := newProfile(t)
-	code, _, errs := p.yad("", "disconnect", "home", "--forcee")
+	code, _, errs := p.yad("", "sessions", "close", "s1", "--connectionn", "home")
 	if code == 0 || !strings.Contains(errs, "not defined") {
 		t.Errorf("exit %d, err %q — want the flag package's own refusal", code, errs)
 	}

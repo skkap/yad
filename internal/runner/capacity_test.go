@@ -2,18 +2,12 @@ package runner
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"testing"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/hubclient"
-	"github.com/skkap/yad/internal/store/db"
 )
 
 // hubs is one runner registered with several `yad hub`s, all of them drawing
@@ -235,85 +229,5 @@ func TestAConnectionCapBoundsWhatTheSyncAsksFor(t *testing.T) {
 	}
 	if len(hub.results) != 0 {
 		t.Errorf("results sent %v, want none", hub.results)
-	}
-}
-
-// A claim recorded and not yet handed to the executor holds a unit of the
-// pool, and only a withdrawal or the executor starting it gives that unit
-// back. A loop that stops in between — which is what `yad disconnect` does to
-// one connection while the others keep running — must not keep it: the
-// capacity would be gone for the life of the daemon, along with one unit of
-// its harness cap.
-//
-// The race itself is not reproduced here; what is pinned is the property that
-// makes it harmless, that a stopped loop leaves nothing held.
-func TestAStoppedLoopWithdrawsWhatItNeverStarted(t *testing.T) {
-	e := newEnv(t)
-	ctx := context.Background()
-	hub := &scriptedHub{offer: []v1.Run{testRun("in-flight", "s-flight")}}
-	doc := drivableDoc("r", 2)
-	pool := NewPool(v1.Capacity{Total: 2, ByHarness: map[string]int{"claude": 1}})
-	pool.Join("hub", 0)
-	l := &Loop{Connection: "hub", RunnerID: "r", Hub: hub, Store: e.store, Pool: pool,
-		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
-
-	// One sync: the run is claimed and pending, holding a unit. The sync that
-	// would list it back never happens, as a cancelled loop's never does.
-	mustSync(t, l)
-	if len(e.exec.ids()) != 0 {
-		t.Fatalf("the run started without an acknowledging sync: %v", e.exec.ids())
-	}
-	if free := pool.Free(); free != 1 {
-		t.Fatalf("free = %d, want 1 held by the pending claim", free)
-	}
-
-	l.WithdrawPending(ctx)
-
-	if free := pool.Free(); free != 2 {
-		t.Errorf("free = %d after the loop stopped, want the whole pool back", free)
-	}
-	if held, _ := pool.Held("hub"); held != 0 {
-		t.Errorf("the connection still holds %d", held)
-	}
-	// The harness cap is whole again too, not just the total.
-	if got := pool.Reserve("hub").Free(); got.ByHarness["claude"] != 1 {
-		t.Errorf("claude cap = %d, want 1 — a unit of it is still held", got.ByHarness["claude"])
-	}
-	// And the claim is gone from the store, so the hub may offer it again.
-	if _, err := e.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "in-flight"}); !errors.Is(err, sql.ErrNoRows) {
-		t.Errorf("the withdrawn claim is still in the store: %v", err)
-	}
-}
-
-// The withdrawal is wired into the supervisor, not merely available to it.
-// The test above proves WithdrawPending gives the capacity back; this proves
-// something calls it when a loop stops, which is what the leak actually turns
-// on — without this, deleting the call in server.run restores the leak and
-// every test still passes.
-//
-// It reads the source rather than driving a disconnect because the leak needs
-// a claim caught between its sync and the acknowledging one, and a test that
-// arranges that by holding a sync open leaves the runner waiting on a request
-// that never returns. A guard that says what it checks is worth more than a
-// flaky one that pretends to check more.
-func TestStoppingALoopWithdrawsItsPendingClaims(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "runner.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "WithdrawPending" {
-			found = true
-		}
-		return true
-	})
-	if !found {
-		t.Error("nothing in runner.go calls WithdrawPending; a loop that stops with a claim it never started leaks that unit of the pool, and one of its harness cap, for the life of the daemon")
 	}
 }

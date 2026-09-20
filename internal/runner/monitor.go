@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -23,9 +22,6 @@ type Monitor struct {
 	store    *store.Store
 	sessions *Collector
 	ready    bool
-	// stops ends one connection's loop and, with it, its reporter. Serve
-	// fills them; `yad disconnect` is what uses them.
-	stops map[string]context.CancelFunc
 }
 
 // Connection states.
@@ -34,10 +30,6 @@ const (
 	ConnSyncing  = "syncing"  // the last sync succeeded
 	ConnRetrying = "retrying" // the last sync failed, and the loop backs off
 	ConnStopped  = "stopped"  // the loop gave up; the owner has to act
-	// ConnGone is a connection `yad disconnect` retired while the daemon was
-	// running. It is not in config.toml any more, so `yad status` leaves it
-	// out rather than showing the config this process started with.
-	ConnGone = "disconnected"
 )
 
 // ConnectionState is one connection's recent history, and its standing in the
@@ -54,19 +46,7 @@ type ConnectionState struct {
 }
 
 // NewMonitor returns an empty monitor.
-func NewMonitor() *Monitor {
-	return &Monitor{conns: map[string]ConnectionState{}, stops: map[string]context.CancelFunc{}}
-}
-
-// register records how to stop one connection's loop.
-func (m *Monitor) register(conn string, stop context.CancelFunc) {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.stops[conn] = stop
-}
+func NewMonitor() *Monitor { return &Monitor{conns: map[string]ConnectionState{}} }
 
 func (m *Monitor) attach(p *Pool, st *store.Store, sessions *Collector) {
 	if m == nil {
@@ -92,101 +72,6 @@ func (m *Monitor) CloseSession(ctx context.Context, connection, id string) (Clos
 		return CloseResult{}, ErrNoSessions
 	}
 	return sessions.Close(ctx, connection, id, v1.SessionClosedByOwner)
-}
-
-// Disconnected is the runner's side of `yad disconnect`, which has already
-// retired this runner's registration with that hub.
-type Disconnected struct {
-	// Running is whether a loop for that connection was still syncing.
-	Running bool
-	// Runs is how many of that hub's runs are still held here.
-	Runs int
-	// Closed and Closing are its sessions: closed now, or closing once the
-	// run held in them ends.
-	Closed, Closing int
-}
-
-// Disconnecting stops one connection syncing, because the owner has begun
-// disconnecting it. It is told before the hub is asked to retire the
-// registration, so the sync that would otherwise take the 401 its own
-// deregistration causes never happens — and if one is already in flight, what
-// it fails on is no longer this runner's failure to report.
-//
-// Nothing is destroyed here. A disconnect the hub then refuses leaves the
-// connection stopped until the daemon restarts, which is recoverable; closing
-// its sessions at this point would not be.
-func (m *Monitor) Disconnecting(connection string) Disconnected {
-	if m == nil {
-		return Disconnected{}
-	}
-	m.mu.Lock()
-	stop, running := m.stops[connection]
-	delete(m.stops, connection)
-	m.mu.Unlock()
-	// Marked here for a connection whose loop had already stopped, since
-	// nothing else will; a running one is marked again on its way out, over
-	// whatever its last failing sync recorded.
-	m.update(connection, func(c *ConnectionState) { c.State = ConnGone })
-	if running {
-		stop()
-	}
-	return Disconnected{Running: running}
-}
-
-// Disconnected closes every session the connection held, the hub having
-// retired it. A session is resumable only on the runner that holds it and that
-// hub is gone, so closing them is what gets their workdirs reclaimed — the
-// collector reclaims from session rows, and nothing else would ever close
-// these (decisions 0011, 0035).
-//
-// The runs held are left to finish where they are: the hub has marked them
-// lost, and killing a run the owner did not ask to kill would throw the work
-// away.
-func (m *Monitor) Disconnected(ctx context.Context, connection string) (Disconnected, error) {
-	if m == nil {
-		return Disconnected{}, nil
-	}
-	m.mu.Lock()
-	sessions, st := m.sessions, m.store
-	m.mu.Unlock()
-	var out Disconnected
-	if st == nil || sessions == nil {
-		// No store open: no connection configured here, or the runner is
-		// still starting. There is nothing of this hub's to let go of.
-		return out, nil
-	}
-	err := m.letGo(ctx, connection, st, sessions, &out)
-	return out, err
-}
-
-// letGo counts what the connection still holds and closes every session of
-// it, so the collector reclaims their workdirs.
-func (m *Monitor) letGo(ctx context.Context, connection string, st *store.Store, sessions *Collector, out *Disconnected) error {
-	held, err := st.ListHeldRuns(ctx, connection)
-	if err != nil {
-		return err
-	}
-	out.Runs = len(held)
-	rows, err := st.ListSessions(ctx)
-	if err != nil {
-		return err
-	}
-	var errs []error
-	for _, r := range rows {
-		if r.Connection != connection || r.State != "open" {
-			continue
-		}
-		res, err := sessions.Close(ctx, connection, r.ID, v1.SessionClosedByOwner)
-		switch {
-		case err != nil:
-			errs = append(errs, fmt.Errorf("close session %s: %w", r.ID, err))
-		case res.Outcome == CloseDone:
-			out.Closed++
-		case res.Outcome == CloseWaiting:
-			out.Closing++
-		}
-	}
-	return errors.Join(errs...)
 }
 
 func (m *Monitor) markReady() {

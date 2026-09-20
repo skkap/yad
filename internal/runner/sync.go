@@ -558,27 +558,6 @@ func (l *Loop) withdraw(ctx context.Context, runID string) {
 	l.Sessions.Wake()
 }
 
-// WithdrawPending gives back every claim this loop recorded and never handed
-// to the executor. A claim holds a unit of the pool until its release is
-// called, and only a withdrawal or the executor taking the run calls it — the
-// loop stopping does neither. While the process was always on its way out that
-// cost nothing; `yad disconnect` stops one loop and leaves the others running,
-// so a claim caught in flight by the cancel would hold its unit, and one unit
-// of its harness cap, for the life of the daemon.
-//
-// It runs after Run has returned, in that same goroutine, so nothing else is
-// touching pending. ctx is the process's rather than the stopped loop's: the
-// store writes are what remove the claim, and on a cancelled context they
-// would all fail.
-func (l *Loop) WithdrawPending(ctx context.Context) {
-	l.init()
-	for id := range l.pending {
-		l.Log.Warn("claimed and not started when this connection stopped; withdrawn, for the hub to offer again or lose",
-			"connection", l.Connection, "run", id)
-		l.withdraw(ctx, id)
-	}
-}
-
 // Recover settles runs a previous process held (decision 0030). No
 // process of theirs survived it — a harness is its runner's child, in a
 // process group the runner killed on the way out — so none can be finished,

@@ -13,50 +13,19 @@ import (
 
 // Request is what the CLI asks.
 type Request struct {
-	Op string `json:"op"` // "status", "stop", "close_session" or "disconnect"
-	// Connection names the connection to disconnect, and with Session the
-	// session to close.
+	Op string `json:"op"` // "status", "stop" or "close_session"
+	// Connection and Session name the session to close.
 	Connection string `json:"connection,omitempty"`
 	Session    string `json:"session,omitempty"`
-	// Stage is which half of a disconnect this is.
-	Stage string `json:"stage,omitempty"`
 }
-
-// The two stages of a disconnect. The daemon is told it has begun *before* the
-// hub is asked to retire the registration, so a sync that takes the 401 its
-// own deregistration caused is never mistaken for this runner failing — by
-// then the connection is already stopped and expected to be. Nothing is
-// destroyed in the first stage: a disconnect that the hub then refuses leaves
-// the connection stopped until `yad daemon restart`, and nothing else.
-const (
-	// DisconnectBegin stops the connection syncing.
-	DisconnectBegin = "begin"
-	// DisconnectEnd closes its sessions, the hub having retired it.
-	DisconnectEnd = "end"
-)
 
 // Response is the daemon's answer. Error carries the next action, as every
 // error here does.
 type Response struct {
-	Error        string        `json:"error,omitempty"`
-	PID          int           `json:"pid"`
-	Status       *Status       `json:"status,omitempty"`
-	Closed       *SessionClose `json:"closed,omitempty"`
-	Disconnected *Disconnected `json:"disconnected,omitempty"`
-}
-
-// Disconnected is what the daemon let go of for `yad disconnect`: the hub has
-// already been told, so this is only the runner's side of it.
-type Disconnected struct {
-	// Running is whether a loop for that connection was still syncing.
-	Running bool `json:"running"`
-	// Runs is how many of that hub's runs this runner still holds. They
-	// finish where they are; the hub has marked them lost.
-	Runs int `json:"runs"`
-	// Closed is how many of that hub's sessions were closed, so their
-	// workdirs are reclaimed; Closing is those waiting on a run to end.
-	Closed  int `json:"closed"`
-	Closing int `json:"closing"`
+	Error  string        `json:"error,omitempty"`
+	PID    int           `json:"pid"`
+	Status *Status       `json:"status,omitempty"`
+	Closed *SessionClose `json:"closed,omitempty"`
 }
 
 // SessionClose is what `yad sessions close` did.

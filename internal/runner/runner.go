@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"path/filepath"
-	"slices"
 	"sync"
 	"time"
 
@@ -87,11 +85,8 @@ func Serve(ctx context.Context, o Options) error {
 	// Runs before the store closes: a status read after it would fail.
 	defer o.Monitor.attach(nil, nil, nil)
 
-	sv := &server{
-		drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, pool: pool,
-		log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{},
-		errs: map[string][]error{}, gone: map[string]bool{},
-	}
+	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, pool: pool,
+		log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{}}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -147,79 +142,21 @@ type server struct {
 	log       *slog.Logger
 	monitor   *Monitor
 
-	mu sync.Mutex
-	// errs is what stopped each connection, keyed by its name so a
-	// connection the owner disconnects can take its own failure with it.
-	errs map[string][]error
-	// gone are the connections `yad disconnect` retired. They are expected to
-	// stop, and what they stop on is not this process's failure.
-	gone map[string]bool
+	mu   sync.Mutex
+	errs []error
 }
 
 // fail records a connection that stopped, and says so now: the others keep
 // the process running, so the return value may be hours away.
-//
-// A connection the owner disconnected is not one of these. Its last sync very
-// often fails with the 401 its own deregistration caused, and recording that
-// would have Serve return an error and the process exit non-zero — which a
-// service manager reads as a crash and restarts.
 func (s *server) fail(conn string, err error) {
 	// A connection nothing is syncing takes no work, so its turn at the
 	// capacity goes to the connections that can.
 	s.pool.Pass(conn)
-	s.mu.Lock()
-	s.initErrs()
-	if s.gone[conn] {
-		s.mu.Unlock()
-		s.log.Info("disconnected connection stopped", "connection", conn, "err", err)
-		return
-	}
-	s.errs[conn] = append(s.errs[conn], err)
-	s.mu.Unlock()
 	s.log.Error("connection stopped", "connection", conn, "err", err)
 	s.monitor.failed(conn, err, time.Now(), ConnStopped)
-}
-
-// initErrs fills the maps for a server built without Serve, as a test does.
-// Callers hold s.mu.
-func (s *server) initErrs() {
-	if s.errs == nil {
-		s.errs, s.gone = map[string][]error{}, map[string]bool{}
-	}
-}
-
-// allDisconnected is whether every connection this process ran was retired by
-// `yad disconnect`, rather than stopping on its own.
-func (s *server) allDisconnected() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.loops) == 0 {
-		return false
-	}
-	for _, l := range s.loops {
-		if !s.gone[l.Connection] {
-			return false
-		}
-	}
-	return true
-}
-
-// forget drops what a connection stopped on, because the owner asked for it to
-// stop. Both orderings pass through here: the loop may already have failed on
-// the 401 its own deregistration caused, or it may fail after this. So this
-// clears what was recorded and marks the connection gone for what comes next,
-// and it is the one place that does either.
-func (s *server) forget(conn string) {
-	s.mu.Lock()
-	s.initErrs()
-	s.gone[conn] = true
-	delete(s.errs, conn)
-	s.mu.Unlock()
-	// Last word on the connection's state, over any failure already recorded:
-	// `yad status` leaves out a connection that is no longer in config.toml.
-	s.monitor.update(conn, func(c *ConnectionState) {
-		c.State, c.LastError, c.LastErrorAt = ConnGone, "", time.Time{}
-	})
+	s.errs = append(s.errs, fmt.Errorf("connection %s: %w", conn, err))
 }
 
 func (s *server) run(ctx context.Context) error {
@@ -255,15 +192,6 @@ func (s *server) run(ctx context.Context) error {
 			l.Executor = runsOn{Executor: l.Executor, ctx: ctx}
 		}
 		ended[i] = make(chan struct{})
-		// Each loop has a context of its own, so `yad disconnect` can stop
-		// one connection where the others carry on.
-		loopCtx, stopLoop := context.WithCancel(lctx)
-		s.monitor.register(l.Connection, func() {
-			// The owner asked: this connection stopping is the answer, not a
-			// failure, whatever its last sync made of a retired credential.
-			s.forget(l.Connection)
-			stopLoop()
-		})
 		// A reporter lives as long as its connection's loop: a connection
 		// the owner has to fix delivers nothing, and what it owes stays in
 		// the store for the next start.
@@ -271,16 +199,9 @@ func (s *server) run(ctx context.Context) error {
 		wg.Go(func() { s.reporters[l.Connection].Run(rctx) })
 		wg.Go(func() {
 			defer stop()
-			defer stopLoop()
 			defer close(ended[i])
 			defer l.Pool.Pass(l.Connection)
-			err := l.Run(loopCtx)
-			// Before the turn is given up and after nothing else touches
-			// this loop: a claim it never handed over holds pool capacity
-			// until it is withdrawn, and the other connections carry on
-			// needing that capacity.
-			l.WithdrawPending(ctx)
-			if err != nil {
+			if err := l.Run(lctx); err != nil {
 				s.fail(l.Connection, err)
 			}
 		})
@@ -295,19 +216,6 @@ func (s *server) run(ctx context.Context) error {
 
 	select {
 	case <-stopped:
-		if s.allDisconnected() {
-			// Every connection was disconnected by the owner rather than
-			// stopping on its own. A runner with no hub waits to be told to
-			// go, exactly as one started with no connection does — and its
-			// sessions are still the daemon's to close, which is the second
-			// half of the disconnect that is about to arrive.
-			s.log.Info("every connection was disconnected by its owner; idle until stopped")
-			select {
-			case <-ctx.Done():
-			case <-s.drain.Draining():
-			}
-			break
-		}
 		// Every connection stopped on its own: nothing left to sync with,
 		// and the runs in hand still answer the ladder on their way to an end.
 	case <-ctx.Done():
@@ -328,13 +236,7 @@ func (s *server) run(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var all []error
-	for _, conn := range slices.Sorted(maps.Keys(s.errs)) {
-		for _, err := range s.errs[conn] {
-			all = append(all, fmt.Errorf("connection %s: %w", conn, err))
-		}
-	}
-	return errors.Join(all...)
+	return errors.Join(s.errs...)
 }
 
 // runsOn starts runs on the server's context rather than the calling loop's.
