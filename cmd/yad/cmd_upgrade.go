@@ -28,9 +28,12 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	if err != nil {
 		return err
 	}
-	// flag stops parsing at the first positional argument, so `yad upgrade
-	// v0.3.1 --check` would drop the --check and replace the binary for real.
-	// Every other command here refuses leftovers for smaller reasons.
+	// A release named as an argument is refused rather than taken: `yad
+	// upgrade v0.3.1` reads like it would install that release, and silently
+	// installing the newest one instead is the wrong direction to guess in.
+	// (The flag is safe either way now — parseInterleaved takes --check on
+	// either side of it — but the argument still means something this command
+	// does not do.)
 	if len(pos) > 0 {
 		return fmt.Errorf("unexpected argument %q — a release goes in --tag, as `yad upgrade --tag %s`", pos[0], pos[0])
 	}

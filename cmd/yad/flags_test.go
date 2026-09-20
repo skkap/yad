@@ -217,3 +217,26 @@ func TestOnlyTheHelperCollectsPositionals(t *testing.T) {
 		t.Fatal("no command source was read, so this guard proved nothing")
 	}
 }
+
+// A mistyped subcommand is named as such, whatever arguments follow it. How
+// many positionals are right depends on which subcommand it is, so checking
+// the arguments first made `yad hub admin-token delete cli` complain about
+// "cli" — the one part of the command line that was fine.
+func TestAnUnknownSubcommandIsNamedNotItsArgument(t *testing.T) {
+	p := newProfile(t)
+	for _, args := range [][]string{
+		{"hub", "admin-token", "delete", "cli"},
+		{"hub", "admin-token", "delete"},
+	} {
+		code, _, errs := p.yad("", args...)
+		if code == 0 {
+			t.Errorf("%v: exit 0", args)
+		}
+		if !strings.Contains(errs, `unknown admin-token subcommand "delete"`) {
+			t.Errorf("%v: err %q, want it to name the subcommand", args, errs)
+		}
+		if strings.Contains(errs, `unexpected argument`) {
+			t.Errorf("%v: err %q blames the argument", args, errs)
+		}
+	}
+}
