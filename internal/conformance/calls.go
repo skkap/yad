@@ -29,9 +29,29 @@ func checkWrongMethod(ctx context.Context, s *session) error {
 }
 
 func checkRegisterNeedsToken(ctx context.Context, s *session) error {
+	// No bearer at all, and then one the hub cannot have issued. The second
+	// is the one that matters: a hub that takes any unseen string as a
+	// registration token will spend it, refuse its reuse, and pass every
+	// other rule here while registering anyone who asks.
 	a, err := s.c.do(ctx, call{path: "/runners/register", body: v1.RegisterRequest{Capabilities: s.doc()}})
 	if err != nil {
 		return err
+	}
+	if err := refused(a); err != nil {
+		return err
+	}
+	id, err := newID()
+	if err != nil {
+		return err
+	}
+	doc := s.doc()
+	doc.RunnerID = DefaultHarness + "-" + id
+	a, err = s.c.do(ctx, call{path: "/runners/register", bearer: "yad-conformance-never-issued-" + id, body: v1.RegisterRequest{Capabilities: doc}})
+	if err != nil {
+		return err
+	}
+	if a.ok() {
+		return brokenf("the hub registered runner %s with a token it never issued: %s", doc.RunnerID, a)
 	}
 	return refused(a)
 }
@@ -57,22 +77,30 @@ func checkRegister(ctx context.Context, s *session) error {
 }
 
 func checkTokenIsOneTime(ctx context.Context, s *session) error {
-	// A second runner id, so a hub that refuses this is refusing the token
-	// rather than the runner it already knows.
+	// Both halves of the rule: another runner id, and then the one the token
+	// was spent on. A hub that binds a spent token to its first runner and
+	// lets that runner exchange it again would pass the first alone — and a
+	// replayed token then rotates that runner's credential and takes over its
+	// sessions.
 	id, err := newID()
 	if err != nil {
 		return err
 	}
-	doc := s.doc()
-	doc.RunnerID = DefaultHarness + "-" + id
-	a, err := s.c.do(ctx, call{path: "/runners/register", bearer: s.opts.Token, body: v1.RegisterRequest{Capabilities: doc}})
-	if err != nil {
-		return err
+	for _, runner := range []string{DefaultHarness + "-" + id, s.runner} {
+		doc := s.doc()
+		doc.RunnerID = runner
+		a, err := s.c.do(ctx, call{path: "/runners/register", bearer: s.opts.Token, body: v1.RegisterRequest{Capabilities: doc}})
+		if err != nil {
+			return err
+		}
+		if a.ok() {
+			return brokenf("the hub registered runner %s with a token that had already been exchanged: %s", runner, a)
+		}
+		if err := refused(a); err != nil {
+			return err
+		}
 	}
-	if a.ok() {
-		return brokenf("the hub registered a second runner, %s, with a token that had already been exchanged: %s", doc.RunnerID, a)
-	}
-	return refused(a)
+	return nil
 }
 
 func checkCredentialRequired(ctx context.Context, s *session) error {
@@ -87,29 +115,71 @@ func checkCredentialRequired(ctx context.Context, s *session) error {
 	return refused(a)
 }
 
+// checkEventsCredentialRequired is the same rule on another call, and it takes
+// a run this runner holds to ask it: against a run the hub has never heard of,
+// a hub that authenticates nothing still answers not_found, and the refusal
+// the rule is looking for cannot be told from that one.
+func checkEventsCredentialRequired(ctx context.Context, s *session) error {
+	id, err := newID()
+	if err != nil {
+		return err
+	}
+	batch := v1.EventBatch{Events: []v1.Event{{Seq: seqFirst, Kind: v1.EventText, Text: "yad conformance"}}}
+	a, err := s.c.do(ctx, call{path: eventsPath(s.report), bearer: "yad-conformance-not-a-credential-" + id, body: batch})
+	if err != nil {
+		return err
+	}
+	if a.ok() {
+		return brokenf("the hub took events for run %s from a bearer it never issued: %s", s.report, a)
+	}
+	return refused(a)
+}
+
 // The version is checked before the body, so these two send a body no hub can
 // decode: a hub that answers 400 read the body first, which is what the rule
 // forbids — a body shaped for another version fails validation in ways that
 // say nothing about the cause.
+//
+// Both go to two calls rather than one. The rule is about every request, and a
+// hub built route by route — which a hub generated from openapi.yaml is —
+// can hold the header where its sync is and nowhere else. Register is left out
+// deliberately: it is the one call the registration token authenticates, and a
+// hub that reads the body before the header would burn the operator's token on
+// a request this suite sent to check a header.
 
 func checkProtocolHeaderMissing(ctx context.Context, s *session) error {
 	none := ""
-	a, err := s.c.do(ctx, call{path: s.syncPath(), bearer: s.cred, raw: notJSON, protocol: &none})
-	if err != nil {
-		return err
-	}
-	return refusedWith(a, http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol)
+	return s.everyCall(ctx, func(path string) call {
+		return call{path: path, bearer: s.cred, raw: notJSON, protocol: &none}
+	})
 }
 
 func checkProtocolHeaderOtherVersion(ctx context.Context, s *session) error {
 	// A version this protocol will never be: the check is about the header
 	// being read, not about which version comes next.
 	other := "0"
-	a, err := s.c.do(ctx, call{path: s.syncPath(), bearer: s.cred, raw: notJSON, protocol: &other})
+	return s.everyCall(ctx, func(path string) call {
+		return call{path: path, bearer: s.cred, raw: notJSON, protocol: &other}
+	})
+}
+
+// everyCall makes the same request of the sync and the events paths and wants
+// 426 unsupported_protocol from both.
+func (s *session) everyCall(ctx context.Context, build func(path string) call) error {
+	run, err := s.strangeRun()
 	if err != nil {
 		return err
 	}
-	return refusedWith(a, http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol)
+	for _, path := range []string{s.syncPath(), eventsPath(run)} {
+		a, err := s.c.do(ctx, build(path))
+		if err != nil {
+			return err
+		}
+		if err := refusedWith(a, http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func checkNextAction(_ context.Context, s *session) error {

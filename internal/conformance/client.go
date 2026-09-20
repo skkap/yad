@@ -128,6 +128,60 @@ func (c *client) do(ctx context.Context, in call) (*answer, error) {
 
 func (a *answer) ok() bool { return a.Status/100 == 2 }
 
+// redaction replaces a secret in a printed body.
+const redaction = `"[redacted by yad conformance]"`
+
+// redacted is a body with the two secrets v1 carries removed: the runner
+// credential a register answers with, and the value of every grant in a run a
+// sync offers. Half the failures here print the answer that broke the rule,
+// and the answer that breaks "a token registers one runner once" is a 200
+// carrying a working credential — which would then be in the terminal, and in
+// the log of whatever pipeline ran the suite, for as long as that log is kept.
+// CLAUDE.md's guardrail is that a secret is never printed, and a report about
+// a hub's mistakes is not an exception to it.
+func redacted(body []byte) string {
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		// Not this protocol's JSON, so it holds no field known to be a
+		// secret — and a proxy's HTML error page is worth printing as it
+		// arrived, since that is the evidence that it was a proxy.
+		return string(body)
+	}
+	if !scrub(v, "") {
+		return string(body)
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		// Unreachable for a value that came out of Unmarshal; if it ever is
+		// reached, say nothing rather than print what was being redacted.
+		return "[a body this suite could not print without its secrets]"
+	}
+	return string(out)
+}
+
+// scrub replaces every secret v1 carries, wherever in the body it is, and
+// reports whether it replaced any. The grant value is matched by the key it
+// sits under rather than by its own name, because "value" alone is a field
+// name any hub might use for something harmless.
+func scrub(v any, under string) bool {
+	found := false
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			if _, isString := child.(string); isString && (k == "runner_credential" || under == "grants" && k == "value") {
+				t[k], found = json.RawMessage(redaction), true
+				continue
+			}
+			found = scrub(child, k) || found
+		}
+	case []any:
+		for _, child := range t {
+			found = scrub(child, under) || found
+		}
+	}
+	return found
+}
+
 // decode reads the body into v. A hub that answers 200 with something else has
 // broken the call, so the failure says that rather than leaking a Go type name.
 func (a *answer) decode(v any) error {
@@ -159,9 +213,10 @@ func (a *answer) envelope() (v1.Error, bool) {
 }
 
 // String is what a failure prints: the call, the status, and enough of the
-// body to show what happened.
+// body to show what happened — with the secrets the protocol carries taken
+// out of it first.
 func (a *answer) String() string {
-	body := strings.TrimSpace(string(a.Body))
+	body := strings.TrimSpace(redacted(a.Body))
 	if len(body) > bodyExcerpt {
 		body = strings.ToValidUTF8(body[:bodyExcerpt], "") + "..."
 	}

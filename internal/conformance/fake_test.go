@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,7 +24,14 @@ type fake struct {
 	// flaw is the one rule this hub breaks; empty is a hub that follows §2.
 	flaw string
 
+	// cancelAfter, with cancel, stops the suite from inside the hub after
+	// that many requests, so the rule about an interrupted run is testable
+	// without a race over how long a check takes.
+	cancelAfter int
+	cancel      context.CancelFunc
+
 	mu       sync.Mutex
+	requests int
 	token    string
 	spent    bool
 	cred     string
@@ -64,6 +72,12 @@ const (
 	flawUngatedControl     = "a steer goes to a runner that never advertised one"
 	flawNoNextAction       = "errors say what went wrong and not what to do"
 	flawRenewsEverything   = "every run's lease is renewed, listed or not"
+	flawAcceptsAnyToken    = "any bearer is taken as a registration token"
+	flawSameRunnerReuse    = "a spent token registers the runner it was spent on, again"
+	flawIgnoresHarnessCap  = "the per-harness free capacity is not read"
+	flawGuardsSyncOnly     = "the credential and the protocol header are checked on sync alone"
+	flawSendsUpdate        = "the reserved update control is sent"
+	flawOverOffersWhenBusy = "one run more than the free capacity is offered, whenever there is any"
 )
 
 func newFake(t *testing.T, flaw string, queued ...v1.Run) (*fake, string) {
@@ -73,6 +87,12 @@ func newFake(t *testing.T, flaw string, queued ...v1.Run) (*fake, string) {
 		// The shortest pair §2 allows, so a test that waits a lease out waits
 		// six seconds rather than a minute.
 		interval: 5 * time.Second, lease: 5 * time.Second,
+	}
+	// One more run than the suite asks for, so the hub that over-offers has
+	// something to over-offer with: with exactly as many runs as free
+	// capacity, the defect cannot show.
+	if flaw == flawOverOffersWhenBusy {
+		queued = append(queued, fakeRunSpec(len(queued)))
 	}
 	for _, r := range queued {
 		f.runs[r.RunID] = &fakeRun{spec: r, queued: true, events: map[int64]bool{}}
@@ -93,6 +113,13 @@ func fakeRunSpec(n int) v1.Run {
 }
 
 func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	f.requests++
+	stop := f.cancel != nil && f.requests >= f.cancelAfter
+	f.mu.Unlock()
+	if stop {
+		f.cancel()
+	}
 	path, ok := strings.CutPrefix(r.URL.Path, "/v1")
 	if !ok {
 		f.fail(w, http.StatusNotFound, v1.CodeNotFound, "nothing is mounted at "+r.URL.Path, "the connection URL ends in the hub's base")
@@ -102,7 +129,8 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.fail(w, http.StatusMethodNotAllowed, v1.CodeInvalid, r.Method+" is not how a protocol call is made", "every protocol call is a POST")
 		return
 	}
-	if f.flaw != flawIgnoresProtocol && r.Header.Get(v1.HeaderProtocol) != v1.Version {
+	guarded := f.flaw != flawGuardsSyncOnly || strings.HasSuffix(path, "/sync")
+	if f.flaw != flawIgnoresProtocol && guarded && r.Header.Get(v1.HeaderProtocol) != v1.Version {
 		f.fail(w, http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol, "this hub speaks protocol 1", "upgrade yad or the hub")
 		return
 	}
@@ -113,9 +141,9 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 3 && parts[0] == "runners" && parts[2] == "sync":
 		f.sync(w, r, parts[1])
 	case len(parts) == 3 && parts[0] == "runs" && parts[2] == "events":
-		f.events(w, r, parts[1])
+		f.events(w, r, parts[1], guarded)
 	case len(parts) == 3 && parts[0] == "runs" && parts[2] == "result":
-		f.result(w, r, parts[1])
+		f.result(w, r, parts[1], guarded)
 	case f.flaw == flawPlainTextNotFound:
 		http.NotFound(w, r)
 	default:
@@ -127,11 +155,13 @@ func (f *fake) register(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var req v1.RegisterRequest
-	if bearer(r) != f.token || json.NewDecoder(r.Body).Decode(&req) != nil {
+	issued := bearer(r) == f.token || f.flaw == flawAcceptsAnyToken && bearer(r) != ""
+	if !issued || json.NewDecoder(r.Body).Decode(&req) != nil {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "that is not a registration token this hub issued", "ask the hub for a new one")
 		return
 	}
-	if f.spent && f.flaw != flawTokenIsReusable {
+	sameRunner := f.flaw == flawSameRunnerReuse && req.Capabilities.RunnerID == f.runner
+	if f.spent && f.flaw != flawTokenIsReusable && !sameRunner {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "that registration token has been used", "ask the hub for a new one")
 		return
 	}
@@ -151,7 +181,7 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var req v1.SyncRequest
-	if !f.authenticated(w, r, &req) {
+	if !f.authenticated(w, r, &req, true) {
 		return
 	}
 	if runner != f.runner {
@@ -165,6 +195,11 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	}
 	if f.flaw == flawUngatedControl {
 		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlSteer, RunID: "fake-run-0", Text: "carry on"})
+	}
+	// Reserved, and gated on nothing: a runner that does not implement
+	// self-update ignores it (decision 0018), so this must not be a finding.
+	if f.flaw == flawSendsUpdate {
+		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlUpdate})
 	}
 	for _, id := range f.order {
 		run := f.runs[id]
@@ -203,6 +238,16 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	if f.flaw == flawOffersOverCapacity {
 		free = max(free, 1)
 	}
+	// Over-offering only when there is capacity to over-offer: the probe with
+	// none declared cannot see this one, and the runs it hands back are runs
+	// the runner has nowhere to put.
+	if f.flaw == flawOverOffersWhenBusy && free > 0 {
+		free++
+	}
+	// The owner's cap for this harness bounds the answer as the total does.
+	if n, capped := req.Health.FreeCapacity.ByHarness[DefaultHarness]; capped && f.flaw != flawIgnoresHarnessCap {
+		free = min(free, n)
+	}
 	for _, id := range f.order {
 		run := f.runs[id]
 		claimed := run.holder != "" && f.flaw == flawOffersTwice
@@ -223,11 +268,11 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	f.write(w, http.StatusOK, res)
 }
 
-func (f *fake) events(w http.ResponseWriter, r *http.Request, runID string) {
+func (f *fake) events(w http.ResponseWriter, r *http.Request, runID string, guarded bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var batch v1.EventBatch
-	if !f.authenticated(w, r, &batch) {
+	if !f.authenticated(w, r, &batch, guarded) {
 		return
 	}
 	run := f.runs[runID]
@@ -252,11 +297,11 @@ func (f *fake) events(w http.ResponseWriter, r *http.Request, runID string) {
 	f.write(w, http.StatusOK, v1.EventAck{AckedThrough: run.through})
 }
 
-func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string) {
+func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string, guarded bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var res v1.Result
-	if !f.authenticated(w, r, &res) {
+	if !f.authenticated(w, r, &res, guarded) {
 		return
 	}
 	run := f.runs[runID]
@@ -275,9 +320,10 @@ func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string) {
 	f.write(w, http.StatusOK, v1.Ack{OK: true})
 }
 
-// authenticated checks the runner credential and decodes the body.
-func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any) bool {
-	if bearer(r) != f.cred || f.cred == "" {
+// authenticated checks the runner credential and decodes the body. guarded is
+// false on the calls a hub with the sync-only flaw does not authenticate.
+func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, guarded bool) bool {
+	if guarded && (bearer(r) != f.cred || f.cred == "") {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "this hub does not know that runner credential", "register again")
 		return false
 	}

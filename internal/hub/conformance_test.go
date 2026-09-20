@@ -22,9 +22,15 @@ import (
 func TestYadHubPassesTheConformanceSuite(t *testing.T) {
 	// The suite waits a lease out in real time, because a hub it does not own
 	// shares no clock with it. Five seconds is the shortest lease this hub can
-	// name and still pass the suite's own timings rule — a lease under the
-	// interval is a finding — and it keeps the check at about six seconds
+	// name and still pass the suite's own timings rule — a lease shorter than
+	// the interval is a finding — and it keeps the check at about six seconds
 	// rather than the minute a shipped lease would cost every CI run.
+	//
+	// It is not what a hub names in production, and the suite accepting it is
+	// not an endorsement: a shipped `yad hub` names max(four intervals, 60 s),
+	// and a lease equal to the interval leaves a runner's own ±10 % jitter
+	// enough to lose a run. What is under test here is the lapse, not the
+	// timings a hub should choose.
 	LeaseForTests = MinSyncInterval
 	t.Cleanup(func() { LeaseForTests = 0 })
 

@@ -34,6 +34,14 @@ var unchecked = []struct{ rule, section, why string }{{
 	rule:    "The caps on tool output, event text and a result's final text, and the halving of a batch a proxy refused.",
 	section: sectionEvents,
 	why:     "they are what a runner must not exceed, not what a hub must enforce.",
+}, {
+	rule:    "Whether events and a result are refused from a runner that is not the run's holder while another runner holds it.",
+	section: sectionEvents + ", " + sectionResult,
+	why:     "it needs two runners at once, and so two registration tokens; this suite holds one. What is checked is the near half: that a run the hub cannot match to the calling runner is refused.",
+}, {
+	rule:    "Whether the copy of a resent event that the hub keeps is the first one.",
+	section: sectionEvents,
+	why:     "v1 gives a runner no way to read an event back, so nothing outside the hub can see which copy it stored. What is checked is that a resent batch is accepted and acknowledged no further back than before.",
 }}
 
 // Print writes the report as the person who ran the suite reads it: every
@@ -54,6 +62,12 @@ func (r *Report) Print(w io.Writer) {
 		}
 	}
 	fmt.Fprintf(w, "\n%d passed, %d failed, %d skipped\n", r.count(Passed), r.count(Failed), r.count(Skipped))
+	if n := r.count(Skipped); n > 0 {
+		wrap(w, "", "", "A skip is not a pass: each one says what this hub gave the suite no way to check, and what would make it possible.")
+	}
+	if r.Interrupted {
+		wrap(w, "", "", "This run was stopped before it finished, so the checks after that point were never made.")
+	}
 	fmt.Fprint(w, "\nNot checked here, and why — a hub still has to get these right:\n")
 	for _, u := range unchecked {
 		fmt.Fprintln(w)

@@ -76,9 +76,13 @@ type Outcome struct {
 
 // Report is what one run of the suite found.
 type Report struct {
-	BaseURL  string
-	Harness  string
-	Outcomes []Outcome
+	BaseURL string
+	Harness string
+	// Interrupted says the run was stopped before every check was made, so
+	// the outcomes below are not the whole suite. Nothing that was not run is
+	// a pass, and a report that ended early must not read like one.
+	Interrupted bool
+	Outcomes    []Outcome
 }
 
 // Failed reports whether any check failed. A skip is not a failure: it is a
@@ -184,9 +188,11 @@ type session struct {
 	leaseAtClaim time.Duration
 }
 
-// syncSeen is one sync answer and the request it answered.
+// syncSeen is one sync answer, the request it answered, and the free capacity
+// that request declared — which is what the answer's offers are judged against.
 type syncSeen struct {
 	call string
+	free int
 	res  v1.SyncResponse
 }
 
@@ -230,9 +236,21 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		offered:     map[string]v1.Run{},
 	}
 	rep := &Report{BaseURL: opts.BaseURL, Harness: opts.Harness}
-	for _, ch := range checks() {
+	all := checks()
+	for i, ch := range all {
 		rep.Outcomes = append(rep.Outcomes, s.make(ctx, ch))
+		// A Ctrl-C between two checks ends the run. The rest are recorded as
+		// what they are — not made — because a report listing only the checks
+		// that happened to run before the signal, all of them passed, is a
+		// clean bill of health for a suite that stopped early.
 		if ctx.Err() != nil {
+			rep.Interrupted = true
+			for _, rest := range all[i+1:] {
+				rep.Outcomes = append(rep.Outcomes, Outcome{
+					ID: rest.id, Rule: rest.rule, Section: rest.section, Status: Skipped,
+					Detail: "the suite was stopped before this check ran",
+				})
+			}
 			break
 		}
 	}
@@ -269,6 +287,11 @@ func (s *session) missing(need requirement) string {
 		return "the suite never registered with this hub, so nothing needing a runner credential could be checked"
 	case need >= heldRun && s.report == "":
 		return "no run was offered to this runner, so nothing needing a run it holds could be checked; queue a run for harness " + s.opts.Harness + " and run the suite again"
+	case need >= secondRun && s.lapse == "" && len(s.offered) > 1:
+		// Offering one run at a time breaks no rule of §2's, and no way of
+		// queueing runs gets around it: say so rather than repeat advice the
+		// operator has already followed.
+		return "this hub offered its runs one at a time, and the lease rules need two held at once — one to report on and one to leave unrenewed — so they could not be checked against it"
 	case need >= secondRun && s.lapse == "":
 		return "only one run was offered, and the lease rules need a second one to leave unrenewed; queue two runs for harness " + s.opts.Harness + " and run the suite again"
 	}
@@ -305,8 +328,14 @@ const (
 	advertisedCapacity = 4
 )
 
-// syncRequest is what this runner sends, holding what it holds.
+// syncRequest is what this runner sends, holding what it holds. byHarness is
+// the free capacity declared for the suite's own harness, and is left out when
+// it is negative — every harness a runner drives is optional there.
 func (s *session) syncRequest(free int) v1.SyncRequest {
+	return s.syncRequestCapped(free, -1)
+}
+
+func (s *session) syncRequestCapped(free, byHarness int) v1.SyncRequest {
 	req := v1.SyncRequest{
 		RunnerID:    s.runner,
 		Fingerprint: s.fingerprint,
@@ -315,6 +344,9 @@ func (s *session) syncRequest(free int) v1.SyncRequest {
 			Harnesses:    []v1.HarnessHealth{{ID: s.opts.Harness, Ready: true}},
 		},
 		Runs: slices.Clone(s.held),
+	}
+	if byHarness >= 0 {
+		req.Health.FreeCapacity.ByHarness = map[string]int{s.opts.Harness: byHarness}
 	}
 	if !s.sentDoc {
 		doc := s.doc()
@@ -344,8 +376,21 @@ func (s *session) syncWith(ctx context.Context, req v1.SyncRequest, raw []byte) 
 	if err := a.decode(&res); err != nil {
 		return res, a, err
 	}
-	s.syncs = append(s.syncs, syncSeen{call: a.Call, res: res})
+	s.syncs = append(s.syncs, syncSeen{call: a.Call, free: req.Health.FreeCapacity.Total, res: res})
 	s.note(a.Call, res.NextSyncMS, res.LeaseMS)
+	return res, a, nil
+}
+
+// syncCappedOK sends a sync declaring free capacity for the suite's harness
+// as well as in total, and fails the check when the hub does not answer it.
+func (s *session) syncCappedOK(ctx context.Context, free, byHarness int) (v1.SyncResponse, *answer, error) {
+	res, a, err := s.syncWith(ctx, s.syncRequestCapped(free, byHarness), nil)
+	switch {
+	case err != nil:
+		return res, a, err
+	case !a.ok():
+		return res, a, brokenf("the sync was refused: %s", a)
+	}
 	return res, a, nil
 }
 

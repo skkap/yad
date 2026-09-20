@@ -1,7 +1,8 @@
 // Package conformance is the v1 protocol conformance suite: the rules of
 // ARCHITECTURE.md §2 as black-box checks against a hub URL, so a hub written
-// in any language — Zumino's embedded one, a hub someone builds from HUB.md —
-// can prove it speaks the protocol before a runner ever connects.
+// in any language — Zumino's embedded one, a hub someone builds from §2 and
+// protocol/v1/openapi.yaml — can prove it speaks the protocol before a runner
+// ever connects.
 //
 // It holds a URL and a registration token and nothing else. Nothing here
 // imports internal/hub: a suite that reached into `yad hub`'s types would be

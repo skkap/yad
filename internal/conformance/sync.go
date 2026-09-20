@@ -3,7 +3,6 @@ package conformance
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -68,12 +67,38 @@ func checkUnknownFieldsIgnored(ctx context.Context, s *session) error {
 }
 
 func checkFreeCapacity(ctx context.Context, s *session) error {
+	// Nothing free: a run offered here is one the runner has nowhere to put.
 	res, a, err := s.syncOK(ctx, 0)
 	if err != nil {
 		return err
 	}
 	if len(res.Runs) > 0 {
 		return brokenf("the sync declared no free capacity and the hub offered %d run(s), %s: %s", len(res.Runs), strings.Join(runIDs(res.Runs), ", "), a)
+	}
+	// Room for two runs but one of this harness. The per-harness figure is
+	// the owner's cap, and a run over it must never be claimed and then found
+	// to be over it, so it binds the answer exactly as the total does.
+	capped, ca, err := s.syncCappedOK(ctx, runsWanted, 1)
+	if err != nil {
+		return err
+	}
+	if len(capped.Runs) > 1 {
+		return brokenf("the sync declared free capacity for one run of harness %s and the hub offered %d, %s: %s",
+			s.opts.Harness, len(capped.Runs), strings.Join(runIDs(capped.Runs), ", "), ca)
+	}
+	return nil
+}
+
+// checkOffersWithinCapacity is the same rule over every sync this run made,
+// rather than over a probe written to test it: the syncs that ask for work
+// take what they are given, and a hub that over-offers only when it has
+// something to offer would pass the probes above.
+func checkOffersWithinCapacity(_ context.Context, s *session) error {
+	for _, seen := range s.syncs {
+		if len(seen.res.Runs) > seen.free {
+			return brokenf("answering %s the hub offered %d runs, %s, to a sync that declared free capacity for %d",
+				seen.call, len(seen.res.Runs), strings.Join(runIDs(seen.res.Runs), ", "), seen.free)
+		}
 	}
 	return nil
 }
@@ -99,57 +124,54 @@ func checkCancelForRunNotHeld(ctx context.Context, s *session) error {
 }
 
 func checkOfferIsRepeated(ctx context.Context, s *session) error {
-	var offered []v1.Run
-	for i := 0; i < offerSyncs && len(offered) == 0; i++ {
-		res, _, err := s.syncOK(ctx, runsWanted)
-		if err != nil {
-			return err
-		}
-		offered = res.Runs
-	}
-	if len(offered) == 0 {
-		return skipf("the hub offered no run for harness %s in %d syncs, so the rules that need one could not be checked; queue one or two runs for that harness and run the suite again",
-			s.opts.Harness, offerSyncs)
-	}
-	// What the runs are used for is settled here rather than after the rule
-	// below, so a hub that breaks this one is still checked against the rest.
-	for _, r := range offered {
-		s.offered[r.RunID] = r
-	}
-	want := runIDs(offered)
-	s.pick(want)
-	// Nothing is listed in the syncs below, so every run above was never
-	// received as far as the hub is concerned, and must come back.
-	seen, instead := map[string]bool{}, map[string]bool{}
-	var last *answer
-	for i := 0; i < offerSyncs && len(seen) < len(want); i++ {
+	// Ask for work, listing nothing each time: every run offered is therefore
+	// one the next sync did not list, which is the state the rule is about.
+	var (
+		offered  []string // every run this hub has offered the suite, in order
+		others   []string // those it had not offered before, after the first answer
+		current  []v1.Run // what the last answer offered, which is what the hub holds open now
+		repeated bool     // a run came back after a sync that did not list it
+		last     *answer
+	)
+	for i := 0; i < offerSyncs; i++ {
 		res, a, err := s.syncOK(ctx, runsWanted)
 		if err != nil {
 			return err
 		}
-		last = a
+		last, current = a, res.Runs
 		for _, r := range res.Runs {
-			if slices.Contains(want, r.RunID) {
-				seen[r.RunID] = true
-			} else {
-				instead[r.RunID] = true
+			s.offered[r.RunID] = r
+			switch {
+			case slices.Contains(offered, r.RunID):
+				repeated = true
+			default:
+				if i > 0 {
+					others = append(others, r.RunID)
+				}
+				offered = append(offered, r.RunID)
 			}
 		}
-	}
-	if missing := absent(want, seen); len(missing) > 0 {
-		note := ""
-		if len(instead) > 0 {
-			note = fmt.Sprintf(", and it offered %s instead", strings.Join(sorted(instead), ", "))
+		if repeated && len(current) >= runsWanted {
+			break
 		}
-		// §2 says the hub offers it again and does not say how soon, so the
-		// number of syncs waited is this suite's tolerance and not a verdict
-		// about the protocol. A hub with a deep queue for this harness can
-		// have something else to say first, and the failure says so rather
-		// than calling queue depth a broken rule.
-		return brokenf("run %s was offered, was not listed in the next sync, and had not been offered again %d syncs later%s; §2 does not say how soon a hub must offer it again, so %d syncs is this suite's tolerance rather than the protocol's number: %s",
-			strings.Join(missing, ", "), offerSyncs, note, offerSyncs, last)
 	}
-	return nil
+	// The runs later checks use are the ones the hub offered last. An id from
+	// an earlier answer is one a sync did not list, so by this very rule the
+	// hub has taken it back, and claiming it would be this suite's mistake.
+	s.pick(runIDs(current))
+	switch {
+	case len(offered) == 0:
+		return skipf("the hub offered no run for harness %s in %d syncs, so the rules that need one could not be checked; queue one or two runs for that harness and run the suite again",
+			s.opts.Harness, offerSyncs)
+	case repeated:
+		return nil
+	case len(others) > 0:
+		return skipf("run %s was offered and not listed, and in the %d syncs after it the hub had other runs to offer first (%s), so whether it comes back cannot be told in a bounded number of syncs — §2 names no deadline, and this is not a verdict on the hub. Queue only the runs this suite should use, and run it again: %s",
+			strings.Join(offered[:1], ""), offerSyncs-1, strings.Join(sorted(setOf(others)), ", "), last)
+	default:
+		return skipf("run %s was offered and not listed, and the hub offered nothing at all in the %d syncs after it though this runner declared room for %d. §2 says the hub offers such a run again but names no deadline, so this is not a verdict — read it as a warning instead: a hub that never offers a dropped run again loses every run it drops. %s",
+			strings.Join(offered[:1], ""), offerSyncs-1, runsWanted, last)
+	}
 }
 
 func checkClaimByListing(ctx context.Context, s *session) error {
@@ -205,29 +227,31 @@ const (
 	v1MaxInterval = 60 * time.Second
 )
 
+// gated is the controls §2 says a hub sends only to a runner that advertised
+// the feature by name. The rest are not gated: cancel and report_capabilities
+// go to every v1 runner, and update is reserved — a runner that does not
+// implement self-update ignores it (decision 0018), so a hub sending one has
+// broken no rule of §2's.
+var gated = []v1.ControlKind{v1.ControlDrain, v1.ControlCloseSession, v1.ControlSteer, v1.ControlInterrupt}
+
 func checkControlsAreGated(_ context.Context, s *session) error {
 	for _, seen := range s.syncs {
 		for _, c := range seen.res.Controls {
-			switch c.Kind {
-			case v1.ControlCancel, v1.ControlReportCapabilities:
-			default:
-				return brokenf("answering %s the hub sent a %q control, and this runner's capability document advertises no protocol feature; only cancel and report_capabilities go to every v1 runner",
-					seen.call, c.Kind)
+			if slices.Contains(gated, c.Kind) {
+				return brokenf("answering %s the hub sent a %q control, which goes only to a runner whose capability document advertises %q; this one advertises no protocol feature at all",
+					seen.call, c.Kind, c.Kind)
 			}
 		}
 	}
 	return nil
 }
 
-// absent is the members of want that seen does not hold, in want's order.
-func absent(want []string, seen map[string]bool) []string {
-	var missing []string
-	for _, id := range want {
-		if !seen[id] {
-			missing = append(missing, id)
-		}
-	}
-	return missing
-}
-
 func sorted(set map[string]bool) []string { return slices.Sorted(maps.Keys(set)) }
+
+func setOf(ids []string) map[string]bool {
+	set := map[string]bool{}
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}

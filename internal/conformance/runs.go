@@ -12,6 +12,9 @@ import (
 // The rules of §2's "Events", "Result" and the lease: everything that needs a
 // run the hub has offered this runner.
 
+// minPoll is the shortest pause the suite puts between two syncs of its own.
+const minPoll = time.Second
+
 // The seqs the event rules are made with: two that are contiguous, one that
 // leaves a gap, and the one that fills it.
 const (
@@ -147,10 +150,17 @@ func checkLeaseLapse(ctx context.Context, s *session) error {
 	// Syncing all the while, as a runner does. A sync renews the lease on the
 	// runs it lists and on no others, so these must not save the run.
 	for time.Now().Before(deadline) {
+		// Never faster than minPoll, whatever the hub named. A hub that has
+		// not wired next_sync_ms yet — a hub still being built, which is this
+		// suite's whole audience — names zero, and an unclamped pause would
+		// then be no pause at all: back-to-back syncs for the length of the
+		// lease. The rule about what a hub may name is checked separately;
+		// this suite must not flood a hub in order to reach it.
+		pause := min(max(s.interval, minPoll), time.Until(deadline))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(min(s.interval, time.Until(deadline))):
+		case <-time.After(pause):
 		}
 		if _, _, err := s.syncOK(ctx, 0); err != nil {
 			return err
@@ -211,7 +221,7 @@ func (s *session) eventsFor(ctx context.Context, runID string, seqs ...int64) (v
 		})
 		s.lastSeq = max(s.lastSeq, seq)
 	}
-	a, err := s.c.do(ctx, call{path: "/runs/" + url.PathEscape(runID) + "/events", bearer: s.cred, body: batch})
+	a, err := s.c.do(ctx, call{path: eventsPath(runID), bearer: s.cred, body: batch})
 	if err != nil {
 		return v1.EventAck{}, nil, err
 	}
@@ -234,8 +244,12 @@ func (s *session) resultFor(ctx context.Context, runID string, state v1.RunState
 			Message: "the yad conformance suite claimed this run to check the protocol and drives no harness",
 		}
 	}
-	return s.c.do(ctx, call{path: "/runs/" + url.PathEscape(runID) + "/result", bearer: s.cred, body: res})
+	return s.c.do(ctx, call{path: resultPath(runID), bearer: s.cred, body: res})
 }
+
+// The two run-scoped paths, which several checks build by hand.
+func eventsPath(runID string) string { return "/runs/" + url.PathEscape(runID) + "/events" }
+func resultPath(runID string) string { return "/runs/" + url.PathEscape(runID) + "/result" }
 
 // strangeRun is a run id this hub cannot have offered anyone.
 func (s *session) strangeRun() (string, error) {
