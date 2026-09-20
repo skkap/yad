@@ -19,13 +19,55 @@ type RunUsage struct {
 
 // Metrics is how the run went, for the hub's "why is Codex slow on the Linux
 // box" questions.
+//
+// Every figure covers the whole run, however many turns and however many
+// accounts it took — not the last turn. The exception is first_event_ms,
+// which is one turn's by design; its own comment says why.
 type Metrics struct {
-	DurationMS      int64  `json:"duration_ms"`
-	FirstEventMS    int64  `json:"first_event_ms"`
-	ToolCalls       int    `json:"tool_calls"`
-	APIRetries      int    `json:"api_retries"`
-	Stalls          int    `json:"stalls"`
-	CancelLatencyMS *int64 `json:"cancel_latency_ms,omitempty"`
-	WaitedMS        int64  `json:"waited_ms,omitempty"`
-	AccountSwitches int    `json:"account_switches"`
+	// DurationMS is how long the run took, from the moment it first reached
+	// preparing.
+	//
+	// For a run reported lost it is a **floor**, not an end anybody saw: the
+	// runner's process was gone and nothing observed the run stop, so the
+	// duration is measured to the last moment the runner is known to have
+	// been alive for it — its last spooled event, or the last write to its
+	// row. The real duration is that or more. Measuring to the restart
+	// instead would report how long the machine was off.
+	DurationMS int64 `json:"duration_ms" doc:"How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more."`
+	// FirstEventMS is how long the harness took to say anything, measured
+	// from the start of the turn that answered — deliberately not from the
+	// start of the run. A run parked five hours on a usage limit and then
+	// answering in two seconds is not a harness that took five hours to
+	// speak, and the wait is already reported as waited_ms.
+	FirstEventMS int64 `json:"first_event_ms" doc:"How long the harness took to say anything, measured from the start of the turn that answered rather than from the start of the run. A run parked on a usage limit and then answering at once is not a slow harness, and the wait is reported separately as waited_ms."`
+	ToolCalls    int   `json:"tool_calls" doc:"Tool calls across every turn of the run."`
+	// APIRetries counts transient throttling the harness retried by itself.
+	// A usage limit is not one of these (DOMAIN.md, "Usage limit").
+	APIRetries      int    `json:"api_retries" doc:"Transient throttling the harness retried by itself, across every turn. A usage limit is not one of these."`
+	Stalls          int    `json:"stalls" doc:"Times a watchdog found the event stream idle, across every turn."`
+	CancelLatencyMS *int64 `json:"cancel_latency_ms,omitempty" doc:"From a cancel or interrupt arriving to the turn ending. Absent when nothing asked the run to stop."`
+	// WaitedMS is how long the run spent waiting for an account, **summed
+	// over every wait** — not the longest and not the last. A run may be
+	// parked, resumed, limited again and parked again, and this is the
+	// total of all of it.
+	//
+	// The total is also what Run.MaxWaitMS is judged against. A cap on the
+	// total beside a metric reporting the last wait would let a run time out
+	// at a number its own report contradicts, which is not a discrepancy
+	// anybody would find before it happened.
+	//
+	// For a run reported lost while it was parked, this is a floor for the
+	// same reason DurationMS is.
+	WaitedMS int64 `json:"waited_ms,omitempty" doc:"How long the run spent waiting for a free account, summed over every wait rather than the longest or the last: a run may be parked, resumed, limited again and parked again. This total is also what the run's max_wait_ms is judged against. For a run reported lost while it was parked it is a floor, as duration_ms is."`
+	// AccountSwitches is how many turns of this run started on a different
+	// account than the turn before them.
+	//
+	// Defined by cost rather than by cause. Each move spends one cache-cold
+	// turn, because the prompt cache does not follow the account
+	// (decision 0013), and a run resumed onto a different account after
+	// waiting pays that whether or not a failover put it there — so a
+	// resume that lands elsewhere counts. Two consequences worth stating: a
+	// run parked five times and resumed on the same account each time
+	// reports 0, and a run that goes A to B and back to A reports 2.
+	AccountSwitches int `json:"account_switches" doc:"How many turns of this run started on a different account than the turn before them. Counted by what a move costs rather than by what caused it: each one spends a cache-cold turn because the prompt cache does not follow the account, and a run resumed onto a different account pays that whether or not a failover put it there. A run parked five times and resumed on the same account each time reports 0; a run that goes A to B and back to A reports 2."`
 }

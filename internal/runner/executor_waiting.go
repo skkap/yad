@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/skkap/yad/internal/account"
@@ -137,6 +138,32 @@ func (e *Exec) progress(ctx context.Context, c Claim) progress {
 			e.Log.Warn("what the run's earlier turns cost could not be read; its usage and counters start again from zero",
 				"connection", c.Connection, "run", c.Run.RunID, "err", err)
 			p.spent = spent{}
+		}
+	}
+	return p
+}
+
+// progressOf is what a run's row says it has cost, for whoever has to report
+// a run they did not watch: the collector ending a parked one, and the start
+// that finds a run a previous process held.
+//
+// until is the moment the run is being measured to, and it is the caller's
+// because the two have different answers. A run still parked is measured to
+// now; one whose process is gone stopped at some unknown moment before this
+// process started, so its caller passes the last moment anything is known to
+// have been true of it. Measuring that one to now would report how long the
+// machine was off.
+func progressOf(row db.Run, until time.Time, log *slog.Logger) progress {
+	p := progress{started: until, waitedMS: row.WaitedMs + waitingFor(row, until), switches: int(row.AccountSwitches)}
+	if row.StartedAt.Valid {
+		p.started = time.UnixMilli(row.StartedAt.Int64)
+	}
+	if row.Spent.Valid && row.Spent.String != "" {
+		if err := json.Unmarshal([]byte(row.Spent.String), &p.spent); err != nil {
+			// The run still gets its terminal state; only what it cost is
+			// lost, and saying nothing is better than saying a wrong number.
+			log.Warn("what the run's turns cost could not be read; its result carries none of it",
+				"connection", row.Connection, "run", row.ID, "err", err)
 		}
 	}
 	return p
@@ -315,16 +342,7 @@ func (e *Exec) Forget(connection, runID string) {
 // reports it timed out, which is a second terminal state for one run.
 func (e *Exec) End(ctx context.Context, c Claim, row db.Run, state v1.RunState, rerr *v1.RunError, now time.Time) error {
 	e.init()
-	prog := progress{started: now, waitedMS: row.WaitedMs + waitingFor(row, now), switches: int(row.AccountSwitches)}
-	if row.StartedAt.Valid {
-		prog.started = time.UnixMilli(row.StartedAt.Int64)
-	}
-	if row.Spent.Valid && row.Spent.String != "" {
-		if err := json.Unmarshal([]byte(row.Spent.String), &prog.spent); err != nil {
-			e.Log.Warn("what the run's turns cost could not be read; its result carries none of it",
-				"connection", c.Connection, "run", c.Run.RunID, "err", err)
-		}
-	}
+	prog := progressOf(row, now, e.Log)
 	return e.finishWith(ctx, c, v1.Result{
 		State: state, LastSeq: e.lastSeq(ctx, c), Error: rerr,
 		Usage:   v1.RunUsage{ByModel: prog.spent.Usage},

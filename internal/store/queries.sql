@@ -267,6 +267,14 @@ DELETE FROM sessions WHERE sessions.connection = sqlc.arg(connection) AND sessio
 -- name: LastEventSeq :one
 SELECT CAST(COALESCE(MAX(seq), 0) AS INTEGER) FROM events WHERE connection = ? AND run_id = ?;
 
+-- The last event a run spooled, whole. The body carries the moment the event
+-- was written, which is the latest time anything is known to have been true
+-- of a run whose process is gone: runs.updated_at moves only when a column
+-- does, so for a turn that streamed for three hours it still says when the
+-- run reached running. No rows for a run that never spoke.
+-- name: LastEvent :one
+SELECT seq, body FROM events WHERE connection = ? AND run_id = ? ORDER BY seq DESC LIMIT 1;
+
 -- What `yad status` lists: every run held, across connections.
 -- name: ListAllHeldRuns :many
 SELECT * FROM runs
