@@ -151,3 +151,11 @@ func (f *fixture) state(t *testing.T, runID string) string {
 	}
 	return r.State
 }
+
+// continues is a run in a session that already exists, as a hub sends the
+// next turn of a conversation.
+func continues(id, session string) v1.Run {
+	r := run(id, session)
+	r.Session.New = false
+	return r
+}

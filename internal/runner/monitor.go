@@ -123,6 +123,9 @@ func (m *Monitor) Disconnect(ctx context.Context, connection string) (Disconnect
 	sessions, st := m.sessions, m.store
 	m.mu.Unlock()
 	out := Disconnected{Running: running}
+	// Marked here for a connection whose loop had already stopped, since
+	// nothing else will: a loop that is running is marked again on its way
+	// out, over whatever its last failing sync recorded.
 	m.update(connection, func(c *ConnectionState) { c.State = ConnGone })
 	// Sessions first, while the loop still holds the store open: stopping the
 	// last connection ends Serve, and Serve closes the store on its way out.

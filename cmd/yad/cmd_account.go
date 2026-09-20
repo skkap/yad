@@ -203,22 +203,11 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 func accountRemove(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account remove", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "do not ask; the login in that home is deleted")
-	if err := fs.Parse(args); err != nil {
+	pos, err := positional(fs, args, 2, "usage: yad account remove <harness> <label> [--yes]")
+	if err != nil {
 		return err
 	}
-	// flag stops at the first positional argument, so --yes is parsed on
-	// either side of the harness and label.
-	rest := fs.Args()
-	if len(rest) < 2 {
-		return errors.New("usage: yad account remove <harness> <label> [--yes]")
-	}
-	id, label := rest[0], rest[1]
-	if err := fs.Parse(rest[2:]); err != nil {
-		return err
-	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected %q — usage: yad account remove <harness> <label> [--yes]", fs.Arg(0))
-	}
+	id, label := pos[0], pos[1]
 	// Checked before anything is printed or deleted, as `add` does at its own
 	// top: this argument becomes a path element under <data>/accounts/, and
 	// what waits at the end of that path is os.RemoveAll.

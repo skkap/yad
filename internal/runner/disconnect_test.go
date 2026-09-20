@@ -269,3 +269,49 @@ func brokenHub(t *testing.T, e *env, status int) config.Paths {
 	}
 	return e.paths
 }
+
+// A forced disconnect leaves the registration live at the hub, so an error
+// after that point must not tell the owner the credential is dead — that is
+// how a working credential is left at a hub nobody will ever retire it at.
+func TestAForcedDisconnectSaysTheRunnerIsStillRegistered(t *testing.T) {
+	e := newEnv(t)
+	connected(t, e, "home")
+	broken := brokenHub(t, e, http.StatusBadGateway)
+	// The credential cannot be removed: its directory is not writable.
+	dir := filepath.Join(broken.Config, "credentials")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	_, _, err := Disconnect(context.Background(), broken, "home", true, nil)
+	if err == nil {
+		t.Fatal("the credential could not be removed and no error said so")
+	}
+	if !strings.Contains(err.Error(), "still registered") {
+		t.Errorf("error = %v, want it to say the hub still holds the registration", err)
+	}
+	if !strings.Contains(err.Error(), "credential still works") {
+		t.Errorf("error = %v, want it to say the credential is live and must be retired", err)
+	}
+}
+
+// The same failure after a real deregistration says the opposite, because
+// there the credential really is dead.
+func TestADeregisteredCredentialThatWillNotDeleteSaysItIsDead(t *testing.T) {
+	e := newEnv(t)
+	connected(t, e, "home")
+	dir := filepath.Join(e.paths.Config, "credentials")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	_, _, err := Disconnect(context.Background(), e.paths, "home", false, nil)
+	if err == nil || !strings.Contains(err.Error(), "no longer accepted anywhere") {
+		t.Errorf("error = %v, want it to say the credential is dead", err)
+	}
+	if strings.Contains(err.Error(), "still registered") {
+		t.Errorf("error = %v, want it to say this runner is deregistered", err)
+	}
+}

@@ -203,3 +203,78 @@ func TestTheRunnerRowCannotBeDeletedWhileItsWorkPointsAtIt(t *testing.T) {
 		t.Errorf("the delete failed, but not on the reference: %v", err)
 	}
 }
+
+// A session is resumable only on the runner holding it, so when that runner
+// deregisters the session closes and the runs waiting in it are cancelled.
+// Left open and bound, a queued run in one is offerable to nobody — the offer
+// query takes only sessions unbound or bound to the asking runner, and a
+// queued run has no lease to lapse — so it would wait for ever.
+func TestDeregisterClosesTheRunnersSessionsAndCancelsWhatWaited(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	cred := f.register(t, "r1")
+	f.enqueue(t, run("first", "s1"))
+	f.mustSync(t, "r1", cred, first("r1", 1))
+	f.mustSync(t, "r1", cred, req("r1", 0, claimed("first")...))
+	// A second run of the same session, queued behind the one being held.
+	f.enqueue(t, continues("second", "s1"))
+	if got := f.state(t, "second"); got != "queued" {
+		t.Fatalf("the second run is %s", got)
+	}
+
+	if res, env := f.deregister(t, "r1", cred, ""); res.StatusCode != http.StatusOK {
+		t.Fatalf("deregister: %d %+v", res.StatusCode, env)
+	}
+
+	sess, err := f.store.GetSession(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.ClosedAt.Valid {
+		t.Error("the session is still open, so nothing will ever take a run in it")
+	}
+	if got := sess.CloseReason.String; got != string(v1.SessionClosedByOwner) {
+		t.Errorf("close reason = %q, want the same reason the runner records", got)
+	}
+	if got := f.state(t, "second"); got != "cancelled" {
+		t.Errorf("the run waiting in it is %s, want cancelled — it is offerable to nobody", got)
+	}
+	row, err := f.store.GetRun(ctx, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(row.Reason.String, "new session") {
+		t.Errorf("cancel reason = %q, want the next action", row.Reason.String)
+	}
+	// The run it held is still lost, not cancelled: it ran.
+	if got := f.state(t, "first"); got != "lost" {
+		t.Errorf("the run it held is %s, want lost", got)
+	}
+}
+
+// Another runner's sessions are not this runner's to close.
+func TestDeregisterClosesOnlyItsOwnSessions(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	mine := f.register(t, "r1")
+	theirs := f.register(t, "r2")
+	f.enqueue(t, run("mine", "s-mine"), run("theirs", "s-theirs"))
+	f.mustSync(t, "r1", mine, first("r1", 1))
+	f.mustSync(t, "r1", mine, req("r1", 0, claimed("mine")...))
+	f.mustSync(t, "r2", theirs, first("r2", 1))
+	f.mustSync(t, "r2", theirs, req("r2", 0, claimed("theirs")...))
+
+	if res, env := f.deregister(t, "r1", mine, ""); res.StatusCode != http.StatusOK {
+		t.Fatalf("deregister: %d %+v", res.StatusCode, env)
+	}
+	theirSession, err := f.store.GetSession(ctx, "s-theirs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if theirSession.ClosedAt.Valid {
+		t.Error("one runner deregistering closed another runner's session")
+	}
+	if got := f.state(t, "theirs"); got != "claimed" {
+		t.Errorf("the other runner's run is %s", got)
+	}
+}

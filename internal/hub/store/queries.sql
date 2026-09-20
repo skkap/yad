@@ -220,3 +220,9 @@ WHERE runner_id = sqlc.arg(runner_id) AND state IN ('claimed', 'preparing', 'run
 -- name: RequeueRunnerOffers :execrows
 UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = sqlc.arg(now)
 WHERE runner_id = sqlc.arg(runner_id) AND state = 'offered';
+
+-- A deregistering runner's open sessions. They are bound to it and a session
+-- is resumable only on the runner that holds it, so nothing else can take
+-- them over: deregister closes them and cancels the runs waiting in them.
+-- name: OpenSessionsOfRunner :many
+SELECT id FROM sessions WHERE runner_id = sqlc.arg(runner_id) AND closed_at IS NULL ORDER BY id;

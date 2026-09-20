@@ -26,6 +26,25 @@ type Disconnection struct {
 	Remaining int
 }
 
+// standing is what the hub is left holding, for an error that arrives after
+// the point of no return. It is not always "deregistered": --force goes past a
+// hub that refused, and telling the owner the credential is dead when the hub
+// still accepts it is how a live credential is left behind for good.
+func (d Disconnection) standing() string {
+	if d.Deregistered {
+		return "this runner is deregistered at " + d.Connection.URL
+	}
+	return "this runner is still registered at " + d.Connection.URL
+}
+
+// andRetire is the step left at the hub when nothing retired the registration.
+func (d Disconnection) andRetire() string {
+	if d.Deregistered {
+		return "; it is no longer accepted anywhere"
+	}
+	return ", and retire this runner at " + d.Connection.URL + " — the credential still works there"
+}
+
 // Disconnect retires this runner's registration with one hub and forgets it:
 // the hub deregisters it — marking every run it still holds lost — and then
 // the credential and the connection's entry in config.toml go.
@@ -98,12 +117,12 @@ func Disconnect(ctx context.Context, p config.Paths, name string, force bool, st
 		}
 	}
 	if err := p.DeleteCredential(name); err != nil {
-		return out, notes, fmt.Errorf("this runner is deregistered at %s but its credential could not be removed: %w — delete the file by hand; it is no longer accepted anywhere", out.Connection.URL, err)
+		return out, notes, fmt.Errorf("%s, but its credential could not be removed: %w — delete the file by hand%s", out.standing(), err, out.andRetire())
 	}
 	next := cfg
 	next.Connections = slices.Delete(slices.Clone(cfg.Connections), i, i+1)
 	if err := config.Save(p, next); err != nil {
-		return out, notes, fmt.Errorf("this runner is deregistered at %s and its credential is gone, but %s could not be written: %w — remove the [[connection]] entry named %q by hand", out.Connection.URL, p.ConfigFile(), err, name)
+		return out, notes, fmt.Errorf("%s and its credential is gone, but %s could not be written: %w — remove the [[connection]] entry named %q by hand%s", out.standing(), p.ConfigFile(), err, name, out.andRetire())
 	}
 	out.Remaining = len(next.Connections)
 	return out, notes, nil

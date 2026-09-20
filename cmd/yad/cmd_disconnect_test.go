@@ -66,6 +66,16 @@ func TestDisconnectRemovesTheCredentialAndTheConnection(t *testing.T) {
 	if !strings.Contains(out, "no connections left") {
 		t.Errorf("disconnect did not say the runner has no hub left: %q", out)
 	}
+	// And what it did not do. With no daemon running, nothing closed that
+	// hub's sessions here, and saying "credential removed" and stopping would
+	// leave the operator to find the workdirs themselves.
+	if !strings.Contains(out, "no daemon is running") || !strings.Contains(out, "yad sessions") {
+		t.Errorf("disconnect did not say the sessions were left behind: %q", out)
+	}
+	// What the hub did with the work it held is the operator's business too.
+	if !strings.Contains(out, "sessions on this runner are closed") {
+		t.Errorf("disconnect did not say what became of the work at the hub: %q", out)
+	}
 	// And again: there is nothing by that name any more.
 	if code, _, errs := p.yad("", "disconnect", "home"); code == 0 || !strings.Contains(errs, "none at all") {
 		t.Errorf("second disconnect: exit %d %q", code, errs)

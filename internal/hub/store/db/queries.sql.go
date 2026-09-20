@@ -731,6 +731,36 @@ func (q *Queries) OfferRun(ctx context.Context, arg OfferRunParams) error {
 	return err
 }
 
+const openSessionsOfRunner = `-- name: OpenSessionsOfRunner :many
+SELECT id FROM sessions WHERE runner_id = ?1 AND closed_at IS NULL ORDER BY id
+`
+
+// A deregistering runner's open sessions. They are bound to it and a session
+// is resumable only on the runner that holds it, so nothing else can take
+// them over: deregister closes them and cancels the runs waiting in them.
+func (q *Queries) OpenSessionsOfRunner(ctx context.Context, runnerID sql.NullString) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, openSessionsOfRunner, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const putResult = `-- name: PutResult :execrows
 INSERT INTO results (run_id, state, body, received_at) VALUES (?, ?, ?, ?)
 ON CONFLICT (run_id) DO NOTHING

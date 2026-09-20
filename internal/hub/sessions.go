@@ -109,6 +109,13 @@ func closeUnbound(ctx context.Context, q *db.Queries, id string, now time.Time) 
 	if _, err := q.CloseUnboundSession(ctx, db.CloseUnboundSessionParams{Now: sql.NullInt64{Int64: store.Ms(now), Valid: true}, ID: id}); err != nil {
 		return err
 	}
+	return cancelUnstarted(ctx, q, id, closedUnstartedReason, now)
+}
+
+// cancelUnstarted cancels every run still waiting in a session that is
+// closing, so a submitter hears a terminal state rather than waiting on a
+// session no runner will take another run in.
+func cancelUnstarted(ctx context.Context, q *db.Queries, id, reason string, now time.Time) error {
 	runs, err := q.UnstartedRunsInSession(ctx, id)
 	if err != nil {
 		return err
@@ -117,7 +124,7 @@ func closeUnbound(ctx context.Context, q *db.Queries, id string, now time.Time) 
 		// An offered run keeps its runner, which hears cancel at its next
 		// sync and withdraws it.
 		if _, err := q.CancelUnstartedRun(ctx, db.CancelUnstartedRunParams{
-			Reason: sql.NullString{String: closedUnstartedReason, Valid: true}, UpdatedAt: store.Ms(now), ID: r,
+			Reason: sql.NullString{String: reason, Valid: true}, UpdatedAt: store.Ms(now), ID: r,
 		}); err != nil {
 			return err
 		}
