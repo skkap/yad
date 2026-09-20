@@ -253,8 +253,10 @@ func TestGrantNames(t *testing.T) {
 		{"X TOKEN", "environment variable name"}, {"X=Y", "environment variable name"},
 		{"X\x00Y", "environment variable name"}, {"\u0420\u0410\u0422\u041d", "environment variable name"},
 
-		// The four, in every case: a file grant's name is a file name, and
-		// macOS folds case, so "path" is the same mistake as PATH.
+		// The four, in every case. Not because "path" would break a run —
+		// it arrives as "path" and leaves PATH alone — but because the list
+		// catches a hub's mistake, and a hub author whose platform folds
+		// environment case writes "Path" meaning PATH (see grant.go).
 		{"PATH", "PATH"}, {"path", "PATH"}, {"Path", "PATH"},
 		{"HOME", "HOME"}, {"home", "HOME"}, {"hOmE", "HOME"},
 		{"LD_PRELOAD", "LD_"}, {"ld_preload", "LD_"}, {"Ld_Library_Path", "LD_"}, {"LD_", "LD_"},

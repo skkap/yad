@@ -406,8 +406,8 @@ func TestGrantFilesAreSweptAfterACrash(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
-	// The owner is told a run died hard and left secrets on disk — by count
-	// alone, since a grant's name says as much about a hub as its value.
+	// The owner is told that secrets sat on disk after their run ended — by
+	// count alone, since a grant's name says as much about a hub as its value.
 	if !strings.Contains(logged.String(), "files=1") {
 		t.Errorf("the sweep said nothing about what it deleted:\n%s", logged.String())
 	}
@@ -659,9 +659,11 @@ func TestASweepThatFailsNamesNoGrant(t *testing.T) {
 
 // The cleanup at the end of every ordinary run is held to the rule sweepGrants
 // is: a RemoveAll that fails must not put a grant's name in the log. This is
-// the branch that runs whenever a run ends; the sweep runs at every start, and
-// is what finally removes the files this one could not — after a crash, and
-// after a failure like this one too.
+// the branch that runs whenever a run ends, and it is the last word on these
+// files whenever the reason it failed outlives the process — the sweep at the
+// next start does the same RemoveAll and fails the same way on a read-only
+// mount or a permission this one could not get past. What the sweep recovers
+// is a cleanup that never ran at all, or one whose reason has since cleared.
 func TestAFailedGrantCleanupNamesNoGrant(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root unlinks through a directory's missing write bit, so the cleanup would succeed")

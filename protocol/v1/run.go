@@ -154,8 +154,9 @@ func (r Run) Validate() error {
 	}
 	seen := map[string]bool{}
 	// A file grant's name is also its file's name, and macOS folds case: two
-	// that differ only by case share one file, and the second's value silently
-	// becomes the first's. Env grants are deliberately not held to this — FOO
+	// that differ only by case are written to one file, in order, so the
+	// second truncates the first and both names end up pointing at the second
+	// grant's value. Env grants are deliberately not held to this — FOO
 	// and foo are two variables on linux and darwin alike, and both arrive
 	// intact. The filesystem and the environment have different rules, so the
 	// asymmetry is the point and not something to tidy into agreement.

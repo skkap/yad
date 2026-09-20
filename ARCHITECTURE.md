@@ -780,7 +780,8 @@ line here is a reviewed change.
   would break the run rather than attack it: `PATH`, `HOME`, `LD_*` and
   `DYLD_*`, matched whatever their case. Two `file` grants whose names differ
   only by case are refused too: on a case-folding filesystem they are one file,
-  and the second's value would silently become the first's. `protocol/v1`
+  written in order, so the second truncates the first and both names end up
+  pointing at the second grant's value. `protocol/v1`
   checks it; a run carrying one that fails is refused by the hub and by the
   runner, never run with it
   stripped — [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md),
