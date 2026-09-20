@@ -55,6 +55,14 @@ type Resumer struct {
 	wake chan struct{}
 	// mu makes sweeps one at a time, so two of them cannot start one run.
 	mu sync.Mutex
+	// cancelled are parked runs the hub asked to stop whose terminal result
+	// could not be written. The intent lives nowhere else: the transaction
+	// leaves the row exactly as it was, which is what keeps the run's grants
+	// and its wait intact, and a row left untouched is indistinguishable
+	// from one nobody has cancelled. Without this a later sweep reads an
+	// ordinary parked run and starts a turn for one the hub asked to stop,
+	// in the up-to-a-minute before the hub's next sync repeats the cancel.
+	cancelled map[runKey]bool
 }
 
 // resumeEvery is the longest a sweep waits when nothing is due. Each sweep
@@ -72,6 +80,7 @@ const resumeSkew = 5 * time.Second
 func (r *Resumer) init() {
 	r.once.Do(func() {
 		r.wake = make(chan struct{}, 1)
+		r.cancelled = map[runKey]bool{}
 		if r.Clock == nil {
 			r.Clock = realClock{}
 		}
@@ -157,6 +166,16 @@ func (r *Resumer) Sweep(ctx context.Context) time.Duration {
 func (r *Resumer) consider(ctx context.Context, row db.Run, accounts []account.Account) time.Duration {
 	now := r.Clock.Now()
 	log := r.Log.With("connection", row.Connection, "run", row.ID)
+	// A cancel this process could not write down is still a cancel. Tried
+	// again here rather than only waited on: the hub does repeat it, but not
+	// before this sweep would otherwise have started the turn.
+	if key := (runKey{row.Connection, row.ID}); r.cancelled[key] {
+		if r.cancel(ctx, row, now) {
+			return 0
+		}
+		log.Warn("the run was cancelled and its result still cannot be recorded; it is not started and is tried again")
+		return resumeEvery
+	}
 	var run v1.Run
 	if err := json.Unmarshal([]byte(row.Spec), &run); err != nil {
 		// Unreadable, so it can never run and never resume: ending it is the
@@ -185,6 +204,14 @@ func (r *Resumer) consider(ctx context.Context, row db.Run, accounts []account.A
 		// tokens on a run whose lease nothing here renews and whose result
 		// nothing here delivers, so the hub would lose it, give it to
 		// another runner, and this machine would run it twice.
+		//
+		// The remaining cap is still returned, not zero: a run with a second
+		// left on its max_wait would otherwise be looked at again up to a
+		// minute later, which is not what "bounded by the cap its hub gave
+		// it" says a line above.
+		if run.MaxWaitMS > 0 {
+			return time.Duration(run.MaxWaitMS-waited) * time.Millisecond
+		}
 		return 0
 	}
 	due := now
@@ -373,21 +400,32 @@ func (r *Resumer) CancelWaiting(ctx context.Context, connection, runID string) b
 	if err != nil || row.State != string(v1.RunWaiting) {
 		return false
 	}
-	now := r.Clock.Now()
 	r.Log.Info("the run was waiting for a free account and is cancelled", "connection", connection, "run", runID)
+	return r.cancel(ctx, row, r.Clock.Now())
+}
+
+// cancel writes a parked run's cancellation, and reports whether it landed.
+// A write that did not is remembered rather than left to the hub's repeat:
+// the row is deliberately untouched by a failed transaction, so nothing on
+// disk says this run must not be started, and the next sweep is sooner than
+// the next sync.
+//
+// The caller holds mu.
+func (r *Resumer) cancel(ctx context.Context, row db.Run, now time.Time) bool {
+	key := runKey{row.Connection, row.ID}
 	c, cerr := claimFor(row, nil)
 	if cerr != nil {
-		c = Claim{Connection: connection, Run: v1.Run{RunID: runID, Harness: row.Harness, Session: v1.SessionRef{ID: row.SessionID}}, Release: func() {}}
+		c = Claim{Connection: row.Connection, Release: func() {},
+			Run: v1.Run{RunID: row.ID, Harness: row.Harness, Session: v1.SessionRef{ID: row.SessionID}}}
 	}
-	// No error, as for any run the hub cancelled: the hub asked, so it knows
-	// why, and a runner that invented a reason here would be the only one of
-	// the two making something up.
+	// No error on the result, as for any run the hub cancelled: the hub
+	// asked, so it knows why, and a runner that invented a reason here would
+	// be the only one of the two making something up.
 	if err := r.Exec.finishParked(ctx, c, row, v1.RunCancelled, nil, now); err != nil {
-		// Still parked, and still this process's to resume or cancel. The
-		// hub repeats a cancel until the run ends (decision 0025), so the
-		// next sync tries again.
+		r.cancelled[key] = true
 		return false
 	}
-	r.Exec.forget(connection, runID)
+	delete(r.cancelled, key)
+	r.Exec.forget(row.Connection, row.ID)
 	return true
 }

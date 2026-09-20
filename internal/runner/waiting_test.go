@@ -1015,3 +1015,56 @@ func TestAFailedResultKeepsTheParkedClaimSoTheCancelCanBeTriedAgain(t *testing.T
 		t.Error("the parked claim was given up for a result that did not land; the retry would report grants_lost")
 	}
 }
+
+// A cancel this process could not write down is still a cancel. The
+// transaction leaves the row exactly as it was, which is what keeps the
+// run's grants and its wait — and makes the row indistinguishable from one
+// nobody cancelled. Without somewhere to remember the intent, the next sweep
+// starts a turn for a run the hub asked to stop, in the up-to-a-minute
+// before the hub's next sync repeats it.
+func TestACancelThatCouldNotBeWrittenStillStopsTheRunFromResuming(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(limitScript("five_hour", reset, "native-1")))
+	claimAndRun(t, l, x)
+	waitingRow(t, e, "a")
+
+	broken, err := store.Open(ctx, e.paths.StateDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken.Close()
+	x.Store = broken
+	r := e.resumer(x, l.Pool, &stepClock{now: reset.Add(resumeSkew + time.Second)})
+	if r.CancelWaiting(ctx, "hub", "a") {
+		t.Fatal("CancelWaiting reported success on a store that cannot be written")
+	}
+	x.Store = e.store
+
+	// The reset has passed and the account is free, so nothing but the
+	// remembered cancel stands between this run and a turn.
+	if err := e.store.SetAccountLimit(ctx, db.SetAccountLimitParams{
+		Harness: "claude", Label: "work",
+		LimitedUntil: sql.NullInt64{Int64: time.Now().Add(-time.Minute).UnixMilli(), Valid: true},
+		UpdatedAt:    time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.Sweep(ctx)
+	x.Wait()
+
+	if got, _ := x.Adapters.Lookup("claude"); len(got.(*fake.Adapter).Starts) != 1 {
+		t.Errorf("the harness was started %d times, want the one turn before the cancel", len(got.(*fake.Adapter).Starts))
+	}
+	// And the sweep that could write finished the cancel rather than leaving
+	// it to the hub to ask again.
+	res, ok := outboxResult(t, e, "a")
+	if !ok || res.State != v1.RunCancelled {
+		t.Fatalf("result = %+v, %v, want the cancel recorded once the store worked again", res, ok)
+	}
+}

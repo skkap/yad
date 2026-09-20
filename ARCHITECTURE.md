@@ -595,10 +595,14 @@ for `codex`); the suite never runs a real harness.
   ping-ponged between. `account_switches` counts the moves — including one made
   across a park, since the run reads the account it last ran on back from its
   row. A run is **one run** however many accounts and however many processes it
-  took: `usage`, `tool_calls`, `api_retries`, `stalls` and `first_event_ms` cover
-  every turn, and `wall_clock_ms` is one budget spent across them rather than
-  handed out afresh per account. Waiting is not spent against it — `max_wait_ms`
-  caps that, and two names for one limit would leave one of them meaningless.
+  took: `usage`, `tool_calls`, `api_retries` and `stalls` cover every turn, and
+  `wall_clock_ms` is one budget spent across all of them rather than handed out
+  afresh per account — a park spends none of that budget, since `max_wait_ms`
+  is what caps a wait and two names for one limit would leave one of them
+  meaningless. `first_event_ms` is the one metric that is **not** the whole
+  run: it is the answering turn's own offset, because a run parked five hours
+  and then answering in two seconds is not a harness that took five hours to
+  speak, and `waited_ms` already reports the park.
 - **Choosing among free accounts**: soonest refill first, counting only windows
   the account has spent something of — an untouched window has no quota to waste
   (`internal/account.Soonest`). The owner's list names which accounts take part
