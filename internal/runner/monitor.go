@@ -106,44 +106,57 @@ type Disconnected struct {
 	Closed, Closing int
 }
 
-// Disconnect stops syncing one connection and closes every session it holds.
-// The hub is gone, so its sessions can never take another run; closing them
-// is what gets their workdirs reclaimed, since the collector reclaims from
-// session rows and nothing else would ever close these (decisions 0011, 0035).
-// The runs held are left to finish where they are — the hub has marked them
-// lost, and killing a run the owner did not ask to kill would throw the work
-// away.
-func (m *Monitor) Disconnect(ctx context.Context, connection string) (Disconnected, error) {
+// Disconnecting stops one connection syncing, because the owner has begun
+// disconnecting it. It is told before the hub is asked to retire the
+// registration, so the sync that would otherwise take the 401 its own
+// deregistration causes never happens — and if one is already in flight, what
+// it fails on is no longer this runner's failure to report.
+//
+// Nothing is destroyed here. A disconnect the hub then refuses leaves the
+// connection stopped until the daemon restarts, which is recoverable; closing
+// its sessions at this point would not be.
+func (m *Monitor) Disconnecting(connection string) Disconnected {
 	if m == nil {
-		return Disconnected{}, nil
+		return Disconnected{}
 	}
 	m.mu.Lock()
 	stop, running := m.stops[connection]
 	delete(m.stops, connection)
-	sessions, st := m.sessions, m.store
 	m.mu.Unlock()
-	out := Disconnected{Running: running}
 	// Marked here for a connection whose loop had already stopped, since
-	// nothing else will: a loop that is running is marked again on its way
-	// out, over whatever its last failing sync recorded.
+	// nothing else will; a running one is marked again on its way out, over
+	// whatever its last failing sync recorded.
 	m.update(connection, func(c *ConnectionState) { c.State = ConnGone })
-	// Sessions first, while the loop still holds the store open: stopping the
-	// last connection ends Serve, and Serve closes the store on its way out.
-	if st != nil && sessions != nil {
-		if err := m.letGo(ctx, connection, st, sessions, &out); err != nil {
-			// Stop syncing anyway: the hub has already retired this runner,
-			// so every sync from here is a refused credential. What was not
-			// reclaimed is swept at the next start.
-			if running {
-				stop()
-			}
-			return out, err
-		}
-	}
 	if running {
 		stop()
 	}
-	return out, nil
+	return Disconnected{Running: running}
+}
+
+// Disconnected closes every session the connection held, the hub having
+// retired it. A session is resumable only on the runner that holds it and that
+// hub is gone, so closing them is what gets their workdirs reclaimed — the
+// collector reclaims from session rows, and nothing else would ever close
+// these (decisions 0011, 0035).
+//
+// The runs held are left to finish where they are: the hub has marked them
+// lost, and killing a run the owner did not ask to kill would throw the work
+// away.
+func (m *Monitor) Disconnected(ctx context.Context, connection string) (Disconnected, error) {
+	if m == nil {
+		return Disconnected{}, nil
+	}
+	m.mu.Lock()
+	sessions, st := m.sessions, m.store
+	m.mu.Unlock()
+	var out Disconnected
+	if st == nil || sessions == nil {
+		// No store open: no connection configured here, or the runner is
+		// still starting. There is nothing of this hub's to let go of.
+		return out, nil
+	}
+	err := m.letGo(ctx, connection, st, sessions, &out)
+	return out, err
 }
 
 // letGo counts what the connection still holds and closes every session of

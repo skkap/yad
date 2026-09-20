@@ -18,7 +18,22 @@ type Request struct {
 	// session to close.
 	Connection string `json:"connection,omitempty"`
 	Session    string `json:"session,omitempty"`
+	// Stage is which half of a disconnect this is.
+	Stage string `json:"stage,omitempty"`
 }
+
+// The two stages of a disconnect. The daemon is told it has begun *before* the
+// hub is asked to retire the registration, so a sync that takes the 401 its
+// own deregistration caused is never mistaken for this runner failing — by
+// then the connection is already stopped and expected to be. Nothing is
+// destroyed in the first stage: a disconnect that the hub then refuses leaves
+// the connection stopped until `yad daemon restart`, and nothing else.
+const (
+	// DisconnectBegin stops the connection syncing.
+	DisconnectBegin = "begin"
+	// DisconnectEnd closes its sessions, the hub having retired it.
+	DisconnectEnd = "end"
+)
 
 // Response is the daemon's answer. Error carries the next action, as every
 // error here does.

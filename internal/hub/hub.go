@@ -329,8 +329,10 @@ func (h *Hub) register(api huma.API) {
 		OperationID: "deregister", Method: http.MethodPost, Path: "/runners/{runner}/deregister",
 		Summary: "Retire this runner's credential",
 		Description: "Runs the runner still holds become lost on the hub's side; runs offered to it and never claimed go back in the queue. " +
-			"The credential stops working at once. The runner's id, its sessions and its history stay, so registering again with a token " +
-			"issued for that runner brings it back.",
+			"Every session bound to that runner closes, and the runs queued or offered in them are cancelled: a session is resumable only on " +
+			"the runner that holds it, so a run left in one would be offerable to no runner at all. The binding is never cleared instead — the " +
+			"session's state is on that machine. The credential stops working at once. The runner's id and its history stay, so registering " +
+			"again with a token issued for that runner brings it back.",
 		Security: security, Errors: []int{401, 403, 426},
 	}, h.deregister)
 }

@@ -183,11 +183,16 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				res, err := monitor.CloseSession(ctx, conn, id)
 				return control.SessionClose{Outcome: res.Outcome, Reason: string(res.Reason), LiveRun: res.LiveRun}, err
 			},
-			Disconnect: func(ctx context.Context, conn string) (control.Disconnected, error) {
-				res, err := monitor.Disconnect(ctx, conn)
-				log.Warn("connection disconnected by its owner: no longer syncing", "connection", conn,
-					"was_syncing", res.Running, "runs_still_held", res.Runs, "sessions_closed", res.Closed+res.Closing, "err", err)
-				return control.Disconnected{Running: res.Running, Runs: res.Runs, Closed: res.Closed, Closing: res.Closing}, err
+			Disconnect: func(ctx context.Context, conn, stage string) (control.Disconnected, error) {
+				if stage == control.DisconnectBegin {
+					res := monitor.Disconnecting(conn)
+					log.Warn("connection disconnected by its owner: no longer syncing", "connection", conn, "was_syncing", res.Running)
+					return control.Disconnected{Running: res.Running}, nil
+				}
+				res, err := monitor.Disconnected(ctx, conn)
+				log.Warn("connection disconnected by its owner: sessions closed", "connection", conn,
+					"runs_still_held", res.Runs, "sessions_closed", res.Closed+res.Closing, "err", err)
+				return control.Disconnected{Runs: res.Runs, Closed: res.Closed, Closing: res.Closing}, err
 			},
 		})
 	}()

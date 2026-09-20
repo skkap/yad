@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,20 +59,34 @@ func TestDisconnectRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stopped := 0
-	out, notes, err := Disconnect(ctx, e.paths, "home", false, func(context.Context) error {
-		// Called before anything is removed: the daemon's side of it.
-		if !credentialExists(t, e.paths, "home") {
-			t.Error("the credential was removed before the daemon was told")
-		}
-		stopped++
-		return nil
+	var stages []string
+	out, notes, err := Disconnect(ctx, e.paths, "home", false, Daemon{
+		Beginning: func(context.Context) error {
+			// Before the hub is asked, so nothing the connection does next is
+			// read as this runner failing.
+			if !out0Deregistered(e, t) {
+				t.Error("the hub was told before the daemon was")
+			}
+			stages = append(stages, "begin")
+			return nil
+		},
+		Ended: func(context.Context) error {
+			// After the hub answered and before anything is removed.
+			if !credentialExists(t, e.paths, "home") {
+				t.Error("the credential was removed before the sessions were closed")
+			}
+			stages = append(stages, "end")
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.Deregistered || out.Forced != nil || out.Remaining != 0 || stopped != 1 {
-		t.Errorf("out %+v, notes %v, stopped %d", out, notes, stopped)
+	if out.Outcome != Retired || out.Refused != nil || out.Remaining != 0 {
+		t.Errorf("out %+v, notes %v", out, notes)
+	}
+	if want := []string{"begin", "end"}; !slices.Equal(stages, want) {
+		t.Errorf("the daemon was told %v, want %v — begin must come before the hub call", stages, want)
 	}
 	if len(notes) != 0 {
 		t.Errorf("notes on a clean disconnect: %v", notes)
@@ -105,7 +120,7 @@ func TestDisconnectLeavesTheOtherConnections(t *testing.T) {
 	if _, err := e.paths.Credential("two"); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := Disconnect(context.Background(), e.paths, "one", false, nil)
+	out, _, err := Disconnect(context.Background(), e.paths, "one", false, Daemon{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,16 +142,21 @@ func TestDisconnectKeepsEverythingWhenTheHubWillNotAnswer(t *testing.T) {
 	connected(t, e, "home")
 	broken := brokenHub(t, e, http.StatusBadGateway)
 
-	stopped := 0
-	_, _, err := Disconnect(context.Background(), broken, "home", false, func(context.Context) error {
-		stopped++
-		return nil
+	var stages []string
+	_, _, err := Disconnect(context.Background(), broken, "home", false, Daemon{
+		Beginning: func(context.Context) error { stages = append(stages, "begin"); return nil },
+		Ended:     func(context.Context) error { stages = append(stages, "end"); return nil },
 	})
 	if err == nil || !strings.Contains(err.Error(), "--force") || !strings.Contains(err.Error(), "nothing was removed") {
 		t.Fatalf("error = %v, want a refusal naming --force", err)
 	}
-	if stopped != 0 {
-		t.Error("the daemon was told to stop a connection that is still registered")
+	// The connection is stopped — that is what makes the 401 harmless — but
+	// nothing of its was closed, because the hub never answered.
+	if want := []string{"begin"}; !slices.Equal(stages, want) {
+		t.Errorf("the daemon was told %v, want %v: the second stage destroys things the hub never agreed to", stages, want)
+	}
+	if !strings.Contains(err.Error(), "yad daemon restart") {
+		t.Errorf("error = %v, want it to say the connection is stopped until a restart", err)
 	}
 	if !credentialExists(t, broken, "home") {
 		t.Error("the credential was removed although the hub never answered")
@@ -146,11 +166,11 @@ func TestDisconnectKeepsEverythingWhenTheHubWillNotAnswer(t *testing.T) {
 	}
 
 	// --force is the way through, and says the hub still holds a registration.
-	out, _, err := Disconnect(context.Background(), broken, "home", true, nil)
+	out, _, err := Disconnect(context.Background(), broken, "home", true, Daemon{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Deregistered || out.Forced == nil {
+	if out.Outcome != LeftBehind || out.Refused == nil {
 		t.Errorf("out = %+v, want a forced removal carrying the hub's refusal", out)
 	}
 	if credentialExists(t, broken, "home") || len(connectionNames(t, broken)) != 0 {
@@ -167,12 +187,12 @@ func TestDisconnectProceedsWhenTheHubHasForgottenTheRunner(t *testing.T) {
 			connected(t, e, "home")
 			gone := brokenHub(t, e, status)
 
-			out, notes, err := Disconnect(context.Background(), gone, "home", false, nil)
+			out, notes, err := Disconnect(context.Background(), gone, "home", false, Daemon{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if out.Deregistered || out.Forced != nil {
-				t.Errorf("out = %+v, want nothing retired and nothing forced", out)
+			if out.Outcome != AlreadyGone {
+				t.Errorf("out = %+v, want the hub recorded as already unaware of this runner", out)
 			}
 			if len(notes) != 1 || !strings.Contains(notes[0], "already forgotten") {
 				t.Errorf("notes = %v", notes)
@@ -192,12 +212,12 @@ func TestDisconnectWithoutACredential(t *testing.T) {
 	if err := e.paths.DeleteCredential("home"); err != nil {
 		t.Fatal(err)
 	}
-	out, notes, err := Disconnect(context.Background(), e.paths, "home", false, nil)
+	out, notes, err := Disconnect(context.Background(), e.paths, "home", false, Daemon{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Deregistered {
-		t.Error("a hub was told with no credential to tell it with")
+	if out.Outcome != AlreadyGone {
+		t.Errorf("out = %+v — a hub was told with no credential to tell it with", out)
 	}
 	if len(notes) != 1 || !strings.Contains(notes[0], "retire this runner at the hub itself") {
 		t.Errorf("notes = %v", notes)
@@ -210,11 +230,11 @@ func TestDisconnectWithoutACredential(t *testing.T) {
 // A name nothing is connected to names the ones that are.
 func TestDisconnectUnknownConnection(t *testing.T) {
 	e := newEnv(t)
-	if _, _, err := Disconnect(context.Background(), e.paths, "nowhere", false, nil); err == nil || !strings.Contains(err.Error(), "none at all") {
+	if _, _, err := Disconnect(context.Background(), e.paths, "nowhere", false, Daemon{}); err == nil || !strings.Contains(err.Error(), "none at all") {
 		t.Errorf("with no connections: %v", err)
 	}
 	connected(t, e, "home")
-	_, _, err := Disconnect(context.Background(), e.paths, "nowhere", false, nil)
+	_, _, err := Disconnect(context.Background(), e.paths, "nowhere", false, Daemon{})
 	if err == nil || !strings.Contains(err.Error(), "home") {
 		t.Errorf("error = %v, want the connections it does have", err)
 	}
@@ -229,17 +249,17 @@ func TestDisconnectUnknownConnection(t *testing.T) {
 func TestDisconnectGoesOnWhenTheDaemonCannotBeTold(t *testing.T) {
 	e := newEnv(t)
 	connected(t, e, "home")
-	out, notes, err := Disconnect(context.Background(), e.paths, "home", false, func(context.Context) error {
-		return errors.New("the daemon does not answer")
+	out, notes, err := Disconnect(context.Background(), e.paths, "home", false, Daemon{
+		Ended: func(context.Context) error { return errors.New("the daemon does not answer") },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.Deregistered {
+	if out.Outcome != Retired {
 		t.Error("the hub was not told")
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "yad daemon restart") {
-		t.Errorf("notes = %v, want one naming the way to end the connection now", notes)
+	if len(notes) != 1 || !strings.Contains(notes[0], "yad sessions") {
+		t.Errorf("notes = %v, want one naming how to close the sessions by hand", notes)
 	}
 	if credentialExists(t, e.paths, "home") || len(connectionNames(t, e.paths)) != 0 {
 		t.Error("nothing was removed")
@@ -270,6 +290,51 @@ func brokenHub(t *testing.T, e *env, status int) config.Paths {
 	return e.paths
 }
 
+// What an error after the point of no return says about the hub, for each of
+// the three outcomes. Two of them leave the registration unretired by us and
+// they are opposite: --force leaves a live one to go and retire, while a hub
+// that had already forgotten this runner has none, and sending the owner to
+// retire it would send them after something that is not there. Branching this
+// on "was it deregistered" covered the two ends and got the middle backwards.
+func TestWhatALateFailureSaysAboutTheHub(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   int // what the hub answers to deregister; 0 is a working hub
+		force    bool
+		want     string
+		unwanted string
+	}{
+		{name: "retired", status: 0, want: "is deregistered at", unwanted: "still works there"},
+		{name: "already gone", status: http.StatusUnauthorized, want: "already unknown to", unwanted: "still works there"},
+		{name: "left behind", status: http.StatusBadGateway, force: true, want: "still registered at", unwanted: "no longer accepted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			connected(t, e, "home")
+			p := e.paths
+			if tc.status != 0 {
+				p = brokenHub(t, e, tc.status)
+			}
+			dir := filepath.Join(p.Config, "credentials")
+			if err := os.Chmod(dir, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+			_, _, err := Disconnect(context.Background(), p, "home", tc.force, Daemon{})
+			if err == nil {
+				t.Fatal("the credential could not be removed and no error said so")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to mention %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), tc.unwanted) {
+				t.Errorf("error = %v, must not say %q", err, tc.unwanted)
+			}
+		})
+	}
+}
+
 // A forced disconnect leaves the registration live at the hub, so an error
 // after that point must not tell the owner the credential is dead — that is
 // how a working credential is left at a hub nobody will ever retire it at.
@@ -284,7 +349,7 @@ func TestAForcedDisconnectSaysTheRunnerIsStillRegistered(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(dir, 0o700) })
 
-	_, _, err := Disconnect(context.Background(), broken, "home", true, nil)
+	_, _, err := Disconnect(context.Background(), broken, "home", true, Daemon{})
 	if err == nil {
 		t.Fatal("the credential could not be removed and no error said so")
 	}
@@ -307,11 +372,25 @@ func TestADeregisteredCredentialThatWillNotDeleteSaysItIsDead(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(dir, 0o700) })
 
-	_, _, err := Disconnect(context.Background(), e.paths, "home", false, nil)
+	_, _, err := Disconnect(context.Background(), e.paths, "home", false, Daemon{})
 	if err == nil || !strings.Contains(err.Error(), "no longer accepted anywhere") {
 		t.Errorf("error = %v, want it to say the credential is dead", err)
 	}
 	if strings.Contains(err.Error(), "still registered") {
 		t.Errorf("error = %v, want it to say this runner is deregistered", err)
 	}
+}
+
+// out0Deregistered is whether the hub has retired this runner yet, read from
+// the hub rather than from Disconnect's own bookkeeping.
+func out0Deregistered(e *env, t *testing.T) bool {
+	t.Helper()
+	cred, err := e.paths.Credential("home")
+	if err != nil {
+		return false
+	}
+	id, _ := e.paths.RunnerID()
+	c, _ := hubclient.New(e.url, cred)
+	_, err = c.Sync(context.Background(), id, v1.SyncRequest{RunnerID: id})
+	return err == nil
 }

@@ -54,13 +54,11 @@ func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error
 // is skipped for runs until the owner finishes the login.
 func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account add", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	pos, err := positional(fs, args, 2, "usage: yad account add <harness> <label>")
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 2 {
-		return errors.New("usage: yad account add <harness> <label>")
-	}
-	id, label := fs.Arg(0), fs.Arg(1)
+	id, label := pos[0], pos[1]
 	if err := checkHarness(id); err != nil {
 		return err
 	}
@@ -134,11 +132,8 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 func accountList(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account list", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "as JSON")
-	if err := fs.Parse(args); err != nil {
+	if _, err := positional(fs, args, 0, "usage: yad account list [--json]"); err != nil {
 		return err
-	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected %q — usage: yad account list [--json]", fs.Arg(0))
 	}
 	cfg, err := config.Load(g.paths)
 	if err != nil {

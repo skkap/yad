@@ -49,21 +49,6 @@ func (f hubFlags) client() (*hubapiclient.Client, error) {
 	return hubapiclient.New(*f.url, tok)
 }
 
-// parseInterleaved parses flags on both sides of the positional arguments,
-// since flag stops at the first one and the usage puts them first.
-func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
-	var pos []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if fs.NArg() == 0 {
-			return pos, nil
-		}
-		pos, args = append(pos, fs.Arg(0)), fs.Args()[1:]
-	}
-}
-
 const submitUsage = "usage: yad hub submit --harness h --model m [--context text | --context-file f] [--session id | --new-session id] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
 
 // cmdHubSubmit queues a run and prints its id — alone on stdout, so a script

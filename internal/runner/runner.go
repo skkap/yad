@@ -188,6 +188,22 @@ func (s *server) initErrs() {
 	}
 }
 
+// allDisconnected is whether every connection this process ran was retired by
+// `yad disconnect`, rather than stopping on its own.
+func (s *server) allDisconnected() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.loops) == 0 {
+		return false
+	}
+	for _, l := range s.loops {
+		if !s.gone[l.Connection] {
+			return false
+		}
+	}
+	return true
+}
+
 // forget drops what a connection stopped on, because the owner asked for it to
 // stop. Both orderings pass through here: the loop may already have failed on
 // the 401 its own deregistration caused, or it may fail after this. So this
@@ -279,6 +295,19 @@ func (s *server) run(ctx context.Context) error {
 
 	select {
 	case <-stopped:
+		if s.allDisconnected() {
+			// Every connection was disconnected by the owner rather than
+			// stopping on its own. A runner with no hub waits to be told to
+			// go, exactly as one started with no connection does — and its
+			// sessions are still the daemon's to close, which is the second
+			// half of the disconnect that is about to arrive.
+			s.log.Info("every connection was disconnected by its owner; idle until stopped")
+			select {
+			case <-ctx.Done():
+			case <-s.drain.Draining():
+			}
+			break
+		}
 		// Every connection stopped on its own: nothing left to sync with,
 		// and the runs in hand still answer the ladder on their way to an end.
 	case <-ctx.Done():

@@ -26,7 +26,7 @@ func TestPositional(t *testing.T) {
 		{name: "a flag on each side", args: []string{"--other=x", "home", "--force"}, want: 1, pos: []string{"home"}, flag: true, other: "x"},
 		{name: "no flag at all", args: []string{"home"}, want: 1, pos: []string{"home"}},
 		{name: "two positionals, flag after", args: []string{"claude", "personal", "--force"}, want: 2, pos: []string{"claude", "personal"}, flag: true},
-		{name: "two positionals, flag between", args: []string{"claude", "--force", "personal"}, want: 2, err: "usage"},
+		{name: "two positionals, flag between", args: []string{"claude", "--force", "personal"}, want: 2, pos: []string{"claude", "personal"}, flag: true},
 		{name: "a flag value that looks positional", args: []string{"--other", "home", "s1"}, want: 1, pos: []string{"s1"}, other: "home"},
 		{name: "none given", args: nil, want: 1, err: "usage"},
 		{name: "one too many", args: []string{"home", "--force", "extra"}, want: 1, err: `unexpected argument "extra"`},
@@ -99,6 +99,23 @@ func TestEveryCommandTakesItsFlagsAfterItsPositionals(t *testing.T) {
 			args: []string{"hub", "admin-token", "revoke", "nosuch"},
 			want: "no admin token",
 		},
+		{
+			// The five commands in cmd_hub_run.go went through their own copy
+			// of this helper and were never in this table.
+			name: "hub cancel",
+			args: []string{"hub", "cancel", "r1", "--hub", "https://hub.example"},
+			want: "admin token",
+		},
+		{
+			name: "hub watch",
+			args: []string{"hub", "watch", "r1", "--hub", "https://hub.example"},
+			want: "admin token",
+		},
+		{
+			name: "hub close-session",
+			args: []string{"hub", "close-session", "s1", "--hub", "https://hub.example"},
+			want: "admin token",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newProfile(t)
@@ -144,16 +161,21 @@ func TestAnUnknownFlagAfterAPositionalIsRefused(t *testing.T) {
 	}
 }
 
-// A guard for the next command. Parsing one flag set twice in one function is
-// the hand-rolled shape — parse, take the positional, parse the rest — and
-// three commands had their own copy of it before one of them got it wrong. It
-// belongs in positional() now, so a second parse anywhere else is the shape
-// coming back.
+// A guard for the next command. Collecting positional arguments off a flag
+// set is what the hand-rolled shape does — parse, take the first argument,
+// parse the rest — and it had been written three times before one of them got
+// it wrong. Reading fs.Arg or fs.Args is the thing only the helper may do.
 //
-// Counted per function, not per file: a file holding several commands has a
-// parse per command, and counting those would be the same kind of mistake as
-// the bug.
-func TestTheParsingHelperIsTheOnlyImplementation(t *testing.T) {
+// The first version of this guard counted fs.Parse calls per function, and
+// missed parseInterleaved, which parses once inside a loop: it enforced the
+// shape of the bug it had just seen rather than the shape of the bug. It also
+// counted per file, which flagged four innocent files — the same distinction
+// the defect itself turns on.
+func TestOnlyTheHelperCollectsPositionals(t *testing.T) {
+	// run reads the subcommand and hands the rest on, so it is the one place
+	// that must not consume every positional.
+	allowed := map[string]bool{"parseInterleaved": true, "run": true}
+
 	paths, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -171,31 +193,28 @@ func TestTheParsingHelperIsTheOnlyImplementation(t *testing.T) {
 		checked++
 		for _, d := range f.Decls {
 			fn, ok := d.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
+			if !ok || fn.Body == nil || allowed[fn.Name.Name] {
 				continue
 			}
-			parses := 0
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Parse" {
-					if x, ok := sel.X.(*ast.Ident); ok && x.Name == "fs" {
-						parses++
-					}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				x, ok := sel.X.(*ast.Ident)
+				if !ok || x.Name != "fs" {
+					return true
+				}
+				if sel.Sel.Name == "Arg" || sel.Sel.Name == "Args" {
+					t.Errorf("%s: %s reads fs.%s; take the positionals from positional() or parseInterleaved() so a flag may come last",
+						filepath.Base(path), fn.Name.Name, sel.Sel.Name)
 				}
 				return true
 			})
-			// The helper is the one place that parses twice; that is what it
-			// is for.
-			if fn.Name.Name == "positional" {
-				continue
-			}
-			if parses > 1 {
-				t.Errorf("%s: %s parses its flag set %d times; use positional() so the flag may come last",
-					filepath.Base(path), fn.Name.Name, parses)
-			}
 		}
 	}
 	if checked == 0 {

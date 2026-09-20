@@ -50,11 +50,8 @@ func cmdSessions(ctx context.Context, g global, args []string, w io.Writer) erro
 	}
 	fs := flag.NewFlagSet("sessions", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print the sessions as JSON")
-	if err := fs.Parse(args); err != nil {
+	if _, err := positional(fs, args, 0, "`yad sessions [--json]` lists every session"); err != nil {
 		return err
-	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected %q — `yad sessions [--json]` lists every session", fs.Arg(0))
 	}
 	var list []session
 	s, err := store.OpenReadOnly(ctx, g.paths.StateDB())

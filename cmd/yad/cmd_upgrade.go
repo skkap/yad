@@ -24,14 +24,15 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	check := fs.Bool("check", false, "say what the newest release is and change nothing")
 	force := fs.Bool("force", false, "replace the binary even when it is not older than the newest release")
 	tag := fs.String("tag", "", "a release to install instead of the newest — naming one installs it whether it is newer or older, which is how a bad release is rolled back")
-	if err := fs.Parse(args); err != nil {
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
 		return err
 	}
 	// flag stops parsing at the first positional argument, so `yad upgrade
 	// v0.3.1 --check` would drop the --check and replace the binary for real.
 	// Every other command here refuses leftovers for smaller reasons.
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected argument %q — a release goes in --tag, as `yad upgrade --tag %s`", fs.Arg(0), fs.Arg(0))
+	if len(pos) > 0 {
+		return fmt.Errorf("unexpected argument %q — a release goes in --tag, as `yad upgrade --tag %s`", pos[0], pos[0])
 	}
 	src := releaseSource()
 

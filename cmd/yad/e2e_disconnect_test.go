@@ -133,21 +133,40 @@ func TestE2EDisconnectWithARunHeld(t *testing.T) {
 	if !strings.Contains(out, "1 run(s)") || !strings.Contains(out, "nowhere to go") {
 		t.Errorf("disconnect said %q, want it to say the run held has nowhere to report", out)
 	}
+	if !strings.Contains(out, "stays up idle") {
+		t.Errorf("disconnect said %q, want it to say the daemon does not exit", out)
+	}
 	eventually(t, "the hub has the run it held as lost", func() bool {
 		r, err := m.hubDB.GetRun(ctx, "e2e-held")
 		return err == nil && r.State == string(v1.RunLost)
 	})
-	// Let the harness finish; the daemon ends with it, having no hub left.
+	// Let the harness finish. The daemon stays up with no connection left —
+	// a runner with no hub waits rather than exits — and that is what lets
+	// the second stage of the disconnect close the session and reclaim its
+	// workdir even when the hub being left was the only one.
 	m.open()
+	eventually(t, "the session of the hub that was left is closed", func() bool {
+		var list []session
+		if err := json.Unmarshal([]byte(m.ok("sessions", "--json")), &list); err != nil {
+			return false
+		}
+		for _, s := range list {
+			if s.State == "open" {
+				return false
+			}
+		}
+		return len(list) > 0
+	})
+	var st control.Status
+	if err := json.Unmarshal([]byte(m.ok("status", "--json")), &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Connections) != 0 {
+		t.Errorf("status shows %+v, want no connection", st.Connections)
+	}
 	select {
 	case code := <-d.done:
-		if code != 0 {
-			t.Errorf("daemon exited %d:\n%s", code, d.out.String())
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatalf("the daemon kept running with no connection left:\n%s", d.out.String())
+		t.Fatalf("the daemon exited %d instead of waiting with no hub:\n%s", code, d.out.String())
+	default:
 	}
-	// Its exit is taken here, so the cleanup does not wait on a process that
-	// has already stopped.
-	d.once.Do(func() {})
 }

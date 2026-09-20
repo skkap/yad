@@ -47,8 +47,9 @@ const deregisteredUnstartedReason = "the runner holding this session deregistere
 // deregistering ends.
 //
 // The runner's row stays. Its sessions and runs reference it, and a runner
-// that comes back registers under the same id with a token issued for it —
-// the recovery [0020] already describes. What goes is the credential, replaced
+// that comes back registers under the same id with a token issued for it,
+// which is the recovery UpsertRunner's own comment describes and
+// ARCHITECTURE.md §5 gives the operator. What goes is the credential, replaced
 // by the hash of a secret nobody was given, so nothing can authenticate as
 // that runner again and no row has to be deleted to say so.
 func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, error) {
@@ -97,7 +98,13 @@ func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, 
 				return err
 			}
 			if n == 0 {
-				continue // closed between the listing and here
+				// Not a race: both statements are in this transaction, and
+				// the row was listed open by it. A session already closed is
+				// one RecordSessionClosed's own guard turned away, which can
+				// only mean the listing and the update disagree about what
+				// open means — worth not counting, and not worth inventing a
+				// concurrent closer for.
+				continue
 			}
 			closed++
 			if err := cancelUnstarted(ctx, q, id, deregisteredUnstartedReason, at); err != nil {

@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"testing"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -279,5 +282,38 @@ func TestAStoppedLoopWithdrawsWhatItNeverStarted(t *testing.T) {
 	// And the claim is gone from the store, so the hub may offer it again.
 	if _, err := e.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "in-flight"}); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("the withdrawn claim is still in the store: %v", err)
+	}
+}
+
+// The withdrawal is wired into the supervisor, not merely available to it.
+// The test above proves WithdrawPending gives the capacity back; this proves
+// something calls it when a loop stops, which is what the leak actually turns
+// on — without this, deleting the call in server.run restores the leak and
+// every test still passes.
+//
+// It reads the source rather than driving a disconnect because the leak needs
+// a claim caught between its sync and the acknowledging one, and a test that
+// arranges that by holding a sync open leaves the runner waiting on a request
+// that never returns. A guard that says what it checks is worth more than a
+// flaky one that pretends to check more.
+func TestStoppingALoopWithdrawsItsPendingClaims(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "runner.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "WithdrawPending" {
+			found = true
+		}
+		return true
+	})
+	if !found {
+		t.Error("nothing in runner.go calls WithdrawPending; a loop that stops with a claim it never started leaks that unit of the pool, and one of its harness cap, for the life of the daemon")
 	}
 }
