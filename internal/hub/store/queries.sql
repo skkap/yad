@@ -199,3 +199,24 @@ SELECT id FROM sessions WHERE runner_id = ? AND close_requested_at IS NOT NULL A
 
 -- name: UnstartedRunsInSession :many
 SELECT id FROM runs WHERE session_id = ? AND state IN ('queued', 'offered') ORDER BY created_at, id;
+
+-- Deregistration (DEV-29). A runner that disconnects keeps its row: sessions
+-- and runs reference it, and re-registering under a token for that id is how
+-- it comes back. What goes is its credential, replaced by the hash of a
+-- secret nobody was given, so nothing can authenticate as it again.
+-- name: RetireRunnerCredential :execrows
+UPDATE runners SET credential_hash = sqlc.arg(credential_hash), drain_requested_at = NULL
+WHERE id = sqlc.arg(id);
+
+-- Runs the deregistering runner holds are lost: it is not coming back to
+-- report them, and a lost run is what a hub tells its submitter.
+-- name: LoseRunnerRuns :execrows
+UPDATE runs SET state = 'lost', reason = sqlc.arg(reason), lease_expires_at = NULL, resumes_at = NULL,
+  updated_at = sqlc.arg(now)
+WHERE runner_id = sqlc.arg(runner_id) AND state IN ('claimed', 'preparing', 'running', 'waiting');
+
+-- An offer it never claimed was never held, so it goes back in the queue for
+-- another runner rather than being lost.
+-- name: RequeueRunnerOffers :execrows
+UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = sqlc.arg(now)
+WHERE runner_id = sqlc.arg(runner_id) AND state = 'offered';

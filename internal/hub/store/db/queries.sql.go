@@ -612,6 +612,28 @@ func (q *Queries) LoseLapsedRuns(ctx context.Context, now int64) (int64, error) 
 	return result.RowsAffected()
 }
 
+const loseRunnerRuns = `-- name: LoseRunnerRuns :execrows
+UPDATE runs SET state = 'lost', reason = ?1, lease_expires_at = NULL, resumes_at = NULL,
+  updated_at = ?2
+WHERE runner_id = ?3 AND state IN ('claimed', 'preparing', 'running', 'waiting')
+`
+
+type LoseRunnerRunsParams struct {
+	Reason   sql.NullString
+	Now      int64
+	RunnerID sql.NullString
+}
+
+// Runs the deregistering runner holds are lost: it is not coming back to
+// report them, and a lost run is what a hub tells its submitter.
+func (q *Queries) LoseRunnerRuns(ctx context.Context, arg LoseRunnerRunsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, loseRunnerRuns, arg.Reason, arg.Now, arg.RunnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const offerCandidates = `-- name: OfferCandidates :many
 SELECT r.id, r.session_id, r.harness, r.model, r.spec, r.state, r.runner_id, r.lease_expires_at, r.resumes_at, r.reason, r.created_at, r.updated_at, r.events_through FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
@@ -857,6 +879,26 @@ func (q *Queries) RequeueRun(ctx context.Context, arg RequeueRunParams) error {
 	return err
 }
 
+const requeueRunnerOffers = `-- name: RequeueRunnerOffers :execrows
+UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = ?1
+WHERE runner_id = ?2 AND state = 'offered'
+`
+
+type RequeueRunnerOffersParams struct {
+	Now      int64
+	RunnerID sql.NullString
+}
+
+// An offer it never claimed was never held, so it goes back in the queue for
+// another runner rather than being lost.
+func (q *Queries) RequeueRunnerOffers(ctx context.Context, arg RequeueRunnerOffersParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, requeueRunnerOffers, arg.Now, arg.RunnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const requeueWithdrawnOffers = `-- name: RequeueWithdrawnOffers :execrows
 UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = ?1
 WHERE state = 'offered' AND lease_expires_at <= ?1
@@ -864,6 +906,28 @@ WHERE state = 'offered' AND lease_expires_at <= ?1
 
 func (q *Queries) RequeueWithdrawnOffers(ctx context.Context, now int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, requeueWithdrawnOffers, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const retireRunnerCredential = `-- name: RetireRunnerCredential :execrows
+UPDATE runners SET credential_hash = ?1, drain_requested_at = NULL
+WHERE id = ?2
+`
+
+type RetireRunnerCredentialParams struct {
+	CredentialHash string
+	ID             string
+}
+
+// Deregistration (DEV-29). A runner that disconnects keeps its row: sessions
+// and runs reference it, and re-registering under a token for that id is how
+// it comes back. What goes is its credential, replaced by the hash of a
+// secret nobody was given, so nothing can authenticate as it again.
+func (q *Queries) RetireRunnerCredential(ctx context.Context, arg RetireRunnerCredentialParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, retireRunnerCredential, arg.CredentialHash, arg.ID)
 	if err != nil {
 		return 0, err
 	}
