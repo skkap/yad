@@ -177,3 +177,29 @@ func TestCleanReason(t *testing.T) {
 		t.Errorf("a long reason came back %d bytes: %q", len(long), long)
 	}
 }
+
+// Deregistering keeps the runner's row because its sessions and runs point at
+// it — which is a reason only while SQLite is enforcing those references. It
+// does not by default; the pragma that turns it on is in store.OpenSQLite, and
+// the hub database inherits it. Watching the delete be refused is what keeps
+// that reason true: an open that lost the pragma would fail here, rather than
+// quietly turn deregistration into a way to orphan a session.
+func TestTheRunnerRowCannotBeDeletedWhileItsWorkPointsAtIt(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	f.enqueue(t, run("a", "s1"))
+	f.mustSync(t, "r1", cred, first("r1", 1))
+	f.mustSync(t, "r1", cred, req("r1", 0, claimed("a")...))
+	if res, env := f.deregister(t, "r1", cred, ""); res.StatusCode != http.StatusOK {
+		t.Fatalf("deregister: %d %+v", res.StatusCode, env)
+	}
+
+	_, err := f.store.DB.ExecContext(context.Background(), `DELETE FROM runners WHERE id = 'r1'`)
+	if err == nil {
+		t.Fatal("the runner row was deleted while a session and a run still reference it — deregistering by deleting it would orphan them")
+	}
+	// Named, so a delete refused for some other reason cannot pass for this.
+	if !strings.Contains(strings.ToLower(err.Error()), "foreign key") {
+		t.Errorf("the delete failed, but not on the reference: %v", err)
+	}
+}
