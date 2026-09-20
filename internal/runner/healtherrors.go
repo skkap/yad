@@ -40,11 +40,18 @@ const (
 // That is the guarantee DEV-60 had to add to HarnessReport.Error after the
 // fact, and the one DEV-67 still owes Warnings.
 //
-// One ring, and every connection reports from it, so a hub hears about
-// trouble that was not its own — "could not reach the hub" reaches hub B when
-// it was hub A that would not answer. That is the right way round: the
-// messages name no hub (which connection it was is an attr, and attrs stay
-// here), and a runner that is struggling is news to everyone offering it work.
+// One ring, and every connection reports from it, so a hub hears about trouble
+// that was not its own — "could not reach the hub" reaches hub B when it was
+// hub A that would not answer. Deliberate, and bounded by the same rule as the
+// rest: a connection's name and a hub's URL are runtime values, so a message
+// carrying either would have to be formatted at run time, which the literal
+// test makes impossible. What hub B learns is that something was unreachable,
+// never which hub or where. That is nothing it could act
+// on beyond what it already knows — under decision 0038 the owner trusts the
+// hubs it connects, and the capability document has already told each one the
+// capacity it is sharing. A struggling runner is news to everyone offering it
+// work, so the per-connection alternative would cost information and buy
+// nothing.
 //
 // Repeats collapse to their newest occurrence: a hub that cannot be reached
 // logs every sync, and five copies of one sentence tell a hub less than five
