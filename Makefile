@@ -14,7 +14,7 @@ GENERATED := internal/store/db internal/hub/store/db protocol/v1/openapi.yaml pr
 
 TARGETS := linux/amd64 linux/arm64 darwin/arm64 darwin/amd64
 
-.PHONY: fmt lint test build generate check-generated cross check install dist clean smoke smoke-codex
+.PHONY: fmt lint test build generate check-generated cross check ci install dist clean smoke smoke-codex
 
 fmt:
 	gofmt -w .
@@ -53,6 +53,25 @@ cross:
 	done
 
 check: lint test build check-generated cross
+
+# What CI runs, and only that. CI's one advantage over a laptop here is that it
+# is a clean Linux machine, so it runs the things whose answer can differ there
+# — vet, a build, and the suite — and nothing whose answer cannot.
+#
+# gofmt, staticcheck, check-generated and cross give the same answer on any
+# machine, so running them twice buys nothing; `make check` is where they live
+# and CHECKS.md makes passing it the bar before a pull request.
+#
+# vet is here despite being machine-independent because it type-checks test
+# files, which a build never does — twice this has caught a merge that was
+# textually clean and did not compile.
+#
+# -race is deliberately absent: it needs cgo, roughly triples the suite, and
+# `make check` runs it on every change before the branch is pushed.
+ci:
+	go vet ./...
+	go build -ldflags '$(LDFLAGS)' -o /dev/null ./cmd/yad
+	go test ./...
 
 # One real run through yad hub (scripts/smoke.sh), with Claude or with Codex.
 # Each spends a few cents of the logged-in account, so they are run by hand and
