@@ -47,8 +47,8 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		return config.Connection{}, none, notes, err
 	}
 	conn := config.Connection{Name: name, URL: hubURL}
-	// Every message below names the hub, and a hub URL can carry a
-	// credential in its userinfo.
+	// Every message below names the hub. CheckHubURL has refused userinfo,
+	// but a query or fragment is where a signed URL keeps its signature.
 	shown := config.RedactURL(hubURL)
 	existing := -1
 	for i, c := range cfg.Connections {
@@ -56,9 +56,9 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		case c.Name == name && c.URL != hubURL:
 			return conn, none, notes, fmt.Errorf("connection %q already points at %s — pick another --name for this hub", name, config.RedactURL(c.URL))
 		case c.Name != name && c.URL == hubURL:
-			// The command is for pasting, and one carrying "redacted@" in
-			// place of the owner's credential would register against the
-			// wrong account, so it names the URL rather than quoting it.
+			// The command is for pasting, and one carrying "?redacted" in place
+			// of the owner's query would register against a different URL, so
+			// it names the URL rather than quoting it.
 			again := shown
 			if shown != hubURL {
 				again = "<the same URL>"

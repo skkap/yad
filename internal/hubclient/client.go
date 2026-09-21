@@ -129,8 +129,9 @@ func (c *Client) do(ctx context.Context, bearer, path string, in, out any) error
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// url.Error carries the URL, never the headers, so the bearer stays
-		// out — but the URL is the connection's own, userinfo and all, with
-		// only its password starred by Go.
+		// out. The base URL carries no userinfo — CheckHubURL refused it — but
+		// a hub's redirect names a Location of its own choosing, and the
+		// refusal of it is quoted here whole.
 		return config.RedactURLError(err)
 	}
 	defer resp.Body.Close()

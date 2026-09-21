@@ -90,9 +90,10 @@ func RedactURL(raw string) string {
 
 // RedactURLError is err with the URL in a *url.Error redacted. That is the
 // error net/http returns for a request that never got an answer, and it
-// quotes the URL it dialled with only the password starred, so a token held
-// as the username reaches the terminal, the daemon's log and `yad status`
-// unless every client that dials a hub passes its errors through here.
+// quotes the URL it last dialled — a hub's redirect Location among them, which
+// CheckHubURL never saw — with at most the password starred. Every client that
+// dials a hub passes its errors through here before they reach the terminal,
+// the daemon's log or `yad status`.
 func RedactURLError(err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) {
