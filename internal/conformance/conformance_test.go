@@ -599,16 +599,25 @@ func TestASecretTheHubSentIsNotPrinted(t *testing.T) {
 
 // A connection URL with userinfo is refused before the suite starts, so the
 // route left for a URL-shaped credential into the report is a hub that
-// redirects to one: the refusal quotes the Location, and Go's transport error
-// quotes it again with only the password starred.
+// redirects to one: the refusal quotes the Location, Go's transport error
+// quotes it again with only the password starred, and a Location that does not
+// parse is quoted whole inside the error net/http builds for it.
 func TestACredentialInARedirectIsNotPrinted(t *testing.T) {
 	t.Parallel()
 	const secret = "sk-secret-token-abc"
-	for _, userinfo := range []string{secret, "runner:" + secret} {
-		t.Run(userinfo, func(t *testing.T) {
+	for _, tc := range []struct{ name, location string }{
+		{"token as username", "http://" + secret + "@HOST/elsewhere"},
+		{"token as password", "http://runner:" + secret + "@HOST/elsewhere"},
+		{"unparseable, token as password", "http://runner:" + secret + "@HOST/%zz"},
+		{"unparseable, token as username", "http://" + secret + "@HOST/%zz"},
+		{"unparseable host", "http://runner:" + secret + "@[::1/elsewhere"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.Redirect(w, r, "http://"+userinfo+"@"+r.Host+"/elsewhere", http.StatusTemporaryRedirect)
+				// Set by hand: http.Redirect would clean a Location it can parse.
+				w.Header().Set("Location", strings.ReplaceAll(tc.location, "HOST", r.Host))
+				w.WriteHeader(http.StatusTemporaryRedirect)
 			}))
 			t.Cleanup(srv.Close)
 			rep, err := Run(context.Background(), Options{BaseURL: srv.URL + "/v1", Token: fakeToken})
