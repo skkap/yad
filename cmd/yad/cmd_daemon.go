@@ -219,8 +219,10 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				fmt.Fprintln(w, "\ndrained — every run held has ended")
 				log.Info("daemon stopped", "drained", true, "reason", drain.Reason())
 			default:
-				// Every connection stopped on its own: nothing left to do.
-				log.Error("daemon exiting: every connection stopped", "err", err)
+				// Every connection stopped on its own, or the runner could
+				// not set up at all — its store would not open, say, which a
+				// runner with no hub now meets too. The error says which.
+				log.Error("daemon exiting: the runner stopped on its own", "err", err)
 			}
 			return err
 		case t := <-tick.C:
