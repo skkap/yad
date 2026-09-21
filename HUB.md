@@ -81,17 +81,27 @@ refused before its body is read — see below.
 
 ## Authenticating a runner
 
-**`register` is authenticated by a registration token your hub issued**, as the
-bearer. Register no runner without one, and none with a bearer you did not
-issue.
+**`register` is authenticated by a registration token your hub issued**, sent
+as `Authorization: Bearer <token>` — the spec says `type: http, scheme:
+bearer` and nothing spells the header out. Register no runner without one, and
+none with a bearer you did not issue.
 
 **A registration token registers one runner once.** Presented a second time,
 for any runner, it is refused. It is spent whether or not the runner it
 registered still exists.
 
 **`register` exchanges that token for a runner credential**, and that
-credential authenticates **every later call**. A sync, an events batch or a
-result carrying no bearer, or one you did not issue, is refused.
+credential authenticates **every later call**, in the same
+`Authorization: Bearer` form. A sync, an events batch or a result carrying no
+bearer, or one you did not issue, is refused.
+
+The register answer also carries `sync_interval_ms` and `lease_ms`, which are
+governed by the timing rules below. Its `hub_features` and `min_version` are
+optional and no rule in §2 constrains them: `hub_features` is yours to name if
+you want runners to know something about you, and `min_version` refuses
+runners older than a version you choose, with `version_too_old`. **Omitting
+both is a complete, conforming hub** — nothing checks either, and a hub that
+never refuses on version never emits that code.
 
 ## What a hub must do
 
@@ -108,7 +118,9 @@ claim loses every run a runner never got.
 request's `health.free_capacity` is what the runner has already reserved for
 you. `total` bounds the whole response — and `by_harness` bounds each harness
 **independently of it**: a sync declaring `total: 4` with `by_harness:
-{claude: 1}` will take one Claude run, not four. That per-harness figure is the
+{claude: 1}` will take one Claude run, not four. A harness **absent** from
+`by_harness` has no per-harness bound and is limited by `total` alone; the map
+carries only the caps its owner set, and an empty map is omitted entirely. That per-harness figure is the
 owner's cap on their own machine. Offer past either and the surplus is refused,
 having occupied your queue in the meantime.
 
@@ -196,6 +208,15 @@ carries it — an unknown path and a wrong method included. A plain-text 404 is
 a protocol violation, because the runner on the other end is debugged by
 someone reading `next_action`.
 
+**The envelope is required; most of the status numbers are yours.** The
+protocol fixes only a few: `426` for a missing or wrong `Yad-Protocol`, `409`
+for a terminal state that differs from one you hold, and `403`/`404` for a
+call about a run you cannot match to the caller. For everything else — a spent
+registration token, a credential that belongs to another runner, a wrong
+method — what is checked is that the envelope and its `next_action` are there,
+not which number carries them. Pick sensibly and be consistent; nothing will
+fail you for choosing `401` over `403`.
+
 **Refuse the wrong protocol before reading the body.** A request whose
 `Yad-Protocol` header is missing or names another version is `426
 unsupported_protocol`.
@@ -226,6 +247,11 @@ queueing it.
 yad conformance <hub url> --token <token> [--harness id] [--lease-wait d]
 ```
 
+The URL you give it is your base: every path in the spec is relative to it, so
+a hub mounted at `https://example.com/yad/v1` is named in full. The spec's
+`servers` entry says `/v1` because that is where `yad hub` mounts it; yours is
+wherever you say it is.
+
 Thirty-four black-box checks against a URL, written from §2 rather than from
 `yad hub`'s internals — nothing in the suite imports the hub, so it tests the
 protocol and not one implementation of it. A failure gives you the rule as a
@@ -234,10 +260,18 @@ implementing a hub and does not have this repository open.
 
 **What it does to your hub.** It spends the registration token you give it and
 registers a runner advertising a harness no real run asks for, so a suite
-pointed at a live hub is offered nothing anyone was waiting on. The rules about
-claiming, events, results and the lease need a real run: queue one or two for
-that harness first. Without them those checks are **skipped**, and each skip
-says what to queue to make it possible.
+pointed at a live hub is offered nothing anyone was waiting on.
+
+**Queue at least two runs for that harness first, and be able to offer both at
+once.** The lease rules need two runs held simultaneously — one to report on,
+one to leave unrenewed until its lease lapses — so one run is not enough, and
+**two offered one at a time is also not enough**. Offering one run per sync
+breaks no rule in §2 and is a perfectly good hub; it simply leaves those checks
+unreachable, and the suite says so rather than failing you. More than two does
+no harm.
+
+Without them those checks are **skipped**, and each skip says what to queue to
+make it possible.
 
 **A skip is not a pass.** It is the suite saying your hub gave it no way to
 ask. Read the skips before believing the passes.
