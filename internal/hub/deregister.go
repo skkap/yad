@@ -88,10 +88,7 @@ func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, 
 //     would otherwise be offerable to no one — OfferCandidates takes only
 //     sessions unbound or bound to the asking runner — and would stay queued
 //     for ever, since a queued run holds no lease for the sweep to lapse.
-//     A session the runner already closed can still hold one — a close
-//     leaves queued runs for the runner to refuse when offered, and this
-//     runner will not be offered anything again — so those end too, with
-//     the session's own close reason left as it was.
+//     A session the runner already closed holds none: its report ended them.
 //
 // Deregistering is today's only caller. A runner that simply stops syncing
 // strands its sessions the same way, and the day the protocol says when a hub

@@ -152,16 +152,29 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 
 		// A close the runner reports is what closes the session here, and
 		// answers the close_session this hub was repeating (decision 0035).
+		// It is believed from the runner holding the session, or from the one
+		// its run was last offered to before any claim bound it. The runs
+		// still waiting in it end now rather than being offered to be
+		// refused: before the unlisted offers below go back in the queue, so
+		// a run offered to this runner in the closed session is not among
+		// them.
 		for _, c := range req.ClosedSessions {
 			at := c.ClosedAt
 			if at.IsZero() {
 				at = now
 			}
-			if _, err := q.RecordSessionClosed(ctx, db.RecordSessionClosedParams{
+			n, err := q.RecordSessionClosed(ctx, db.RecordSessionClosedParams{
 				ClosedAt: sql.NullInt64{Int64: store.Ms(at), Valid: true},
 				Reason:   sql.NullString{String: string(c.Reason), Valid: c.Reason != ""},
 				ID:       c.SessionID, RunnerID: me,
-			}); err != nil {
+			})
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				continue
+			}
+			if err := endSessionRuns(ctx, q, c.SessionID, closedByRunner(runner.ID, c.Reason), now); err != nil {
 				return err
 			}
 		}
@@ -282,6 +295,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 				continue
 			}
 			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
+				return nil, err
+			}
+			if err := q.NoteSessionOffer(ctx, db.NoteSessionOfferParams{RunnerID: me, ID: c.SessionID}); err != nil {
 				return nil, err
 			}
 			if _, capped := left[c.Harness]; capped {
