@@ -1,8 +1,10 @@
 package hub
 
 import (
+	"bytes"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -122,10 +124,13 @@ func TestGeneratingTheDocumentDoesNotChangeHowAHubAnswers(t *testing.T) {
 	}
 }
 
-// And the invariant itself, which is what catches a future method: whatever
-// has been generated, the schemas a serving hub validates against carry no
-// oneOf. This one does go red against a generator that mutates the hub it is
-// given — it is the assertion, not the symptom.
+// The invariant itself: whatever has been generated, the schemas a serving hub
+// validates against carry no oneOf.
+//
+// This one cannot go red either — it never hands its hub to a generator, so
+// nothing it asserts on is ever touched. It is here as a statement of what
+// must remain true, not as a guard. The guard is
+// TestConstrainSourcesIsReachedOnlyFromTheGenerators below, which can fail.
 func TestAServingHubsRegistryNeverCarriesTheConstraint(t *testing.T) {
 	h := New(Options{})
 	if _, err := ServiceOpenAPIYAML(); err != nil {
@@ -165,8 +170,14 @@ func TestConstrainSourcesIsReachedOnlyFromTheGenerators(t *testing.T) {
 		"constrainSources(New(Options{}).api.OpenAPI())":     true,
 		"constrainSources(New(Options{}).service.OpenAPI())": true,
 	}
-	// One level of nesting is enough for the calls that exist, and the
-	// declaration is excluded by requiring no "func " before the name.
+	// Two patterns, because the dangerous case is the call this cannot parse.
+	// mention finds every occurrence of the name at all; call matches the
+	// shapes with at most one level of nested parentheses. An occurrence that
+	// is not a call and not one of the permitted forms is reported rather
+	// than skipped: a regex that cannot read
+	// constrainSources(h.registry(r.Context()).OpenAPI()) must not answer
+	// "no violations" about it.
+	mention := regexp.MustCompile(`(?:func )?constrainSources\(`)
 	call := regexp.MustCompile(`(?:func )?constrainSources\((?:[^()]|\([^()]*\))*\)`)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		switch {
@@ -181,12 +192,21 @@ func TestConstrainSourcesIsReachedOnlyFromTheGenerators(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, m := range call.FindAll(raw, -1) {
-			if strings.HasPrefix(string(m), "func ") {
+		parsed := map[int]bool{}
+		for _, loc := range call.FindAllIndex(raw, -1) {
+			m := string(raw[loc[0]:loc[1]])
+			parsed[loc[0]] = true
+			if strings.HasPrefix(m, "func ") {
 				continue // the declaration itself
 			}
-			if !allowed[string(m)] {
+			if !allowed[m] {
 				t.Errorf("%s calls %s; constrainSources may only be given a document from a hub built for it and discarded, or that hub starts validating against the oneOf", path, m)
+			}
+		}
+		for _, loc := range mention.FindAllIndex(raw, -1) {
+			if !parsed[loc[0]] {
+				line := 1 + strings.Count(string(raw[:loc[0]]), "\n")
+				t.Errorf("%s:%d names constrainSources in a form this test cannot read, so it is neither permitted nor reported — simplify the call or widen the pattern", path, line)
 			}
 		}
 		return nil
@@ -196,19 +216,50 @@ func TestConstrainSourcesIsReachedOnlyFromTheGenerators(t *testing.T) {
 	}
 	// A rename or a rewrite that stops either generator matching would make
 	// this vacuous, so the allowed forms must actually be present.
+	raw, err := os.ReadFile(filepath.Join("..", "hub", "hub.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	found := 0
-	for _, f := range []string{"hub.go"} {
-		raw, err := os.ReadFile(filepath.Join("..", "hub", f))
-		if err != nil {
-			t.Fatal(err)
+	for _, loc := range call.FindAllIndex(raw, -1) {
+		// Not inside a comment: a permitted form quoted in the prose above a
+		// declaration would otherwise satisfy this count while no call
+		// existed, which is the vacuity this check is here to refuse.
+		lineStart := bytes.LastIndexByte(raw[:loc[0]], '\n') + 1
+		if bytes.Contains(raw[lineStart:loc[0]], []byte("//")) {
+			continue
 		}
-		for _, m := range call.FindAll(raw, -1) {
-			if allowed[string(m)] {
-				found++
-			}
+		if allowed[string(raw[loc[0]:loc[1]])] {
+			found++
 		}
 	}
 	if found != len(allowed) {
 		t.Errorf("found %d of the %d expected generator calls; this test is passing because it matches nothing", found, len(allowed))
+	}
+}
+
+// The endpoint stays off, and nothing else asserts it.
+//
+// Restoring c.OpenAPIPath = "/openapi" passed every other test on this branch:
+// the scanning guard only reads calls to constrainSources, and the invariant
+// above only says the live registry is unconstrained — which is exactly why a
+// served document would be wrong. huma marshals a served document from that
+// registry, so it would go out without the Source oneOf, and the one reader
+// who fetches a hub's live document is a hub author looking for precisely that
+// rule. The committed file is the contract; if a hub serves a document one
+// day, it serves those bytes.
+func TestTheProtocolDocumentIsNotServed(t *testing.T) {
+	f := newFixture(t)
+	for _, path := range []string{"/v1/openapi.yaml", "/v1/openapi.json", "/v1/openapi"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := serve(f.hub, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s answered %d; the document is not served", path, rec.Code)
+		}
+	}
+	// And the config that decides it, so the reason is pinned and not only
+	// the symptom.
+	if p := Config().OpenAPIPath; p != "" {
+		t.Errorf("Config().OpenAPIPath = %q, want empty", p)
 	}
 }

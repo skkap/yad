@@ -43,21 +43,34 @@ hand-written encoders override anyway:
 not enforce it.** The document says the rule with a `oneOf`, but
 `openapi-typescript` renders `oneOf` as a plain union rather than an exclusive
 one; its own documentation notes this "mimics behavior closer to `anyOf`". So
-the generated `Source` will happily accept **both** fields set. It does reject
-an empty object — the union has no arm an empty object satisfies — so it is the
-"both" half of the rule the types miss, not the whole of it. The constraint is
+the generated `Source` will happily accept **both** fields set. It rejects an object with **neither key present** — no arm of the union
+accepts that — but not `{"path": ""}` or `{"git": {"url": ""}}`, which satisfy
+the types and are "neither" once here: an empty string is the same as unset.
+An empty form field reaches you as exactly that shape. The constraint is
 in the document for you and for tooling that reads it, not as a type you can
 lean on. **Check it yourself.** A run naming both, or neither, must be refused.
 
 **Every run you offer must satisfy rules the schema cannot state**, and
 conformance validates *every run your hub offers it* — it never sends you an
 invalid run to see whether you refuse it, so this is a rule about your output
-and not your input. Among them: a run needs a model; no two grants may share a
-name; no two *file* grants may have names differing only by case, which on a
-case-folding filesystem become one file holding silently the second value; and
-a `Source` is exactly one of `git` or `path`, as above. The full set is
-`v1.Run.Validate`, and refusing a run that breaks any of them is refusing it
-whole rather than dropping the offending part.
+and not your input. Here is all of it:
+
+- `run_id`, `session.id`, `harness`, `model` and `brief.instruction` are each
+  non-empty.
+- `session.mode`, when given, is `per_run` or `live`.
+- each `Source` is exactly one of `git` or `path`, and a `git` source has a
+  non-empty `url`.
+- each grant is delivered `as` either `env` or `file`.
+- each grant name matches `[A-Za-z_][A-Za-z0-9_]*` — it is an environment
+  variable name, and also the filename a file grant is written to.
+- no grant may be named `PATH` or `HOME`, or begin `LD_` or `DYLD_`: those
+  would redirect the harness or its loader.
+- no two grants share a name, and no two **file** grants have names differing
+  only by case — on a case-folding filesystem they become one file holding
+  silently the second value.
+
+A run breaking any of them is refused **whole**, not stripped of the offending
+part.
 
 **`Yad-Protocol: 1` is on every request and appears nowhere in the spec.** The
 value is the protocol's major version, `1`, and that is the only value a v1 hub
@@ -145,9 +158,14 @@ run you cannot match to the calling runner are refused: `403 not_holder`, or
 run was offered to *or* claimed by.** That is not sloppiness about who owns a
 run — it is how a runner **refuses** one. A run it will not take is reported as
 a `failed` result with error class `refused`, and it is reported *before* the
-run is ever claimed. A hub that demands a claim first rejects the only
-mechanism a runner has for declining work, and the run sits offered until its
-lease lapses.
+run is ever claimed.
+
+A hub that demands a claim first never hears the refusal. The runner simply
+does not list the run, so you take the offer back and queue it again — and
+offer it again, and take it back again, for as long as that runner is the one
+you reach for. Declining silently by omitting a run from the next sync is the
+runner's other way out and is normal; the refusal is what tells you *why*, and
+tells you not to try again.
 
 **Keep accepting events after the run has ended.** A batch still in the
 runner's spool when the result landed is not late, it is owed — reject it and
