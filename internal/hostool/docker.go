@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+
+	"github.com/skkap/yad/internal/probe"
 )
 
 // dockerStatus asks the daemon, not the binary.
@@ -14,11 +16,11 @@ import (
 // is, and answers only while the app is open. So the probe asks for the
 // *server* version, and a daemon that does not answer is reported with the way
 // to start it.
-func dockerStatus(ctx context.Context, path string, d *Detected) {
-	out, err := run(ctx, path, []string{"version", "--format", "{{.Server.Version}}"}, false, statusWait())
+func dockerStatus(ctx context.Context, bin probe.Found, d *Detected) {
+	out, err := run(ctx, bin.Path, []string{"version", "--format", "{{.Server.Version}}"}, false, statusWait())
 	switch {
 	case err != nil:
-		d.Error = wontRun("docker")
+		d.Error = bin.WontStart()
 	case out.TimedOut:
 		d.Error = fmt.Sprintf("the Docker daemon did not answer within %s — %s", statusWait(), startDocker())
 	case out.Err != nil, len(bytes.TrimSpace(out.Stdout)) == 0:

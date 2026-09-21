@@ -1,6 +1,10 @@
 package hostool
 
-import "context"
+import (
+	"context"
+
+	"github.com/skkap/yad/internal/probe"
+)
 
 // Tool is a non-harness executable YAD looks for.
 //
@@ -14,7 +18,7 @@ type Tool struct {
 	EnvPath     string // env var overriding the binary path, for GUI-launched daemons with no shell PATH
 	// status is the second probe — what "the binary is installed" does not
 	// answer. nil for a tool where being installed is the whole story.
-	status func(ctx context.Context, path string, d *Detected)
+	status func(ctx context.Context, bin probe.Found, d *Detected)
 }
 
 // Catalog is every host tool YAD probes, in display order.
