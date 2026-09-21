@@ -101,13 +101,22 @@ UPDATE runs SET state = ?, resumes_at = ?, reason = ?, updated_at = ? WHERE conn
 -- name: SetRunStarted :exec
 UPDATE runs SET started_at = ?, updated_at = ? WHERE connection = ? AND id = ? AND started_at IS NULL;
 
--- Park the run on a usage limit. The state, the moment it comes back, when
--- the wait began and what the run has cost so far, in one statement: a park
--- missing any of them is a run no sync can finish or a metric that
--- silently resets.
+-- Park the run on a usage limit. The state, the moment it comes back and when
+-- the wait began, in one statement: a park missing any of them is a run no
+-- sync can finish. What the run has cost is not here, because it is already
+-- on the row: SetRunSpent wrote it when the turn before the park ended, and
+-- SetRunAccount wrote the moves.
 -- name: SetRunWaiting :exec
-UPDATE runs SET state = 'waiting', resumes_at = ?, waiting_since = ?, account_switches = ?,
-  spent = ?, reason = ?, updated_at = ? WHERE connection = ? AND id = ?;
+UPDATE runs SET state = 'waiting', resumes_at = ?, waiting_since = ?, reason = ?, updated_at = ?
+WHERE connection = ? AND id = ?;
+
+-- What the run's turns have cost, written as each turn ends. Once per turn
+-- and never per event: a turn's usage arrives with its end, so nothing
+-- written sooner would hold more. It is what a restart reports for a run it
+-- finds lost (decision 0030), and what a later process resumes a parked run
+-- from.
+-- name: SetRunSpent :exec
+UPDATE runs SET spent = ?, updated_at = ? WHERE connection = ? AND id = ?;
 
 -- End the current wait, folding it into the total. Called by whoever takes
 -- the run out of waiting, before it runs again or times out, so the wait in
@@ -125,8 +134,12 @@ WHERE connection = sqlc.arg(connection) AND id = sqlc.arg(id);
 -- name: ListWaitingRuns :many
 SELECT * FROM runs WHERE state = 'waiting' ORDER BY created_at, connection, id;
 
+-- The account a turn is about to run on, and how many moves it took to get
+-- there. Together because a move is counted when the next account is taken:
+-- written apart, a restart between the two would find the run on a new
+-- account with the move that put it there uncounted.
 -- name: SetRunAccount :exec
-UPDATE runs SET account = ?, updated_at = ? WHERE connection = ? AND id = ?;
+UPDATE runs SET account = ?, account_switches = ?, updated_at = ? WHERE connection = ? AND id = ?;
 
 -- name: ListHeldRuns :many
 SELECT * FROM runs
