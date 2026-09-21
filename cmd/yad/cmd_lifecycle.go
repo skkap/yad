@@ -153,20 +153,30 @@ func daemonStop(ctx context.Context, g global, args []string, w io.Writer) error
 }
 
 // stopDaemon asks for a graceful stop through the socket and waits for the
-// process to go. A daemon that holds its lock and does not answer is sent
-// SIGTERM instead — the kill fallback's first step, which is still a graceful
-// stop to a process that is listening for signals. SIGKILL is only ever
-// --force's, after the timeout.
+// process to go. A daemon that holds its lock and never acknowledged the ask
+// is sent SIGTERM instead — the kill fallback's first step, which is still a
+// graceful stop to a process that is listening for signals, and the first
+// stop it hears, because an unacknowledged ask is never acted on (see
+// control.OpStop). An ask that was acknowledged and confirmed is delivered,
+// answered or not: nothing but --force signals after it, and SIGKILL is only
+// ever --force's, after the timeout.
 func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
-	var pid int
-	res, err := control.Ask(ctx, g.paths, "stop")
+	pid, err := control.Stop(ctx, g.paths)
 	var wedged *control.UnresponsiveError
+	var unanswered *control.UnansweredStopError
 	switch {
 	case errors.Is(err, control.ErrNotRunning):
 		fmt.Fprintf(w, "not running — profile %s has no daemon to stop\n", g.paths.Profile)
 		return nil
+	case errors.As(err, &unanswered):
+		pid = unanswered.PID
+		fmt.Fprintf(w, "stopping — pid %d took the request, and its answer did not arrive (%v)\n", pid, unanswered.Err)
 	case errors.As(err, &wedged):
 		pid = wedged.PID
+		// A Ctrl-C during the ask is not a daemon that failed to answer.
+		if err := interrupted(ctx, pid); err != nil {
+			return err
+		}
 		if err := sendSignal(pid, syscall.SIGTERM); err != nil {
 			return err
 		}
@@ -174,7 +184,6 @@ func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
 	case err != nil:
 		return err
 	default:
-		pid = res.PID
 		fmt.Fprintf(w, "stopping — pid %d\n", pid)
 	}
 	if gone(ctx, g.paths, pid, s.timeout) {
@@ -185,7 +194,7 @@ func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
 		return err
 	}
 	if !s.force {
-		return fmt.Errorf("pid %d is still stopping after %s — `yad status` shows the runs it is waiting on; wait longer with --timeout, or `yad daemon stop --force` signals it", pid, s.timeout)
+		return fmt.Errorf("pid %d is still stopping after %s — `yad status` shows whether it is stopping and the runs it is waiting on; wait longer with --timeout, or `yad daemon stop --force` signals it", pid, s.timeout)
 	}
 	// The runner counts its owner's stop requests (decision 0029), and the
 	// stop above was the first: a SIGTERM is the second, which cancels the

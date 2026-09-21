@@ -2,7 +2,9 @@
 // opens (decision 0004): `yad status` and `yad daemon stop|status` talk to the
 // running process through it. The socket is 0600 in the profile's data
 // directory, and its protocol is internal and unversioned — only this binary
-// speaks it, one JSON request and one JSON answer per connection.
+// speaks it, one JSON request and one JSON answer per connection. A stop is
+// the exception: it is acknowledged, then confirmed, before the daemon acts on
+// it (OpStop, decision 0027).
 //
 // Beside the socket sits yad.lock, which the daemon holds with flock(2) for
 // its whole life. The lock, not the socket file, says whether a daemon is

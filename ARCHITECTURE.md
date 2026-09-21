@@ -817,8 +817,10 @@ its socket; `--foreground` is what service units run. Logs are JSON through
 `log/slog`, rotated by size; a foreground daemon whose stdout is a file or pipe
 (a service unit's `service.log`) writes nothing more there once that log is
 open. The control socket is `0600` in a data directory
-that must itself be private, one JSON request and answer per connection; its
-protocol is internal and unversioned. The daemon holds `yad.lock` with
+that must itself be private, one JSON request and answer per connection — but
+a stop, which the daemon acknowledges and acts on only once the CLI confirms
+it ([0027](docs/decisions/0027-stop-asks-then-signals-and-restart-checks-first.md));
+its protocol is internal and unversioned. The daemon holds `yad.lock` with
 `flock(2)` for its life, which is the single-instance lock per profile: a
 socket file a crash left behind never blocks a start
 ([0026](docs/decisions/0026-the-daemon-lock-is-a-held-flock-beside-the-socket.md)).
