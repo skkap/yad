@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -708,112 +707,148 @@ func TestStartAtIsHonoured(t *testing.T) {
 	}
 }
 
-// The sweep's failure line is held to the same rule as its success line: a
-// grant's name never reaches the log. os.RemoveAll returns a *fs.PathError
-// naming the file it could not unlink, so the raw error is the leak — the
-// directory and the reason are what the owner acts on.
-func TestASweepThatFailsNamesNoGrant(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root unlinks through a directory's missing write bit, so the sweep would succeed")
-	}
-	e := newEnv(t)
-	dir := filepath.Join(e.paths.Data, "grants", "hub", "a")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "AWS_SECRET_ACCESS_KEY"), []byte("file-secret"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Unlinking a child needs write permission on its directory, so this is
-	// a sweep that cannot finish — the branch a read-only mount or an
-	// immutable flag reaches in the field.
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+// grantLocks are the ways a grant directory can refuse a plain RemoveAll, as
+// the run's cleanup and the sweep each meet them. The first is one yad gets
+// past; the second is one nothing gets past, and must be said out loud.
+var grantLocks = []struct {
+	name       string
+	frozen     bool
+	lock       func(t *testing.T, dir, file string)
+	wantSecret bool
+	wantLog    string
+}{
+	{
+		name: "a directory without its write bit",
+		lock: func(t *testing.T, dir, _ string) { os.Chmod(dir, 0o500) },
+	},
+	{
+		name:   "an immutable directory holding a read-only file",
+		frozen: true,
+		lock: func(t *testing.T, dir, file string) {
+			os.Chmod(file, 0o400)
+			freeze(t, dir)
+		},
+		wantSecret: true,
+		wantLog:    "the secrets a hub sent are still on disk",
+	},
+}
 
-	var logged strings.Builder
-	ctx := context.Background()
-	if err := Serve(ctx, Options{
-		Paths: e.paths, Config: config.Default(), RunnerID: "r",
-		Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
-		Log:          slog.New(slog.NewTextHandler(&logged, nil)), Drain: drained(),
-	}); err != nil {
-		t.Fatalf("Serve: %v", err)
+// The sweep at the start of Serve goes through destroyGrants, so a directory
+// whose write bit is gone no longer keeps a secret on disk from one start to
+// the next — before DEV-76 it failed there exactly as the run's own cleanup
+// had. When nothing gets through, the line says so, naming no grant: an
+// fs.PathError from the removal names the file it could not unlink.
+func TestTheSweepDestroysLeftGrants(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits these cases take away")
 	}
-	got := logged.String()
-	if !strings.Contains(got, "delete them by hand") {
-		t.Fatalf("a sweep that could not finish said nothing:\n%s", got)
-	}
-	if strings.Contains(got, "AWS_SECRET_ACCESS_KEY") || strings.Contains(got, "file-secret") {
-		t.Errorf("the failure line names a grant:\n%s", got)
+	for _, tc := range grantLocks {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.frozen && !canFreeze {
+				t.Skip("no immutable flag an unprivileged user may set on this OS")
+			}
+			e := newEnv(t)
+			root := filepath.Join(e.paths.Data, "grants")
+			dir := filepath.Join(root, "hub", "a")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(dir, testGrantName)
+			if err := os.WriteFile(file, []byte(testGrantValue), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			unlockTree(t, root)
+			tc.lock(t, dir, file)
+
+			var logged strings.Builder
+			if err := Serve(context.Background(), Options{
+				Paths: e.paths, Config: config.Default(), RunnerID: "r",
+				Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
+				Log:          slog.New(slog.NewTextHandler(&logged, nil)), Drain: drained(),
+			}); err != nil {
+				t.Fatalf("Serve: %v", err)
+			}
+			got := logged.String()
+			if left := secretLeft(t, root, testGrantValue); left != tc.wantSecret {
+				t.Errorf("secret left on disk = %v, want %v", left, tc.wantSecret)
+			}
+			if tc.wantLog == "" && !strings.Contains(got, "deleted grant files an earlier run left behind") {
+				t.Errorf("a sweep that deleted grants said nothing:\n%s", got)
+			}
+			if tc.wantLog != "" && !strings.Contains(got, tc.wantLog) {
+				t.Errorf("a sweep that could not finish did not say %q:\n%s", tc.wantLog, got)
+			}
+			if strings.Contains(got, testGrantName) || strings.Contains(got, testGrantValue) {
+				t.Errorf("the sweep's log names a grant:\n%s", got)
+			}
+		})
 	}
 }
 
-// The cleanup at the end of every ordinary run is held to the rule sweepGrants
-// is: a RemoveAll that fails must not put a grant's name in the log. This is
-// the branch that runs whenever a run ends, and it is the last word on these
-// files whenever the reason it failed outlives the process — the sweep at the
-// next start does the same RemoveAll and fails the same way on a read-only
-// mount or a permission this one could not get past. What the sweep recovers
-// is a cleanup that never ran at all, or one whose reason has since cleared.
-func TestAFailedGrantCleanupNamesNoGrant(t *testing.T) {
+// The cleanup at the end of every run goes through destroyGrants too. The
+// lock is taken inside the run, while it still holds its grant file, which is
+// how a harness that chmods its surroundings leaves it; before DEV-76 the
+// secret outlived the run, and the sweep at the next start failed on it the
+// same way.
+func TestARunsCleanupDestroysItsGrants(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("root unlinks through a directory's missing write bit, so the cleanup would succeed")
+		t.Skip("root ignores the permission bits these cases take away")
 	}
-	e := newEnv(t)
-	l := e.loop(t, 1)
-	run := testRun("a", "s1")
-	run.Grants = []v1.Grant{{Name: "AWS_SECRET_ACCESS_KEY", Value: "file-secret", As: v1.GrantFile}}
-	e.enqueue(t, run)
-	var (
-		mu  sync.Mutex
-		dir string
-	)
-	ad := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
-		mu.Lock()
-		defer mu.Unlock()
-		for _, kv := range s.Env {
-			if p, ok := strings.CutPrefix(kv, "AWS_SECRET_ACCESS_KEY="); ok {
-				dir = filepath.Dir(p)
+	for _, tc := range grantLocks {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.frozen && !canFreeze {
+				t.Skip("no immutable flag an unprivileged user may set on this OS")
 			}
-		}
-		// Taken while the run still holds its grant file, so the cleanup that
-		// follows cannot unlink it — the branch a read-only mount or an
-		// immutable flag reaches in the field.
-		if dir != "" {
-			if err := os.Chmod(dir, 0o500); err != nil {
-				t.Error(err)
-			}
-		}
-		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
-	}}
-	var logged strings.Builder
-	x := e.executor(ad)
-	x.Log = slog.New(slog.NewTextHandler(&logged, nil))
-	// Registered before the run, not after: a run that fails early leaves the
-	// directory at 0500, and t.TempDir's own cleanup cannot remove it.
-	t.Cleanup(func() {
-		filepath.WalkDir(filepath.Join(e.paths.Data, "grants"), func(p string, d fs.DirEntry, err error) error {
-			if err == nil && d.IsDir() {
-				os.Chmod(p, 0o700)
-			}
-			return nil
-		})
-	})
-	claimAndRun(t, l, x)
+			e := newEnv(t)
+			root := filepath.Join(e.paths.Data, "grants")
+			// Registered before the run, so it runs after any freeze is
+			// thawed and t.TempDir can remove what is left.
+			unlockTree(t, root)
+			l := e.loop(t, 1)
+			run := testRun("a", "s1")
+			run.Grants = []v1.Grant{{Name: testGrantName, Value: testGrantValue, As: v1.GrantFile}}
+			e.enqueue(t, run)
+			var (
+				mu   sync.Mutex
+				file string
+			)
+			ad := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+				mu.Lock()
+				defer mu.Unlock()
+				for _, kv := range s.Env {
+					if p, ok := strings.CutPrefix(kv, testGrantName+"="); ok {
+						file = p
+					}
+				}
+				if file != "" {
+					tc.lock(t, filepath.Dir(file), file)
+				}
+				return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
+			}}
+			var logged strings.Builder
+			x := e.executor(ad)
+			x.Log = slog.New(slog.NewTextHandler(&logged, nil))
+			claimAndRun(t, l, x)
 
-	mu.Lock()
-	defer mu.Unlock()
-	if dir == "" {
-		t.Fatal("the run was never given a file grant")
-	}
-	got := logged.String()
-	if !strings.Contains(got, "grant files not removed") {
-		t.Fatalf("a cleanup that could not finish said nothing:\n%s", got)
-	}
-	if strings.Contains(got, "AWS_SECRET_ACCESS_KEY") || strings.Contains(got, "file-secret") {
-		t.Errorf("the failure line names a grant:\n%s", got)
+			mu.Lock()
+			defer mu.Unlock()
+			if file == "" {
+				t.Fatal("the run was never given a file grant")
+			}
+			got := logged.String()
+			if left := secretLeft(t, root, testGrantValue); left != tc.wantSecret {
+				t.Errorf("secret left on disk = %v, want %v", left, tc.wantSecret)
+			}
+			if tc.wantLog == "" && strings.Contains(got, "grant files could not be removed") {
+				t.Errorf("a cleanup that got through reported failing:\n%s", got)
+			}
+			if tc.wantLog != "" && !strings.Contains(got, tc.wantLog) {
+				t.Errorf("a cleanup that could not finish did not say %q:\n%s", tc.wantLog, got)
+			}
+			if strings.Contains(got, testGrantName) || strings.Contains(got, testGrantValue) {
+				t.Errorf("the cleanup's log names a grant:\n%s", got)
+			}
+		})
 	}
 }
 

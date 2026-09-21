@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1229,19 +1228,7 @@ func (e *Exec) grants(c Claim) (env []string, cleanup func(), err error) {
 				if err := os.MkdirAll(dir, 0o700); err != nil {
 					return nil, cleanup, fmt.Errorf("grant directory: %w", err)
 				}
-				cleanup = func() {
-					if err := os.RemoveAll(dir); err != nil {
-						// The error names the file it could not unlink,
-						// which is a grant's name; the directory and the
-						// reason are what the owner acts on.
-						reason := error(err)
-						var pe *fs.PathError
-						if errors.As(err, &pe) {
-							reason = pe.Err
-						}
-						e.Log.Error("grant files not removed — delete them by hand", "dir", dir, "err", reason)
-					}
-				}
+				cleanup = func() { destroyGrants(dir, e.Log) }
 			}
 			path := filepath.Join(dir, g.Name)
 			if err := os.WriteFile(path, []byte(g.Value), 0o600); err != nil {
