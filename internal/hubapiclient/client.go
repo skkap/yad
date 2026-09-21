@@ -43,16 +43,9 @@ func New(hubURL, token string) (*Client, error) {
 	return &Client{
 		base:  strings.TrimRight(hubURL, "/") + hubapi.BasePath,
 		token: token,
-		http: &http.Client{
-			// A poll waits up to hubapi.MaxWait by design; the margin is for
-			// the answer itself.
-			Timeout: hubapi.MaxWait + 30*time.Second,
-			// Refused, not followed: Go would carry the token across a
-			// same-host redirect to plain http.
-			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-				return fmt.Errorf("the hub redirected to %s — use the hub's final address", config.RedactURL(req.URL.String()))
-			},
-		},
+		// A poll waits up to hubapi.MaxWait by design; the margin is for the
+		// answer itself.
+		http: config.HubHTTPClient(hubapi.MaxWait + 30*time.Second),
 	}, nil
 }
 
@@ -210,9 +203,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// url.Error carries the URL, never the headers, so the bearer stays
-		// out. The base URL carries no userinfo — CheckHubURL refused it — but
-		// a hub's redirect names a Location of its own choosing, and the
-		// refusal of it is quoted here whole.
+		// out; the redaction is for whatever URL a later change lets in.
 		return config.RedactURLError(err)
 	}
 	defer resp.Body.Close()

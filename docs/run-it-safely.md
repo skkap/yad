@@ -133,6 +133,12 @@ wanted any of this could simply ask the harness for it.
   print a URL it did not choose — a refusal, a hub's redirect, an unreachable
   hub — the userinfo, query and fragment are taken out first, and a URL that
   does not parse is not repeated at all (`config.RedactURL`).
+- **A hub's redirect is refused, never followed** — Go would carry the bearer
+  across a same-host redirect even from https to plain http. It is refused as
+  the response arrives, before Go's HTTP client reads the `Location`, so even a
+  `Location` too malformed to parse, which Go's own error would quote whole, is
+  never repeated (`config.HubHTTPClient`, used by the runner, `yad hub run` and
+  `yad conformance`).
 
 ### Where a grant actually lands
 
