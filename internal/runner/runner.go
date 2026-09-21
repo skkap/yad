@@ -12,6 +12,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/logfile"
@@ -21,8 +22,14 @@ import (
 
 // Options are what Serve needs from the process around it.
 type Options struct {
-	Paths    config.Paths
-	Config   config.Config
+	Paths config.Paths
+	// Config is read once, here. Its account lists are the exception, and
+	// are not read from it: Accounts holds them, and they change live.
+	Config config.Config
+	// Accounts is the owner's account lists, which the process around Serve
+	// reloads when the owner adds or removes one (decision 0043). Nil is
+	// Config's lists, fixed for the life of this Serve.
+	Accounts *Accounts
 	RunnerID string
 	// Capabilities returns the current document; the caller keeps it fresh.
 	Capabilities func() v1.Capabilities
@@ -74,6 +81,14 @@ func Serve(ctx context.Context, o Options) error {
 		return err
 	}
 	defer st.Close()
+	if o.Accounts == nil {
+		o.Accounts = NewAccounts(o.Paths.Data, account.ListsOf(o.Config))
+		o.Accounts.Log = o.Log
+	}
+	// Before any run can hold an account, so the prune of what a removal
+	// with no daemon left behind never races a run writing to one.
+	o.Accounts.attach(ctx, st)
+	defer o.Accounts.attach(ctx, nil)
 	pool := NewPool(o.Capabilities().Capacity)
 	// One manager for preparing and reclaiming: its per-repository locks are
 	// what keep a worktree being added and one being removed from meeting in
@@ -95,11 +110,11 @@ func Serve(ctx context.Context, o Options) error {
 	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, pool: pool,
 		log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{},
 		hubless: len(o.Config.Connections) == 0}
-	sv.probe = &LoginProbe{Store: st, Config: o.Config, Data: o.Paths.Data, Log: o.Log}
+	sv.probe = &LoginProbe{Store: st, Accounts: o.Accounts, Log: o.Log}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
-		Store: st, Adapters: o.Adapters, Config: o.Config, Data: o.Paths.Data, Paths: o.Paths, Workdirs: workdirs, Log: o.Log,
+		Store: st, Adapters: o.Adapters, Config: o.Config, Accounts: o.Accounts, Data: o.Paths.Data, Paths: o.Paths, Workdirs: workdirs, Log: o.Log,
 		Report: func(conn string) {
 			if r := sv.reporters[conn]; r != nil {
 				r.Wake()
@@ -131,7 +146,7 @@ func Serve(ctx context.Context, o Options) error {
 		sv.loops = append(sv.loops, &Loop{
 			Connection: conn.Name, RunnerID: o.RunnerID, Hub: client, Store: st, Pool: pool,
 			Capabilities: o.Capabilities, Executor: executor, Drain: o.Drain,
-			Config: o.Config, Data: o.Paths.Data,
+			Accounts:   o.Accounts,
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
 			RecentErrors: o.RecentErrors,
 		})

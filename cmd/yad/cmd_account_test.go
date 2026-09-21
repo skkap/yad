@@ -66,7 +66,7 @@ func TestAccountListShowsStateAndKeepsTheHomeOutOfItsJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := recordState(ctx, p, "claude", "work", v1.AccountNeedsLogin); err != nil {
+	if err := setAccountState(ctx, p, "work", v1.AccountNeedsLogin); err != nil {
 		t.Fatal(err)
 	}
 
@@ -175,7 +175,7 @@ func TestAccountRemoveDeletesTheHomeAndKeepsTheTranscripts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recordState(ctx, p, "claude", "work", v1.AccountNeedsLogin); err != nil {
+	if err := setAccountState(ctx, p, "work", v1.AccountNeedsLogin); err != nil {
 		t.Fatal(err)
 	}
 	shared := account.TranscriptDir(p.Data, "claude")
@@ -205,7 +205,7 @@ func TestAccountRemoveDeletesTheHomeAndKeepsTheTranscripts(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(other, "projects", "a-session.jsonl")); err != nil {
 		t.Errorf("the remaining account lost the session: %v", err)
 	}
-	// It is out of the owner's order and out of the store.
+	// It is out of the owner's order, and so out of what a read reports.
 	cfg, err = config.Load(p)
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestAccountRemoveDeletesTheHomeAndKeepsTheTranscripts(t *testing.T) {
 	if len(cfg.Harness["claude"].Accounts) != 1 || cfg.Harness["claude"].Accounts[0] != "personal" {
 		t.Errorf("accounts = %v", cfg.Harness["claude"].Accounts)
 	}
-	accounts, err := account.Read(ctx, p, cfg, time.Now())
+	accounts, err := account.Read(ctx, p, account.ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,10 +272,10 @@ func TestRecordedStateIsWhatTheDocumentReports(t *testing.T) {
 	if err := config.Save(p, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordState(ctx, p, "claude", "work", v1.AccountNeedsLogin); err != nil {
+	if err := setAccountState(ctx, p, "work", v1.AccountNeedsLogin); err != nil {
 		t.Fatal(err)
 	}
-	accounts, err := account.Read(ctx, p, cfg, time.Now())
+	accounts, err := account.Read(ctx, p, account.ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,43 +329,6 @@ func TestAccountRemoveRefusesAHarnessThatWalksOutOfTheDataDirectory(t *testing.T
 	}
 	if _, err := os.Stat(target); err != nil {
 		t.Errorf("a refused remove deleted %s, which is outside the data directory: %v", target, err)
-	}
-}
-
-// The state a daemon already running cannot see. Only remove is driven here:
-// `yad account add` returns early unless it finds a terminal, so its own copy
-// of this sentence is pinned by TestBothAccountCommandsShareTheRestartNotice
-// instead of by running the command.
-func TestAccountRemoveNamesTheDaemonRestart(t *testing.T) {
-	p := accountEnv(t)
-	if _, err := account.Ensure(p.Data, "claude", "work"); err != nil {
-		t.Fatal(err)
-	}
-	code, out, errs := yadIn(t, "account", "remove", "claude", "work", "--yes")
-	if code != 0 {
-		t.Fatalf("exit %d: %s", code, errs)
-	}
-	if !strings.Contains(out, "yad --profile default daemon restart") {
-		t.Errorf("remove does not mention the restart a running runner needs:\n%s", out)
-	}
-}
-
-// add's restart line cannot be reached from a test — the command refuses
-// without a terminal — so both commands print the same constant and this pins
-// that they do. Deleting or rewording either one fails here.
-func TestBothAccountCommandsShareTheRestartNotice(t *testing.T) {
-	if n := daemonRestartNotice(config.Paths{Profile: "side"}); !strings.Contains(n, "yad --profile side daemon restart") {
-		t.Fatalf("the shared notice stopped naming the command for its profile: %q", n)
-	}
-	src, err := os.ReadFile("cmd_account.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Two prints: the success branch of add, and the end of remove. Counting
-	// the print rather than the identifier, so the doc comment above the
-	// constant does not make this pass on its own.
-	if n := strings.Count(string(src), "fmt.Fprintln(w, daemonRestartNotice(g.paths))"); n != 2 {
-		t.Errorf("the notice is printed %d times, want 2 (add's success branch and remove) — one command stopped printing it", n)
 	}
 }
 
@@ -448,36 +411,13 @@ func TestAccountListShowsWindowUseAndResets(t *testing.T) {
 	}
 }
 
-// An account `yad account remove` forgot takes its windows with it: left
-// behind, they would be reported against a label the owner re-adds later for
-// a different subscription.
-func TestAccountRemoveForgetsItsWindows(t *testing.T) {
-	p := accountEnv(t)
-	ctx := context.Background()
-	cfg := config.Default()
-	cfg.Harness = map[string]config.HarnessConfig{"claude": {Accounts: []string{"work"}}}
-	if err := config.Save(p, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := account.Ensure(p.Data, "claude", "work"); err != nil {
-		t.Fatal(err)
-	}
-	reset := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	recordLimit(t, p, "work", reset, reset)
-
-	if code, _, errs := yadIn(t, "account", "remove", "claude", "work", "--yes"); code != 0 {
-		t.Fatalf("exit %d: %s", code, errs)
-	}
+// setAccountState writes an account's state the way the daemon would. The
+// test stands in for the daemon here: no CLI path writes the database.
+func setAccountState(ctx context.Context, p config.Paths, label string, state v1.AccountState) error {
 	st, err := store.Open(ctx, p.StateDB())
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	defer st.Close()
-	ws, err := st.ListAllAccountWindows(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ws) != 0 {
-		t.Errorf("windows left behind after a remove: %+v", ws)
-	}
+	return account.SetState(ctx, st.Queries, "claude", label, state, time.Now())
 }

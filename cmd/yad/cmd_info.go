@@ -132,7 +132,7 @@ func cmdHarnesses(ctx context.Context, g global, args []string, w, errw io.Write
 	// The note goes to stderr: the document goes to w and has to stay
 	// parseable, and an owner reading "free" for an account that may need
 	// login should be told the states were never read.
-	accounts, err := account.Read(ctx, g.paths, cfg, time.Now())
+	accounts, err := account.Read(ctx, g.paths, account.ListsOf(cfg), time.Now())
 	if err != nil {
 		fmt.Fprintln(errw, "note: account states could not be read, so every configured account is shown free:", err)
 		accounts = nil

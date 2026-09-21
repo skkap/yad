@@ -28,12 +28,46 @@ const (
 	OpConfirm = "confirm"
 )
 
+// OpAccountsChanged is `yad account add` or `yad account remove` telling the
+// daemon that config.toml's account lists changed (decision 0043). The daemon
+// re-reads them, writes what follows from the change to its own database, and
+// only then answers, so the CLI can say what happened rather than what will.
+const OpAccountsChanged = "accounts_changed"
+
 // Request is what the CLI asks.
 type Request struct {
-	Op string `json:"op"` // "status", OpStop, OpConfirm or "close_session"
+	Op string `json:"op"` // "status", OpStop, OpConfirm, "close_session" or OpAccountsChanged
 	// Connection and Session name the session to close.
 	Connection string `json:"connection,omitempty"`
 	Session    string `json:"session,omitempty"`
+	// Account is the account an OpAccountsChanged is about.
+	Account *AccountChange `json:"account,omitempty"`
+}
+
+// AccountChange is the one account the owner just added or removed. The
+// daemon re-reads every list, not only this account's; naming it is what
+// lets the daemon do the two things a diff of the lists cannot tell it to.
+// An added account may already have been listed — its login was lost, and
+// this is the owner logging it in again — and must still be asked about.
+// A removed account's home is deleted only because the owner said so here,
+// never because a label vanished from a file someone edited by hand.
+type AccountChange struct {
+	Harness string `json:"harness"`
+	Label   string `json:"label"`
+	// Removed is the owner removing the account; otherwise they have just
+	// logged it in.
+	Removed bool `json:"removed,omitempty"`
+}
+
+// AccountResult is where the account named in an OpAccountsChanged stands
+// once the daemon has taken the change up.
+type AccountResult struct {
+	// State is an added account's state as the daemon now reads it.
+	State string `json:"state,omitempty"`
+	// Runs are the runs still on a removed account. They finish on it, and
+	// its home is deleted when the last of them lets it go; with none, the
+	// daemon has already deleted it.
+	Runs []string `json:"runs,omitempty"`
 }
 
 // Response is the daemon's answer. Error carries the next action, as every
@@ -43,6 +77,8 @@ type Response struct {
 	PID    int           `json:"pid"`
 	Status *Status       `json:"status,omitempty"`
 	Closed *SessionClose `json:"closed,omitempty"`
+	// Account is what the daemon did with an OpAccountsChanged.
+	Account *AccountResult `json:"account,omitempty"`
 	// Confirm is the daemon holding a stop until the CLI confirms it. A stop
 	// answered without it came from a daemon older than the exchange, which
 	// acted on the request alone.

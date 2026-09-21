@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/skkap/yad/internal/account"
-	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/store"
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -36,10 +35,10 @@ import (
 // any more than it is a "no". Only a definite answer moves anything, and the
 // only move this makes is needs_login to free.
 type LoginProbe struct {
-	Store  *store.Store
-	Config config.Config
-	// Data is the profile's data directory, where the account homes live.
-	Data string
+	Store *store.Store
+	// Accounts is the owner's account lists as they read now, so an account
+	// the owner adds while the daemon runs is probed too. Nil is none.
+	Accounts *Accounts
 	// Binary resolves a harness to its executable; nil is harness.Locate.
 	Binary func(harness string) (string, bool)
 	// Every is how often each needs-login account is asked again; zero is
@@ -97,7 +96,7 @@ func (p *LoginProbe) Run(ctx context.Context) {
 // the ones that say yes. It returns how many it freed.
 func (p *LoginProbe) Sweep(ctx context.Context) int {
 	p.init()
-	accounts, err := account.Load(ctx, p.Store.Queries, p.Data, p.Config, p.Clock.Now())
+	accounts, err := p.Accounts.Load(ctx, p.Store.Queries, p.Clock.Now())
 	if err != nil {
 		p.Log.Warn("could not read account states; needs-login accounts are asked again at the next sweep", "err", err)
 		return 0
@@ -119,10 +118,10 @@ func (p *LoginProbe) probe(ctx context.Context, a account.Account) bool {
 	if a.State != v1.AccountNeedsLogin || !account.CanLogIn(a.Harness) {
 		return false
 	}
-	// A home that is not on disk is what `yad account remove` looks like to a
-	// daemon still holding the config it started with (internal/account.Load).
-	// There is nothing to ask a harness about, and asking would make the home
-	// the owner deleted, so this one waits for `yad account add`.
+	// A home that is not on disk is a label written into config.toml by hand
+	// (internal/account.Load). There is nothing to ask a harness about, and
+	// asking would make a home nobody logged in, so this one waits for
+	// `yad account add`.
 	if _, err := os.Stat(a.Home); err != nil {
 		return false
 	}

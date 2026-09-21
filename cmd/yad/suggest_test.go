@@ -86,7 +86,7 @@ func TestAccountListLoginCommandRunsAsPrinted(t *testing.T) {
 	if _, err := account.Ensure(p.Data, "claude", "work"); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordState(context.Background(), p, "claude", "work", v1.AccountNeedsLogin); err != nil {
+	if err := setAccountState(context.Background(), p, "work", v1.AccountNeedsLogin); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {

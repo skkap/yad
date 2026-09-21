@@ -199,8 +199,7 @@ func TestASuccessfulRunLeavesTheAccountAlone(t *testing.T) {
 func healthLoop(t *testing.T, e *env, labels ...string) *Loop {
 	t.Helper()
 	l := e.loop(t, 1)
-	l.Data = e.paths.Data
-	l.Config = accountConfig(labels...)
+	l.Accounts = accountsOf(e.paths.Data, accountConfig(labels...))
 	return l
 }
 
@@ -272,7 +271,7 @@ func TestHealthReportsAHomeThatIsGoneAsNeedsLogin(t *testing.T) {
 		t.Error("a harness whose only account has no home is reported ready")
 	}
 	// And health agrees with what a run would actually do.
-	accounts, err := account.Load(ctx, e.store.Queries, e.paths.Data, l.Config, e.clock.Now())
+	accounts, err := l.Accounts.Load(ctx, e.store.Queries, e.clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

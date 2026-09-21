@@ -35,12 +35,17 @@ func (e *env) accountExecutor(t *testing.T, cfg config.Config, adapters ...adapt
 	t.Helper()
 	var logged bytes.Buffer
 	x := e.executor(adapters...)
-	x.Config = cfg
+	x.Config, x.Accounts = cfg, accountsOf(e.paths.Data, cfg)
 	// slog's JSON handler is what the daemon writes, so anything a log line
 	// carries — a value, an error string, an attribute — lands in this buffer
 	// exactly as it would land in yad.log.
 	x.Log = slog.New(slog.NewJSONHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return x, &logged
+}
+
+// accountsOf is the daemon's account source over cfg's lists.
+func accountsOf(data string, cfg config.Config) *Accounts {
+	return NewAccounts(data, account.ListsOf(cfg))
 }
 
 func accountConfig(labels ...string) config.Config {
@@ -151,7 +156,7 @@ func TestNoCredentialFromAnAccountHomeEverLeaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := []harness.Detected{{Harness: harness.Catalog()[0], Present: true, Path: "/x/claude", Version: "2.1"}}
-	accounts, err := account.Load(context.Background(), e.store.Queries, e.paths.Data, cfg, time.Now())
+	accounts, err := account.Load(context.Background(), e.store.Queries, e.paths.Data, account.ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -115,8 +115,13 @@ type Exec struct {
 	Store    *store.Store
 	Adapters *Registry
 	// Config is the owner's: harness settings and the watchdog default. Nothing
-	// the hub sends can widen either (decision 0015).
+	// the hub sends can widen either (decision 0015). Its account lists are
+	// not read here: they change while the daemon runs, and Accounts is where
+	// they are kept.
 	Config config.Config
+	// Accounts is the owner's account lists, and which run is on which
+	// account. Nil is no accounts: every harness on its own default home.
+	Accounts *Accounts
 	// Data is the profile's data directory; workdirs and grant files live
 	// under it.
 	Data string
@@ -465,7 +470,11 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	// harness the owner gave no accounts runs on the harness's own default
 	// home, exactly as every installation did before accounts existed — no
 	// accounts is a state, not a failure.
-	acct, hasAccount, err := e.pickAccount(bg, run.Harness)
+	acct, hold, hasAccount, err := e.pickAccount(bg, run.Harness, run.RunID)
+	// Released however the run leaves this function — ended, parked or
+	// killed with the runner — and swapped below when it moves: an account is
+	// held exactly as long as a turn of this run can be using its home.
+	defer func() { e.Accounts.release(hold) }()
 	if err != nil {
 		if e.park(bg, c, &prog, &lastSeq, err.Error()) {
 			return
@@ -681,9 +690,10 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			// exclusion lives, rather than a list of tried accounts here that
 			// would have to be kept in step with it.
 			tried[acct.Label] = true
-			next, ok, perr := e.pickAccount(bg, run.Harness)
+			next, nextHold, ok, perr := e.pickAccount(bg, run.Harness, run.RunID)
 			switch {
 			case ok && tried[next.Label]:
+				e.Accounts.release(nextHold)
 				turnLog.Error("the account at a usage limit was offered to this run again; it is not moved a second time",
 					"next_account", next.Label)
 			case ok:
@@ -692,7 +702,8 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 				// park is counted by the same code.
 				turnLog.Info("the account is at a usage limit; the run moves to another account",
 					"next_account", next.Label)
-				acct, lastLimit = next, out.Limit
+				e.Accounts.release(hold)
+				acct, hold, lastLimit = next, nextHold, out.Limit
 				continue
 			case perr != nil && e.park(bg, c, &prog, &lastSeq, perr.Error()):
 				return

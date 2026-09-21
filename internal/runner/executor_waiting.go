@@ -238,7 +238,7 @@ func (e *Exec) setStarted(ctx context.Context, c Claim, at time.Time) {
 // nothing can say when that will happen.
 func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64, reason string) bool {
 	now := time.Now()
-	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config, now)
+	accounts, err := e.Accounts.Load(ctx, e.Store.Queries, now)
 	if err != nil {
 		e.Log.Warn("could not read account states; the run is not parked", "connection", c.Connection, "run", c.Run.RunID, "err", err)
 		return false

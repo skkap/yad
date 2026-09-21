@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -23,25 +24,37 @@ import (
 // happens to sit in ~/.claude is the one thing an owner who configured accounts
 // did not ask for. What the caller does with the error depends on what is in
 // the way — a limited account is a wait, a login is the owner's to finish.
-func (e *Exec) pickAccount(ctx context.Context, harness string) (account.Account, bool, error) {
+//
+// The account comes with a hold for the run, which the caller releases when
+// the run moves off it, parks or ends: while a hold is out, an account the
+// owner removes keeps its home for the run to finish in (Accounts).
+func (e *Exec) pickAccount(ctx context.Context, harness, run string) (account.Account, *accountHold, bool, error) {
 	if !account.Supported(harness) {
-		return account.Account{}, false, nil
+		return account.Account{}, nil, false, nil
 	}
-	// One moment for the whole choice: the states Load derives and the
-	// resets Soonest ranks are then judged against the same instant.
-	now := time.Now()
-	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config, now)
-	if err != nil {
-		return account.Account{}, false, err
+	// Twice at most: the second read is after a removal that landed between
+	// the first and the hold, and it reads the lists that removal left.
+	for range 2 {
+		// One moment for the whole choice: the states Load derives and the
+		// resets Soonest ranks are then judged against the same instant.
+		now := time.Now()
+		accounts, err := e.Accounts.Load(ctx, e.Store.Queries, now)
+		if err != nil {
+			return account.Account{}, nil, false, err
+		}
+		all := account.For(accounts, harness)
+		if len(all) == 0 {
+			return account.Account{}, nil, false, nil
+		}
+		a, ok := account.Soonest(accounts, harness, now)
+		if !ok {
+			return account.Account{}, nil, false, &noFreeAccountError{paths: e.Paths, harness: harness, accounts: all}
+		}
+		if h, ok := e.Accounts.take(account.Ref{Harness: a.Harness, Label: a.Label}, run); ok {
+			return a, h, true, nil
+		}
 	}
-	all := account.For(accounts, harness)
-	if len(all) == 0 {
-		return account.Account{}, false, nil
-	}
-	if a, ok := account.Soonest(accounts, harness, now); ok {
-		return a, true, nil
-	}
-	return account.Account{}, false, &noFreeAccountError{paths: e.Paths, harness: harness, accounts: all}
+	return account.Account{}, nil, false, fmt.Errorf("the %s accounts changed twice while this run was choosing one — the hub may offer it again", harness)
 }
 
 // noFreeAccountError says which accounts were in the way and what ends it, so

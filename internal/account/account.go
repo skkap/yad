@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -412,9 +414,69 @@ func checkNames(harness, label string) error {
 	return nil
 }
 
-// Load is every account the owner configured, per harness in the owner's
-// order, with its state. A nil q is a runner with no state database yet,
-// which has no states to hold.
+// Lists is the owner's accounts per harness, in the owner's order:
+// config.toml's harness.<id>.accounts and nothing else from it.
+//
+// It is its own type, rather than the whole config, because it is the one part
+// of config.toml a running daemon takes up without a restart (decision 0043):
+// `yad account add` and `yad account remove` tell the daemon, and it re-reads
+// these lists alone. Everything else in the file — capacity, connections,
+// permission modes — is still read once, at start.
+type Lists map[string][]string
+
+// ListsOf is the account lists config.toml names. A harness with none is left
+// out, so two configs that differ only in an empty accounts list read alike.
+func ListsOf(cfg config.Config) Lists {
+	out := Lists{}
+	for id, h := range cfg.Harness {
+		if len(h.Accounts) > 0 {
+			out[id] = slices.Clone(h.Accounts)
+		}
+	}
+	return out
+}
+
+// Ref names one account.
+type Ref struct{ Harness, Label string }
+
+// Has says whether the owner lists this account.
+func (l Lists) Has(r Ref) bool { return slices.Contains(l[r.Harness], r.Label) }
+
+// Harnesses is every harness with an account, in a stable order, so what
+// groups accounts by harness prints them the same way twice.
+func (l Lists) Harnesses() []string {
+	ids := make([]string, 0, len(l))
+	for id := range l {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// Apply is cfg with its account lists replaced by these: for what still reads
+// a whole config — the capability document names a harness's configured
+// labels when their states could not be read — so it names the owner's
+// current accounts and not the ones the daemon started with.
+func (l Lists) Apply(cfg config.Config) config.Config {
+	h := make(map[string]config.HarnessConfig, len(cfg.Harness)+len(l))
+	for id, hc := range cfg.Harness {
+		hc.Accounts = nil
+		h[id] = hc
+	}
+	for id, labels := range l {
+		hc := h[id]
+		hc.Accounts = slices.Clone(labels)
+		h[id] = hc
+	}
+	cfg.Harness = h
+	return cfg
+}
+
+// Load is every account the owner lists, per harness in the owner's order,
+// with its state. A nil q is a runner with no state database yet, which has no
+// states to hold. A row for an account the lists do not name is not read: it
+// is what an account removed while no daemon ran leaves behind, until the
+// daemon's next start prunes it (Prune).
 //
 // The rule, stated once here because several places used to state it
 // differently: an account is free only when its home is on disk and nothing
@@ -426,7 +488,7 @@ func checkNames(harness, label string) error {
 // now is the moment a limit is judged against, and it is the caller's rather
 // than read here so a runner on an injected clock sees accounts on that
 // clock too: the runner's loop passes its Clock, everything else the wall.
-func Load(ctx context.Context, q *db.Queries, data string, cfg config.Config, now time.Time) ([]Account, error) {
+func Load(ctx context.Context, q *db.Queries, data string, lists Lists, now time.Time) ([]Account, error) {
 	var rows []db.Account
 	var wrows []db.AccountWindow
 	if q != nil {
@@ -456,8 +518,8 @@ func Load(ctx context.Context, q *db.Queries, data string, cfg config.Config, no
 		windows[k] = append(windows[k], aw)
 	}
 	var out []Account
-	for _, id := range cfg.HarnessIDs() {
-		for _, label := range cfg.Harness[id].Accounts {
+	for _, id := range lists.Harnesses() {
+		for _, label := range lists[id] {
 			a := Account{
 				Harness: id, Label: label,
 				Home:  HomeDir(data, id, label),
@@ -683,21 +745,75 @@ func SetWindows(ctx context.Context, q *db.Queries, harness, label string, windo
 
 // Read is Load against the state database on disk, opened read-only and closed
 // again: for the capability document and the CLI, which need account states
-// without owning the runner's store.
+// without owning the runner's store. The CLI never writes that database
+// (decision 0043); this is the whole of what it does with it.
 //
 // A profile with no state database yet has no states, so every account the
-// owner configured is read by the same rule as any other: free when its home
+// owner lists is read by the same rule as any other: free when its home
 // is on disk, needs_login when it is not.
 //
 // now is passed to Load, which says why it is the caller's.
-func Read(ctx context.Context, paths config.Paths, cfg config.Config, now time.Time) ([]Account, error) {
+func Read(ctx context.Context, paths config.Paths, lists Lists, now time.Time) ([]Account, error) {
 	st, err := store.OpenProfile(ctx, paths)
 	if errors.Is(err, store.ErrNoState) {
-		return Load(ctx, nil, paths.Data, cfg, now)
+		return Load(ctx, nil, paths.Data, lists, now)
 	}
 	if err != nil {
 		return nil, err
 	}
 	defer st.Close()
-	return Load(ctx, st.Queries, paths.Data, cfg, now)
+	return Load(ctx, st.Queries, paths.Data, lists, now)
+}
+
+// Forget deletes an account's state row and its windows. Left behind, the
+// windows would be reported against a label the owner re-adds later for a
+// different subscription, and a limit would park it.
+func Forget(ctx context.Context, q *db.Queries, r Ref) error {
+	if err := q.DeleteAccountWindows(ctx, db.DeleteAccountWindowsParams{Harness: r.Harness, Label: r.Label}); err != nil {
+		return err
+	}
+	return q.DeleteAccount(ctx, db.DeleteAccountParams{Harness: r.Harness, Label: r.Label})
+}
+
+// Prune forgets every account the lists do not name, and returns which it
+// forgot, in a stable order.
+//
+// It is how the daemon, the database's only writer, catches up with what
+// happened while it was not running: `yad account remove` with no daemon
+// changes config.toml and deletes the home and writes nothing else, so the
+// rows it would have cleared are cleared here at the next start.
+func Prune(ctx context.Context, q *db.Queries, lists Lists) ([]Ref, error) {
+	rows, err := q.ListAllAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	wrows, err := q.ListAllAccountWindows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stale := map[Ref]bool{}
+	for _, r := range rows {
+		stale[Ref{r.Harness, r.Label}] = true
+	}
+	for _, w := range wrows {
+		stale[Ref{w.Harness, w.Label}] = true
+	}
+	var gone []Ref
+	for r := range stale {
+		if !lists.Has(r) {
+			gone = append(gone, r)
+		}
+	}
+	slices.SortFunc(gone, func(a, b Ref) int {
+		if c := strings.Compare(a.Harness, b.Harness); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Label, b.Label)
+	})
+	for i, r := range gone {
+		if err := Forget(ctx, q, r); err != nil {
+			return gone[:i], err
+		}
+	}
+	return gone, nil
 }

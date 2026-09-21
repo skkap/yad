@@ -19,7 +19,7 @@ func probeFor(t *testing.T, e *env, cfg config.Config, mode ...string) *LoginPro
 	t.Helper()
 	x := &Exec{}
 	fakeClaudeBinary(t, x, mode...)
-	return &LoginProbe{Store: e.store, Config: cfg, Data: e.paths.Data, Binary: x.Binary, Log: slog.New(slog.DiscardHandler)}
+	return &LoginProbe{Store: e.store, Accounts: accountsOf(e.paths.Data, cfg), Binary: x.Binary, Log: slog.New(slog.DiscardHandler)}
 }
 
 // The trap DEV-26 left and this task closes: an account marked needs-login is
@@ -59,7 +59,7 @@ func TestANeedsLoginAccountReturnsToServiceOnceTheOwnerLogsIn(t *testing.T) {
 		t.Errorf("the account is %q, want free", got)
 	}
 	// And a run would now take it.
-	accounts, err := account.Load(ctx, e.store.Queries, e.paths.Data, cfg, e.clock.Now())
+	accounts, err := account.Load(ctx, e.store.Queries, e.paths.Data, account.ListsOf(cfg), e.clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,10 +91,9 @@ func TestAProbeThatCannotAnswerLeavesTheAccountAsItIs(t *testing.T) {
 }
 
 // Two things the probe must not do: touch an account that is not parked, and
-// rebuild a home the owner deleted. A label left in config.toml after
-// `yad account remove` reads needs_login because its home is gone
-// (internal/account.Load); asking the harness about it would make the
-// directory again.
+// rebuild a home that is not there. A label in config.toml whose home is gone
+// reads needs_login (internal/account.Load); asking the harness about it would
+// make the directory again.
 func TestTheProbeLeavesFreeAccountsAndMissingHomesAlone(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
