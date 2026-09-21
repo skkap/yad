@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/skkap/yad/internal/probe"
 )
 
 // ghLoginTTL is how long gh's answer about its login is reused before gh is
@@ -108,7 +110,7 @@ func (m ghMemory) report(d *Detected) {
 // nothing from its output is copied anywhere — not into Error, not into a log —
 // and only the hosts and the boolean are read out of it. Being signed out is
 // not an error; it is the answer to the question a hub asked.
-func ghStatus(ctx context.Context, path string, d *Detected) {
+func ghStatus(ctx context.Context, bin probe.Found, d *Detected) {
 	m := recallGH()
 	switch {
 	case !m.answered.IsZero() && time.Since(m.answered) < ghLoginTTL:
@@ -122,24 +124,24 @@ func ghStatus(ctx context.Context, path string, d *Detected) {
 		m.report(d)
 		return
 	}
-	in, hosts, failure := askGH(ctx, path)
+	in, hosts, failure := askGH(ctx, bin)
 	rememberGH(in, hosts, failure).report(d)
 }
 
 // askGH runs the probe and reduces it to the two things a hub may see. The
 // third return is what to report when the answer is not known; it never
 // carries a word gh printed.
-func askGH(ctx context.Context, path string) (in bool, hosts []string, failure string) {
+func askGH(ctx context.Context, bin probe.Found) (in bool, hosts []string, failure string) {
 	// `--json` is gh's machine-readable surface: it names its fields, so
 	// nothing is picked out of prose a release may reword. `--active` gives one
 	// entry per host — the account gh would use there — which is the question
 	// here; the other accounts on a host differ only by a name we must not read.
-	out, err := run(ctx, path, []string{"auth", "status", "--active", "--json", "hosts"}, false, statusWait())
+	out, err := run(ctx, bin.Path, []string{"auth", "status", "--active", "--json", "hosts"}, false, statusWait())
 	switch {
 	case err != nil:
-		return false, nil, wontRun("gh")
+		return false, nil, bin.WontStart()
 	case out.TimedOut:
-		return false, nil, noAnswer("gh auth status", statusWait())
+		return false, nil, probe.NoAnswer("gh auth status", statusWait())
 	}
 	// The exit status is not consulted: with `--json` gh exits 0 whatever it
 	// finds wrong with an account, and non-zero only on a fatal error — which
@@ -160,12 +162,12 @@ func askGH(ctx context.Context, path string) (in bool, hosts []string, failure s
 	// stderr when it is signed out. Reporting a working gh as broken would cost
 	// its owner every run that needs a pull request, so the prose is read — for
 	// the hosts and nothing else.
-	out, err = run(ctx, path, []string{"auth", "status"}, true, statusWait())
+	out, err = run(ctx, bin.Path, []string{"auth", "status"}, true, statusWait())
 	switch {
 	case err != nil:
-		return false, nil, wontRun("gh")
+		return false, nil, bin.WontStart()
 	case out.TimedOut:
-		return false, nil, noAnswer("gh auth status", statusWait())
+		return false, nil, probe.NoAnswer("gh auth status", statusWait())
 	}
 	if hosts := ghFromProse(string(out.Stdout)); len(hosts) > 0 {
 		return true, hosts, ""

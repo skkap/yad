@@ -2,14 +2,12 @@ package harness
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/skkap/yad/internal/probe"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -18,7 +16,9 @@ type Detected struct {
 	Harness
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
-	Present bool   `json:"present"`
+	// Present is there being a binary yad would run for this harness: Path.
+	// Not that it works — Error says whether it does.
+	Present bool `json:"present"`
 	// Error is what is wrong with this harness and what to do about it. It
 	// never carries a word the harness printed,
 	// nor the path it was started from: the capability document reaches every
@@ -26,8 +26,10 @@ type Detected struct {
 	// proxy URL with a password in it, a loader error naming the owner's home
 	// (DEV-60).
 	Error string `json:"error,omitempty"`
-	// Warnings are readiness checks beyond the version probe that failed
-	// without making the harness undrivable; capability.Detect fills them.
+	// Warnings are what is wrong with a harness that can still be driven: an
+	// override naming nothing while PATH has the binary, and the readiness
+	// checks capability.Detect adds beyond the version probe. The same rule as
+	// Error binds them.
 	Warnings []string `json:"warnings,omitempty"`
 }
 
@@ -85,90 +87,52 @@ func Detect(ctx context.Context) []Detected {
 }
 
 // Locate finds the binary for a harness the way detection does, so a run
-// starts exactly the executable its capability document advertised.
+// starts exactly the executable its capability document advertised — the one
+// on PATH when an override names nothing.
 func Locate(id string) (string, bool) {
 	h, ok := Lookup(id)
 	if !ok {
 		return "", false
 	}
-	path, _, found := locate(h)
-	return path, found
+	f := find(h)
+	return f.Path, f.Path != ""
 }
 
-// locate says where the binary is and which of the two places it came from.
-// Which one is what a broken harness's report sends its owner to: the override
-// they set, or whatever PATH resolved.
-func locate(h Harness) (path string, fromEnv, found bool) {
-	if path := os.Getenv(h.EnvPath); path != "" {
-		return path, true, true
-	}
-	path, err := exec.LookPath(h.Binary)
-	return path, false, err == nil
-}
+func find(h Harness) probe.Found { return probe.Find(h.EnvPath, h.Binary, h.VersionArgs) }
 
 func detectOne(ctx context.Context, h Harness) Detected {
 	d := Detected{Harness: h}
 
-	path, fromEnv, found := locate(h)
-	if !found {
-		return d // absent, and that is not an error
+	f := find(h)
+	d.Error = f.Error
+	if f.Warning != "" {
+		d.Warnings = append(d.Warnings, f.Warning)
 	}
-	d.Path, d.Present = path, true
+	if f.Path == "" {
+		return d // absent, and that is not an error unless an override was set
+	}
+	d.Path, d.Present = f.Path, true
 
 	// Through supervise like every other child: the probe runs every sync, and a
 	// wrapper script or node/bun launcher that forks and hangs must take its
 	// whole process group with it, not leave one orphan per tick.
 	ctx, cancel := context.WithTimeout(ctx, versionWait())
 	defer cancel()
-	out, err := supervise.Run(ctx, supervise.Spec{Path: path, Args: h.VersionArgs}, versionOutputCap)
+	out, err := supervise.Run(ctx, supervise.Spec{Path: f.Path, Args: h.VersionArgs}, versionOutputCap)
 	// A start failure never ran, so it is never a timeout: Run reports
-	// TimedOut only for a leader that was running when ctx ended.
+	// TimedOut only for a leader that was running when ctx ended. None of the
+	// three quotes the error or the child: see internal/probe.
 	switch {
 	case err != nil:
-		d.Error = wontStart(h, fromEnv)
+		d.Error = f.WontStart()
 	case out.TimedOut:
-		d.Error = noAnswer(h)
+		d.Error = probe.NoAnswer(f.Command(), versionWait())
 	case out.Err != nil:
-		d.Error = wontAnswer(h)
+		d.Error = probe.WontAnswer(f.Command())
 	default:
 		d.Version = ParseVersion(string(out.Stdout))
 	}
 	return d
-}
-
-// wontStart and wontAnswer are the two things that go wrong with a harness the
-// runner found, said without quoting it. The wrapped exec error names the
-// binary's absolute path — under /Users/<name> on a Mac, which is the owner's
-// name — and a harness's own stderr is unbounded text nobody vetted: a dyld
-// failure listing libraries under that same home, a proxy URL with a password
-// in it. Neither travels. What a hub can act on is that the harness does not
-// work; what its owner needs is where to look, and an override's *name* is safe
-// where its value is the thing that leaks.
-//
-// The two are worded apart because what is still worth checking differs.
-// locate does not stat an override, so a YAD_<ID>_PATH naming nothing at all
-// reaches here and the override itself is the thing to fix. LookPath has
-// already proved the other one exists and is executable, so telling its owner
-// to check that would send them to `ls -l` and a dead end: what is left is a
-// missing interpreter, a binary for another architecture, or this machine
-// failing to fork, and running it by hand is what tells them which.
-func wontStart(h Harness, fromEnv bool) string {
-	if fromEnv {
-		return fmt.Sprintf("%s does not name a %s this runner can start — point it at an executable %s, or unset it and let PATH decide", h.EnvPath, h.Binary, h.Binary)
-	}
-	return fmt.Sprintf("the %s on PATH will not start — run `%s %s` on this machine to see what stops it", h.Binary, h.Binary, strings.Join(h.VersionArgs, " "))
-}
-
-// noAnswer is a probe the harness never came back from. It names the command
-// and the wait and nothing else — the same rule as the two above — and gives
-// the action because this is the case where it is worth most: a CLI that hangs
-// on its own version flag has stopped telling its owner anything at all.
-func noAnswer(h Harness) string {
-	return fmt.Sprintf("no answer to `%s %s` within %s — run it on this machine to see what it waits on", h.Binary, strings.Join(h.VersionArgs, " "), versionWait())
-}
-
-func wontAnswer(h Harness) string {
-	return fmt.Sprintf("`%s %s` exited with an error — run it on this machine to see why", h.Binary, strings.Join(h.VersionArgs, " "))
 }
 
 // versionToken is what a version looks like: two to four dotted numbers and
