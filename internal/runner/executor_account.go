@@ -152,11 +152,14 @@ func maybeAuth(class string) bool {
 	return class == adapter.ClassHarness || class == adapter.ClassHarnessExited
 }
 
-// setRunAccount records which account ran the run, for `yad status` and for a
-// restart that has to say what it lost.
-func (e *Exec) setRunAccount(ctx context.Context, c Claim, label string) {
+// setRunAccount records which account runs the run's next turn and how many
+// moves it has made, for `yad status` and for a restart that has to say what
+// it lost. The count is written here, at the move, rather than at the end of
+// the turn on the new account: a run lost during that turn has still moved.
+func (e *Exec) setRunAccount(ctx context.Context, c Claim, label string, switches int) {
 	err := e.Store.SetRunAccount(ctx, db.SetRunAccountParams{
-		Account: sql.NullString{String: label, Valid: true}, UpdatedAt: time.Now().UnixMilli(), Connection: c.Connection, ID: c.Run.RunID,
+		Account: sql.NullString{String: label, Valid: true}, AccountSwitches: int64(switches),
+		UpdatedAt: time.Now().UnixMilli(), Connection: c.Connection, ID: c.Run.RunID,
 	})
 	if err != nil {
 		e.Log.Warn("could not record the run's account", "connection", c.Connection, "run", c.Run.RunID, "err", err)
