@@ -236,7 +236,7 @@ components:
           format: int64
           type: integer
         duration_ms:
-          description: "How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more. A lost run's other figures are likewise only what the runner had durably recorded: its counters and usage are whatever its last pause wrote down, so zeros there mean nothing was written rather than nothing happened."
+          description: "How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more. A lost run's other figures are likewise only what the runner had durably recorded: its counters and usage cover every turn that ended before the runner stopped, and account_switches every move it made, but not the turn it stopped during, whose usage the harness never reported. Zeros there mean no turn ended rather than nothing happened."
           format: int64
           type: integer
         first_event_ms:

@@ -28,10 +28,12 @@ type RunUsage struct {
 // difference is worth stating rather than leaving a hub to infer it. Nobody
 // watched that run stop, so its figures are what the runner had durably
 // recorded, not what happened: duration_ms and waited_ms come from its
-// stored timestamps and are floors, while the counters and the usage are
-// whatever its last pause wrote down. A run that changed accounts and was
-// then lost without pausing reports zeros for the counters, and that means
-// "nothing was written down" rather than "nothing happened".
+// stored timestamps and are floors, while the counters and the usage cover
+// every turn that ended before the runner stopped, and account_switches every
+// move it made. The turn the runner stopped during is missing from them:
+// a harness reports usage when its turn ends, so nothing about that turn was
+// ever there to write down. Zeros mean no turn ended, not that nothing
+// happened.
 type Metrics struct {
 	// DurationMS is how long the run took, from the moment it first reached
 	// preparing.
@@ -42,7 +44,7 @@ type Metrics struct {
 	// been alive for it — its last spooled event, or the last write to its
 	// row. The real duration is that or more. Measuring to the restart
 	// instead would report how long the machine was off.
-	DurationMS int64 `json:"duration_ms" doc:"How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more. A lost run's other figures are likewise only what the runner had durably recorded: its counters and usage are whatever its last pause wrote down, so zeros there mean nothing was written rather than nothing happened."`
+	DurationMS int64 `json:"duration_ms" doc:"How long the run took, from the moment it first reached preparing. For a run reported lost this is a floor rather than an end anybody observed: nothing watched the run stop, so it is measured to the last moment the runner is known to have been alive for it, and the real duration is that or more. A lost run's other figures are likewise only what the runner had durably recorded: its counters and usage cover every turn that ended before the runner stopped, and account_switches every move it made, but not the turn it stopped during, whose usage the harness never reported. Zeros there mean no turn ended rather than nothing happened."`
 	// FirstEventMS is how long the harness took to say anything, measured
 	// from the start of the turn that answered — deliberately not from the
 	// start of the run. A run parked five hours on a usage limit and then

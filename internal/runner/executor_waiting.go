@@ -187,6 +187,27 @@ func (e *Exec) lastSeq(ctx context.Context, c Claim) int64 {
 	return seq
 }
 
+// setSpent writes what the run's turns have cost so far, once per turn. The
+// row is where a process that did not watch the run reads it back from
+// (progress, progressOf): the next process resuming it after a park, and the
+// restart reporting it lost. A run that finishes is reported from memory and
+// does not need it, but a run lost between this write and its result does.
+func (e *Exec) setSpent(ctx context.Context, c Claim, s spent) {
+	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
+	body, err := json.Marshal(s)
+	if err != nil {
+		log.Warn("what this run's turns have cost could not be recorded; a process that did not watch them reports less", "err", err)
+		return
+	}
+	err = e.Store.SetRunSpent(ctx, db.SetRunSpentParams{
+		Spent:     sql.NullString{String: string(body), Valid: true},
+		UpdatedAt: time.Now().UnixMilli(), Connection: c.Connection, ID: c.Run.RunID,
+	})
+	if err != nil {
+		log.Warn("what this run's turns have cost could not be recorded; a process that did not watch them reports less", "err", err)
+	}
+}
+
 func (e *Exec) setStarted(ctx context.Context, c Claim, at time.Time) {
 	err := e.Store.SetRunStarted(ctx, db.SetRunStartedParams{
 		StartedAt:  sql.NullInt64{Int64: at.UnixMilli(), Valid: true},
@@ -243,23 +264,16 @@ func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64
 	if e.spool(ctx, c, &ev, *lastSeq+1) {
 		*lastSeq = ev.Seq
 	}
-	// Written with the park rather than after every turn: a run that moves
-	// and then finishes reports these from memory, and one that parks is the
-	// only one another process has to read them back for.
-	var carried sql.NullString
-	if body, merr := json.Marshal(prog.spent); merr == nil {
-		carried = sql.NullString{String: string(body), Valid: true}
-	} else {
-		log.Warn("what this run's turns have cost could not be recorded; its usage restarts if another process resumes it", "err", merr)
-	}
+	// What the run has cost is not written here: the turn before the park
+	// wrote it as it ended (setSpent), and the move before that turn wrote
+	// the count (setRunAccount). A park is not the only way a run stops being
+	// watched, so it cannot be the only writer.
 	err = e.Store.SetRunWaiting(ctx, db.SetRunWaitingParams{
-		ResumesAt:       sql.NullInt64{Int64: at.UnixMilli(), Valid: true},
-		WaitingSince:    sql.NullInt64{Int64: now.UnixMilli(), Valid: true},
-		AccountSwitches: int64(prog.switches),
-		Spent:           carried,
-		Reason:          sql.NullString{String: reason, Valid: true},
-		UpdatedAt:       now.UnixMilli(),
-		Connection:      c.Connection, ID: c.Run.RunID,
+		ResumesAt:    sql.NullInt64{Int64: at.UnixMilli(), Valid: true},
+		WaitingSince: sql.NullInt64{Int64: now.UnixMilli(), Valid: true},
+		Reason:       sql.NullString{String: reason, Valid: true},
+		UpdatedAt:    now.UnixMilli(),
+		Connection:   c.Connection, ID: c.Run.RunID,
 	})
 	if err != nil {
 		// Nothing was parked, so the caller's own path — refusing the run —
