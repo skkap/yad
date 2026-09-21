@@ -23,7 +23,7 @@ const fakeToken = "fake-registration-token"
 func TestAHubThatFollowsTheProtocolPasses(t *testing.T) {
 	t.Parallel()
 	_, url := newFake(t, "", fakeRunSpec(0), fakeRunSpec(1))
-	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken, LeaseWait: time.Minute})
+	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken, SecondToken: fakeSecondToken, LeaseWait: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +50,9 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 	for _, tc := range []struct {
 		flaw, check string
 		leaseWait   time.Duration
+		// second passes the fake's second registration token, which only
+		// the holder rules spend.
+		second bool
 		// want is on every row on purpose: Passed is Status's zero, so a row
 		// that left it out would assert the hub was fine and pass whatever
 		// the suite did. Skipped is for a rule that cannot be judged in a
@@ -98,11 +101,24 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		// so the suite says what happened and checks nothing further.
 		{flaw: flawVersionFloorQuotes, check: "register/exchange", want: Skipped},
 		{flaw: flawSendsUpdate, check: "versioning/controls-are-gated", want: Passed},
+		// The near half passes on this hub — it refuses a run it has never
+		// heard of — so only a second runner shows it is not asking who
+		// holds the run.
+		{flaw: flawNoHolderCheck, check: "events/not-held", second: true, want: Passed},
+		{flaw: flawNoHolderCheck, check: "result/not-held", second: true, want: Passed},
+		{flaw: flawNoHolderCheck, check: "events/held-by-another", second: true, want: Failed},
+		{flaw: flawNoHolderCheck, check: "result/held-by-another", second: true, want: Failed},
+		// A hub taking events from anyone for any run fails both halves.
+		{flaw: flawTakesAnyEvents, check: "events/held-by-another", second: true, want: Failed},
 	} {
 		t.Run(tc.flaw+"/"+tc.check, func(t *testing.T) {
 			t.Parallel()
 			_, url := newFake(t, tc.flaw, fakeRunSpec(0), fakeRunSpec(1))
-			rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken, LeaseWait: tc.leaseWait})
+			opts := Options{BaseURL: url, Token: fakeToken, LeaseWait: tc.leaseWait}
+			if tc.second {
+				opts.SecondToken = fakeSecondToken
+			}
+			rep, err := Run(context.Background(), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,16 +167,69 @@ func TestEveryCheckNamesItsRuleAndSection(t *testing.T) {
 // says what it needs when it is given no token.
 func TestTheSuiteRefusesWhatItCannotCheckSafely(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, url, token, want string }{
+	for _, tc := range []struct{ name, url, token, second, want string }{
 		{name: "plain http to another host", url: "http://hub.example/v1", token: fakeToken, want: "cleartext"},
 		{name: "no token", url: "https://hub.example/v1", want: "registration token"},
+		// The first registration would spend it, and the hub's correct
+		// refusal of the second would then be reported as its fault.
+		{name: "the same token twice", url: "https://hub.example/v1", token: fakeToken, second: fakeToken, want: "--second-token is the same token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Run(context.Background(), Options{BaseURL: tc.url, Token: tc.token})
+			_, err := Run(context.Background(), Options{BaseURL: tc.url, Token: tc.token, SecondToken: tc.second})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error is %v, and should say %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// Without a second token the holder rules are skipped, not passed, and the
+// skip names the flag that would make them checkable; the rule is in the
+// checked list either way, and no longer in the printed "not checked" one.
+func TestWithoutASecondTokenTheHolderRulesSaySo(t *testing.T) {
+	t.Parallel()
+	_, url := newFake(t, "", fakeRunSpec(0), fakeRunSpec(1))
+	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"events/held-by-another", "result/held-by-another"} {
+		if o := outcome(t, rep, id); o.Status != Skipped || !strings.Contains(o.Detail, "--second-token") {
+			t.Errorf("%s: %s %q, want a skip naming --second-token", id, label(o.Status), o.Detail)
+		}
+	}
+	var out strings.Builder
+	rep.Print(&out)
+	if flat := strings.Join(strings.Fields(out.String()), " "); strings.Contains(flat, "while another runner holds it") {
+		t.Errorf("the rule is checked and still listed as not checked:\n%s", out.String())
+	}
+}
+
+// The second runner's token and credential are secrets like the first's: a
+// hub that quotes its credential back in a refusal the report prints gets a
+// report without it.
+func TestTheSecondRunnersSecretsStayOutOfTheReport(t *testing.T) {
+	t.Parallel()
+	f, url := newFake(t, flawQuotesTheNonHolder, fakeRunSpec(0), fakeRunSpec(1))
+	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken, SecondToken: fakeSecondToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := outcome(t, rep, "errors/next-action"); o.Status != Failed {
+		t.Fatalf("errors/next-action was %s, so the refusal quoting the credential was never printed", label(o.Status))
+	}
+	var out strings.Builder
+	rep.Print(&out)
+	f.mu.Lock()
+	cred := f.cred2
+	f.mu.Unlock()
+	if cred == "" {
+		t.Fatal("the second runner never registered, so this test proves nothing")
+	}
+	for _, secret := range []string{fakeSecondToken, cred} {
+		if strings.Contains(out.String(), secret) {
+			t.Errorf("%q is in the report:\n%s", secret, out.String())
+		}
 	}
 }
 

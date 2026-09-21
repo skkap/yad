@@ -13,7 +13,7 @@ import (
 var unchecked = []struct{ rule, section, why string }{{
 	rule:    "POST /runners/{runner}/deregister — the credential dies; the runs that runner held are lost, its offers go back in the queue, and its sessions close with the runs queued in them ended.",
 	section: sectionCalls,
-	why:     "the suite holds one registration token, and deregistering retires the only runner it has. `yad hub` implements it; a hub you write should too.",
+	why:     "deregistering retires the runner every other check here is made as; the second runner --second-token registers could carry it, and does not yet. `yad hub` implements it; a hub you write should too.",
 }, {
 	rule:    "The controls — cancel, interrupt, steer, close_session, drain — their repetition until the runner acts, and the single delivery of a steer.",
 	section: sectionSync,
@@ -34,10 +34,6 @@ var unchecked = []struct{ rule, section, why string }{{
 	rule:    "The caps on tool output, event text and a result's final text, and the halving of a batch a proxy refused.",
 	section: sectionEvents,
 	why:     "they are what a runner must not exceed, not what a hub must enforce.",
-}, {
-	rule:    "Whether events and a result are refused from a runner that is not the run's holder while another runner holds it.",
-	section: sectionEvents + ", " + sectionResult,
-	why:     "it needs two runners at once, and so two registration tokens; this suite holds one. What is checked is the near half: that a run the hub cannot match to the calling runner is refused.",
 }, {
 	rule:    "Whether register refuses a request whose Yad-Protocol header is missing or names another version, and whether it ignores a field this version does not define.",
 	section: sectionCalls,

@@ -340,7 +340,7 @@ queueing it.
 ## Proving it
 
 ```
-yad conformance <hub url> --token <token> [--harness id] [--lease-wait d]
+yad conformance <hub url> --token <token> [--second-token <token>] [--harness id] [--lease-wait d]
 ```
 
 The URL you give it is your base: every path in the spec is relative to it, so
@@ -348,7 +348,7 @@ a hub mounted at `https://example.com/yad/v1` is named in full. The spec's
 `servers` entry says `/v1` because that is where `yad hub` mounts it; yours is
 wherever you say it is.
 
-Thirty-four black-box checks against a URL, written from §2 rather than from
+Thirty-six black-box checks against a URL, written from §2 rather than from
 `yad hub`'s internals — nothing in the suite imports the hub, so it tests the
 protocol and not one implementation of it. A failure gives you the rule as a
 sentence and the part of §2 it is written in, because whoever reads it is
@@ -369,23 +369,30 @@ no harm.
 Without them those checks are **skipped**, and each skip says what to queue to
 make it possible.
 
+**Give it a second registration token to check who holds a run.**
+`--second-token` spends it on a second runner, which sends a batch of events
+and a result for the run the first runner holds. Both must be refused, and a
+`403` must carry `not_holder`, the code a runner stops on. Without the second
+token those two checks are skipped, saying which flag would make them possible;
+the half that needs one runner — a run you cannot match to the caller at all
+is refused — is checked either way. Only one of the two tokens can be `-`.
+
 **A skip is not a pass.** It is the suite saying your hub gave it no way to
 ask. Read the skips before believing the passes.
 
 ### What it does not check
 
-The suite prints this list itself, and it is nine rules — not a footnote. Each
+The suite prints this list itself, and it is eight rules — not a footnote. Each
 is something **your hub still has to get right** with nothing to catch you:
 
 | rule | why the suite cannot reach it |
 |---|---|
-| `POST /runners/{runner}/deregister` — held runs lost, offers requeued, the runner's sessions closed and their queued runs ended | the suite holds one registration token, and deregistering retires the only runner it has. `yad hub` implements it; implement it in yours |
+| `POST /runners/{runner}/deregister` — held runs lost, offers requeued, the runner's sessions closed and their queued runs ended | deregistering retires the runner every other check is made as; the second runner `--second-token` registers could carry it, and does not yet. `yad hub` implements it; implement it in yours |
 | The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, and a `steer` being delivered once | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
 | `start_at`, `min_version`, and the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at` | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated |
 | Sessions staying put — first claim binds the session to that runner, later runs to that runner alone, one at a time | needs two runs in one session, which only your own queueing can arrange |
 | Capacity shared round the hubs, one pool, a unit at a time | a rule about one runner across several hubs, so no single hub can pass or fail it |
 | The caps on tool output, event text and final text, and halving a batch a proxy refused | those bind the runner, not the hub |
-| Whether events and results are refused from a runner that is not the holder *while another runner holds it* | needs two runners and so two registration tokens; the suite holds one. The near half is checked: a run it cannot match to the caller is refused |
 | Whether `register` refuses a missing or wrong `Yad-Protocol`, and ignores unknown fields | reading the body before the header would burn the operator's token on a header check. Both rules *are* checked on `sync`, `events` and `result` |
 | Whether the copy of a resent event you keep is the first one | v1 gives a runner no way to read an event back, so nothing outside your hub can see which copy you stored. What is checked: a resent batch is accepted and acknowledged no further back than before |
 

@@ -39,6 +39,11 @@ type Options struct {
 	BaseURL string
 	// Token is a registration token the hub issued and nobody has used.
 	Token string
+	// SecondToken is another one, optional. With it the suite registers a
+	// second runner and has it send events and a result for a run the first
+	// one holds, which is the only way to see a hub tell two of its runners
+	// apart; without it those two checks are skipped, saying so.
+	SecondToken string
 	// Harness is the harness id the suite advertises; DefaultHarness when empty.
 	Harness string
 	// LeaseWait bounds the wait for a lease to lapse. Zero waits for none of
@@ -193,6 +198,12 @@ type session struct {
 	lapseAt time.Time
 	// leaseAtClaim is the lease the hub named in the answer that claimed it.
 	leaseAtClaim time.Duration
+
+	// other is the runner the second token registered, once a check has
+	// asked for it, and otherErr why it could not be: the token is spent by
+	// the first attempt, so the second check reads the first one's outcome.
+	other    *otherRunner
+	otherErr error
 }
 
 // syncSeen is one sync answer, the request it answered, and the free capacity
@@ -221,6 +232,11 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	if opts.Token == "" {
 		return nil, errors.New("a registration token is needed: create one on the hub (`yad hub token create`, or the hub's Add runner) and pass it with --token")
 	}
+	if opts.SecondToken != "" && opts.SecondToken == opts.Token {
+		// The first registration spends it, and the second would then be
+		// reported as the hub refusing a token it was right to refuse.
+		return nil, errors.New("--second-token is the same token as --token, and a token registers one runner: create another on the hub and pass that")
+	}
 	if opts.Harness == "" {
 		opts.Harness = DefaultHarness
 	}
@@ -234,7 +250,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 	s := &session{
 		opts: opts,
-		c:    newClient(opts.BaseURL, opts.Token),
+		c:    newClient(opts.BaseURL, opts.Token, opts.SecondToken),
 		// Every id this suite invents begins with the same word, whichever
 		// harness was named, so whoever reads the hub's records afterwards
 		// can see where this runner and its runs came from.

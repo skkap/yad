@@ -4,7 +4,8 @@
 // protocol/v1/openapi.yaml — can prove it speaks the protocol before a runner
 // ever connects.
 //
-// It holds a URL and a registration token and nothing else. Nothing here
+// It holds a URL and a registration token — two, for the holder rules — and
+// nothing else. Nothing here
 // imports internal/hub: a suite that reached into `yad hub`'s types would be
 // testing this implementation rather than the protocol, and the hubs it exists
 // for would not be checkable by it. `yad hub` is checked against it like any
@@ -37,7 +38,9 @@
 // failed with error class refused (§2's answer for a run a runner will not
 // take) and leaves the other to lose its lease. Without them those checks are
 // reported as skipped, with what to queue to make them possible: a skip is
-// never a pass.
+// never a pass. Given a second registration token, it spends that too, on a
+// second runner that sends events and a result for the run the first one
+// holds — which the hub must refuse.
 //
 // Epic E7 (Zumino yad/dev).
 package conformance

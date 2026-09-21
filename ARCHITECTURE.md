@@ -824,9 +824,12 @@ yad hub admin-token create|list|revoke
 yad hub token create [--ttl 1h] [--runner id]
                                    a one-time registration token; --runner re-registers
                                    that runner, the only way to replace its credential
-yad conformance <url> --token T    check any hub against v1: every rule it
+yad conformance <url> --token T [--second-token T2]
+                                   check any hub against v1: every rule it
                                    breaks, where that rule is written, and what
-                                   it does not check
+                                   it does not check; the second token registers
+                                   a runner that must not be able to report on
+                                   the first one's run
 yad upgrade [--check] [--force] [--tag v]
                                    replace this binary with the newest release
 ```

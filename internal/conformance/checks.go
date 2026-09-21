@@ -155,6 +155,18 @@ func checks() []check {
 		needs:   credential,
 		run:     checkResultNotHeld,
 	}, {
+		id:      "events/held-by-another",
+		rule:    "Only the runner a run was claimed by may append to it: a batch of events another runner sends for it is refused, with not_holder if the answer is a 403, and never written into the run, whose stream would otherwise show output its harness never produced.",
+		section: sectionEvents,
+		needs:   heldRun,
+		run:     checkEventsHeldByAnother,
+	}, {
+		id:      "result/held-by-another",
+		rule:    "A hub applies a result only from the runner the run was offered to or claimed by: a terminal state another runner reports for it is refused, with not_holder if the answer is a 403, and never applied.",
+		section: sectionResult,
+		needs:   heldRun,
+		run:     checkResultHeldByAnother,
+	}, {
 		id:      "result/applied",
 		rule:    "A hub applies the terminal state the runner holding a run reports.",
 		section: sectionResult,
