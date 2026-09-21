@@ -134,12 +134,12 @@ func askGH(ctx context.Context, path string) (in bool, hosts []string, failure s
 	// nothing is picked out of prose a release may reword. `--active` gives one
 	// entry per host — the account gh would use there — which is the question
 	// here; the other accounts on a host differ only by a name we must not read.
-	out, err := run(ctx, path, []string{"auth", "status", "--active", "--json", "hosts"}, false)
+	out, err := run(ctx, path, []string{"auth", "status", "--active", "--json", "hosts"}, false, statusWait())
 	switch {
 	case err != nil:
 		return false, nil, wontRun("gh")
 	case out.TimedOut:
-		return false, nil, noAnswer("gh auth status")
+		return false, nil, noAnswer("gh auth status", statusWait())
 	}
 	// The exit status is not consulted: with `--json` gh exits 0 whatever it
 	// finds wrong with an account, and non-zero only on a fatal error — which
@@ -160,12 +160,12 @@ func askGH(ctx context.Context, path string) (in bool, hosts []string, failure s
 	// stderr when it is signed out. Reporting a working gh as broken would cost
 	// its owner every run that needs a pull request, so the prose is read — for
 	// the hosts and nothing else.
-	out, err = run(ctx, path, []string{"auth", "status"}, true)
+	out, err = run(ctx, path, []string{"auth", "status"}, true, statusWait())
 	switch {
 	case err != nil:
 		return false, nil, wontRun("gh")
 	case out.TimedOut:
-		return false, nil, noAnswer("gh auth status")
+		return false, nil, noAnswer("gh auth status", statusWait())
 	}
 	if hosts := ghFromProse(string(out.Stdout)); len(hosts) > 0 {
 		return true, hosts, ""

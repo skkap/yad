@@ -14,6 +14,19 @@ import (
 	"github.com/skkap/yad/internal/hostool"
 )
 
+// Every fake here is meant to answer, so every probe gets a budget no spawn
+// should reach. At the shipped five seconds, TestDocumentCarriesNoChildOutputOrHomePath
+// read a timeout from every one of its fresh scripts under `make check`
+// instead of the failures it injects (DEV-100): macOS assesses a new
+// executable on its first run, and beside a race-instrumented suite that alone
+// can outlast five seconds. The shipped values are asserted where they live.
+func TestMain(m *testing.M) {
+	const answerBudget = 30 * time.Second
+	harness.VersionTimeoutForTests = answerBudget
+	hostool.VersionTimeoutForTests, hostool.StatusTimeoutForTests = answerBudget, answerBudget
+	os.Exit(m.Run())
+}
+
 // noTools puts every probe out of reach: an empty PATH is not enough on its
 // own, because a path override left in the environment would have Build spawn
 // the machine's real docker, and reach its daemon.

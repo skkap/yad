@@ -125,15 +125,17 @@ func TestLookup(t *testing.T) {
 // machine could plausibly take, or brought by the test itself.
 const (
 	// Never reached while leader fate holds, and far above any plausible spawn:
-	// a case that returns with its leader returns long before this.
-	leaderProbeTimeout = 10 * time.Second
+	// a case that returns with its leader returns long before this. It is the
+	// budget every probe here runs under unless a test shortens it.
+	leaderProbeTimeout = answerBudget
 	// Reached on purpose, so the one case that waits out a real versionTimeout
 	// waits as little as it can.
 	hangingProbeTimeout = 250 * time.Millisecond
 	// Every child below sleeps a minute. A probe still running this long after
-	// its deadline is held by one of them, which is the regression these tests
-	// exist for; it is a bound on a broken build, not a budget for a busy one.
-	afterTheDeadline = 15 * time.Second
+	// it started is held by one of them — it is past any deadline a case sets,
+	// with fifteen seconds to spare — which is the regression these tests exist
+	// for; it is a bound on a broken build, not a budget for a busy one.
+	afterTheDeadline = leaderProbeTimeout + 15*time.Second
 )
 
 // A probe that hangs takes its descendants with it: a launcher that forks and
@@ -150,9 +152,6 @@ func TestHangingProbeIsBoundedAndLeavesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("YAD_CODEX_PATH", script)
-	old := versionTimeout
-	versionTimeout = leaderProbeTimeout
-	t.Cleanup(func() { versionTimeout = old })
 
 	h, _ := Lookup("codex")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -296,10 +295,8 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 			timeout := leaderProbeTimeout
 			if tc.waitsItOut && !tc.endsAtCancel {
 				timeout = hangingProbeTimeout
+				shorten(t, timeout)
 			}
-			old := versionTimeout
-			versionTimeout = timeout
-			t.Cleanup(func() { versionTimeout = old })
 
 			h, _ := Lookup("codex")
 			ctx, cancel := context.WithCancel(context.Background())
@@ -336,7 +333,7 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 	}
 }
 
-// answer is the probe's. One still running this long past its deadline is held
+// answer is the probe's. One still running this long past its start is held
 // by a descendant's pipe — the regression leader fate exists to prevent — and
 // the test says so rather than hanging until the package times out.
 func answer(t *testing.T, done <-chan Detected) Detected {
@@ -345,7 +342,7 @@ func answer(t *testing.T, done <-chan Detected) Detected {
 	case d := <-done:
 		return d
 	case <-time.After(afterTheDeadline):
-		t.Fatalf("the probe was still running %s past its deadline: a descendant is holding it", afterTheDeadline)
+		t.Fatalf("the probe was still running %s after it started, past its deadline: a descendant is holding it", afterTheDeadline)
 		return Detected{}
 	}
 }
@@ -501,11 +498,9 @@ func TestATimedOutProbeIsNeverReportedAsAnExit(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("YAD_CODEX_PATH", script)
-			old := versionTimeout
 			// Short, because every run waits it out; all the case needs is that
 			// the deadline arrive while the child is still there.
-			versionTimeout = 250 * time.Millisecond
-			t.Cleanup(func() { versionTimeout = old })
+			shorten(t, 250*time.Millisecond)
 
 			h, _ := Lookup("codex")
 			d := detectOne(context.Background(), h)
