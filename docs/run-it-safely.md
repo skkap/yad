@@ -135,10 +135,11 @@ wanted any of this could simply ask the harness for it.
   does not parse is not repeated at all (`config.RedactURL`).
 - **A hub's redirect is refused, never followed** — Go would carry the bearer
   across a same-host redirect even from https to plain http. It is refused as
-  the response arrives, before Go's HTTP client reads the `Location`, so even a
+  the response arrives, before Go's HTTP client parses the `Location`, so a
   `Location` too malformed to parse, which Go's own error would quote whole, is
-  never repeated (`config.HubHTTPClient`, used by the runner, `yad hub run` and
-  `yad conformance`).
+  never repeated. Nor is a header line Go refuses to read at all, such as one
+  holding a control byte (`config.HubHTTPClient`, used by the runner, the
+  `yad hub` service commands and `yad conformance`).
 
 ### Where a grant actually lands
 

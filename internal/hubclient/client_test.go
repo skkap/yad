@@ -155,12 +155,15 @@ func TestRedirectIsRefusedAndCarriesNoCredential(t *testing.T) {
 // error it builds. Every such error reaches `yad status` and the daemon's log.
 func TestAnErrorNeverQuotesACredentialFromAURL(t *testing.T) {
 	const secret = "sk-secret-token"
-	for _, tc := range []struct{ name, location string }{
-		{"token as username", "http://" + secret + "@HOST/elsewhere"},
-		{"token as password", "http://runner:" + secret + "@HOST/elsewhere"},
-		{"unparseable, token as password", "http://runner:" + secret + "@HOST/%zz"},
-		{"unparseable, token as username", "http://" + secret + "@HOST/%zz"},
-		{"unparseable host", "http://runner:" + secret + "@[::1/elsewhere"},
+	for _, tc := range []struct{ name, location, says string }{
+		{"token as username", "http://" + secret + "@HOST/elsewhere", "redirected"},
+		{"token as password", "http://runner:" + secret + "@HOST/elsewhere", "redirected"},
+		{"unparseable, token as password", "http://runner:" + secret + "@HOST/%zz", "redirected"},
+		{"unparseable, token as username", "http://" + secret + "@HOST/%zz", "redirected"},
+		{"unparseable host", "http://runner:" + secret + "@[::1/elsewhere", "redirected"},
+		// A byte net/textproto refuses in a header value, so the answer fails
+		// to parse before net/http ever looks for a redirect in it.
+		{"unreadable header", "http://runner:" + secret + "@HOST/\x7f", "the hub's answer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -179,8 +182,8 @@ func TestAnErrorNeverQuotesACredentialFromAURL(t *testing.T) {
 				t.Fatal("the call succeeded; it was meant to fail and quote a URL")
 			case strings.Contains(err.Error(), secret):
 				t.Errorf("the error carries the credential: %v", err)
-			case !strings.Contains(err.Error(), "redirect"):
-				t.Errorf("the error no longer says the hub redirected: %v", err)
+			case !strings.Contains(err.Error(), tc.says):
+				t.Errorf("the error no longer says %q: %v", tc.says, err)
 			case !strings.Contains(err.Error(), "127.0.0.1:"):
 				t.Errorf("the error no longer says which hub it was: %v", err)
 			}

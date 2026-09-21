@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"time"
@@ -116,7 +117,9 @@ func RedactURLError(err error) error {
 // not only in CheckRedirect: net/http parses the Location before it calls
 // CheckRedirect, and when that parse fails it builds an error quoting the
 // Location whole — userinfo and all — which no rewrite of the url.Error around
-// it reaches. Refused here, net/http never reads the Location at all.
+// it reaches. Refused here, net/http never parses the Location. A Location
+// holding a byte HTTP forbids fails earlier still, in net/textproto, whose
+// error quotes the header line; the transport replaces that error too.
 func HubHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout:   timeout,
@@ -134,6 +137,13 @@ type refuseRedirects struct{ next http.RoundTripper }
 
 func (t refuseRedirects) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.next.RoundTrip(req)
+	var malformed textproto.ProtocolError
+	if errors.As(err, &malformed) {
+		// net/textproto quotes the offending line whole, and a header line
+		// the hub wrote — a Location with a byte it refuses — can carry a
+		// credential. Matched by type: every ProtocolError quotes the hub.
+		return nil, errors.New("the hub's answer is not valid HTTP — what it sent is not repeated, since a header such as a redirect's Location can carry a credential")
+	}
 	if err != nil {
 		return resp, err
 	}
@@ -144,9 +154,12 @@ func (t refuseRedirects) RoundTrip(req *http.Request) (*http.Response, error) {
 	if resp.StatusCode < 300 || resp.StatusCode > 399 || loc == "" {
 		return resp, nil
 	}
-	// A little is read so a small body leaves the connection reusable, as
-	// net/http does before following a redirect.
-	_, _ = io.CopyN(io.Discard, resp.Body, 2<<10)
+	// A small body is read so the connection stays reusable, by net/http's
+	// own rule before following a redirect; a large one is not waited on.
+	const maxBodySlurpSize = 2 << 10
+	if resp.ContentLength == -1 || resp.ContentLength <= maxBodySlurpSize {
+		_, _ = io.CopyN(io.Discard, resp.Body, maxBodySlurpSize)
+	}
 	resp.Body.Close()
 	// Resolved against the request, so a relative Location still says where;
 	// one that does not parse is not repeated, not even in part, and neither

@@ -605,12 +605,15 @@ func TestASecretTheHubSentIsNotPrinted(t *testing.T) {
 func TestACredentialInARedirectIsNotPrinted(t *testing.T) {
 	t.Parallel()
 	const secret = "sk-secret-token-abc"
-	for _, tc := range []struct{ name, location string }{
-		{"token as username", "http://" + secret + "@HOST/elsewhere"},
-		{"token as password", "http://runner:" + secret + "@HOST/elsewhere"},
-		{"unparseable, token as password", "http://runner:" + secret + "@HOST/%zz"},
-		{"unparseable, token as username", "http://" + secret + "@HOST/%zz"},
-		{"unparseable host", "http://runner:" + secret + "@[::1/elsewhere"},
+	for _, tc := range []struct{ name, location, says string }{
+		{"token as username", "http://" + secret + "@HOST/elsewhere", "redirected"},
+		{"token as password", "http://runner:" + secret + "@HOST/elsewhere", "redirected"},
+		{"unparseable, token as password", "http://runner:" + secret + "@HOST/%zz", "redirected"},
+		{"unparseable, token as username", "http://" + secret + "@HOST/%zz", "redirected"},
+		{"unparseable host", "http://runner:" + secret + "@[::1/elsewhere", "redirected"},
+		// A byte net/textproto refuses in a header value, so the answer fails
+		// to parse before net/http ever looks for a redirect in it.
+		{"unreadable header", "http://runner:" + secret + "@HOST/\x7f", "the hub's answer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -632,8 +635,8 @@ func TestACredentialInARedirectIsNotPrinted(t *testing.T) {
 			if strings.Contains(out.String(), secret) {
 				t.Errorf("the credential in the redirect is in the report:\n%s", out.String())
 			}
-			if !strings.Contains(out.String(), "redirected") {
-				t.Errorf("the report no longer says the hub redirected:\n%s", out.String())
+			if !strings.Contains(out.String(), tc.says) {
+				t.Errorf("the report no longer says %q:\n%s", tc.says, out.String())
 			}
 		})
 	}
