@@ -3,6 +3,8 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +118,68 @@ func TestBuildReportsEveryHostTool(t *testing.T) {
 	for i, tool := range doc.HostTools {
 		if tool.ID != hostool.Catalog()[i].ID || tool.Present {
 			t.Errorf("host tool %d = %+v, want %s absent", i, tool, hostool.Catalog()[i].ID)
+		}
+	}
+}
+
+// The guard on the document as a whole, because that is what every connected
+// hub reads. DEV-60 kept child output out of a harness's Error and DEV-67
+// found the same leak in its Warnings: sweeping by field misses a sibling
+// field, so this sweeps by destination. Every binary the runner probes lives
+// under a home named like an owner's, and every one fails printing a
+// credential and that home; a Codex answers its version and then fails the
+// protocol check the same way. Whatever field a future probe adds, none of it
+// may reach the marshalled document.
+func TestDocumentCarriesNoChildOutputOrHomePath(t *testing.T) {
+	const secret = "https://user:hunter2@proxy.internal/"
+	realHome, _ := os.UserHomeDir()
+	home := filepath.Join(t.TempDir(), "Users", "someone")
+	bin := filepath.Join(home, "bin")
+	tmp := filepath.Join(home, "tmp")
+	for _, d := range []string{bin, tmp} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	noTools(t)
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("PATH", bin)
+	fail := "echo \"dyld: Library not loaded: $HOME/lib/libnode.dylib\" >&2\necho 'fatal: unable to access " + secret + "' >&2\nexit 2\n"
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, h := range harness.Catalog() {
+		write(h.Binary, fail)
+	}
+	for _, tool := range hostool.Catalog() {
+		write(tool.Binary, fail)
+	}
+	// Past its version probe, so the protocol check runs and fails.
+	write("codex", "if [ \"$1\" = --version ]; then echo 'codex-cli 0.147.0'; exit 0; fi\n"+fail)
+
+	cfg := config.Default()
+	cfg.Name = "r1"
+	doc := Build(context.Background(), "r1", cfg, nil)
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	// Not vacuous: the failures are reported, in the runner's words.
+	if !strings.Contains(s, `"warnings":["yad could not check this codex`) || !strings.Contains(s, `"error":"`) {
+		t.Fatalf("the failures are not in the document: %s", s)
+	}
+	leaks := []string{secret, "hunter2", "dyld", "fatal:", home, bin, tmp, "/Users/", "fork/exec",
+		"permission denied", "exit status", "no such file"}
+	if realHome != "" && realHome != "/" {
+		leaks = append(leaks, realHome)
+	}
+	for _, leak := range leaks {
+		if strings.Contains(s, leak) {
+			t.Errorf("the document carries %q: %s", leak, s)
 		}
 	}
 }

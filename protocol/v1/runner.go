@@ -36,7 +36,8 @@ type HarnessReport struct {
 	// drive — an installed Codex whose app-server protocol differs from the
 	// one the adapter was built against. A hub may show them or prefer a
 	// runner without; they never make a harness refuse runs, which Error does.
-	Warnings []string `json:"warnings,omitempty"`
+	// The same rule as Error binds them (DEV-67).
+	Warnings []string `json:"warnings,omitempty" doc:"What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
 }
 
 // AccountState is what a hub may know about an account, and the whole of it.

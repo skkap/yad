@@ -313,6 +313,7 @@ components:
         version:
           type: string
         warnings:
+          description: "What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."
           items:
             type: string
           type: array

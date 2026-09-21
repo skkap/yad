@@ -138,8 +138,11 @@ func TestSchemaWarning(t *testing.T) {
 			if tc.want == "" && got != "" || !strings.Contains(got, tc.want) {
 				t.Fatalf("warning = %q, want %q", got, tc.want)
 			}
-			if tc.want != "" && !strings.Contains(got, tc.version) && tc.schema != "fail" {
-				t.Errorf("warning %q does not name the installed version", got)
+			// The version is the first line codex printed; the report's
+			// version field carries it, and a warning quotes nothing a child
+			// wrote.
+			if tc.want != "" && strings.Contains(got, tc.version) {
+				t.Errorf("warning %q repeats what codex printed for its version", got)
 			}
 		})
 	}
@@ -204,5 +207,74 @@ func TestFailedSchemaCheckIsRetried(t *testing.T) {
 	clock = clock.Add(100 * schemaRetry)
 	if w := SchemaWarning(context.Background(), os.Args[0], version); w != "" {
 		t.Errorf("warning = %q: a definite answer was asked again", w)
+	}
+}
+
+// The warning reaches the capability document, which every connected hub
+// reads, so however the check fails it says so in the runner's words: never
+// what codex printed, never the path it was started from, never the temp
+// directory it wrote into (DEV-67). Each case fails the check a different way,
+// and the leaks list what the raw error would have carried.
+func TestSchemaWarningQuotesNothingItWasTold(t *testing.T) {
+	const secret = "https://user:hunter2@proxy.internal/"
+	realHome, _ := os.UserHomeDir()
+	for _, tc := range []struct {
+		name string
+		// script is the fake codex's body; "" leaves the file unexecutable.
+		script string
+		// noTemp points TMPDIR at a directory that is not there.
+		noTemp bool
+		want   string
+	}{
+		{name: "it will not start", want: "it would not start"},
+		{name: "it fails, saying what it should not", want: "it exited with an error",
+			script: "echo \"dyld: Library not loaded: $HOME/lib/libnode.dylib\" >&2\necho 'fatal: unable to access " + secret + "' >&2\nexit 2"},
+		{name: "what it wrote cannot be read", want: "what it wrote could not be read",
+			script: "mkdir \"$4/" + schemaFile + "\""},
+		{name: "what it wrote is not a schema", want: "is not one yad can read",
+			script: "echo '" + secret + "' > \"$4/" + schemaFile + "\""},
+		{name: "the temp directory cannot be made", noTemp: true, want: "the temp directory",
+			script: "exit 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := filepath.Join(t.TempDir(), "Users", "someone")
+			bin := filepath.Join(home, "bin", "codex")
+			tmp := filepath.Join(home, "tmp")
+			for _, d := range []string{filepath.Dir(bin), tmp} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("TMPDIR", tmp)
+			if tc.noTemp {
+				t.Setenv("TMPDIR", filepath.Join(home, "gone"))
+			}
+			body, mode := "#!/bin/sh\n"+tc.script+"\n", os.FileMode(0o755)
+			if tc.script == "" {
+				mode = 0o644
+			}
+			if err := os.WriteFile(bin, []byte(body), mode); err != nil {
+				t.Fatal(err)
+			}
+
+			got, _, err := schemaWarning(context.Background(), bin)
+			if err != nil || !strings.Contains(got, tc.want) {
+				t.Fatalf("warning = %q, %v; want %q", got, err, tc.want)
+			}
+			if !strings.Contains(got, "on this machine") {
+				t.Errorf("warning = %q, want it to send the owner to the machine", got)
+			}
+			leaks := []string{secret, "hunter2", "dyld", "fatal:", home, "/Users/", "fork/exec",
+				"permission denied", "exit status", "is a directory", "no such file", "invalid character"}
+			if realHome != "" && realHome != "/" {
+				leaks = append(leaks, realHome)
+			}
+			for _, leak := range leaks {
+				if strings.Contains(got, leak) {
+					t.Errorf("warning carries %q: %q", leak, got)
+				}
+			}
+		})
 	}
 }

@@ -192,7 +192,24 @@ func stripDocs(v any) any {
 // a codex that takes seconds is broken in a way its version probe reports.
 const schemaTimeout = 10 * time.Second
 
-var errSchemaTimeout = fmt.Errorf("no answer within %s", schemaTimeout)
+// failure is why the check could not run, in the runner's own words. The
+// warning it becomes is copied into the capability document, which every
+// connected hub reads, so it is a type of its own rather than an error: an
+// error's text is where a child's stderr, the exec path under the owner's home
+// and the temp directory's absolute path end up (DEV-67; DEV-60 found the same
+// in Error). Every value is one of those below. What codex printed and what
+// the OS said stay on the machine, and the warning sends the owner to run the
+// command there, where all of it is on their screen.
+type failure string
+
+var (
+	failTempDir = failure("the temp directory it writes into could not be made")
+	failStart   = failure("it would not start")
+	failTimeout = failure(fmt.Sprintf("it gave no answer within %s", schemaTimeout))
+	failExit    = failure("it exited with an error")
+	failNoFile  = failure("it wrote no " + schemaFile)
+	failRead    = failure("what it wrote could not be read")
+)
 
 // schemaRetry is how long a failed check is believed. A check that could not
 // run — a loaded machine at boot, a full temp directory — may run next time,
@@ -201,18 +218,19 @@ var errSchemaTimeout = fmt.Errorf("no answer within %s", schemaTimeout)
 const schemaRetry = 10 * time.Minute
 
 // generateSchema runs `codex app-server generate-json-schema` into a
-// throwaway directory and returns its bundle.
-func generateSchema(parent context.Context, bin string) ([]byte, error) {
+// throwaway directory and returns its bundle, or why there is none. A parent
+// context that ended comes back as a failure too; the caller asks the context.
+func generateSchema(parent context.Context, bin string) ([]byte, failure) {
 	dir, err := os.MkdirTemp("", "yad-codex-schema-*")
 	if err != nil {
-		return nil, err
+		return nil, failTempDir
 	}
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeout(parent, schemaTimeout)
 	defer cancel()
 	p, err := supervise.Start(ctx, supervise.Spec{Path: bin, Args: []string{"app-server", "generate-json-schema", "--out", dir}})
 	if err != nil {
-		return nil, err
+		return nil, failStart
 	}
 	// What it prints is not wanted, and the read must not wait for EOF: a
 	// descendant that left the group with setsid can hold the pipe open for
@@ -223,18 +241,20 @@ func generateSchema(parent context.Context, bin string) ([]byte, error) {
 	p.Stdout().Close()
 	switch {
 	case parent.Err() != nil:
-		return nil, parent.Err()
+		return nil, failStart
 	case ctx.Err() != nil:
-		return nil, errSchemaTimeout
+		return nil, failTimeout
 	case werr != nil:
-		return nil, fmt.Errorf("%v %s", werr, strings.TrimSpace(p.Stderr()))
+		return nil, failExit
 	}
 	b, err := os.ReadFile(filepath.Join(dir, schemaFile))
-	if errors.Is(err, fs.ErrNotExist) {
-		// The throwaway directory's path would say nothing useful.
-		return nil, errors.New("it wrote no " + schemaFile)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, failNoFile
+	case err != nil:
+		return nil, failRead
 	}
-	return b, err
+	return b, ""
 }
 
 type check struct {
@@ -263,7 +283,7 @@ func SchemaWarning(ctx context.Context, bin, version string) string {
 	if ok && (c.until.IsZero() || now().Before(c.until)) {
 		return c.warning
 	}
-	w, final, err := schemaWarning(ctx, bin, version)
+	w, final, err := schemaWarning(ctx, bin)
 	if err != nil {
 		// The caller stopped asking; that says nothing about codex.
 		return ""
@@ -280,18 +300,19 @@ func SchemaWarning(ctx context.Context, bin, version string) string {
 
 // schemaWarning checks once. final says the answer holds for this binary and
 // version; err, that ctx ended and there is no answer at all.
-func schemaWarning(ctx context.Context, bin, version string) (warning string, final bool, err error) {
-	b, err := generateSchema(ctx, bin)
+func schemaWarning(ctx context.Context, bin string) (warning string, final bool, err error) {
+	b, f := generateSchema(ctx, bin)
 	if ctx.Err() != nil {
 		return "", false, ctx.Err()
 	}
-	if err != nil {
-		return fmt.Sprintf("yad could not check this codex's app-server protocol (%v) — runs may still work; `codex app-server generate-json-schema --out DIR` shows the error", err), false, nil
+	if f != "" {
+		return "yad could not check this codex's app-server protocol: " + string(f) + " — runs may still work; run `codex app-server generate-json-schema --out DIR` on this machine to see why", false, nil
 	}
 	sum, err := SchemaHash(b)
 	if err != nil {
-		// The same bytes hash the same way next time.
-		return fmt.Sprintf("yad could not check this codex's app-server protocol: %v", err), true, nil
+		// The same bytes hash the same way next time. The error stays
+		// unquoted: a JSON syntax error quotes what codex wrote.
+		return "yad could not check this codex's app-server protocol: the schema it generated is not one yad can read — runs may still work; run `codex app-server generate-json-schema --out DIR` on this machine to see what it writes", true, nil
 	}
 	if _, ok := pinned[sum]; ok {
 		return "", true, nil
@@ -301,5 +322,8 @@ func schemaWarning(ctx context.Context, bin, version string) (warning string, fi
 		known = append(known, v)
 	}
 	slices.Sort(known)
-	return fmt.Sprintf("the app-server protocol of %s differs from the one this yad was built against (codex %s) in the parts the adapter uses — runs may fail; install a pinned codex or a yad that knows this one", version, strings.Join(known, ", ")), true, nil
+	// The installed version is not repeated here: it is the first line codex
+	// printed, which the report's version field already carries, and a warning
+	// quotes nothing a child wrote.
+	return fmt.Sprintf("this codex's app-server protocol differs from the one this yad was built against (codex %s) in the parts the adapter uses — runs may fail; install a pinned codex or a yad that knows this one", strings.Join(known, ", ")), true, nil
 }
