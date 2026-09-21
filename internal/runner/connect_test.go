@@ -69,7 +69,7 @@ func TestConnectRoundTrip(t *testing.T) {
 
 	// The token is spent: a second connect with it is refused, with the way on.
 	_, _, _, err = Connect(ctx, e.paths, e.url, tok, "home")
-	if err == nil || !strings.Contains(err.Error(), "already used") || !strings.Contains(err.Error(), "yad hub token create") {
+	if err == nil || !strings.Contains(err.Error(), "already used") || !strings.Contains(err.Error(), "hub token create") {
 		t.Errorf("reused token: %v", err)
 	}
 	// A token for a new runner cannot replace this one's credential; a token

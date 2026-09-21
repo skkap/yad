@@ -92,7 +92,7 @@ type Options struct {
 	// Command builds the yad command an operator runs against this hub's own
 	// database, for an answer's next action: the hub is handed a store, not
 	// the profile or the --db that opened it, so only its caller can name
-	// them. Nil, and the answer says in words what to run where.
+	// them. Nil, and the command carries placeholders for both.
 	Command func(args ...string) string
 }
 

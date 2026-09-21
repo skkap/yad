@@ -86,7 +86,7 @@ func TestTokenCreateAndConnect(t *testing.T) {
 
 	// Spent: the same token again is refused with the next action.
 	code, _, errs = runnerSide.yad("", "connect", "--token", tok, url, "--name", "home")
-	if code == 0 || !strings.Contains(errs, "yad hub token create") {
+	if code == 0 || !strings.Contains(errs, "hub token create") {
 		t.Errorf("reused token: exit %d: %s", code, errs)
 	}
 	if strings.Contains(errs, tok) {

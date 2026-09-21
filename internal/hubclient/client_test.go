@@ -81,7 +81,7 @@ func TestDecodesHubErrors(t *testing.T) {
 	if !errors.As(err, &se) || se.Status != http.StatusUnauthorized || Code(err) != v1.CodeUnauthorized {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "yad hub token create") {
+	if !strings.Contains(err.Error(), "hub token create") {
 		t.Errorf("the next action is lost: %v", err)
 	}
 	if strings.Contains(err.Error(), "super-secret-credential") {

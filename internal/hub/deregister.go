@@ -61,7 +61,7 @@ func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, 
 		unstarted: runnerDeregistered,
 	}
 	err = h.store.Tx(ctx, func(q *db.Queries) error {
-		if _, err := current(ctx, q, runner); err != nil {
+		if _, err := h.current(ctx, q, runner); err != nil {
 			return err
 		}
 		if err := abandon(ctx, q, runner.ID, gone, h.now()); err != nil {

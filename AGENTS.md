@@ -47,14 +47,18 @@ rebuilds them and `make check` fails when they drift.
   so it must run as printed: built from argv with `shellword.Command`, never
   formatted by hand and never with Go's `%q` — every interpolated word
   POSIX-quoted, whether or not its validation lets it hold a special character
-  today. It carries every variable the reader needs: the profile and the
-  directory variables it resolved with (`Paths.Command`), the account's home,
+  today. It carries every variable the reader needs: the profile — the
+  default one too, unless it is the machine's only profile, since the reader's
+  shell may export `YAD_PROFILE` — and the directory variables it resolved
+  with (`Paths.Command`), the account's home,
   `YAD_REPO` for an upgrade, the `--hub`, `--token-file` or `--db` the command
   it follows was given. A command that leaves the machine — in a run's error,
   a hub's answer — carries no path under anyone's home (DEV-67):
   `Paths.RemoteCommand` names the profile and keeps each directory variable
   with a `<placeholder>` value, and a home or a database stays a placeholder
-  beside the command that shows it. Set it apart in
+  beside the command that shows it. What the writer cannot know — a hub's
+  answer naming the runner's profile, URL or connection name — is a
+  placeholder too, never left out. Set it apart in
   backticks, and test it by running it through a real `sh`
   (`shellwordtest.Check`, `CheckEnv`), not by reading it.
 - **Tests never spend a token and never touch the network.** Adapters replay

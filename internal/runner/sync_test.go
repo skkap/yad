@@ -415,7 +415,7 @@ func TestLoopStopsOnARefusedCredential(t *testing.T) {
 	}
 	l.Hub = bad
 	err = l.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "yad connect") {
+	if err == nil || !strings.Contains(err.Error(), "yad --profile '<runner profile>' connect") {
 		t.Errorf("err = %v, want a stop naming yad connect", err)
 	}
 	if len(e.clock.waits) != 0 {
