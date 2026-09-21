@@ -129,14 +129,16 @@ func privateFiles(p Paths) []privateFile {
 	// there. That is conditional, and the advice says so rather than telling
 	// an owner to rotate something that may not exist.
 	//
-	// The hub's is unconditional and keeps grants outright: a run's spec is
-	// written once with them (hub/store/migrations/0001) and no query clears
-	// it, FinishRun settling only state, reason and the lease — so every grant
-	// that hub was ever given is still there, the current queue included and
-	// not only it.
+	// The hub's is unconditional: a run's spec carries its grants in
+	// plaintext until the run ends, when the schema blanks their values
+	// (hub/store/migrations/0001, decision 0041). So what an exposed hub.db
+	// gives up is the grants of every run not yet ended — queued, offered,
+	// held or waiting — and not the history. Its -wal is wider: frames written
+	// while a run was live stay there until SQLite reuses them, so it can
+	// still hold the grants of runs that ended since the last clean close.
 	for _, st := range []struct{ path, holds, rotate string }{
 		{p.StateDB(), "every run's events, which carry what the harness did and anything it printed", "if a run ever printed a credential, its events still hold it — treat that one as exposed too"},
-		{p.HubDB(), "every run this hub has been given, with its grants, in plaintext", "rotate every secret any run's grants have carried"},
+		{p.HubDB(), "the grants of every run this hub has not seen end, in plaintext", "rotate every secret carried by a grant of a run that has not ended — and, if its -wal was exposed too, of any run that ended since this hub last stopped cleanly"},
 	} {
 		base := filepath.Base(st.path)
 		files = append(files, privateFile{st.path, "it holds " + st.holds, closeAnd(st.path, st.rotate)})

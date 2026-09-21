@@ -54,7 +54,8 @@ func Open(ctx context.Context, file string) (*Store, error) {
 // uses it too, so the two databases cannot drift in how they are opened.
 //
 // The file is created 0600 before SQLite touches it: both databases hold run
-// specs, and the hub's holds credential hashes and grants.
+// specs, and the hub's holds credential hashes and the grants of runs that
+// have not ended.
 func OpenSQLite(ctx context.Context, file string, fsys fs.FS) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return nil, err
@@ -67,12 +68,17 @@ func OpenSQLite(ctx context.Context, file string, fsys fs.FS) (*sql.DB, error) {
 
 	// WAL lets `yad status` read while the runner writes; busy_timeout turns a
 	// brief lock into a wait instead of an error; foreign keys are off by
-	// default in SQLite and the schema relies on them.
+	// default in SQLite and the schema relies on them. secure_delete zeroes
+	// what an update or a delete frees instead of leaving it in a free block:
+	// the hub blanks a grant's value when its run ends (decision 0041), and
+	// without it the old bytes stay readable in the file — a few values in
+	// every few hundred, measured in hub/store.TestAnEndedRunsGrantValuesLeaveTheFile.
 	q := url.Values{}
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "synchronous(NORMAL)")
+	q.Add("_pragma", "secure_delete(1)")
 	conn, err := sql.Open("sqlite", "file:"+file+"?"+q.Encode())
 	if err != nil {
 		return nil, err
