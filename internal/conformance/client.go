@@ -241,7 +241,7 @@ const registerPath = "/runners/register"
 // print the answer that broke the rule, and the answer that breaks "a token
 // registers one runner once" is a 200 carrying a working credential — which
 // would then be in the terminal, and in the log of whatever pipeline ran the
-// suite, for as long as that log is kept. CLAUDE.md's guardrail is that a
+// suite, for as long as that log is kept. AGENTS.md's guardrail is that a
 // secret is never printed, and a report about a hub's mistakes is not an
 // exception to it.
 //

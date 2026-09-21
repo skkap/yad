@@ -165,7 +165,7 @@ func TestTheSuiteRefusesWhatItCannotCheckSafely(t *testing.T) {
 // A failure prints what the hub answered, and the answer to the rule about a
 // spent token is a registration that carries a live runner credential. The
 // report is read in a terminal and kept in a pipeline's log, so the credential
-// must not be in it (CLAUDE.md, Guardrails).
+// must not be in it (AGENTS.md, Guardrails).
 func TestNoSecretReachesTheReport(t *testing.T) {
 	t.Parallel()
 	f, url := newFake(t, flawTokenIsReusable, fakeRunSpec(0), fakeRunSpec(1))
