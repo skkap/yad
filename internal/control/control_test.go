@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,6 +34,16 @@ func testPaths(t *testing.T) config.Paths {
 // serve claims the profile and answers until the test ends.
 func serve(t *testing.T, p config.Paths, h Handler) *Daemon {
 	t.Helper()
+	d, _ := serving(t, p, h)
+	return d
+}
+
+// serving is serve, and also returns halt, which stops the answering early and
+// returns once every exchange has finished. A daemon answers a stop before it
+// acts on it (decision 0027), so the CLI hearing the answer says nothing about
+// whether the handler has run yet; after halt, it has.
+func serving(t *testing.T, p config.Paths, h Handler) (d *Daemon, halt func()) {
+	t.Helper()
 	d, err := Claim(p)
 	if err != nil {
 		t.Fatal(err)
@@ -40,12 +51,15 @@ func serve(t *testing.T, p config.Paths, h Handler) *Daemon {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { d.Serve(ctx, h); close(done) }()
-	t.Cleanup(func() {
+	halt = sync.OnceFunc(func() {
 		cancel()
 		<-done
+	})
+	t.Cleanup(func() {
+		halt()
 		d.Close()
 	})
-	return d
+	return d, halt
 }
 
 func TestStatusAndSingleInstance(t *testing.T) {
@@ -80,10 +94,17 @@ func TestStatusAndSingleInstance(t *testing.T) {
 	}
 }
 
+// However many times it is asked, a daemon stops once. The handler is slow on
+// purpose: a daemon answers a stop before acting on it, so a goroutine
+// descheduled between the two — routine on a loaded machine — is what this
+// test must count across, and only halt waits for it (DEV-92).
 func TestStopIsAskedOnce(t *testing.T) {
 	p := testPaths(t)
 	var stops atomic.Int32
-	serve(t, p, Handler{Status: func(context.Context) Status { return Status{} }, Stop: func() { stops.Add(1) }})
+	_, halt := serving(t, p, Handler{Status: func(context.Context) Status { return Status{} }, Stop: func() {
+		time.Sleep(50 * time.Millisecond)
+		stops.Add(1)
+	}})
 	for range 2 {
 		if pid, err := Stop(context.Background(), p); err != nil || pid != os.Getpid() {
 			t.Fatalf("stop: %d, %v", pid, err)
@@ -92,15 +113,16 @@ func TestStopIsAskedOnce(t *testing.T) {
 	if _, err := Ask(context.Background(), p, OpStop); err == nil || !strings.Contains(err.Error(), "control.Stop") {
 		t.Errorf("a one-line stop: %v, want it refused", err)
 	}
-	if n := stops.Load(); n != 1 {
-		t.Errorf("Stop called %d times, want once", n)
-	}
 	res, err := Ask(context.Background(), p, "status")
 	if err != nil || !res.Status.Stopping {
 		t.Errorf("status after stop: %+v, %v", res.Status, err)
 	}
 	if _, err := Ask(context.Background(), p, "reboot"); err == nil || !strings.Contains(err.Error(), "unknown request") {
 		t.Errorf("unknown op: %v", err)
+	}
+	halt()
+	if n := stops.Load(); n != 1 {
+		t.Errorf("Stop called %d times, want once", n)
 	}
 }
 
