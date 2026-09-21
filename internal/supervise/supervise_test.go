@@ -65,9 +65,14 @@ func child(mode string) {
 		// something: the reader sees EOF long before the leader exits.
 		os.Stdout.Close()
 		time.Sleep(time.Hour)
-	case "self-kill":
-		// Killed by a signal nobody's deadline sent.
-		syscall.Kill(os.Getpid(), syscall.SIGKILL)
+	case "self-kill", "self-term":
+		// Killed by a signal nobody's deadline sent. SIGTERM stands in for a
+		// crash: with no handler installed the runtime dies of it.
+		sig := syscall.SIGKILL
+		if mode == "self-term" {
+			sig = syscall.SIGTERM
+		}
+		syscall.Kill(os.Getpid(), sig)
 		time.Sleep(time.Hour)
 	case "detached":
 		// A descendant that leaves the group with setsid, holding stdout, and a

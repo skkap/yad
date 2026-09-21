@@ -17,8 +17,9 @@ type Capture struct {
 	Stderr string
 	// TimedOut reports that ctx ended before the leader exited on its own: the
 	// group was killed for it, and Err is that kill rather than anything the
-	// child decided. A leader that exited with a status keeps it, however close
-	// the deadline was. Callers hold ctx; its Err says whether it was a
+	// child decided. A leader that exited with a status, or died of a signal
+	// other than that kill, keeps its own ending however close the deadline
+	// was. Callers hold ctx; its Err says whether it was a
 	// deadline or a cancel. A descendant that left the group with setsid can
 	// still survive the kill, for the reason Run describes below.
 	TimedOut bool

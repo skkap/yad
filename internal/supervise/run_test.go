@@ -4,7 +4,9 @@ package supervise
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -74,6 +76,41 @@ func TestRunTimedOutIsTheLeadersFate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The rule at the reap, over real exit statuses. The orderings that matter —
+// a leader that crashes on its own in the instant the deadline fires — cannot
+// be arranged through Run, since ctx's kill follows at once; here ctx's end is
+// simply given, and only the leader's fate decides.
+func TestEndedByContext(t *testing.T) {
+	for _, tc := range []struct {
+		mode   string
+		ctxErr error
+		want   bool
+	}{
+		{"self-kill", context.DeadlineExceeded, true}, // indistinguishable from ours, and so ours
+		{"self-kill", context.Canceled, true},
+		{"self-kill", nil, false},
+		{"self-term", context.DeadlineExceeded, false}, // its own crash, not our kill
+		{"echo", context.DeadlineExceeded, false},      // it answered, however close
+		{"stderr", context.DeadlineExceeded, false},    // it failed, by itself
+	} {
+		t.Run(fmt.Sprintf("%s/%v", tc.mode, tc.ctxErr), func(t *testing.T) {
+			cmd := exec.Command(os.Args[0])
+			cmd.Env = append(os.Environ(), "SUPERVISE_TEST_CHILD="+tc.mode, "GORACE=atexit_sleep_ms=0")
+			_ = cmd.Run()
+			// Else a self-term that merely exited would pass for the wrong reason.
+			if strings.HasPrefix(tc.mode, "self-") && cmd.ProcessState.Exited() {
+				t.Fatalf("%s exited with %v, want death by signal", tc.mode, cmd.ProcessState)
+			}
+			if got := endedByContext(tc.ctxErr, cmd.ProcessState); got != tc.want {
+				t.Errorf("endedByContext(%v, %v) = %v, want %v", tc.ctxErr, cmd.ProcessState, got, tc.want)
+			}
+		})
+	}
+	if !endedByContext(context.DeadlineExceeded, nil) {
+		t.Error("a Wait with no status after the deadline must still be the deadline's")
 	}
 }
 
