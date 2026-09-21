@@ -51,7 +51,7 @@ func TestUpgradeArgumentRefusalRunsAsPrinted(t *testing.T) {
 func TestCheckLineCommandsRunAsPrinted(t *testing.T) {
 	for _, tag := range shellwordtest.Hostile {
 		for _, state := range []upgrade.State{upgrade.Behind, upgrade.Ahead, upgrade.Unstamped, upgrade.UnreadableTag} {
-			line := checkLine(state, tag, true, "")
+			line := checkLine(state, tag, true, bareUpgrade)
 			for _, cmd := range shellwordtest.Commands(line, "yad upgrade") {
 				shellwordtest.Check(t, cmd, "yad", "upgrade", "--tag", tag)
 			}

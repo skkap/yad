@@ -81,11 +81,14 @@ func TestSchemaBehindCommandCarriesTheProfile(t *testing.T) {
 
 // `yad upgrade` fetches from YAD_REPO when it is set — a fork's install — and
 // a command offered without it would fetch upstream's release over the fork.
+// The profile goes too: the upgrade ends by reporting on that profile's runner.
 func TestUpgradeCommandsCarryTheFork(t *testing.T) {
 	t.Setenv("YAD_REPO", "someone/yad fork")
-	_, _, errs := yad(t, "upgrade", "v1.2.3")
-	shellwordtest.CheckEnv(t, onlyCommand(t, errs, "yad upgrade"), map[string]string{"YAD_REPO": "someone/yad fork"},
-		"yad", "upgrade", "--tag", "v1.2.3")
+	_, _, errs := yad(t, "--profile", "side", "upgrade", "v1.2.3")
+	env := dirsEnv(t)
+	env["YAD_REPO"] = "someone/yad fork"
+	shellwordtest.CheckEnv(t, onlyCommand(t, errs, "yad --profile side upgrade"), env,
+		"yad", "--profile", "side", "upgrade", "--tag", "v1.2.3")
 }
 
 // A hub named by $YAD_HUB_URL is carried as --hub: the shell the watch is

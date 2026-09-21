@@ -9,6 +9,9 @@ import (
 	"github.com/skkap/yad/internal/upgrade"
 )
 
+// bareUpgrade builds the upgrade commands of a default-profile, upstream install.
+func bareUpgrade(args ...string) string { return upgrade.Command("", nil, args...) }
+
 // `yad upgrade` is the next action the hub's version_too_old refusal names, so
 // it has to be the command rather than the placeholder that named epic E9.
 // With no gh on PATH — what yad() gives every test — it fails on gh.
@@ -85,7 +88,7 @@ var everyState = []upgrade.State{upgrade.Behind, upgrade.Current, upgrade.Ahead,
 func TestCheckLineCarriesANextAction(t *testing.T) {
 	for _, state := range everyState {
 		for _, named := range []bool{false, true} {
-			line := checkLine(state, "v0.4.0", named, "")
+			line := checkLine(state, "v0.4.0", named, bareUpgrade)
 			if !strings.Contains(line, "yad upgrade") {
 				t.Errorf("state %v (named=%v) says %q, with nothing to type next", state, named, line)
 			}
@@ -103,12 +106,12 @@ func TestCheckLineCarriesANextAction(t *testing.T) {
 // that tags "latest", and blaming the installed build for it contradicts the
 // `installed  v0.4.0` line printed two lines above.
 func TestCheckLineBlamesTheUnreadableSide(t *testing.T) {
-	if line := checkLine(upgrade.UnreadableTag, "stable", true, ""); strings.Contains(line, "this build carries no release version") {
+	if line := checkLine(upgrade.UnreadableTag, "stable", true, bareUpgrade); strings.Contains(line, "this build carries no release version") {
 		t.Errorf("an unreadable tag says %q, blaming the build for it", line)
 	} else if !strings.Contains(line, `"stable" is not a version number`) {
 		t.Errorf("an unreadable tag says %q, without naming the tag as the problem", line)
 	}
-	if line := checkLine(upgrade.Unstamped, "v0.4.0", false, ""); !strings.Contains(line, "this build carries no release version") {
+	if line := checkLine(upgrade.Unstamped, "v0.4.0", false, bareUpgrade); !strings.Contains(line, "this build carries no release version") {
 		t.Errorf("an unstamped build says %q, without naming the build as the problem", line)
 	}
 }
@@ -186,7 +189,7 @@ func TestRestartNoteOffersACommandOnlyWhereItKnowsTheProfile(t *testing.T) {
 
 func TestCheckLineOnANamedTag(t *testing.T) {
 	for _, state := range everyState {
-		line := checkLine(state, "v0.1.0", true, "")
+		line := checkLine(state, "v0.1.0", true, bareUpgrade)
 		if strings.Contains(line, "newest release") {
 			t.Errorf("state %v says %q, calling a named tag the newest release", state, line)
 		}

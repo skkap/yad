@@ -26,14 +26,23 @@ import (
 // never issued. The --db path itself stays on the hub's machine.
 func TestReRegistrationAdviceNamesTheServedDatabase(t *testing.T) {
 	p := config.Paths{Profile: "side", Config: t.TempDir(), Data: t.TempDir()}
+	// The profile's own database, but under a YAD_DATA_DIR the answer cannot
+	// carry: a bare shell would look in the default place.
+	t.Setenv("YAD_DATA_DIR", t.TempDir())
+	relocated, err := config.Resolve("side")
+	if err != nil {
+		t.Fatal(err)
+	}
+	placeholder := []string{"yad", "--profile", "side", "hub", "token", "create", "--runner", "r1", "--db", "<the database yad hub serve was given>"}
 	for _, tc := range []struct {
 		name string
+		p    config.Paths
 		db   string
 		want []string
 	}{
-		{"the profile's own database", p.HubDB(), []string{"yad", "--profile", "side", "hub", "token", "create", "--runner", "r1"}},
-		{"a database named with --db", filepath.Join(t.TempDir(), "other hub.db"),
-			[]string{"yad", "--profile", "side", "hub", "token", "create", "--runner", "r1", "--db", "<the database yad hub serve was given>"}},
+		{"the profile's own database", p, p.HubDB(), []string{"yad", "--profile", "side", "hub", "token", "create", "--runner", "r1"}},
+		{"a database named with --db", p, filepath.Join(t.TempDir(), "other hub.db"), placeholder},
+		{"the profile's own database under YAD_DATA_DIR", relocated, relocated.HubDB(), placeholder},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, err := hubstore.Open(context.Background(), tc.db)
@@ -41,7 +50,7 @@ func TestReRegistrationAdviceNamesTheServedDatabase(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			h := hub.New(hub.Options{Store: s, Command: hubAnswerCommand(p, tc.db)})
+			h := hub.New(hub.Options{Store: s, Command: hubAnswerCommand(tc.p, tc.db)})
 			register := func(tok string) v1.ErrorEnvelope {
 				t.Helper()
 				body, _ := json.Marshal(v1.RegisterRequest{Capabilities: v1.Capabilities{

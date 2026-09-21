@@ -83,3 +83,26 @@ func (p Paths) Command(args ...string) string {
 	}
 	return prefix + cmd
 }
+
+// RemoteCommand is Command for a reader somewhere else — a run's error, read
+// at a hub by whoever then walks to the machine. The directories are paths
+// under the owner's home and may not travel (DEV-67), but a command without
+// them is pasted into a shell that resolves the default and reads another,
+// empty profile. So each variable Resolve was given is kept, its value a
+// placeholder naming it: the reader sees that it is needed and what to put.
+func (p Paths) RemoteCommand(args ...string) string {
+	cmd := YadCommand(p.Profile, args...)
+	prefix := ""
+	for _, kv := range p.env {
+		if kv[0] != "" {
+			prefix += kv[0] + "=" + shellword.Quote("<the runner's "+kv[0]+">") + " "
+		}
+	}
+	return prefix + cmd
+}
+
+// DataRelocated says a variable, not the default under $HOME, decided where
+// the profile's data lives. A command that cannot carry the variable — one
+// that leaves the machine — has to say so some other way, or it is pasted
+// into a shell that resolves the default and acts on another profile's data.
+func (p Paths) DataRelocated() bool { return p.env[1][0] != "" }

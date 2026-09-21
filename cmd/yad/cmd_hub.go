@@ -16,7 +16,6 @@ import (
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hub"
 	"github.com/skkap/yad/internal/hub/store"
-	"github.com/skkap/yad/internal/shellword"
 )
 
 // cmdHub is `yad hub`: the standalone hub. It listens — it is a server, and the
@@ -123,10 +122,13 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 // hubAnswerCommand builds the yad commands a hub's answers name, run by its
 // operator against the database it serves. Read by a runner's owner on another
 // machine: the profile is a name, but a --db is a path under this operator's
-// home, and stays a placeholder rather than travel (DEV-67).
+// home, and stays a placeholder rather than travel (DEV-67). The placeholder
+// goes in whenever the database is not where a bare shell would look: named
+// with --db, or the profile's own under a YAD_DATA_DIR or XDG_DATA_HOME the
+// command cannot carry.
 func hubAnswerCommand(p config.Paths, dbFile string) func(args ...string) string {
 	return func(args ...string) string {
-		if dbFile != p.HubDB() {
+		if dbFile != p.HubDB() || p.DataRelocated() {
 			args = append(args[:len(args):len(args)], "--db", "<the database yad hub serve was given>")
 		}
 		return config.YadCommand(p.Profile, args...)
@@ -232,12 +234,15 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 		if err := config.WriteSecret(*out, tok); err != nil {
 			return errors.Join(fmt.Errorf("the token was created but not saved to %s — revoke it with `%s`", *out, again("revoke", *name)), err)
 		}
+		// The commands that read it are this profile's: another profile's
+		// default token file is another file. Only the default is read without
+		// being named.
+		var withFile []string
 		if *out != g.paths.HubAdminToken() {
-			// Only the default file is read without being named.
-			fmt.Fprintf(stdout, "admin token %q saved to %s (0600) — `yad hub submit` and `yad hub watch` read it when given `--token-file %s`\n", *name, *out, shellword.Quote(*out))
-			return nil
+			withFile = []string{"--token-file", *out}
 		}
-		fmt.Fprintf(stdout, "admin token %q saved to %s (0600) — `yad hub submit` and `yad hub watch` read it from there\n", *name, *out)
+		fmt.Fprintf(stdout, "admin token %q saved to %s (0600) — `%s` and `%s` read it\n", *name, *out,
+			g.paths.Command(append([]string{"hub", "submit"}, withFile...)...), g.paths.Command(append([]string{"hub", "watch"}, withFile...)...))
 		return nil
 	case "list":
 		s, err := open()

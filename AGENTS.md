@@ -52,8 +52,9 @@ rebuilds them and `make check` fails when they drift.
   `YAD_REPO` for an upgrade, the `--hub`, `--token-file` or `--db` the command
   it follows was given. A command that leaves the machine — in a run's error,
   a hub's answer — carries no path under anyone's home (DEV-67):
-  `config.YadCommand` names the profile alone, and a home or a database stays
-  a `<placeholder>` beside the command that shows it. Set it apart in
+  `Paths.RemoteCommand` names the profile and keeps each directory variable
+  with a `<placeholder>` value, and a home or a database stays a placeholder
+  beside the command that shows it. Set it apart in
   backticks, and test it by running it through a real `sh`
   (`shellwordtest.Check`, `CheckEnv`), not by reading it.
 - **Tests never spend a token and never touch the network.** Adapters replay

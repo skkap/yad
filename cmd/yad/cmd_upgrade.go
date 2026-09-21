@@ -34,10 +34,12 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	// (The flag is safe either way now — parseInterleaved takes --check on
 	// either side of it — but the argument still means something this command
 	// does not do.)
-	if len(pos) > 0 {
-		return fmt.Errorf("unexpected argument %q — a release goes in --tag, as `%s`", pos[0], upgrade.Command(releaseSource().Repo, "--tag", pos[0]))
-	}
 	src := releaseSource()
+	src.Yad = g.paths.Command
+	up := func(args ...string) string { return upgrade.Command(src.Repo, src.Yad, args...) }
+	if len(pos) > 0 {
+		return fmt.Errorf("unexpected argument %q — a release goes in --tag, as `%s`", pos[0], up("--tag", pos[0]))
+	}
 
 	want := *tag
 	if want == "" {
@@ -51,7 +53,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 
 	state := upgrade.Compare(buildinfo.Version, want)
 	if *check {
-		fmt.Fprintln(w, checkLine(state, want, *tag != "", src.Repo))
+		fmt.Fprintln(w, checkLine(state, want, *tag != "", up))
 		return nil
 	}
 	// Only Behind is what a bare `yad upgrade` asks for. Replacing a binary
@@ -60,7 +62,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	// rather than do quietly; --force and an explicit --tag are the two ways
 	// of meaning it.
 	if *tag == "" && !*force && state != upgrade.Behind {
-		fmt.Fprintln(w, checkLine(state, want, false, src.Repo))
+		fmt.Fprintln(w, checkLine(state, want, false, up))
 		return nil
 	}
 
@@ -75,6 +77,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 		GOARCH: runtime.GOARCH,
 		Tag:    want,
 		Repo:   src.Repo,
+		Yad:    src.Yad,
 	})
 	if err != nil {
 		return err
@@ -148,13 +151,13 @@ func restartAdvice(p config.Paths) string {
 // than resolved: the sentence must not call it the newest release, and every
 // command it offers has to carry the tag, or it names one release and installs
 // another.
-func checkLine(state upgrade.State, tag string, named bool, repo string) string {
+func checkLine(state upgrade.State, tag string, named bool, up func(args ...string) string) string {
 	newest := ", the newest release"
-	install := "`" + upgrade.Command(repo, "--force") + "`"
-	replace := "`" + upgrade.Command(repo) + "`"
+	install := "`" + up("--force") + "`"
+	replace := "`" + up() + "`"
 	if named {
 		newest = ""
-		install = "`" + upgrade.Command(repo, "--tag", tag) + "`"
+		install = "`" + up("--tag", tag) + "`"
 		replace = install
 	}
 	switch state {

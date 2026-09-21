@@ -125,9 +125,10 @@ type Options struct {
 	GOOS, GOARCH string
 	// Tag pins a release. Empty means whichever is newest.
 	Tag string
-	// Repo is the RepoEnv value the upgrade runs with, for the commands its
-	// errors offer; empty for DefaultRepo.
+	// Repo is the RepoEnv value the upgrade runs with, and Yad the builder of
+	// its yad commands, for the commands its errors offer (Command).
 	Repo string
+	Yad  func(args ...string) string
 }
 
 // Result is what an upgrade did.
@@ -185,7 +186,7 @@ func Apply(ctx context.Context, o Options) (Result, error) {
 		return Result{}, fmt.Errorf("release %s has no %s to check %s against — nothing was replaced", tag, ChecksumsName, asset)
 	}
 	if err := Verify(staged, sums, asset); err != nil {
-		return Result{}, fmt.Errorf("%w — nothing was replaced; run `%s` again, and if it says this twice the release %s is bad", err, Command(o.Repo, "--tag", tag), tag)
+		return Result{}, fmt.Errorf("%w — nothing was replaced; run `%s` again, and if it says this twice the release %s is bad", err, Command(o.Repo, o.Yad, "--tag", tag), tag)
 	}
 	if err := os.Chmod(staged, binaryMode); err != nil {
 		return Result{}, err

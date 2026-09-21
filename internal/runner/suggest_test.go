@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -27,7 +28,7 @@ func TestTheRunsSpecCarriesWhatALoginCheckNeeds(t *testing.T) {
 	l := e.loop(t, 1)
 	e.enqueue(t, testRun("a", "s1"))
 	x, _ := e.accountExecutor(t, accountConfig("work"), ad)
-	x.Profile = "side"
+	x.Paths = config.Paths{Profile: "side"}
 	claimAndRun(t, l, x)
 
 	if seen.HomeVar != "CLAUDE_CONFIG_DIR" || seen.Account != "work" {
@@ -38,23 +39,36 @@ func TestTheRunsSpecCarriesWhatALoginCheckNeeds(t *testing.T) {
 
 // A run refused for want of a logged-in account tells the hub's reader what to
 // type at the machine — on the runner's own profile, or it adds an account to
-// a different runner.
+// a different runner. A runner whose data lives under YAD_DATA_DIR says the
+// variable is needed without saying where it points: the message goes to a
+// hub, and the path is under the owner's home (DEV-67).
 func TestNoFreeAccountCommandRunsAsPrinted(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("YAD_DATA_DIR", data)
+	relocated, err := config.Resolve("side")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
-		profile string
-		want    []string
+		paths config.Paths
+		env   map[string]string
+		want  []string
 	}{
-		{config.DefaultProfile, []string{"yad", "account", "add", "claude", "work"}},
-		{"side", []string{"yad", "--profile", "side", "account", "add", "claude", "work"}},
+		{config.Paths{Profile: config.DefaultProfile}, map[string]string{"YAD_DATA_DIR": ""}, []string{"yad", "account", "add", "claude", "work"}},
+		{config.Paths{Profile: "side"}, map[string]string{"YAD_DATA_DIR": ""}, []string{"yad", "--profile", "side", "account", "add", "claude", "work"}},
+		{relocated, map[string]string{"YAD_DATA_DIR": "<the runner's YAD_DATA_DIR>"}, []string{"yad", "--profile", "side", "account", "add", "claude", "work"}},
 	} {
-		err := &noFreeAccountError{profile: tc.profile, harness: "claude", accounts: []account.Account{
+		err := &noFreeAccountError{paths: tc.paths, harness: "claude", accounts: []account.Account{
 			{Harness: "claude", Label: "work", State: v1.AccountNeedsLogin},
 		}}
 		cmds := shellwordtest.Commands(err.Error(), "yad ")
 		if len(cmds) != 1 {
 			t.Fatalf("want one command in %q", err)
 		}
-		shellwordtest.Check(t, cmds[0], tc.want...)
+		if strings.Contains(err.Error(), data) {
+			t.Errorf("the message carries the runner's data directory, and goes to a hub: %s", err)
+		}
+		shellwordtest.CheckEnv(t, cmds[0], tc.env, tc.want...)
 	}
 }
 

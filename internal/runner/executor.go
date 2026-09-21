@@ -121,9 +121,11 @@ type Exec struct {
 	// Data is the profile's data directory; workdirs and grant files live
 	// under it.
 	Data string
-	// Profile is the runner's, carried by every yad command a message offers:
-	// pasted without it, the command acts on the default runner instead.
-	Profile string
+	// Paths is the runner's profile, which every yad command a message offers
+	// has to act on: pasted without it, the command acts on the default
+	// runner, or on an empty one. A run's error goes to a hub, so those
+	// commands are Paths.RemoteCommand, which names no directory.
+	Paths config.Paths
 	// Workdirs turns a run's sources into its workdir; nil is one built from
 	// Config's [workdirs] and Data.
 	Workdirs *workdir.Manager
@@ -371,7 +373,7 @@ func (e *Exec) Control(_ context.Context, connection string, c v1.Control) {
 // (DEV-67, as DEV-60 found for the capability document). The hub is told what
 // failed; the owner reads why in the log line written beside it.
 func (e *Exec) seeLogs() string {
-	return " — its owner can see why with `" + config.YadCommand(e.Profile, "daemon", "logs") + "` on the machine"
+	return " — its owner can see why with `" + e.Paths.RemoteCommand("daemon", "logs") + "` on the machine"
 }
 
 // execute runs one claim to a terminal state in the outbox — or, when the
@@ -450,7 +452,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	}
 	bin, ok := e.Binary(run.Harness)
 	if !ok {
-		fail(ClassStart, fmt.Sprintf("harness %q is not installed on this runner any more — `%s` shows where it was looked for", run.Harness, config.YadCommand(e.Profile, "doctor")))
+		fail(ClassStart, fmt.Sprintf("harness %q is not installed on this runner any more — `%s` shows where it was looked for", run.Harness, e.Paths.RemoteCommand("doctor")))
 		return
 	}
 	// Which account the run uses. Chosen here, beside the adapter and binary
@@ -575,7 +577,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			RunID: run.RunID, Model: run.Model, Workdir: prep.Dir,
 			SessionID: run.Session.ID, NativeSessionID: native, Brief: run.Brief,
 			Home: home, Env: turnEnv, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
-			Yad: func(args ...string) string { return config.YadCommand(e.Profile, args...) },
+			Yad: e.Paths.RemoteCommand,
 		}
 		if hasAccount {
 			spec.HomeVar, spec.Account = account.HomeVar(run.Harness), acct.Label
