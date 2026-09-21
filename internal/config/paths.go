@@ -23,6 +23,10 @@ type Paths struct {
 	Profile string
 	Config  string // config.toml, runner-id, credentials/
 	Data    string // state.db, workdirs/, repos/, accounts/, transcripts/, logs/, yad.sock, yad.lock
+	// env is the directory variables Resolve was given, carried by every command
+	// Command prints so that it acts on these directories and not the ones a
+	// bare shell would resolve.
+	env [2][2]string
 }
 
 // Resolve returns the directories for a profile. $YAD_CONFIG_DIR and
@@ -40,7 +44,7 @@ func Resolve(profile string) (Paths, error) {
 	if err != nil && (os.Getenv("YAD_CONFIG_DIR") == "" || os.Getenv("YAD_DATA_DIR") == "") {
 		return Paths{}, fmt.Errorf("no home directory: set YAD_CONFIG_DIR and YAD_DATA_DIR: %w", err)
 	}
-	p := Paths{Profile: profile}
+	p := Paths{Profile: profile, env: resolvedEnv()}
 	p.Config = pick("YAD_CONFIG_DIR", "XDG_CONFIG_HOME", filepath.Join(home, ".config"), profile)
 	p.Data = pick("YAD_DATA_DIR", "XDG_DATA_HOME", filepath.Join(home, ".local", "share"), profile)
 	return p, nil
