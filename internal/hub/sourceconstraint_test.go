@@ -1,8 +1,13 @@
 package hub
 
 import (
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -135,5 +140,75 @@ func TestAServingHubsRegistryNeverCarriesTheConstraint(t *testing.T) {
 		if src := doc.Components.Schemas.Map()["Source"]; src != nil && src.OneOf != nil {
 			t.Errorf("%s: a live hub's Source schema carries the oneOf, so this hub validates against it", name)
 		}
+	}
+}
+
+// The guard that can fail, which the other two cannot.
+//
+// What keeps a serving hub's registry unconstrained is that constrainSources
+// is only ever handed a document from a hub built for the purpose and thrown
+// away. Nothing in the type system says so: hand it a live hub's document and
+// that hub begins validating against the oneOf, answering 422 where
+// Run.Validate should answer 400. That is the defect this branch fixed, and
+// removing the methods removed the obvious way to reintroduce it — not every
+// way.
+//
+// So the enforcement is: no shipped file calls constrainSources except the two
+// generators, which construct their own hub in the same expression. A call
+// anywhere else fails here, naming itself. Matching on source text is a
+// backstop rather than a proof — a document reached through a variable several
+// hops away is past what reading can see — but it catches the line someone
+// would actually write.
+func TestConstrainSourcesIsReachedOnlyFromTheGenerators(t *testing.T) {
+	const root = "../.."
+	allowed := map[string]bool{
+		"constrainSources(New(Options{}).api.OpenAPI())":     true,
+		"constrainSources(New(Options{}).service.OpenAPI())": true,
+	}
+	// One level of nesting is enough for the calls that exist, and the
+	// declaration is excluded by requiring no "func " before the name.
+	call := regexp.MustCompile(`(?:func )?constrainSources\((?:[^()]|\([^()]*\))*\)`)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir() && (d.Name() == ".git" || d.Name() == "testdata"):
+			return fs.SkipDir
+		case d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go"):
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range call.FindAll(raw, -1) {
+			if strings.HasPrefix(string(m), "func ") {
+				continue // the declaration itself
+			}
+			if !allowed[string(m)] {
+				t.Errorf("%s calls %s; constrainSources may only be given a document from a hub built for it and discarded, or that hub starts validating against the oneOf", path, m)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A rename or a rewrite that stops either generator matching would make
+	// this vacuous, so the allowed forms must actually be present.
+	found := 0
+	for _, f := range []string{"hub.go"} {
+		raw, err := os.ReadFile(filepath.Join("..", "hub", f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range call.FindAll(raw, -1) {
+			if allowed[string(m)] {
+				found++
+			}
+		}
+	}
+	if found != len(allowed) {
+		t.Errorf("found %d of the %d expected generator calls; this test is passing because it matches nothing", found, len(allowed))
 	}
 }

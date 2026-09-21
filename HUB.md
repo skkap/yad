@@ -43,23 +43,28 @@ hand-written encoders override anyway:
 not enforce it.** The document says the rule with a `oneOf`, but
 `openapi-typescript` renders `oneOf` as a plain union rather than an exclusive
 one; its own documentation notes this "mimics behavior closer to `anyOf`". So
-the generated `Source` will happily accept both fields set, and both unset.
-The constraint is in the document for you and for tooling that reads it, not
-as a type you can lean on. **Check it yourself.** A run naming both, or
-neither, must be refused.
+the generated `Source` will happily accept **both** fields set. It does reject
+an empty object — the union has no arm an empty object satisfies — so it is the
+"both" half of the rule the types miss, not the whole of it. The constraint is
+in the document for you and for tooling that reads it, not as a type you can
+lean on. **Check it yourself.** A run naming both, or neither, must be refused.
 
-**Every run you offer must satisfy rules beyond the schema**, and conformance
-checks that you refuse one that does not — whole, not partially. A run with no
-model. Two grants sharing a name. Two *file* grants whose names differ only by
-case, which on a case-folding filesystem become one file and silently the
-second value. The `Source` rule above is one of this family, not a special
-case.
+**Every run you offer must satisfy rules the schema cannot state**, and
+conformance validates *every run your hub offers it* — it never sends you an
+invalid run to see whether you refuse it, so this is a rule about your output
+and not your input. Among them: a run needs a model; no two grants may share a
+name; no two *file* grants may have names differing only by case, which on a
+case-folding filesystem become one file holding silently the second value; and
+a `Source` is exactly one of `git` or `path`, as above. The full set is
+`v1.Run.Validate`, and refusing a run that breaks any of them is refusing it
+whole rather than dropping the offending part.
 
-**`Yad-Protocol` is on every request and appears nowhere in the spec.** The
-generated documents declare no header parameters at all, so a client generated
-from `openapi.yaml` alone gives you no hint it exists. It is required, and a
-request missing it or naming another version is refused before its body is
-read — see below.
+**`Yad-Protocol: 1` is on every request and appears nowhere in the spec.** The
+value is the protocol's major version, `1`, and that is the only value a v1 hub
+accepts. The generated documents declare no header parameters at all, so a
+client generated from `openapi.yaml` alone gives you no hint the header exists,
+let alone what to put in it. A request missing it or naming another version is
+refused before its body is read — see below.
 
 ## Authenticating a runner
 
@@ -110,9 +115,11 @@ will ever end is a queue that only grows.
 register and `next_sync_ms` in every sync response are both bounded, inclusive.
 A hub naming 2 s or 5 min is refused by conformance and clamped by a runner.
 
-**Never name a `lease_ms` shorter than the `next_sync_ms` beside it.** This is
-the one timing rule you cannot derive from the field names, and getting it
-wrong punishes the runners behaving best: a lease shorter than the interval
+**Never name a `lease_ms` shorter than the interval beside it — in *either*
+response.** Register answers with `lease_ms` next to `sync_interval_ms`, and
+every sync answers with `lease_ms` next to `next_sync_ms`; both pairs are
+checked, and a hub that gets the sync right and the registration wrong fails.
+Getting it wrong punishes the runners behaving best: a lease shorter than the interval
 lapses on a runner that synced *exactly* when you asked it to, and you take
 back the runs of a runner doing everything right. Four intervals is the
 default and one interval is the floor. Fewer than four is fine; fewer than one
@@ -130,9 +137,17 @@ so returning a number you have not actually stored contiguously loses events
 silently. A batch leaving a gap does not move it past the gap; the batch that
 fills the gap moves it over everything already held.
 
-**Only the runner a run was claimed by may append to it.** Events for a run you
-cannot match to the calling runner are refused: `403 not_holder`, or
-`404 not_found` for a run you have never heard of. The same holds for results.
+**Only the runner a run was claimed by may append events to it.** Events for a
+run you cannot match to the calling runner are refused: `403 not_holder`, or
+`404 not_found` for a run you have never heard of.
+
+**Results are a wider door, and deliberately so: accept one from the runner the
+run was offered to *or* claimed by.** That is not sloppiness about who owns a
+run — it is how a runner **refuses** one. A run it will not take is reported as
+a `failed` result with error class `refused`, and it is reported *before* the
+run is ever claimed. A hub that demands a claim first rejects the only
+mechanism a runner has for declining work, and the run sits offered until its
+lease lapses.
 
 **Keep accepting events after the run has ended.** A batch still in the
 runner's spool when the result landed is not late, it is owed — reject it and
