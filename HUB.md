@@ -43,12 +43,13 @@ hand-written encoders override anyway:
 not enforce it.** The document says the rule with a `oneOf`, but
 `openapi-typescript` renders `oneOf` as a plain union rather than an exclusive
 one; its own documentation notes this "mimics behavior closer to `anyOf`". So
-the generated `Source` will happily accept **both** fields set. It rejects an object with **neither key present** — no arm of the union
-accepts that — but not `{"path": ""}` or `{"git": {"url": ""}}`, which satisfy
-the types and are "neither" once here: an empty string is the same as unset.
-An empty form field reaches you as exactly that shape. The constraint is
-in the document for you and for tooling that reads it, not as a type you can
-lean on. **Check it yourself.** A run naming both, or neither, must be refused.
+the generated `Source` will happily accept **both** fields set. It rejects an
+object with **neither key present** — no arm of the union accepts that — but
+not `{"path": ""}` or `{"git": {"url": ""}}`, which satisfy the types and are
+"neither" once here: an empty string is the same as unset. An empty form field
+reaches you as exactly that shape. The constraint is in the document for you
+and for tooling that reads it, not as a type you can lean on. **Check it
+yourself.** A run naming both, or neither, must be refused.
 
 **Every run you offer must satisfy rules the schema cannot state**, and
 conformance validates *every run your hub offers it* — it never sends you an
@@ -90,6 +91,12 @@ none with a bearer you did not issue.
 for any runner, it is refused. It is spent whether or not the runner it
 registered still exists.
 
+That is the whole of the rule: a token that *registered* a runner is spent. A
+registration you *refused* — a body that does not validate, a runner id that
+conflicts — need not spend it, and the protocol does not say either way. `yad
+hub` does not, so an operator who fixes the request can retry with the same
+token.
+
 **`register` exchanges that token for a runner credential**, and that
 credential authenticates **every later call**, in the same
 `Authorization: Bearer` form. A sync, an events batch or a result carrying no
@@ -115,14 +122,19 @@ to offer again — to this runner or another. A hub that treats the offer as the
 claim loses every run a runner never got.
 
 **Never offer more than the free capacity, on either count.** The sync
-request's `health.free_capacity` is what the runner has already reserved for
-you. `total` bounds the whole response — and `by_harness` bounds each harness
-**independently of it**: a sync declaring `total: 4` with `by_harness:
-{claude: 1}` will take one Claude run, not four. A harness **absent** from
-`by_harness` has no per-harness bound and is limited by `total` alone; the map
-carries only the caps its owner set, and an empty map is omitted entirely. That per-harness figure is the
-owner's cap on their own machine. Offer past either and the surplus is refused,
-having occupied your queue in the meantime.
+request's `health.free_capacity` is **already net of the runs the runner
+holds**, on both counts — `total` after everything it holds, and each
+`by_harness` figure after what it holds of that harness. It is what is left,
+reserved for new offers. Offer up to it as sent; do not subtract the runs
+listed in the same request, or you count them twice and offer too little.
+
+`total` bounds the whole response — and `by_harness` bounds each harness
+**independently of it**: a sync declaring `total: 4` with `by_harness: {claude:
+1}` will take one Claude run, not four. A harness **absent** from `by_harness`
+has no per-harness bound and is limited by `total` alone; the map carries only
+the caps its owner set, and an empty map is omitted entirely. That per-harness
+figure is the owner's cap on their own machine. Offer past either and the
+surplus is refused, having occupied your queue in the meantime.
 
 **A run the runner does not hold, but which its sync listed, is answered with a
 `cancel` for that run.** This is the other direction of claim-by-listing and it
@@ -144,9 +156,9 @@ A hub naming 2 s or 5 min is refused by conformance and clamped by a runner.
 response.** Register answers with `lease_ms` next to `sync_interval_ms`, and
 every sync answers with `lease_ms` next to `next_sync_ms`; both pairs are
 checked, and a hub that gets the sync right and the registration wrong fails.
-Getting it wrong punishes the runners behaving best: a lease shorter than the interval
-lapses on a runner that synced *exactly* when you asked it to, and you take
-back the runs of a runner doing everything right. Four intervals is the
+Getting it wrong punishes the runners behaving best: a lease shorter than the
+interval lapses on a runner that synced *exactly* when you asked it to, and you
+take back the runs of a runner doing everything right. Four intervals is the
 default and one interval is the floor. Fewer than four is fine; fewer than one
 is the bug.
 
@@ -179,6 +191,19 @@ you reach for. Declining silently by omitting a run from the next sync is the
 runner's other way out and is normal; the refusal is what tells you *why*, and
 tells you not to try again.
 
+**Two cases the protocol does not yet specify.** You will meet both, and
+nothing here or in the spec tells you what to do, so decide deliberately
+rather than by accident:
+
+- **An offer to a runner that never syncs again.** Re-offering is defined by
+  the runner's *next* sync leaving the run out. If there is no next sync — the
+  runner crashed, or was switched off — nothing says when you may take the
+  offer back.
+- **A session whose bound runner disappears.** A session's first claim binds
+  it to that runner, and later runs in it go to that runner alone. If the
+  runner never returns, nothing says when the binding lapses — and until it
+  does, every later run in that session waits for a runner that is not coming.
+
 **Keep accepting events after the run has ended.** A batch still in the
 runner's spool when the result landed is not late, it is owed — reject it and
 the record of the run is permanently short of what happened in it.
@@ -201,12 +226,19 @@ appears in `closed_sessions`.
 {"error": {"code": "invalid", "message": "...", "next_action": "..."}}
 ```
 
-`code` is one of `not_implemented`, `unauthorized`, `runner_revoked`,
+v1 names nine codes: `not_implemented`, `unauthorized`, `runner_revoked`,
 `version_too_old`, `conflict`, `not_found`, `invalid`,
-`unsupported_protocol`, `not_holder`. Every response under your base path
-carries it — an unknown path and a wrong method included. A plain-text 404 is
-a protocol violation, because the runner on the other end is debugged by
-someone reading `next_action`.
+`unsupported_protocol`, `not_holder`. They are not a closed set — the spec
+types `code` as a plain string — and two ordinary cases fit them awkwardly. A
+wrong method takes `invalid`, which is what `yad hub` sends. An internal fault
+has **no code in v1**: `yad hub` sends `internal`, which is not among the nine,
+and the protocol does not yet name one. Send the status that is true and a
+`next_action` a person can act on; that pair is what a runner's operator reads.
+
+Every error response under your base path carries this envelope — an unknown
+path and a wrong method included. A plain-text 404 is a protocol violation,
+because the runner on the other end is debugged by someone reading
+`next_action`.
 
 **The envelope is required; most of the status numbers are yours.** The
 protocol fixes only a few: `426` for a missing or wrong `Yad-Protocol`, `409`
