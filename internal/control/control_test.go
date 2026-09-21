@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -143,10 +144,15 @@ func TestAStopNobodyConfirmedIsNeverActedOn(t *testing.T) {
 				t.Fatal(err)
 			}
 			tc.ask(t, conn)
+			// Hung up, and then heard hang up: the daemon closes the
+			// connection only once it is done with the exchange, so what it
+			// did is settled before the assertions.
+			conn.(*net.UnixConn).CloseWrite()
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if _, err := io.Copy(io.Discard, conn); err != nil {
+				t.Fatalf("the daemon did not end the exchange: %v", err)
+			}
 			conn.Close()
-			// The daemon has seen the whole exchange once another request
-			// is answered after it: connections are served as they come.
-			time.Sleep(50 * time.Millisecond)
 			res, err := Ask(context.Background(), p, "status")
 			if err != nil {
 				t.Fatal(err)
@@ -180,15 +186,16 @@ func TestASlowDaemonDoesNotActOnAStopTheCLIGaveUpOn(t *testing.T) {
 		d.Serve(sctx, Handler{Status: func(context.Context) Status { return Status{} }, Stop: func() { stops.Add(1) }})
 		close(done)
 	}()
-	t.Cleanup(func() { scancel(); <-done; d.Close() })
-	// Accepted first, but served beside the status that follows it.
-	time.Sleep(50 * time.Millisecond)
-	res, err := Ask(context.Background(), p, "status")
-	if err != nil {
+	defer d.Close()
+	// Accepted before this status, which queued behind it; Serve returns only
+	// once every connection it accepted has been handled.
+	if _, err := Ask(context.Background(), p, "status"); err != nil {
 		t.Fatal(err)
 	}
-	if n := stops.Load(); n != 0 || res.Status.Stopping {
-		t.Errorf("the stale ask was acted on: Stop called %d times, stopping %v", n, res.Status.Stopping)
+	scancel()
+	<-done
+	if n := stops.Load(); n != 0 || d.stopping.Load() {
+		t.Errorf("the stale ask was acted on: Stop called %d times, stopping %v", n, d.stopping.Load())
 	}
 }
 
