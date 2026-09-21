@@ -70,11 +70,13 @@ and not your input. Here is all of it:
   which home it logs in from, because the run would then spend a credential its
   account knows nothing about while its events still named the account
   ([0040](docs/decisions/0040-a-grant-may-not-move-a-run-off-its-account.md)):
-  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
-  `CLAUDE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`,
-  `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`,
-  `CLAUDE_CODE_USE_FOUNDRY`, `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY`
-  and `OPENAI_BASE_URL`, whatever the run's harness. If the project itself needs
+  `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `ANTHROPIC_PROFILE`, `ANTHROPIC_FEDERATION_RULE_ID`,
+  `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, anything beginning
+  `CLAUDE_CODE_USE_`, `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY`,
+  `CODEX_ACCESS_TOKEN`, `OPENAI_BASE_URL` and
+  `CODEX_REFRESH_TOKEN_URL_OVERRIDE`, whatever the run's harness. If the project itself needs
   one of these keys — to run its tests, say — send it under another name and
   have the brief say which. `protocol/v1/grant.go` is the list itself; this is a
   copy of it.

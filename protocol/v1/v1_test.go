@@ -246,7 +246,11 @@ func TestGrantNames(t *testing.T) {
 		// The account names are matched whole too: a project's own key under
 		// another name is exactly what the refusal asks a hub to send.
 		{"MY_ANTHROPIC_API_KEY", ""}, {"ANTHROPIC_API_KEY_TESTS", ""}, {"OPENAI_API_KEY_2", ""},
-		{"CODEX_HOME_DIR", ""}, {"CLAUDE_CONFIG", ""},
+		{"CODEX_HOME_DIR", ""}, {"CLAUDE_CONFIG", ""}, {"CLAUDE_CODE_USER", ""},
+		// Inert behind a refused switch or pair (see accountGrantNames), and
+		// a project's cloud deploy may need them.
+		{"AWS_BEARER_TOKEN_BEDROCK", ""}, {"ANTHROPIC_AWS_API_KEY", ""}, {"ANTHROPIC_FOUNDRY_API_KEY", ""},
+		{"ANTHROPIC_IDENTITY_TOKEN_FILE", ""}, {"ANTHROPIC_WORKSPACE_ID", ""},
 
 		// Not an environment variable name, or not a plain file name. The
 		// pattern is ASCII, so a Cyrillic lookalike of PATH is not a name at
@@ -274,9 +278,16 @@ func TestGrantNames(t *testing.T) {
 		{"ANTHROPIC_API_KEY", "0040"}, {"anthropic_api_key", "0040"}, {"ANTHROPIC_AUTH_TOKEN", "0040"},
 		{"CLAUDE_CODE_OAUTH_TOKEN", "0040"}, {"CLAUDE_CONFIG_DIR", "0040"}, {"Claude_Config_Dir", "0040"},
 		{"ANTHROPIC_BASE_URL", "0040"}, {"ANTHROPIC_CUSTOM_HEADERS", "0040"},
-		{"CLAUDE_CODE_USE_BEDROCK", "0040"}, {"CLAUDE_CODE_USE_VERTEX", "0040"}, {"CLAUDE_CODE_USE_FOUNDRY", "0040"},
+		{"ANTHROPIC_PROFILE", "0040"}, {"ANTHROPIC_FEDERATION_RULE_ID", "0040"},
+		{"ANTHROPIC_ORGANIZATION_ID", "0040"}, {"ANTHROPIC_CONFIG_DIR", "0040"},
 		{"CODEX_HOME", "0040"}, {"codex_home", "0040"}, {"OPENAI_API_KEY", "0040"},
-		{"CODEX_API_KEY", "0040"}, {"OPENAI_BASE_URL", "0040"},
+		{"CODEX_API_KEY", "0040"}, {"CODEX_ACCESS_TOKEN", "0040"}, {"OPENAI_BASE_URL", "0040"},
+		{"CODEX_REFRESH_TOKEN_URL_OVERRIDE", "0040"},
+		// Every provider switch, the ones Claude has shipped and the next one:
+		// behind them, a provider's own keys move nothing.
+		{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_*"}, {"CLAUDE_CODE_USE_VERTEX", "0040"},
+		{"CLAUDE_CODE_USE_FOUNDRY", "0040"}, {"CLAUDE_CODE_USE_ANTHROPIC_AWS", "0040"},
+		{"claude_code_use_mantle", "0040"}, {"CLAUDE_CODE_USE_", "0040"},
 		{"ANTHROPIC_API_KEY", "under another name"}, {"CODEX_HOME", "yad account add"},
 	} {
 		for _, as := range []GrantDelivery{GrantEnv, GrantFile} {

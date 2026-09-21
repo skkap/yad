@@ -927,9 +927,12 @@ line here is a reviewed change.
   `DYLD_*`, matched whatever their case — and the variables that choose whose
   credential a harness uses or which home it logs in from
   (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
-  `CLAUDE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, the
-  `CLAUDE_CODE_USE_*` provider switches, `CODEX_HOME`, `OPENAI_API_KEY`,
-  `CODEX_API_KEY`, `OPENAI_BASE_URL`), because a grant is appended after
+  `ANTHROPIC_PROFILE`, the federation pair, `ANTHROPIC_CONFIG_DIR`,
+  `CLAUDE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, every
+  `CLAUDE_CODE_USE_*` provider switch, `CODEX_HOME`, `OPENAI_API_KEY`,
+  `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`, `OPENAI_BASE_URL`,
+  `CODEX_REFRESH_TOKEN_URL_OVERRIDE` — `accountGrantNames` in
+  `protocol/v1/grant.go` is the list itself), because a grant is appended after
   `supervise.Scrub` and would put the turn on a credential the run's account
   knows nothing about while its events named the account
   ([0040](docs/decisions/0040-a-grant-may-not-move-a-run-off-its-account.md)).

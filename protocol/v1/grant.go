@@ -84,32 +84,64 @@ var deniedGrantPrefixes = []struct{ prefix, why string }{
 // that answers a turn decides whose account it runs on, and a turn answered
 // through someone else's endpoint reports none of the account's windows —
 // Claude on an API key emits no rate_limit_event at all
-// (internal/adapter/claude/testdata/README.md). Left off is what takes effect
-// only behind a switch already here: the Bedrock, Vertex and Foundry keys and
-// endpoints (AWS_BEARER_TOKEN_BEDROCK, ANTHROPIC_FOUNDRY_API_KEY,
-// ANTHROPIC_VERTEX_BASE_URL and the like) are read only once a
-// CLAUDE_CODE_USE_* switch is on, and those switches are refused below and
-// scrubbed from the owner's environment.
+// (internal/adapter/claude/testdata/README.md).
+//
+// Left off is what takes effect only behind a switch refused here. Claude's
+// cloud providers are each chosen by a CLAUDE_CODE_USE_<provider> switch —
+// Bedrock, Vertex, Foundry, Claude Platform on AWS so far — and every one is
+// refused by prefix, so that the next provider Claude ships is refused before
+// anyone thinks to add it; Scrub removes every CLAUDE_CODE_* from the owner's
+// environment too. So each provider's own keys, endpoints and workspace ids
+// (AWS_BEARER_TOKEN_BEDROCK, ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_AWS_API_KEY,
+// ANTHROPIC_AWS_WORKSPACE_ID, ANTHROPIC_VERTEX_BASE_URL and the like) move
+// nothing on their own, and a project that deploys to a cloud keeps its
+// credentials. The same holds for the Workload Identity Federation inputs
+// (ANTHROPIC_IDENTITY_TOKEN, ANTHROPIC_IDENTITY_TOKEN_FILE,
+// ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID): Claude federates only
+// when ANTHROPIC_FEDERATION_RULE_ID and ANTHROPIC_ORGANIZATION_ID are both set,
+// and both are refused. Each is refused, rather than the pair, because the
+// owner's environment may already hold the other.
 //
 // Matched whole and case-insensitively, as the deny list is and for its
 // reason. internal/account's tests hold every harness home variable to this
-// list, so a harness that gains account homes cannot be missed here.
+// list, so a harness that gains account homes cannot be missed here. The
+// sources are Claude Code's authentication and environment-variable
+// references and Codex's codex-rs/login; a name either harness adds for the
+// same job is a line to add here.
 var accountGrantNames = map[string]string{
-	// Claude Code.
-	"ANTHROPIC_API_KEY":        "is an Anthropic API key, which Claude can bill in place of the account's subscription",
-	"ANTHROPIC_AUTH_TOKEN":     "is a bearer token Claude sends in place of the account's login",
-	"CLAUDE_CODE_OAUTH_TOKEN":  "is a subscription's OAuth token, which Claude uses in place of the login in the account's home",
-	"CLAUDE_CONFIG_DIR":        "is the home Claude reads its login from, which is the account itself",
-	"ANTHROPIC_BASE_URL":       "chooses the server that answers and bills Claude's turns",
-	"ANTHROPIC_CUSTOM_HEADERS": "adds headers to every request Claude makes, and an x-api-key or Authorization header there is a credential",
-	"CLAUDE_CODE_USE_BEDROCK":  "moves Claude onto an AWS account's credentials",
-	"CLAUDE_CODE_USE_VERTEX":   "moves Claude onto a Google Cloud account's credentials",
-	"CLAUDE_CODE_USE_FOUNDRY":  "moves Claude onto an Azure account's credentials",
-	// Codex.
-	"CODEX_HOME":      "is the home Codex reads its login from, which is the account itself",
-	"OPENAI_API_KEY":  "is an OpenAI API key, which Codex can bill in place of the account's ChatGPT login",
-	"CODEX_API_KEY":   "is an OpenAI API key codex exec uses in place of the login in the account's home",
-	"OPENAI_BASE_URL": "chooses the server that answers and bills Codex's turns",
+	// Claude Code, in its own precedence order (code.claude.com/docs/en/authentication).
+	"ANTHROPIC_AUTH_TOKEN":         "is a bearer token Claude sends in place of the account's login",
+	"ANTHROPIC_API_KEY":            "is an Anthropic API key, which Claude can bill in place of the account's subscription",
+	"CLAUDE_CODE_OAUTH_TOKEN":      "is a subscription's OAuth token, which Claude uses in place of the login in the account's home",
+	"ANTHROPIC_PROFILE":            "names an Anthropic profile, which Claude ranks above the login in the account's home",
+	"ANTHROPIC_FEDERATION_RULE_ID": "with ANTHROPIC_ORGANIZATION_ID puts Claude on a federated credential ranked above the account's login",
+	"ANTHROPIC_ORGANIZATION_ID":    "with ANTHROPIC_FEDERATION_RULE_ID puts Claude on a federated credential ranked above the account's login",
+	"ANTHROPIC_CONFIG_DIR":         "chooses the directory Claude reads Anthropic profiles from, and a federation profile there ranks above the account's login",
+	"CLAUDE_CONFIG_DIR":            "is the home Claude reads its login from, which is the account itself",
+	"ANTHROPIC_BASE_URL":           "chooses the server that answers and bills Claude's turns",
+	"ANTHROPIC_CUSTOM_HEADERS":     "adds headers to every request Claude makes, and an x-api-key or Authorization header there is a credential",
+	// Codex (codex-rs/login/src/auth/manager.rs).
+	"CODEX_HOME":                       "is the home Codex reads its login from, which is the account itself",
+	"OPENAI_API_KEY":                   "is an OpenAI API key, which Codex can bill in place of the account's ChatGPT login",
+	"CODEX_API_KEY":                    "is an OpenAI API key Codex uses in place of the login in the account's home",
+	"CODEX_ACCESS_TOKEN":               "is an access token Codex uses in place of the login in the account's home",
+	"OPENAI_BASE_URL":                  "chooses the server that answers and bills Codex's turns",
+	"CODEX_REFRESH_TOKEN_URL_OVERRIDE": "sends the account's refresh token to another server, whose answer Codex then saves as the account's login",
+}
+
+// accountGrantPrefixes are families of account-choosing variables refused
+// whole, for the reason given with each.
+var accountGrantPrefixes = []struct{ prefix, why string }{
+	{"CLAUDE_CODE_USE_", "is how Claude is switched onto a cloud provider's credentials (Bedrock, Vertex, Foundry, Claude Platform on AWS), and the next provider will be named the same way"},
+}
+
+// accountRefusal is the one message for a name either account list refuses:
+// what the name does, the decision, and the two ways a hub gets what it
+// wanted without it.
+func accountRefusal(name, what, why string) error {
+	return fmt.Errorf("grant name %s is refused: %s %s, and a grant may not move a run off the account the runner's owner chose for it (decision 0040) — "+
+		"for the project's own use, send the value under another name and have the brief say which; "+
+		"to run on another login, the runner's owner adds one as an account with `yad account add`", name, what, why)
 }
 
 // Validate checks a grant's name and delivery. A run carrying a grant that
@@ -134,9 +166,12 @@ func (g Grant) Validate() error {
 	}
 	for name, why := range accountGrantNames {
 		if strings.EqualFold(g.Name, name) {
-			return fmt.Errorf("grant name %s is refused: %s %s, and a grant may not move a run off the account the runner's owner chose for it (decision 0040) — "+
-				"for the project's own use, send the value under another name and have the brief say which; "+
-				"to run on another login, the runner's owner adds one as an account with `yad account add`", g.Name, name, why)
+			return accountRefusal(g.Name, name, why)
+		}
+	}
+	for _, d := range accountGrantPrefixes {
+		if len(g.Name) >= len(d.prefix) && strings.EqualFold(g.Name[:len(d.prefix)], d.prefix) {
+			return accountRefusal(g.Name, d.prefix+"*", d.why)
 		}
 	}
 	return nil

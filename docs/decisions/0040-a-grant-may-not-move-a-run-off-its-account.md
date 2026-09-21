@@ -44,24 +44,39 @@ for every grant).
   grant becomes a variable. Nothing about a hub is trusted for this: a hub on an
   older build, or any hub that did not check, is refused by the runner all the
   same.
-- **The names.** For Claude: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-  `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`,
-  `ANTHROPIC_CUSTOM_HEADERS`, and the provider switches
-  `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` and
-  `CLAUDE_CODE_USE_FOUNDRY`. For Codex: `CODEX_HOME`, `OPENAI_API_KEY`,
-  `CODEX_API_KEY` and `OPENAI_BASE_URL`. Matched whole and in any case, as the
-  0038 deny list is. `HOME`, which also moves both harnesses' default homes, was
-  already refused.
+- **The names.** For Claude, taken from its authentication precedence:
+  `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `ANTHROPIC_PROFILE`, `ANTHROPIC_FEDERATION_RULE_ID`,
+  `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, and every provider switch
+  by its prefix, `CLAUDE_CODE_USE_*`. For Codex, taken from its login code:
+  `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`,
+  `OPENAI_BASE_URL` and `CODEX_REFRESH_TOKEN_URL_OVERRIDE`. Matched whole (the
+  prefix as a prefix) and in any case, as the 0038 deny list is. `HOME`, which
+  also moves both harnesses' default homes, was already refused.
+- **The switches go by prefix.** Claude names every cloud provider switch
+  `CLAUDE_CODE_USE_<provider>`: Bedrock, Vertex, Foundry and Claude Platform
+  on AWS so far. The first draft of this list named three of them and missed
+  the fourth, so the family is refused whole. That way a provider Claude has
+  not shipped yet is refused before anyone thinks to add it.
 - **Endpoints and headers count.** The server that answers a turn decides whose
   account it runs on, and a turn answered through someone else's endpoint
   reports none of the account's windows. A header variable can carry an
   `x-api-key` or `Authorization` header, which is a credential by another name.
-- **What is left off, and why.** The Bedrock, Vertex and Foundry keys and
-  endpoints (`AWS_BEARER_TOKEN_BEDROCK`, `ANTHROPIC_FOUNDRY_API_KEY`,
+- **What is left off, and why.** A provider's own keys, endpoints and
+  workspace ids (`AWS_BEARER_TOKEN_BEDROCK`, `ANTHROPIC_FOUNDRY_API_KEY`,
+  `ANTHROPIC_AWS_API_KEY`, `ANTHROPIC_AWS_WORKSPACE_ID`,
   `ANTHROPIC_VERTEX_BASE_URL` and the like) take effect only once a
-  `CLAUDE_CODE_USE_*` switch is on. The switches are on the list, and Scrub
+  `CLAUDE_CODE_USE_*` switch is on. The switches are refused, and Scrub
   removes every `CLAUDE_CODE_*` from the owner's environment, so the keys alone
-  move nothing and a project that deploys to AWS keeps its credentials.
+  move nothing and a project that deploys to AWS keeps its credentials. The
+  Workload Identity Federation inputs (`ANTHROPIC_IDENTITY_TOKEN[_FILE]`,
+  `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`) are inert the same
+  way. Claude federates only when `ANTHROPIC_FEDERATION_RULE_ID` and
+  `ANTHROPIC_ORGANIZATION_ID` are both set, and each of those is refused on its
+  own, because the owner's environment may already hold the other.
+  `CODEX_REVOKE_TOKEN_URL_OVERRIDE` and `CODEX_APP_SERVER_LOGIN_CLIENT_ID` are
+  read only when someone logs in or out, and a run does neither.
 - **The same list for every harness.** A Codex run is refused
   `ANTHROPIC_API_KEY` too. A hub checks the list before queueing without knowing
   which adapter reads what, one harness can start the other as a tool, and the
