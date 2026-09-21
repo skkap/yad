@@ -104,7 +104,7 @@ func (m ghMemory) report(d *Detected) {
 // ghStatus fills in whether gh is signed in and to which hosts.
 //
 // Two of the three things `gh auth status` prints must never leave this
-// machine: the account name and the token, masked or not (CLAUDE.md). So
+// machine: the account name and the token, masked or not (AGENTS.md). So
 // nothing from its output is copied anywhere — not into Error, not into a log —
 // and only the hosts and the boolean are read out of it. Being signed out is
 // not an error; it is the answer to the question a hub asked.
