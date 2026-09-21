@@ -390,7 +390,7 @@ func TestGHSilenceIsNotAnAnswer(t *testing.T) {
 }
 
 // What gh prints names the account and shows a token, masked or not. Neither
-// may reach a hub — CLAUDE.md, and the reason the fixtures carry both.
+// may reach a hub — AGENTS.md, and the reason the fixtures carry both.
 func TestGHReportCarriesNothingButTheHost(t *testing.T) {
 	ghv := answer{out: ghVersion}
 	noJSON := answer{err: ghNoJSONFlag, code: 1}
@@ -438,7 +438,7 @@ func TestDockerReportsTheDaemonNotTheBinary(t *testing.T) {
 		if !strings.Contains(d.Error, "not answering") {
 			t.Errorf("Error = %q, want the daemon reported down", d.Error)
 		}
-		// Errors carry the next action (CLAUDE.md).
+		// Errors carry the next action (AGENTS.md).
 		if !strings.Contains(d.Error, "start ") {
 			t.Errorf("Error = %q, want the way to start it", d.Error)
 		}
