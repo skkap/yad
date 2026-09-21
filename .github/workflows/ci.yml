@@ -7,10 +7,10 @@ on:
 
 # CI is deliberately a subset. Its one advantage over the machine this is
 # written on is that it is a clean Linux box, so it runs what can answer
-# differently there — vet, a build, the suite — and, as of the breaking-change
-# check, one thing that does not.
+# differently there — vet, a build, the suite — and, for the breaking-change
+# check and the freshness of the documents it reads, two things that do not.
 #
-# gofmt, staticcheck, generated-file drift and the cross-compile matrix give
+# gofmt, staticcheck, sqlc drift and the cross-compile matrix give
 # the same answer anywhere; CHECKS.md makes `make check` the bar before a pull
 # request, and that is where they run.
 #
@@ -23,9 +23,14 @@ on:
 # `make check` still cannot bind a contributor who never read CHECKS.md. So
 # this one runs in both places on purpose.
 #
-# There is no sqlc step any more: it existed only for check-generated, which
-# is now local. If a generated file is stale, `make check` says so before the
-# branch is ever pushed.
+# `make check-openapi` goes with it: the breaking check reads the committed
+# documents, so a Go type changed without `make generate` would leave it
+# comparing a stale file with the last release and finding nothing. It is the
+# OpenAPI half of check-generated and needs no sqlc.
+#
+# There is no sqlc step any more: it existed only for check-generated, whose
+# sqlc half is now local. If sqlc output is stale, `make check` says so before
+# the branch is ever pushed.
 jobs:
   ci:
     runs-on: ubuntu-latest

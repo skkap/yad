@@ -170,6 +170,7 @@ components:
       additionalProperties: true
       properties:
         code:
+          description: "What went wrong, for a program to act on. v1 names ten codes: not_implemented, unauthorized, runner_revoked, version_too_old, conflict, not_found, invalid, unsupported_protocol, not_holder and internal. They are not a closed set: a client meeting a code it does not know acts on the HTTP status and shows message and next_action to a person."
           type: string
         message:
           type: string

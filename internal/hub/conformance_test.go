@@ -47,6 +47,12 @@ func TestYadHubPassesTheConformanceSuite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A second, for the runner that sends what only the holder of a run may:
+	// without it the holder rules are skipped, and the loop at the end fails.
+	tok2, _, err := IssueRegistrationToken(ctx, s, time.Hour, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Two runs for the suite's own harness: one carries the event and result
 	// rules, the other is left unrenewed so its lease lapses. Without them the
 	// suite skips half of §2 and says so, which would pass this test while
@@ -64,7 +70,7 @@ func TestYadHubPassesTheConformanceSuite(t *testing.T) {
 	}
 
 	rep, err := conformance.Run(ctx, conformance.Options{
-		BaseURL: srv.URL + BasePath, Token: tok, LeaseWait: time.Minute,
+		BaseURL: srv.URL + BasePath, Token: tok, SecondToken: tok2, LeaseWait: time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)

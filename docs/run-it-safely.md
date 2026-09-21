@@ -149,7 +149,15 @@ different story — see the end of this section.) An `env` grant is `NAME=value`
 harness's environment. A `file` grant is a `0600` file whose path is in `NAME`,
 in a directory of that run's own under `<data>/grants/`, keyed by connection
 and run (`internal/runner/executor.go`). It is deleted when the run ends, and by the
-next start if a crash skipped that (`internal/runner/runner.go`).
+next start if a crash skipped that (`internal/runner/runner.go`). Both go
+through `destroyGrants` (`internal/runner/grants.go`): when the plain removal
+fails, the runner gives its own grant directories their write bit back and
+tries again, and only if that fails too does it overwrite and truncate each
+grant file — never through a symbolic or hard link. What can still not be
+removed — a read-only mount, an immutable flag — is logged as an error at
+the end of the run and again at every start, naming the directory and whether
+the files there were emptied or **still hold a hub's secrets**; the one thing
+that clears it is deleting them by hand.
 
 The grant directory is deliberately not inside the checkout the harness works
 in, so a grant cannot be committed by accident. **It is not, however,

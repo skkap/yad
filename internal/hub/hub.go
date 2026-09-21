@@ -190,7 +190,7 @@ func (h *Hub) serviceRoutes(ops *http.ServeMux) http.Handler {
 		if err := h.authenticateAdmin(r.Context(), bearerFrom(r)); err != nil {
 			var e *ErrorResponse
 			if !errors.As(err, &e) {
-				e = Fail(http.StatusInternalServerError, "internal", "the hub could not check the admin token", "retry later; if it persists, the hub's logs have the cause")
+				e = Fail(http.StatusInternalServerError, v1.CodeInternal, "the hub could not check the admin token", "retry later; if it persists, the hub's logs have the cause")
 			}
 			writeError(w, e)
 			return

@@ -98,3 +98,29 @@ func TestProtocolMountsUnderBasePath(t *testing.T) {
 		t.Errorf("unprefixed path answered %d", res.StatusCode)
 	}
 }
+
+// A fault on the hub's side answers 500 with the code v1 names for it, on both
+// APIs and whichever path produced it — huma's own 500s, and the admin check
+// the service API makes before huma sees the request. Hub authors copy what
+// the reference sends, so a code the protocol does not name would spread.
+func TestAnInternalFaultIsNamedInternal(t *testing.T) {
+	f := newFixture(t)
+	admin := f.admin(t, "yashiki")
+	// A closed store is the cheapest fault that reaches every handler.
+	if err := f.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(v1.RegisterRequest{Capabilities: doc("r1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{v1.HeaderProtocol: v1.Version, "Authorization": "Bearer never-issued"}
+	res, env := post(t, f.hub, "/v1/runners/register", string(body), headers)
+	if res.StatusCode != http.StatusInternalServerError || env.Error.Code != v1.CodeInternal || env.Error.NextAction == "" {
+		t.Errorf("protocol: %d %+v, want 500 %s with a next action", res.StatusCode, env.Error, v1.CodeInternal)
+	}
+	code, e := f.api(t, "GET", "/runs/nope", admin, nil, nil)
+	if code != http.StatusInternalServerError || e.Code != v1.CodeInternal {
+		t.Errorf("service API: %d %+v, want 500 %s", code, e, v1.CodeInternal)
+	}
+}

@@ -24,6 +24,11 @@ func TestConformanceChecksAHubAndSaysWhatItCouldNot(t *testing.T) {
 		t.Fatalf("token create: exit %d: %s", code, errs)
 	}
 	tok = strings.TrimSpace(tok)
+	code, tok2, errs := p.yad("", "hub", "token", "create", "--ttl", "10m")
+	if code != 0 {
+		t.Fatalf("token create: exit %d: %s", code, errs)
+	}
+	tok2 = strings.TrimSpace(tok2)
 	s, err := store.Open(context.Background(), filepath.Join(p.data, "hub.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +39,7 @@ func TestConformanceChecksAHubAndSaysWhatItCouldNot(t *testing.T) {
 
 	// No run is queued for the suite's harness, so the rules that need one
 	// are reported as unchecked rather than quietly passing.
-	code, out, errs := p.yad(tok+"\n", "conformance", srv.URL+hub.BasePath, "--token", "-", "--lease-wait", "0")
+	code, out, errs := p.yad(tok+"\n", "conformance", srv.URL+hub.BasePath, "--token", "-", "--second-token", tok2, "--lease-wait", "0")
 	if code != 0 {
 		t.Fatalf("`yad hub` broke a rule of its own protocol: exit %d\n%s%s", code, out, errs)
 	}
@@ -52,8 +57,21 @@ func TestConformanceChecksAHubAndSaysWhatItCouldNot(t *testing.T) {
 			t.Errorf("the report does not say %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out+errs, tok) {
-		t.Error("the registration token is in what the command printed")
+	for _, secret := range []string{tok, tok2} {
+		if strings.Contains(out+errs, secret) {
+			t.Error("a registration token is in what the command printed")
+		}
+	}
+}
+
+// Stdin is one stream, so only one token may come from it: which line is
+// which would be a guess, and a wrong one spends each token on the other's
+// job. The command refuses before it spends either.
+func TestConformanceReadsOneTokenFromStdin(t *testing.T) {
+	p := newProfile(t)
+	code, _, errs := p.yad("a\nb\n", "conformance", "https://hub.example/v1", "--token", "-", "--second-token", "-")
+	if code == 0 || !strings.Contains(errs, "only one of --token and --second-token") {
+		t.Fatalf("exit %d, and should refuse two tokens on stdin: %s", code, errs)
 	}
 }
 

@@ -39,6 +39,11 @@ type Options struct {
 	BaseURL string
 	// Token is a registration token the hub issued and nobody has used.
 	Token string
+	// SecondToken is another one, optional. With it the suite registers a
+	// second runner and has it send events and a result for a run the first
+	// one holds, which is the only way to see a hub tell two of its runners
+	// apart; without it those two checks are skipped, saying so.
+	SecondToken string
 	// Harness is the harness id the suite advertises; DefaultHarness when empty.
 	Harness string
 	// LeaseWait bounds the wait for a lease to lapse. Zero waits for none of
@@ -113,8 +118,15 @@ type check struct {
 	section string
 	// needs is what must already have happened for the check to be possible.
 	needs requirement
-	run   func(context.Context, *session) error
+	// second says the check needs Options.SecondToken. It is judged before
+	// needs, so a run with neither a queued run nor the token names the flag
+	// too: the flag is the one of the two the operator can see is missing.
+	second bool
+	run    func(context.Context, *session) error
 }
+
+// noSecondToken is why a check needing a second runner was not made.
+const noSecondToken = "it needs a second runner, and no second registration token was given; create another one-time token on the hub and pass it with --second-token to check it"
 
 // requirement is what a check needs before it can be made at all.
 type requirement int
@@ -193,6 +205,12 @@ type session struct {
 	lapseAt time.Time
 	// leaseAtClaim is the lease the hub named in the answer that claimed it.
 	leaseAtClaim time.Duration
+
+	// other is the runner the second token registered, once a check has
+	// asked for it, and otherErr why it could not be: the token is spent by
+	// the first attempt, so the second check reads the first one's outcome.
+	other    *otherRunner
+	otherErr error
 }
 
 // syncSeen is one sync answer, the request it answered, and the free capacity
@@ -221,6 +239,11 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	if opts.Token == "" {
 		return nil, errors.New("a registration token is needed: create one on the hub (`yad hub token create`, or the hub's Add runner) and pass it with --token")
 	}
+	if opts.SecondToken != "" && opts.SecondToken == opts.Token {
+		// The first registration spends it, and the second would then be
+		// reported as the hub refusing a token it was right to refuse.
+		return nil, errors.New("--second-token is the same token as --token, and a token registers one runner: create another on the hub and pass that")
+	}
 	if opts.Harness == "" {
 		opts.Harness = DefaultHarness
 	}
@@ -234,7 +257,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 	s := &session{
 		opts: opts,
-		c:    newClient(opts.BaseURL, opts.Token),
+		c:    newClient(opts.BaseURL, opts.Token, opts.SecondToken),
 		// Every id this suite invents begins with the same word, whichever
 		// harness was named, so whoever reads the hub's records afterwards
 		// can see where this runner and its runs came from.
@@ -278,6 +301,10 @@ func (s *session) make(ctx context.Context, ch check) (out Outcome) {
 	// One exit, so the guard at the end of this function covers every sentence
 	// the report can carry and not only the ones a check wrote.
 	defer func() { out.Detail = s.c.hide(out.Detail) }()
+	if ch.second && s.opts.SecondToken == "" {
+		out.Status, out.Detail = Skipped, noSecondToken
+		return out
+	}
 	if reason := s.missing(ch.needs); reason != "" {
 		out.Status, out.Detail = Skipped, reason
 		return out
