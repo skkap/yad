@@ -174,7 +174,7 @@ func TestRunnerIDIsStable(t *testing.T) {
 
 func TestCredentials(t *testing.T) {
 	p := testPaths(t)
-	if _, err := p.Credential("zumino"); err == nil || !strings.Contains(err.Error(), "yad connect") {
+	if _, err := p.Credential("zumino"); err == nil || !strings.Contains(err.Error(), "yad --profile default connect") {
 		t.Errorf("missing credential error = %v", err)
 	}
 	if err := p.SaveCredential("zumino", "yad_cred_secret"); err != nil {
@@ -255,7 +255,7 @@ func TestCheckCredential(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := p.CheckCredential("home"); err == nil || !strings.Contains(err.Error(), "yad connect") {
+	if err := p.CheckCredential("home"); err == nil || !strings.Contains(err.Error(), "yad --profile default connect") {
 		t.Errorf("missing: %v", err)
 	}
 	for _, tc := range []struct {

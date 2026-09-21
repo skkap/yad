@@ -72,7 +72,7 @@ func TestAdminTokenCreateSavesAndNeverPrints(t *testing.T) {
 func TestSubmitNeedsAToken(t *testing.T) {
 	p := newProfile(t)
 	code, _, errs := p.yad("", "hub", "submit", "--harness", "claude", "--model", "opus", "hi")
-	if code == 0 || !strings.Contains(errs, "yad hub admin-token create") {
+	if code == 0 || !strings.Contains(errs, "yad --profile default hub admin-token create") {
 		t.Errorf("exit %d %q", code, errs)
 	}
 	// A token file others can read is treated as leaked, not used.

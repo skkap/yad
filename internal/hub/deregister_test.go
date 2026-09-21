@@ -155,7 +155,7 @@ func TestAReplacedCredentialIsRefusedInsideTheTransaction(t *testing.T) {
 	}
 	f.register(t, "r1") // a new token for r1, and a new credential
 	err = f.store.Tx(ctx, func(q *db.Queries) error {
-		_, err := current(ctx, q, checked)
+		_, err := f.hub.current(ctx, q, checked)
 		return err
 	})
 	var e *ErrorResponse

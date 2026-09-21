@@ -165,7 +165,7 @@ func TestNeedsLoginIsOnlyClearedByLoggingInAgain(t *testing.T) {
 	if got := accountState(t, e, "work"); got != v1.AccountNeedsLogin {
 		t.Errorf("account state = %q, want it to stand until the owner logs in", got)
 	}
-	if !strings.Contains(res.Error.Message, "yad account add claude work") {
+	if !strings.Contains(res.Error.Message, "yad --profile default account add claude work") {
 		t.Errorf("the failure does not name the way back: %q", res.Error.Message)
 	}
 }

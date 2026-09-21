@@ -44,7 +44,7 @@ func TestAccountListWithNoAccounts(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, errs)
 	}
 	// Absence is data: a runner with no accounts says so and says what to do.
-	if !strings.Contains(out, "no accounts") || !strings.Contains(out, "yad account add") {
+	if !strings.Contains(out, "no accounts") || !strings.Contains(out, "yad --profile default account add") {
 		t.Errorf("output = %q", out)
 	}
 }
@@ -74,7 +74,7 @@ func TestAccountListShowsStateAndKeepsTheHomeOutOfItsJSON(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errs)
 	}
-	for _, want := range []string{"personal", "free", "work", "needs_login", "yad account add claude work"} {
+	for _, want := range []string{"personal", "free", "work", "needs_login", "yad --profile default account add claude work"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("listing does not mention %q:\n%s", want, out)
 		}
@@ -345,7 +345,7 @@ func TestAccountRemoveNamesTheDaemonRestart(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errs)
 	}
-	if !strings.Contains(out, "yad daemon restart") {
+	if !strings.Contains(out, "yad --profile default daemon restart") {
 		t.Errorf("remove does not mention the restart a running runner needs:\n%s", out)
 	}
 }
