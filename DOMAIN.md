@@ -121,7 +121,8 @@ soonest takes the next run. Hubs see an account's label, state and reset time,
 never its credentials.
 _Kinds_: free | limited | needs_login
 _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
-[0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)
+[0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md),
+[0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md)
 
 **Usage limit** — a subscription window an account has exhausted: Claude's
 five-hour and weekly limits, Codex's primary and secondary windows. Has a reset

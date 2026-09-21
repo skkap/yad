@@ -78,6 +78,11 @@ rebuilds them and `make check` fails when they drift.
   Credentials and grants are `0600` files.
 - **Permission mode is runner configuration, never a protocol field.** A hub must
   not be able to set or widen what a harness may do on someone's machine.
+- **The CLI never writes `state.db`.** The daemon is its only writer; a CLI
+  command reads it read-only or asks the daemon over the control socket, as
+  `yad sessions close` and `yad account add`/`remove` do
+  ([0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md)).
+  A test fails on any `cmd/yad` path that opens it for writing.
 - **The runner listens on no network port.** Outbound only; its one socket is a
   Unix socket for its own CLI. A change that opens a port is a decision record
   first.
