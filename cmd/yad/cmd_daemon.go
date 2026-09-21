@@ -196,6 +196,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				return control.SessionClose{Outcome: res.Outcome, Reason: string(res.Reason), LiveRun: res.LiveRun}, err
 			},
 			AccountsChanged: func(ctx context.Context, ch control.AccountChange) (control.AccountResult, error) {
+				if ch.Keep {
+					return control.AccountResult{}, lists.Keep(account.Ref{Harness: ch.Harness, Label: ch.Label})
+				}
 				// config.toml as it reads now, not as it read at start: the
 				// CLI wrote the change there before it asked.
 				now, err := config.Load(g.paths)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -269,7 +270,7 @@ func TestTheExecutorPicksFromTheReloadedLists(t *testing.T) {
 	plantCredential(t, e.paths.Data, "work")
 	plantCredential(t, e.paths.Data, "spare")
 	x, _ := e.accountExecutor(t, accountConfig("work"))
-	x.init()
+	x.Accounts.attach(ctx, e.store)
 	got, h, ok, err := x.pickAccount(ctx, "claude", "run-1")
 	if err != nil || !ok || got.Label != "work" {
 		t.Fatalf("picked %q (%v, %v)", got.Label, ok, err)
@@ -284,4 +285,93 @@ func TestTheExecutorPicksFromTheReloadedLists(t *testing.T) {
 		t.Fatalf("after the remove, picked %q (%v, %v)", got.Label, ok, err)
 	}
 	x.Accounts.release(h)
+}
+
+// `yad account add` for a label whose removed home is waiting on a run tells
+// the daemon before the login, not after it: the run can end in the minutes
+// the login takes, and the home the owner is logging in must not go with it.
+func TestKeepStopsAPendingDeletionBeforeTheLogin(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	home := plantCredential(t, e.paths.Data, "work")
+	a := accountsOf(e.paths.Data, accountConfig("work"))
+	a.attach(ctx, e.store)
+	ref := account.Ref{Harness: "claude", Label: "work"}
+	h, _ := a.take(ref, "run-1")
+	if _, err := a.Reload(ctx, claudeLists(), ref, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Keep(ref); err != nil {
+		t.Fatal(err)
+	}
+	// The run ends while the owner is still at the browser, before the add
+	// reaches the daemon.
+	a.release(h)
+	if !exists(home) {
+		t.Error("the home the owner is logging in again was deleted when the old run ended")
+	}
+	if err := a.Keep(account.Ref{Harness: "claude", Label: "../x"}); err == nil {
+		t.Error("a label that walks out of the accounts directory was taken")
+	}
+}
+
+// A home deleted when its last run lets go leaves nothing behind in the
+// accounts directory: it is moved aside under the lock and removed after it.
+func TestADeletedHomeLeavesNothingBeside(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	a := accountsOf(e.paths.Data, accountConfig("work"))
+	a.attach(ctx, e.store)
+	ref := account.Ref{Harness: "claude", Label: "work"}
+	h, _ := a.take(ref, "run-1")
+	if _, err := a.Reload(ctx, claudeLists(), ref, true); err != nil {
+		t.Fatal(err)
+	}
+	a.release(h)
+	entries, err := os.ReadDir(filepath.Dir(account.HomeDir(e.paths.Data, "claude", "work")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("left in the accounts directory: %v", entries)
+	}
+}
+
+// The socket answers before Serve has opened the store, so a change that
+// arrives in that moment waits for it: answered earlier, the added account's
+// login would go unchecked and its stored row unread, and the CLI would be
+// told it is free on the strength of the no-database default.
+func TestReloadWaitsForTheStore(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	a := accountsOf(e.paths.Data, accountConfig())
+	x := &Exec{}
+	fakeClaudeBinary(t, x)
+	a.Binary = x.Binary
+	done := make(chan Changed, 1)
+	go func() {
+		res, err := a.Reload(ctx, claudeLists("work"), account.Ref{Harness: "claude", Label: "work"}, false)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- res
+	}()
+	select {
+	case res := <-done:
+		t.Fatalf("answered %+v before the store was open", res)
+	case <-time.After(100 * time.Millisecond):
+	}
+	a.attach(ctx, e.store)
+	select {
+	case res := <-done:
+		if res.State != v1.AccountNeedsLogin || accountState(t, e, "work") != v1.AccountNeedsLogin {
+			t.Errorf("reads %q, row %q; the home holds no login", res.State, accountState(t, e, "work"))
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("still waiting after the store was attached")
+	}
 }

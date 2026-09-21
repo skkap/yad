@@ -57,6 +57,10 @@ type AccountChange struct {
 	// Removed is the owner removing the account; otherwise they have just
 	// logged it in.
 	Removed bool `json:"removed,omitempty"`
+	// Keep is `yad account add` about to run the login, before config.toml
+	// changes: a home a removal is waiting to delete must not be deleted
+	// under the login. The daemon reads no file for it and answers at once.
+	Keep bool `json:"keep,omitempty"`
 }
 
 // AccountResult is where the account named in an OpAccountsChanged stands

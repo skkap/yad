@@ -62,6 +62,17 @@ same reason the request names the account on an add: a label already listed,
 whose login a run found gone, is the owner logging it in again, and a diff
 would see no change at all.
 
+A label removed while a run was on it and then added again needs one more
+step, because the login happens before the add reaches the daemon and can
+take minutes: the run could end in the middle of it and delete the home being
+logged in. So `yad account add` sends the same op with `keep` set before it
+runs the login, and the daemon drops the pending deletion. The deletion itself
+moves the home aside under the same lock and removes it after, so a `keep` or
+an add that comes a moment too late finds no home and makes a new one, rather
+than logging into a directory about to go. The daemon also waits for its store
+before it answers a change, so the state it reports is its record and not the
+default a runner with no database reads.
+
 A daemon that did not answer leaves the home on disk and says to run the
 remove again once `yad status` answers. A daemon that is gone before a held
 run lets go leaves the home behind the same way; the label is already out of

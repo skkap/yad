@@ -84,6 +84,16 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	if err := g.paths.Ensure(); err != nil {
 		return err
 	}
+	// Before the home is made or reused: a label removed while a run was on
+	// it has a home the daemon deletes when that run ends, which could be in
+	// the middle of this login (decision 0043). Nothing to act on if it fails:
+	// with no daemon there is nothing pending, and a daemon that cannot
+	// answer this will not answer the change either, which says so.
+	// Bounded tighter than a change: the daemon reads nothing for this, and
+	// the owner is waiting for the login to start.
+	kctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	_, _ = tellDaemon(kctx, g.paths, control.AccountChange{Harness: id, Label: label, Keep: true})
+	cancel()
 	home, err := account.Ensure(g.paths.Data, id, label)
 	if err != nil {
 		return err
@@ -123,14 +133,24 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	case err != nil:
 		return fmt.Errorf("%s account %q is added to config.toml, but the running daemon did not take it up (%v) — `%s` makes it read the file again", id, label, err, g.paths.Command("daemon", "restart"))
 	}
-	if v1.AccountState(res.State) == v1.AccountNeedsLogin {
+	// The daemon's word for the state, not this command's: it is what a run
+	// will read.
+	switch v1.AccountState(res.State) {
+	case v1.AccountFree:
+		fmt.Fprintf(w, "\n%s account %q is added, and the running daemon has taken it up: it is free and will take runs.\n", id, label)
+		return nil
+	case v1.AccountNeedsLogin:
 		// The daemon asked the same check a moment later and heard no. It
 		// wrote that down, so no run will use the account, and the owner is
 		// the one who can settle it.
 		return fmt.Errorf("%s account %q is added, but the running daemon's own check finds no login in %s — run `%s` again", id, label, home, again)
+	case v1.AccountLimited:
+		// Logged in and at a usage limit a run recorded under this label:
+		// nothing for the owner to do but wait, which `list` dates.
+		fmt.Fprintf(w, "\n%s account %q is added, and the running daemon has taken it up: it is at a usage limit, and `%s` says until when.\n", id, label, g.paths.Command("account", "list"))
+		return nil
 	}
-	fmt.Fprintf(w, "\n%s account %q is added, and the running daemon has taken it up: it is free and will take runs.\n", id, label)
-	return nil
+	return fmt.Errorf("%s account %q is added, but the running daemon could not say what state it is in — `%s` shows it", id, label, g.paths.Command("account", "list"))
 }
 
 // tellDaemon is OpAccountsChanged: the daemon re-reads config.toml's account

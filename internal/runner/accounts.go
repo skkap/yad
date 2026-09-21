@@ -2,8 +2,12 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -11,6 +15,7 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/account"
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
@@ -48,6 +53,10 @@ type Accounts struct {
 	// store is the runner's, once Serve has opened it. Before that there is
 	// nothing to write to, and Serve prunes at open what a reload could not.
 	store *store.Store
+	// attached is closed once Serve has given the source its store and the
+	// prune at start is done; Reload waits for it.
+	attached   chan struct{}
+	attachOnce sync.Once
 }
 
 // accountHold is one run on one account, from the moment the account is
@@ -60,7 +69,7 @@ type accountHold struct {
 // NewAccounts is the lists as the daemon starts with them. data is where the
 // account homes live.
 func NewAccounts(data string, lists account.Lists) *Accounts {
-	return &Accounts{data: data, lists: lists, held: map[account.Ref]map[*accountHold]bool{}, doomed: map[account.Ref]bool{}}
+	return &Accounts{data: data, lists: lists, held: map[account.Ref]map[*accountHold]bool{}, doomed: map[account.Ref]bool{}, attached: make(chan struct{})}
 }
 
 // Lists is a copy of the current lists: the caller may keep it for as long
@@ -113,6 +122,7 @@ func (a *Accounts) release(h *accountHold) {
 	if a == nil || h == nil {
 		return
 	}
+	log := a.log().With("harness", h.ref.Harness, "account", h.ref.Label)
 	a.mu.Lock()
 	delete(a.held[h.ref], h)
 	last := len(a.held[h.ref]) == 0
@@ -121,15 +131,17 @@ func (a *Accounts) release(h *accountHold) {
 	}
 	removed := last && !a.lists.Has(h.ref)
 	doomed := removed && a.doomed[h.ref]
+	var aside string
+	var asideErr error
 	if doomed {
 		delete(a.doomed, h.ref)
+		aside, asideErr = a.setAside(h.ref)
 	}
 	st := a.store
 	a.mu.Unlock()
 	if !removed {
 		return
 	}
-	log := a.log().With("harness", h.ref.Harness, "account", h.ref.Label)
 	if st != nil {
 		// Not the run's context: a run cancelled on the way down still lets
 		// go of its account, and the rows it leaves must still go.
@@ -137,13 +149,65 @@ func (a *Accounts) release(h *accountHold) {
 			log.Warn("could not forget a removed account's state; the next start prunes it", "err", err)
 		}
 	}
-	if doomed {
-		if err := account.Remove(a.data, h.ref.Harness, h.ref.Label); err != nil {
-			log.Warn("the last run on a removed account has ended and its home could not be deleted", "err", err)
-			return
-		}
-		log.Info("the last run on a removed account has ended; its home is deleted")
+	if !doomed {
+		return
 	}
+	if err := errors.Join(asideErr, removeAside(aside)); err != nil {
+		log.Warn("the last run on a removed account has ended and its home could not be deleted", "err", err)
+		return
+	}
+	log.Info("the last run on a removed account has ended; its home is deleted")
+}
+
+// Keep cancels a pending deletion of an account's home: `yad account add` is
+// about to log the owner in there again. Sent before the login rather than
+// after it, because the login takes minutes and a run on the removed account
+// could end in the middle of it and delete the home the owner is logging in.
+func (a *Accounts) Keep(r account.Ref) error {
+	if err := checkRef(r); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.doomed, r)
+	return nil
+}
+
+func checkRef(r account.Ref) error {
+	if err := config.ValidName(r.Harness); err != nil {
+		return fmt.Errorf("harness: %w", err)
+	}
+	if err := config.ValidName(r.Label); err != nil {
+		return fmt.Errorf("account label: %w", err)
+	}
+	return nil
+}
+
+// setAside moves a home out of the way under a.mu, so the decision to delete
+// it and its disappearing from the account's path are one step: a Keep or an
+// add that comes after it finds no home there and gets a new one, rather than
+// logging into a directory about to be removed. A rename in one directory is
+// immediate whatever the home holds; the delete itself, removeAside, runs
+// after the lock is let go. Empty with no error is a home already gone.
+func (a *Accounts) setAside(r account.Ref) (string, error) {
+	home := account.HomeDir(a.data, r.Harness, r.Label)
+	// A leading dot and a suffix no label can carry (config.ValidName), so
+	// it can never be read as an account.
+	aside := filepath.Join(filepath.Dir(home), fmt.Sprintf(".%s.removed-%d", r.Label, time.Now().UnixNano()))
+	switch err := os.Rename(home, aside); {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", nil
+	case err != nil:
+		return "", err
+	}
+	return aside, nil
+}
+
+func removeAside(aside string) error {
+	if aside == "" {
+		return nil
+	}
+	return os.RemoveAll(aside)
 }
 
 // attach gives the source the runner's store once Serve has opened it, and
@@ -161,6 +225,7 @@ func (a *Accounts) attach(ctx context.Context, st *store.Store) {
 	if st == nil {
 		return
 	}
+	defer a.attachOnce.Do(func() { close(a.attached) })
 	gone, err := account.Prune(ctx, st.Queries, lists)
 	if err != nil {
 		a.log().Warn("could not prune the state of accounts config.toml no longer lists; nothing reads it, and the next start tries again", "err", err)
@@ -192,6 +257,11 @@ type Changed struct {
 // seen that same check say yes; asking again here is what writes the row, and
 // what brings back an account a run had parked in needs_login.
 func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Ref, removed bool) (Changed, error) {
+	// The names come off the control socket and become a path that ends in
+	// os.RemoveAll; the CLI checked them, and so does the end that deletes.
+	if err := checkRef(r); err != nil {
+		return Changed{}, err
+	}
 	if lists.Has(r) == removed {
 		// Refused before anything is swapped: the CLI wrote config.toml
 		// before asking, so this is a file changed again since.
@@ -200,10 +270,19 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 		}
 		return Changed{}, fmt.Errorf("config.toml does not list %s account %q — add it again", r.Harness, r.Label)
 	}
+	// Once Serve has opened the store, so that the answer is the daemon's
+	// record and not the default a runner with no database reads: in the
+	// moment a daemon is starting, the socket answers before the store is
+	// open. A daemon whose store never opens is exiting; the bound is ctx.
+	select {
+	case <-a.attached:
+	case <-ctx.Done():
+	}
 	a.mu.Lock()
 	a.lists = lists
 	var runs []string
-	deleteNow := false
+	var aside string
+	var asideErr error
 	if removed {
 		for h := range a.held[r] {
 			runs = append(runs, h.run)
@@ -212,7 +291,7 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 		if len(runs) > 0 {
 			a.doomed[r] = true
 		} else {
-			deleteNow = true
+			aside, asideErr = a.setAside(r)
 		}
 	} else {
 		// Logged in again under a label whose old home was waiting to go:
@@ -229,10 +308,8 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 		}
 	}
 	if removed {
-		if deleteNow {
-			if err := account.Remove(a.data, r.Harness, r.Label); err != nil {
-				return Changed{}, fmt.Errorf("%s account %q is removed, and its home could not be deleted: %w", r.Harness, r.Label, err)
-			}
+		if err := errors.Join(asideErr, removeAside(aside)); err != nil {
+			return Changed{}, fmt.Errorf("%s account %q is removed, and its home could not be deleted: %w", r.Harness, r.Label, err)
 		}
 		log.Info("the owner removed the account", "runs_still_on_it", len(runs))
 		return Changed{Runs: runs}, nil
