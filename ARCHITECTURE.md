@@ -199,15 +199,15 @@ plain-text 404 or 405.
   One pool for every connection. A sync takes what is free up to its
   connection's share of the whole capacity, less what it already holds; the
   share is the capacity dealt a unit at a time around the ring of connections
-  from where the last unit taken left off. So a hub with a deep queue cannot
-  crowd out a quieter one: two hubs that both want everything hold half each,
-  and a unit freed goes to whoever's turn it is rather than to whoever asks
-  first. A connection that leaves units unused has no work for them and is
-  skipped until its next sync asks again, so one busy hub still fills a pool
-  the others have no queue for. The share is recomputed per sync from the
-  cursor as it stands then, so with three or more hubs filling one pool a hub
-  can find its turn taken and wait a sync interval for the next unit; it is
-  never starved, and no run is lost or claimed twice. The owner's `cap` on a
+  from a cursor that stays put for the whole fill and moves on one place once
+  the pool is full. So a hub with a deep queue cannot crowd out a quieter one:
+  two hubs that both want everything hold half each, three over four units
+  hold two, one and one whatever order they sync in, the extra unit of an
+  uneven division goes round the ring from fill to fill, and a unit freed goes
+  to whoever's turn it is rather than to whoever asks first. A connection that
+  leaves units unused has no work for them and is out of the deal — keeping
+  what it holds — until its next sync asks again, so one busy hub still fills
+  a pool the others have no queue for. The owner's `cap` on a
   connection bounds what a sync *asks* for and is checked nowhere else: a run
   over it is never claimed and then found to be over it.
 - **Start on acknowledgement** — [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md).

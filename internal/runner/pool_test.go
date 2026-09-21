@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"strings"
 	"testing"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -243,4 +244,157 @@ func TestTurnsGoRoundTheRing(t *testing.T) {
 			t.Errorf("%s holds %d, want 1", name, held)
 		}
 	}
+}
+
+// TestOneFillDealsEveryConnectionItsShare is DEV-78: a fill is dealt from
+// where it started, whatever order the connections sync in, so the hub that
+// syncs last in an uneven division is not left with nothing. DEV-29's cases
+// divided evenly and could not see it; these do not.
+func TestOneFillDealsEveryConnectionItsShare(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		total int
+		conns []string
+		caps  map[string]int
+		want  map[string]int // the first in the ring is dealt first
+	}{
+		{"three over four", 4, []string{"a", "b", "c"}, nil, map[string]int{"a": 2, "b": 1, "c": 1}},
+		{"three over five", 5, []string{"a", "b", "c"}, nil, map[string]int{"a": 2, "b": 2, "c": 1}},
+		{"four over six", 6, []string{"a", "b", "c", "d"}, nil, map[string]int{"a": 2, "b": 2, "c": 1, "d": 1}},
+		// A connection that reaches its cap keeps the share it was dealt; it
+		// is not dropped from the deal so that the next hub to sync is dealt
+		// its turns as well as its own.
+		{"a capped connection", 5, []string{"a", "b", "c"}, map[string]int{"a": 2}, map[string]int{"a": 2, "b": 2, "c": 1}},
+	} {
+		for _, order := range permutations(tc.conns) {
+			t.Run(tc.name+"/"+strings.Join(order, ""), func(t *testing.T) {
+				p := NewPool(v1.Capacity{Total: tc.total})
+				for _, name := range tc.conns {
+					p.Join(name, tc.caps[name])
+				}
+				for _, name := range order {
+					if got := take(t, p, name, 100); got != tc.want[name] {
+						t.Errorf("%s was offered %d of %d, want %d", name, got, tc.total, tc.want[name])
+					}
+				}
+				if p.Free() != 0 {
+					t.Errorf("the fill left %d of %d units free", p.Free(), tc.total)
+				}
+			})
+		}
+	}
+}
+
+// TestAPassedConnectionKeepsWhatItHolds: a hub with nothing more to ask for
+// is out of the deal but still holds its runs, and what is free is shared
+// among the hubs that do ask rather than going to whichever syncs first.
+func TestAPassedConnectionKeepsWhatItHolds(t *testing.T) {
+	for _, order := range [][]string{{"b", "c"}, {"c", "b"}} {
+		p := NewPool(v1.Capacity{Total: 4})
+		for _, name := range []string{"a", "b", "c"} {
+			p.Join(name, 0)
+		}
+		take(t, p, "a", 2)
+		p.Pass("a")
+		for _, name := range order {
+			if got := take(t, p, name, 100); got != 1 {
+				t.Errorf("order %v: %s was offered %d of the 2 free, want 1", order, name, got)
+			}
+		}
+	}
+}
+
+// TestTheRemainderGoesRoundTheRing is what DEV-29 guaranteed and a fixed deal
+// must keep: when the capacity does not divide evenly, the extra unit moves
+// on once a fill completes, so no hub is always the one short.
+func TestTheRemainderGoesRoundTheRing(t *testing.T) {
+	p := NewPool(v1.Capacity{Total: 4})
+	names := []string{"a", "b", "c"}
+	for _, name := range names {
+		p.Join(name, 0)
+	}
+	for fill, extra := range []string{"a", "b", "c", "a"} {
+		var ends []func()
+		for _, name := range names {
+			offered, e := syncOf(t, p, name, 100)
+			want := 1
+			if name == extra {
+				want = 2
+			}
+			if offered != want {
+				t.Errorf("fill %d: %s was offered %d, want %d", fill, name, offered, want)
+			}
+			ends = append(ends, e...)
+		}
+		for _, end := range ends {
+			end()
+		}
+	}
+}
+
+// TestAFreedUnitGoesToTheHubShortOfItsShare is rotation under churn: in a
+// pool that has filled, the unit a run's end frees goes to the hub the next
+// deal favours, not to whichever syncs first.
+func TestAFreedUnitGoesToTheHubShortOfItsShare(t *testing.T) {
+	p := NewPool(v1.Capacity{Total: 3})
+	p.Join("a", 0)
+	p.Join("b", 0)
+	_, endsA := syncOf(t, p, "a", 100) // 2: the extra unit of this fill
+	take(t, p, "b", 100)               // 1, and the pool is full
+	endsA[0]()
+	if got := take(t, p, "a", 100); got != 0 {
+		t.Errorf("a was offered %d of the unit its own run freed, want 0", got)
+	}
+	if got := take(t, p, "b", 100); got != 1 {
+		t.Errorf("b was offered %d of the freed unit, want 1", got)
+	}
+}
+
+// TestAPutBackUnitReturnedOnCloseStartsAFill: a claim that is never recorded
+// puts its unit back, and a sync that ends without re-taking it frees it. The
+// pool filling again after that is a fill of its own, and moves the deal on.
+func TestAPutBackUnitReturnedOnCloseStartsAFill(t *testing.T) {
+	p := NewPool(v1.Capacity{Total: 4})
+	for _, name := range []string{"a", "b", "c"} {
+		p.Join(name, 0)
+	}
+	var ends []func()
+	for _, name := range []string{"a", "b"} {
+		_, e := syncOf(t, p, name, 100)
+		ends = append(ends, e...)
+	}
+	r := p.Reserve("c")
+	if _, ok := r.Take("claude"); !ok { // the pool is full, and the deal moves on to b
+		t.Fatal("c could not take its unit")
+	}
+	r.putBack("claude")
+	r.Close()
+	// c's next sync takes the unit; this fill was dealt from b, and the next
+	// one is dealt from c.
+	_, e := syncOf(t, p, "c", 100)
+	for _, end := range append(ends, e...) {
+		end()
+	}
+	for name, want := range map[string]int{"a": 1, "b": 1, "c": 2} {
+		// Offered without taking, so each sync sees the same deal.
+		r := p.Reserve(name)
+		if got := r.Free().Total; got != want {
+			t.Errorf("%s was offered %d in the next fill, want %d", name, got, want)
+		}
+		defer r.Close()
+	}
+}
+
+func permutations(s []string) [][]string {
+	if len(s) <= 1 {
+		return [][]string{append([]string(nil), s...)}
+	}
+	var out [][]string
+	for i := range s {
+		rest := append(append([]string(nil), s[:i]...), s[i+1:]...)
+		for _, p := range permutations(rest) {
+			out = append(out, append([]string{s[i]}, p...))
+		}
+	}
+	return out
 }

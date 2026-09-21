@@ -18,14 +18,20 @@ import (
 // than the cap is not a state a claim can discover and then have to undo.
 //
 // Capacity goes to connections in turn (0005): the runner's units are dealt
-// one at a time around the ring of connections, from where the last unit taken
-// left off, and a sync may take what is free up to the turns its connection
-// has coming beyond the runs it already holds. A connection that leaves units
-// unused has no work for them and passes — it is skipped in the dealing until
-// its own next sync asks again — so one busy hub still fills a pool the others
-// have no queue for, while a hub that is quiet now finds its turn waiting for
-// it when its work arrives. A unit a turn holds back is not reserved, so it
-// waits at most until that connection's next sync, an interval away.
+// one at a time around the ring of connections, starting from the cursor, and
+// a sync may take what is free up to the turns its connection has coming
+// beyond the runs it already holds. The cursor stays where it is until the
+// pool fills and then moves on once, so every sync of one fill is judged
+// against the same deal — one hub's takes cannot re-deal the turns of a hub
+// that has not synced yet — while the extra unit of an uneven division still
+// goes round the ring from one fill to the next.
+//
+// A connection that leaves units unused has no work for them and passes — it
+// is out of the dealing, keeping what it holds, until its own next sync asks
+// again — so one busy hub still fills a pool the others have no queue for,
+// while a hub that is quiet now finds its turn waiting for it when its work
+// arrives. A unit a turn holds back is not reserved, so it waits at most until
+// that connection's next sync, an interval away.
 type Pool struct {
 	mu        sync.Mutex
 	total     int
@@ -34,10 +40,15 @@ type Pool struct {
 	byHarness map[string]int
 
 	// order is the ring, in the order connections joined it, and cursor is
-	// whose turn the next free unit is.
+	// where the deal starts. filled is whether the cursor has already moved
+	// on for the fill in progress: a pool that fills, has a unit put back
+	// and fills again within one sync is one fill, not two. A unit leaving
+	// the pool's runs — a release, or a put-back unit returned on Close —
+	// starts the next one.
 	order  []string
 	conns  map[string]*poolConn
 	cursor int
+	filled bool
 }
 
 // poolConn is one connection's standing in the pool.
@@ -106,34 +117,46 @@ func (p *Pool) headroom(c *poolConn) int {
 	return max(c.cap-c.held, 0)
 }
 
-// quota is how many of the runner's units this connection's turn entitles it
-// to hold: the whole capacity dealt one at a time around the ring, from where
-// the last unit taken left off. It is reckoned over the capacity rather than
-// over what happens to be free, so a connection already holding its share is
-// not dealt an equal slice of every unit that frees — that is what let the
-// hub that syncs most often end up with most of the pool.
+// deal is the whole capacity dealt one unit at a time around the ring from
+// the cursor: each connection's share, and the position after the first one
+// dealt a unit, which is where the next fill's deal starts. It is reckoned
+// over the capacity rather than over what happens to be free, so a
+// connection already holding its share is not dealt an equal slice of every
+// unit that frees — that is what let the hub that syncs most often end up
+// with most of the pool.
 //
-// A connection that is not asking, or that is at its cap, is skipped rather
-// than dealt a unit no run of its could use: one busy hub may fill a pool the
-// others have no work for.
-func (p *Pool) quota(conn string) int {
-	var asking []string
+// A connection that is not asking keeps what it holds and is dealt nothing
+// more, so one busy hub may fill a pool the others have no work for. One
+// under a cap is dealt no more than the cap, and stays in the deal once it
+// reaches it: dropping it would hand its turns to whoever syncs next.
+func (p *Pool) deal() (share map[string]int, next int) {
+	share = map[string]int{}
+	left := p.total
+	var ring []string
 	for i := range p.order {
 		name := p.order[(p.cursor+i)%len(p.order)]
-		if c := p.conns[name]; c.asking && p.headroom(c) > 0 {
-			asking = append(asking, name)
+		if c := p.conns[name]; !c.asking {
+			left -= c.held
+			continue
+		}
+		ring = append(ring, name)
+	}
+	next = p.cursor
+	for dealt := true; left > 0 && dealt; {
+		dealt = false
+		for _, name := range ring {
+			if c := p.conns[name]; left == 0 || c.cap > 0 && share[name] >= c.cap {
+				continue
+			}
+			if len(share) == 0 {
+				next = (p.conns[name].idx + 1) % len(p.order)
+			}
+			share[name]++
+			left--
+			dealt = true
 		}
 	}
-	if len(asking) == 0 {
-		return 0
-	}
-	n := 0
-	for i := range p.total {
-		if asking[i%len(asking)] == conn {
-			n++
-		}
-	}
-	return n
+	return share, next
 }
 
 // Reserve takes the free units this connection's turn gives it, under its cap.
@@ -143,10 +166,11 @@ func (p *Pool) Reserve(conn string) *Reservation {
 	defer p.mu.Unlock()
 	c := p.conn(conn)
 	c.asking = true
+	share, _ := p.deal()
 	// What is free, what this connection's turns entitle it to beyond what it
 	// already holds, and what its cap leaves it. The cap appears here and
 	// nowhere else: a run over it is not something a claim can discover.
-	n := min(max(p.total-p.used, 0), max(p.quota(conn)-c.held, 0), p.headroom(c))
+	n := min(max(p.total-p.used, 0), max(share[conn]-c.held, 0), p.headroom(c))
 	p.used += n
 	r := &Reservation{p: p, conn: conn, n: n, by: map[string]int{}}
 	for id, cap := range p.caps {
@@ -221,9 +245,7 @@ func (r *Reservation) Take(h string) (release func(), ok bool) {
 	p.byHarness[h]++
 	c := p.conn(r.conn)
 	c.held++
-	// The next free unit is offered past this connection, so a hub that keeps
-	// taking does not keep taking first.
-	p.cursor = (c.idx + 1) % len(p.order)
+	p.rotate()
 	var once sync.Once
 	return func() {
 		once.Do(func() {
@@ -232,8 +254,26 @@ func (r *Reservation) Take(h string) (release func(), ok bool) {
 			p.used--
 			p.byHarness[h]--
 			c.held--
+			p.filled = false
 		})
 	}, true
+}
+
+// rotate moves the cursor on once the pool is full, past the connection this
+// fill's deal started with, so the extra unit of an uneven division is the
+// next connection's in the next fill. Only then: a cursor that moved with
+// every unit taken re-dealt the fill under the syncs still to come, and with
+// three hubs over four units the third was dealt nothing (DEV-78).
+func (p *Pool) rotate() {
+	held := 0
+	for _, c := range p.conns {
+		held += c.held
+	}
+	if held < p.total || p.filled {
+		return
+	}
+	_, p.cursor = p.deal()
+	p.filled = true
 }
 
 // putBack undoes a Take whose claim was never recorded: the unit returns to
@@ -260,6 +300,9 @@ func (r *Reservation) Close() {
 		// It was offered more than it had work for; the rest of its turn goes
 		// to the other connections until its next sync asks again.
 		r.p.conn(r.conn).asking = false
+		// A unit put back after the pool filled comes free here, and the
+		// next time the pool fills is a fill of its own.
+		r.p.filled = false
 	}
 	r.p.used -= r.n
 	r.n = 0

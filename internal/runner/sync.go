@@ -333,34 +333,20 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	defer func() { l.accounts, l.accountsTried, l.accountsErr = nil, false, nil }()
 	l.loadAccounts(ctx)
 	// Capacity for the parked runs that are due, taken before the hub is
-	// asked so it is out of the free capacity the request advertises.
-	//
-	// Without this a parked run is last in line for ever. A hub fills
-	// whatever free capacity the request advertises (internal/hub/sync.go
-	// pages offers until it is full), and those offers are claimed before
-	// the resume is reached — so on a runner whose hub has a standing
-	// queue, each unit that frees goes to a new run at every sync and the
-	// run that has already waited hours never moves. With a max_wait it is
-	// then timed out for a limit that had in fact lifted.
+	// asked so it is out of the free capacity the request advertises — an
+	// order the compiler holds to, through offerable.
 	//
 	// The units are only held here; what becomes of each run is decided
 	// after the hub's answer, and a unit held for one that turns out not to
 	// run is given back at the end of the same sync.
-	// **This must stay above anything that puts res.Free() on the wire.**
-	// Nothing enforces it but these lines' order: Take decrements what
-	// Free reports, so a request built before the hold advertises capacity
-	// this runner has already reserved, the hub fills it, and the fix
-	// below is undone without a line of it changing — silently, with every
-	// test still green, because no test can see an ordering nothing
-	// asserts. DEV-83 is to make the wrong order fail to compile.
-	reserved := l.holdWaiting(held, res)
+	free, reserved := l.holdWaiting(held, res)
 	defer func() {
 		for _, release := range reserved {
 			release()
 		}
 	}()
 
-	req := v1.SyncRequest{RunnerID: l.RunnerID, Fingerprint: fp, Health: l.health(ctx, res)}
+	req := v1.SyncRequest{RunnerID: l.RunnerID, Fingerprint: fp, Health: l.health(ctx, free)}
 	req.Health.Draining = draining
 	// The document goes with the first sync of every process, after any move
 	// and whenever the hub asks; otherwise the fingerprint stands for it.
@@ -877,8 +863,8 @@ func (l *Loop) withdrawOrphan(ctx context.Context, r db.Run) (bool, error) {
 	return gone && err == nil, err
 }
 
-func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
-	h := v1.Health{Load: loadAverage(), FreeCapacity: res.Free(), DiskFreeBytes: l.Sessions.FreeBytes()}
+func (l *Loop) health(ctx context.Context, free offerable) v1.Health {
+	h := v1.Health{Load: loadAverage(), FreeCapacity: free.Free(), DiskFreeBytes: l.Sessions.FreeBytes()}
 	// Depths are best effort: a health report is not worth failing a sync.
 	if n, err := l.Store.SpoolDepth(ctx); err == nil {
 		h.SpoolDepth = int(n)

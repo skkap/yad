@@ -90,9 +90,9 @@ func (l *Loop) loadAccounts(ctx context.Context) {
 // given back at the end of the same sync, so a wrong guess here costs one
 // sync's worth of one unit and nothing else. That is why this may read the
 // stale snapshot and considerWaiting may not.
-func (l *Loop) holdWaiting(held []db.Run, res *Reservation) map[string]func() {
+func (l *Loop) holdWaiting(held []db.Run, res *Reservation) (offerable, map[string]func()) {
 	if l.Executor == nil {
-		return nil
+		return offerable{res}, nil
 	}
 	now := l.Clock.Now()
 	var reserved map[string]func()
@@ -119,8 +119,22 @@ func (l *Loop) holdWaiting(held []db.Run, res *Reservation) map[string]func() {
 		}
 		reserved[row.ID] = release
 	}
-	return reserved
+	return offerable{res}, reserved
 }
+
+// offerable is a sync's reservation after holdWaiting has taken the units of
+// the parked runs that are due, and health takes nothing else, so a request
+// built before the hold does not compile. Built in the wrong order it would
+// advertise those units, a hub with a standing queue would fill them with new
+// runs at every sync, and a parked run would never resume.
+//
+// Go cannot stop this package writing the literal, so the rule is that only
+// holdWaiting does outside tests; tests that want health on its own go
+// through heldNothing.
+type offerable struct{ res *Reservation }
+
+// Free is what the sync declares: the hub offers no more than this.
+func (o offerable) Free() v1.Capacity { return o.res.Free() }
 
 // resumeWaiting settles what becomes of each parked run of this connection,
 // with the capacity holdWaiting put aside for it. held is the listing this

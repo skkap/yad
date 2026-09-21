@@ -49,7 +49,7 @@ func TestHealthErrorsCarryTheMessageAndNeverTheAttrs(t *testing.T) {
 		Attrs: fmt.Sprintf("err=Post \"https://user:%s@proxy.internal/v1/runners/r1/sync\": dial tcp: no route to host home=%s", secret, e.paths.Data),
 	})
 
-	h := l.health(context.Background(), l.Pool.Reserve(l.Connection))
+	h := l.health(context.Background(), heldNothing(l.Pool.Reserve(l.Connection)))
 	if len(h.RecentErrors) != 1 {
 		t.Fatalf("recent_errors = %q, want one entry", h.RecentErrors)
 	}
@@ -234,7 +234,7 @@ func TestALongMessageIsCutForTheWire(t *testing.T) {
 func TestNoRingMeansNoRecentErrors(t *testing.T) {
 	e := newEnv(t)
 	l := healthLoop(t, e)
-	h := l.health(context.Background(), l.Pool.Reserve(l.Connection))
+	h := l.health(context.Background(), heldNothing(l.Pool.Reserve(l.Connection)))
 	if h.RecentErrors != nil {
 		t.Errorf("recent_errors = %q, want absent", h.RecentErrors)
 	}
@@ -291,7 +291,7 @@ func TestAccountsAndWindowsAreCappedAndReadyIsNot(t *testing.T) {
 	}
 	l := healthLoop(t, e, labels...)
 
-	h := l.health(ctx, l.Pool.Reserve(l.Connection))
+	h := l.health(ctx, heldNothing(l.Pool.Reserve(l.Connection)))
 	if len(h.Harnesses) != 1 {
 		t.Fatalf("health harnesses = %+v", h.Harnesses)
 	}
@@ -355,7 +355,7 @@ func TestTheAccountCarryingTheWorkIsNamedEvenPastTheCap(t *testing.T) {
 	free := labels[maxHealthAccounts]
 	l := healthLoop(t, e, labels...)
 
-	hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
+	hh := l.health(ctx, heldNothing(l.Pool.Reserve(l.Connection))).Harnesses[0]
 	if !hh.Ready || len(hh.Accounts) != maxHealthAccounts {
 		t.Fatalf("harness = ready %v with %d accounts", hh.Ready, len(hh.Accounts))
 	}
@@ -401,7 +401,7 @@ func TestAnAccountInsideTheCapIsNotMoved(t *testing.T) {
 	}
 	l := healthLoop(t, e, labels...)
 
-	hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
+	hh := l.health(ctx, heldNothing(l.Pool.Reserve(l.Connection))).Harnesses[0]
 	if !hh.Ready || len(hh.Accounts) != maxHealthAccounts {
 		t.Fatalf("harness = ready %v with %d accounts", hh.Ready, len(hh.Accounts))
 	}
@@ -455,7 +455,7 @@ func TestALimitIsJudgedOnTheLoopsClockNotTheWall(t *testing.T) {
 			}
 			l := healthLoop(t, e, "work")
 
-			hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
+			hh := l.health(ctx, heldNothing(l.Pool.Reserve(l.Connection))).Harnesses[0]
 			if len(hh.Accounts) != 1 || hh.Accounts[0].State != c.wantState {
 				t.Fatalf("accounts = %+v, want work %s at %s with the limit ending %s", hh.Accounts, c.wantState, e.clock.Now(), reset)
 			}
@@ -489,7 +489,7 @@ func TestNoReplacementWhenNothingCanRun(t *testing.T) {
 	}
 	l := healthLoop(t, e, labels...)
 
-	hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
+	hh := l.health(ctx, heldNothing(l.Pool.Reserve(l.Connection))).Harnesses[0]
 	// The length first: the loop below is a no-op over a short slice, so
 	// without this a capAccounts that returned nothing on the empty-label
 	// path would leave this test green while the block it is named for is
@@ -521,7 +521,7 @@ func TestEverySyncCarriesEveryHealthField(t *testing.T) {
 	e.collector(l)
 	l.RecentErrors = recordsAt(e.clock.Now().Add(-time.Minute), logfile.Record{Message: "a workdir could not be reclaimed"})
 
-	h := l.health(ctx, l.Pool.Reserve(l.Connection))
+	h := l.health(ctx, heldNothing(l.Pool.Reserve(l.Connection)))
 	b, err := json.Marshal(h)
 	if err != nil {
 		t.Fatal(err)
@@ -574,6 +574,10 @@ func TestEverySyncCarriesEveryHealthField(t *testing.T) {
 		t.Errorf("a free account carries limited_until = %v", a.LimitedUntil)
 	}
 }
+
+// heldNothing is a reservation as health sees it on a sync with no parked run
+// due: for a test of health on its own, which never runs holdWaiting.
+func heldNothing(res *Reservation) offerable { return offerable{res} }
 
 // Why a health report can say no free capacity on a runner that has plenty,
 // which nothing asserted until an end-to-end test went flaky on it.
