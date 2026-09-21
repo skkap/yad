@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -242,4 +243,138 @@ func TestHealthReportsDiskFree(t *testing.T) {
 	if got := hub.syncs[0].Health.DiskFreeBytes; got != 42<<30 {
 		t.Errorf("disk_free_bytes = %d", got)
 	}
+}
+
+// tappedHub passes everything to the hub underneath and keeps every
+// closed_sessions list the runner sent, answered or not.
+type tappedHub struct {
+	Hub
+	mu     sync.Mutex
+	closed [][]v1.ClosedSession
+}
+
+func (h *tappedHub) Sync(ctx context.Context, id string, req v1.SyncRequest) (v1.SyncResponse, error) {
+	h.mu.Lock()
+	h.closed = append(h.closed, req.ClosedSessions)
+	h.mu.Unlock()
+	return h.Hub.Sync(ctx, id, req)
+}
+
+func (h *tappedHub) reported(id string) (v1.SessionCloseReason, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, list := range h.closed {
+		for _, cs := range list {
+			if cs.SessionID == id {
+				return cs.Reason, true
+			}
+		}
+	}
+	return "", false
+}
+
+// The owner closes a session its first run opened while that run is still
+// only claimed (DEV-99). The close waits on the claim, and the claim is then
+// withdrawn: by the hub's cancel, by draining, by the loop stopping, or by the
+// next process finding it unstarted. However it goes, the owner's close
+// stands: the session closes rather than vanishing, the next sync reports it,
+// and the run offered again in it is refused as session_closed rather than
+// opening the session afresh as if nothing had been asked.
+func TestAClosePendingOnAWithdrawnClaimStands(t *testing.T) {
+	cases := []struct {
+		name string
+		// withdraw ends the claim and returns the loop that syncs next.
+		withdraw func(t *testing.T, e *env, l *Loop) *Loop
+		// hubState is where the run ends on the hub: refused when offered
+		// again, and still queued for a runner that is draining and is
+		// offered nothing.
+		hubState string
+	}{
+		{name: "the hub cancels it", hubState: "failed", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
+			// The runner was away past the offer's lease, and the hub put
+			// the run back in its queue.
+			if _, err := e.hubStore.DB.Exec(`UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL WHERE id = 'a'`); err != nil {
+				t.Fatal(err)
+			}
+			res := mustSync(t, l)
+			if !slices.ContainsFunc(res.Controls, func(c v1.Control) bool { return c.Kind == v1.ControlCancel && c.RunID == "a" }) {
+				t.Fatalf("the claim was not cancelled: %+v", res.Controls)
+			}
+			return l
+		}},
+		{name: "draining", hubState: "queued", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
+			l.Drain = NewDrain()
+			l.Drain.Begin("test")
+			mustSync(t, l)
+			return l
+		}},
+		{name: "the loop stops", hubState: "failed", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
+			l.WithdrawPending(context.Background())
+			return e.nextLoop(l)
+		}},
+		{name: "a restart", hubState: "failed", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
+			l2 := e.nextLoop(l)
+			if err := l2.Recover(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			return l2
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			l := e.loop(t, 1)
+			tap := &tappedHub{Hub: l.Hub}
+			l.Hub = tap
+			c := e.collector(l)
+			e.enqueue(t, testRun("a", "s1"))
+			mustSync(t, l) // offered and claimed; the claim opened s1
+			// What `yad sessions close s1` does, through the daemon.
+			if res, err := c.Close(ctx, "hub", "s1", v1.SessionClosedByOwner); err != nil || res.Outcome != CloseWaiting || res.LiveRun != "a" {
+				t.Fatalf("close = %+v, %v; want it to wait on the claim", res, err)
+			}
+
+			next := tc.withdraw(t, e, l)
+			if _, err := e.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "a"}); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("the claim was not withdrawn: %v", err)
+			}
+			s, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "hub", ID: "s1"})
+			if err != nil {
+				t.Fatalf("the session the owner closed is gone, and the close with it: %v", err)
+			}
+			if s.State != "closed" || s.CloseReason.String != string(v1.SessionClosedByOwner) || s.CloseRequestedAt.Valid {
+				t.Errorf("session after the withdrawal = state %s, reason %q, still requested %v; want closed by the owner",
+					s.State, s.CloseReason.String, s.CloseRequestedAt.Valid)
+			}
+
+			mustSync(t, next)
+			mustSync(t, next)
+			next.sendRefusals(ctx)
+			mustSync(t, next)
+			if reason, ok := tap.reported("s1"); !ok || reason != v1.SessionClosedByOwner {
+				t.Errorf("closed_sessions carried s1 %v with reason %q; want closed_by_owner", ok, reason)
+			}
+			if got := e.exec.ids(); len(got) != 0 {
+				t.Errorf("started %v in a session the owner closed", got)
+			}
+			if s := session(t, e, "s1"); s.State != "closed" {
+				t.Errorf("s1 is %s again after the run was offered back", s.State)
+			}
+			if st := e.hubState(t, "a"); st != tc.hubState {
+				t.Errorf("hub state of a is %s, want %s", st, tc.hubState)
+			} else if st == "failed" {
+				if r := hubResult(t, e, "a"); r.Error == nil || r.Error.Class != ClassSessionClosed {
+					t.Errorf("a ended %+v, want failed with %s", r.Error, ClassSessionClosed)
+				}
+			}
+		})
+	}
+}
+
+// nextLoop is the loop a new process would run for the same connection:
+// same store, hub and runner, nothing pending.
+func (e *env) nextLoop(l *Loop) *Loop {
+	return &Loop{Connection: l.Connection, RunnerID: l.RunnerID, Hub: l.Hub, Store: e.store, Pool: NewPool(v1.Capacity{Total: 1}),
+		Capabilities: l.Capabilities, Executor: e.exec, Clock: e.clock, Rand: l.Rand, Sessions: l.Sessions}
 }
