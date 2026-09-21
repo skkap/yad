@@ -294,6 +294,69 @@ func TestExecutorFailuresAreResults(t *testing.T) {
 	}
 }
 
+// startErr is an adapter whose harness will not start, failing as a real
+// exec does: with the binary's absolute path in the error.
+type startErr struct{ err error }
+
+func (a startErr) Harness() string { return "claude" }
+func (a startErr) Start(context.Context, adapter.Spec) (adapter.Turn, error) {
+	return nil, a.err
+}
+
+// A failure that is the runner's own — a harness that will not start, a
+// directory under its data that cannot be made — reaches the hub as what
+// failed, never as the error behind it: that names paths under the owner's
+// home and, for a start, the exec error (DEV-67). The owner reads the rest in
+// the log.
+func TestRunnerFailuresNameNoPathOnTheMachine(t *testing.T) {
+	const home = "/Users/someone/bin/claude"
+	for _, tc := range []struct {
+		name string
+		// block makes a file of what the executor needs to be a directory
+		// under Data, so making it fails with Data's path in the error.
+		block  string
+		x      func(e *env) *Exec
+		grants []v1.Grant
+		class  string
+	}{
+		{name: "the harness will not start", class: ClassStart, x: func(e *env) *Exec {
+			return e.executor(startErr{errors.New("start " + home + ": fork/exec " + home + ": permission denied — check the claude binary at " + home + " runs")})
+		}},
+		{name: "the workdir cannot be made", class: ClassPrepare, block: "workdirs",
+			x: func(e *env) *Exec { return e.executor(fakeHarness(fake.Script{})) }},
+		{name: "a grant cannot be delivered", class: ClassPrepare, block: "grants",
+			x:      func(e *env) *Exec { return e.executor(fakeHarness(fake.Script{})) },
+			grants: []v1.Grant{{Name: "DATABASE_URL", Value: "file-secret", As: v1.GrantFile}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			if tc.block != "" {
+				if err := os.WriteFile(filepath.Join(e.paths.Data, tc.block), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			l := e.loop(t, 1)
+			run := testRun("a", "s1")
+			run.Grants = tc.grants
+			e.enqueue(t, run)
+			claimAndRun(t, l, tc.x(e))
+			res, ok := outboxResult(t, e, "a")
+			if !ok || res.Error == nil || res.Error.Class != tc.class {
+				t.Fatalf("result = %+v (error %+v), %v", res, res.Error, ok)
+			}
+			msg := res.Error.Message
+			for _, leak := range []string{home, "/Users/", e.paths.Data, "fork/exec", "permission denied", "not a directory", "file-secret"} {
+				if strings.Contains(msg, leak) {
+					t.Errorf("message carries %q: %q", leak, msg)
+				}
+			}
+			if !strings.Contains(msg, "yad logs") {
+				t.Errorf("message = %q, want it to send the owner to the log", msg)
+			}
+		})
+	}
+}
+
 // Grants reach the harness in its environment or as 0600 files, never in the
 // spec a hub could read back, and the files are gone however the run ends. The
 // names are ones decision 0024 refused and 0038 accepts.

@@ -361,6 +361,14 @@ func (e *Exec) Control(_ context.Context, connection string, c v1.Control) {
 	}
 }
 
+// seeLogs ends a run error whose cause stays on the machine. The failures it
+// ends — a harness that will not start, a directory under the runner's data
+// that cannot be made — are the runner's, not the run's, and their errors name
+// absolute paths under the owner's home and, for a start, the exec error
+// (DEV-67, as DEV-60 found for the capability document). The hub is told what
+// failed; the owner reads why in the log line written beside it.
+const seeLogs = " — its owner can see why with `yad logs` on the machine"
+
 // execute runs one claim to a terminal state in the outbox — or, when the
 // runner itself is stopping, leaves it held for the next start to settle.
 func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
@@ -466,7 +474,8 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	}
 	dir, native, err := e.workdir(bg, c)
 	if err != nil {
-		fail(ClassPrepare, "the workdir could not be prepared: "+err.Error())
+		log.Warn("the session's workdir could not be made", "err", err)
+		fail(ClassPrepare, "the session's workdir could not be made on this runner"+seeLogs)
 		return
 	}
 	prep, err := e.prepare(ctx, c, a, dir, &lastSeq)
@@ -496,7 +505,8 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	env, cleanup, err := e.grants(c)
 	defer cleanup()
 	if err != nil {
-		fail(ClassPrepare, err.Error())
+		log.Warn("the run's grants could not be delivered", "err", err)
+		fail(ClassPrepare, "the run's grants could not be delivered on this runner"+seeLogs)
 		return
 	}
 
@@ -524,7 +534,8 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		var home string
 		if hasAccount {
 			if home, err = account.Ensure(e.Data, run.Harness, acct.Label); err != nil {
-				fail(ClassPrepare, "the account's harness home could not be prepared: "+err.Error())
+				turnLog.Warn("the account's harness home could not be prepared", "err", err)
+				fail(ClassPrepare, "the account's harness home could not be prepared on this runner"+seeLogs)
 				return
 			}
 			// One place counts a move, so that the two kinds are counted the
@@ -585,7 +596,8 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		turn, err := ad.Start(runCtx, spec)
 		if err != nil {
 			cancel()
-			fail(ClassStart, err.Error())
+			turnLog.Warn("the harness would not start", "err", err)
+			fail(ClassStart, run.Harness+" would not start on this runner"+seeLogs)
 			return
 		}
 		// Pinned before the first event: an adapter that chooses the id (Claude)
