@@ -371,9 +371,12 @@ make it possible.
 
 **Give it a second registration token to check who holds a run.**
 `--second-token` spends it on a second runner, which sends a batch of events
-and a result for the run the first runner holds. Both must be refused, and a
-`403` must carry `not_holder`, the code a runner stops on. Without the second
-token those two checks are skipped, saying which flag would make them possible;
+and a result for the run the first runner holds. Both must be refused with
+`403 not_holder`, the code a runner stops on, or `404 not_found` if your hub
+will not name a run to a runner that does not hold it; any other refusal fails,
+because a `5xx` or a `401` sends the runner back to retry what you will never
+take. Without the second token those two checks are skipped, saying which flag
+would make them possible;
 the half that needs one runner — a run you cannot match to the caller at all
 is refused — is checked either way. Only one of the two tokens can be `-`.
 

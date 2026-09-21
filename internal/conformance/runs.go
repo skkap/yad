@@ -138,17 +138,26 @@ func checkResultNotHeld(ctx context.Context, s *session) error {
 	return notHolder(a)
 }
 
-// notHolder checks a call for a run this runner does not hold was refused. A
-// hub that has never heard of the run may say so instead — which of the two it
-// is depends on what the hub keeps, and §2 requires only that neither is
-// applied.
+// notHolder checks a call for a run this runner does not hold was refused as
+// §2 fixes it: 403 not_holder, or 404 not_found from a hub that has never heard
+// of the run or will not say to this runner that it has. Any other refusal is
+// a finding, not a pass. A 5xx or a 401 tells the runner to try again, so it
+// resends for ever what the hub will never take, and a 400 says the report
+// was malformed when it was the sender that was wrong; none of them shows the
+// hub asked who holds the run.
 func notHolder(a *answer) error {
 	if err := refused(a); err != nil {
 		return err
 	}
 	e, _ := a.envelope()
-	if a.Status == http.StatusForbidden && e.Code != v1.CodeNotHolder {
+	switch {
+	case a.Status == http.StatusForbidden && e.Code != v1.CodeNotHolder:
 		return brokenf("the hub refused it with 403 and the code %q rather than %q, which is the one a runner stops on: %s", e.Code, v1.CodeNotHolder, a)
+	case a.Status == http.StatusNotFound && e.Code != v1.CodeNotFound:
+		return brokenf("the hub refused it with 404 and the code %q rather than %q: %s", e.Code, v1.CodeNotFound, a)
+	case a.Status != http.StatusForbidden && a.Status != http.StatusNotFound:
+		return brokenf("the hub refused it with %d, and §2 fixes this refusal as 403 %s, or 404 %s for a run the hub will not name to this runner: %s",
+			a.Status, v1.CodeNotHolder, v1.CodeNotFound, a)
 	}
 	return nil
 }

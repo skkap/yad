@@ -110,6 +110,12 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawNoHolderCheck, check: "result/held-by-another", second: true, want: Failed},
 		// A hub taking events from anyone for any run fails both halves.
 		{flaw: flawTakesAnyEvents, check: "events/held-by-another", second: true, want: Failed},
+		// Refused, in the envelope, and still wrong: a 500 sends the runner
+		// back to retry what the hub will never take.
+		{flaw: flawNonHolderGets500, check: "events/not-held", want: Failed},
+		{flaw: flawNonHolderGets500, check: "result/not-held", want: Failed},
+		{flaw: flawNonHolderGets500, check: "events/held-by-another", second: true, want: Failed},
+		{flaw: flawNonHolderGets500, check: "result/held-by-another", second: true, want: Failed},
 	} {
 		t.Run(tc.flaw+"/"+tc.check, func(t *testing.T) {
 			t.Parallel()
@@ -186,22 +192,36 @@ func TestTheSuiteRefusesWhatItCannotCheckSafely(t *testing.T) {
 // Without a second token the holder rules are skipped, not passed, and the
 // skip names the flag that would make them checkable; the rule is in the
 // checked list either way, and no longer in the printed "not checked" one.
+// With no run queued as well, the skip still names the flag: the token is the
+// one missing piece the operator can see, and a skip that names only the run
+// sends them back to queue one and meet a second skip.
 func TestWithoutASecondTokenTheHolderRulesSaySo(t *testing.T) {
 	t.Parallel()
-	_, url := newFake(t, "", fakeRunSpec(0), fakeRunSpec(1))
-	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"events/held-by-another", "result/held-by-another"} {
-		if o := outcome(t, rep, id); o.Status != Skipped || !strings.Contains(o.Detail, "--second-token") {
-			t.Errorf("%s: %s %q, want a skip naming --second-token", id, label(o.Status), o.Detail)
-		}
-	}
-	var out strings.Builder
-	rep.Print(&out)
-	if flat := strings.Join(strings.Fields(out.String()), " "); strings.Contains(flat, "while another runner holds it") {
-		t.Errorf("the rule is checked and still listed as not checked:\n%s", out.String())
+	for _, tc := range []struct {
+		name   string
+		queued []v1.Run
+	}{
+		{"with runs queued", []v1.Run{fakeRunSpec(0), fakeRunSpec(1)}},
+		{"with nothing queued", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, url := newFake(t, "", tc.queued...)
+			rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range []string{"events/held-by-another", "result/held-by-another"} {
+				if o := outcome(t, rep, id); o.Status != Skipped || !strings.Contains(o.Detail, "--second-token") {
+					t.Errorf("%s: %s %q, want a skip naming --second-token", id, label(o.Status), o.Detail)
+				}
+			}
+			var out strings.Builder
+			rep.Print(&out)
+			if flat := strings.Join(strings.Fields(out.String()), " "); strings.Contains(flat, "while another runner holds it") {
+				t.Errorf("the rule is checked and still listed as not checked:\n%s", out.String())
+			}
+		})
 	}
 }
 

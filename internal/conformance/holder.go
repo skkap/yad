@@ -62,11 +62,11 @@ func checkResultHeldByAnother(ctx context.Context, s *session) error {
 }
 
 // otherRunner registers the second runner the first time a check needs it.
-// The skip for a missing token is here rather than in missing(), so the check
-// says which flag would make it possible — the lease rule's pattern.
+// A check marked second never gets here without the token; the guard is for
+// one that forgets the mark, which would otherwise register with no bearer.
 func (s *session) otherRunner(ctx context.Context) (*otherRunner, error) {
 	if s.opts.SecondToken == "" {
-		return nil, skipf("it needs a second runner, and no second registration token was given; create another one-time token on the hub and pass it with --second-token to check it")
+		return nil, skip{noSecondToken}
 	}
 	if s.other == nil && s.otherErr == nil {
 		s.other, s.otherErr = s.registerOther(ctx)

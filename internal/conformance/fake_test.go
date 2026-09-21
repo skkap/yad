@@ -125,6 +125,9 @@ const (
 	// Only to the second runner, so the answer errors/next-action prints
 	// first is the one carrying the second credential.
 	flawQuotesTheNonHolder = "a refusal to a runner that does not hold the run quotes its credential, and names no next action"
+	// A refusal, in the envelope, that tells the runner to try again: it
+	// resends for ever what the hub will never take.
+	flawNonHolderGets500 = "a run the caller does not hold is refused with 500 internal"
 )
 
 const fakeSecondToken = "fake-second-registration-token"
@@ -502,6 +505,10 @@ func (f *fake) holds(r *http.Request, run *fakeRun) bool {
 }
 
 func (f *fake) notHolder(w http.ResponseWriter, r *http.Request, runID string) {
+	if f.flaw == flawNonHolderGets500 {
+		f.fail(w, http.StatusInternalServerError, v1.CodeInternal, "run "+runID+" could not be matched to this runner", "retry later")
+		return
+	}
 	if f.flaw == flawQuotesTheNonHolder && f.cred2 != "" && bearer(r) == f.cred2 {
 		f.fail(w, http.StatusForbidden, v1.CodeNotHolder, "run "+runID+" is not held by the runner with credential "+bearer(r), "")
 		return

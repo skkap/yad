@@ -118,8 +118,15 @@ type check struct {
 	section string
 	// needs is what must already have happened for the check to be possible.
 	needs requirement
-	run   func(context.Context, *session) error
+	// second says the check needs Options.SecondToken. It is judged before
+	// needs, so a run with neither a queued run nor the token names the flag
+	// too: the flag is the one of the two the operator can see is missing.
+	second bool
+	run    func(context.Context, *session) error
 }
+
+// noSecondToken is why a check needing a second runner was not made.
+const noSecondToken = "it needs a second runner, and no second registration token was given; create another one-time token on the hub and pass it with --second-token to check it"
 
 // requirement is what a check needs before it can be made at all.
 type requirement int
@@ -294,6 +301,10 @@ func (s *session) make(ctx context.Context, ch check) (out Outcome) {
 	// One exit, so the guard at the end of this function covers every sentence
 	// the report can carry and not only the ones a check wrote.
 	defer func() { out.Detail = s.c.hide(out.Detail) }()
+	if ch.second && s.opts.SecondToken == "" {
+		out.Status, out.Detail = Skipped, noSecondToken
+		return out
+	}
 	if reason := s.missing(ch.needs); reason != "" {
 		out.Status, out.Detail = Skipped, reason
 		return out
