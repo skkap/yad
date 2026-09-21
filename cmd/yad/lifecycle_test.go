@@ -394,9 +394,11 @@ func TestStatusAndLogsEscapeHubText(t *testing.T) {
 	}
 }
 
-// A connection URL may carry a credential in its userinfo. `yad status` prints
-// every connection's URL, and the control socket hands the same document to
-// anything that asks, so the credential is out before either sees it.
+// Load and Save refuse a connection URL with userinfo, so this Config is one
+// only a bug could build. `yad status` redacts anyway: it prints every
+// connection's URL, and the control socket hands the same document to anything
+// that asks, so a credential that got past the check is still out before
+// either sees it.
 func TestStatusNeverCarriesACredentialFromAConnectionURL(t *testing.T) {
 	const password = "hunter2"
 	cfg := config.Config{Connections: []config.Connection{{Name: "home", URL: "https://runner:" + password + "@hub.example/v1"}}}

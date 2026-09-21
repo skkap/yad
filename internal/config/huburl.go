@@ -27,6 +27,13 @@ func CheckHubURL(raw string) error {
 	if u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return fmt.Errorf("hub URL %q must be an absolute https URL, like https://hub.example/yad/v1", RedactURL(raw))
 	}
+	// Refused, not ignored: every client sends its token as a bearer, and
+	// net/http sends a URL's userinfo only when no Authorization header is
+	// set, so a user or password here authenticates nothing. What it would do
+	// is put a secret into config.toml, which holds none.
+	if u.User != nil {
+		return fmt.Errorf("hub URL %q carries a user name or password — drop the user:password@ part; yad authenticates to a hub with a token sent as a bearer (the runner credential `yad connect --token` exchanges for, or an admin token), never with the URL", RedactURL(raw))
+	}
 	if u.Scheme == "http" && !loopback(u.Hostname()) {
 		return fmt.Errorf("hub URL %q is plain http to another host, which would send the runner credential in cleartext — use https (plain http is allowed only for localhost)", RedactURL(raw))
 	}
@@ -83,9 +90,10 @@ func RedactURL(raw string) string {
 
 // RedactURLError is err with the URL in a *url.Error redacted. That is the
 // error net/http returns for a request that never got an answer, and it
-// quotes the URL it dialled with only the password starred, so a token held
-// as the username reaches the terminal, the daemon's log and `yad status`
-// unless every client that dials a hub passes its errors through here.
+// quotes the URL it last dialled — a hub's redirect Location among them, which
+// CheckHubURL never saw — with at most the password starred. Every client that
+// dials a hub passes its errors through here before they reach the terminal,
+// the daemon's log or `yad status`.
 func RedactURLError(err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) {

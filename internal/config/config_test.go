@@ -379,3 +379,23 @@ func TestEffectiveRootsRefusesAHomeThatResolvesToRoot(t *testing.T) {
 		t.Errorf("EffectiveRoots() = %v, want none — that root reaches every directory", got)
 	}
 }
+
+// A config.toml edited by hand reaches the same rule `yad connect` applies: a
+// hub URL with userinfo is refused at load, with the next action and the file
+// to apply it to, rather than loaded and carried to every request.
+func TestLoadRefusesAHubURLWithUserinfo(t *testing.T) {
+	p := testPaths(t)
+	os.MkdirAll(p.Config, 0o700)
+	os.WriteFile(p.ConfigFile(), []byte("[[connection]]\nname = \"home\"\nurl = \"https://runner:hunter2@hub.example/v1\"\n"), 0o600)
+	_, err := Load(p)
+	switch {
+	case err == nil:
+		t.Fatal("a hub URL with a password in it was loaded")
+	case strings.Contains(err.Error(), "hunter2"):
+		t.Errorf("the refusal carries the credential: %v", err)
+	case !strings.Contains(err.Error(), "drop the user:password@ part"):
+		t.Errorf("the refusal has no next action: %v", err)
+	case !strings.Contains(err.Error(), p.ConfigFile()):
+		t.Errorf("the refusal does not name the file to edit: %v", err)
+	}
+}

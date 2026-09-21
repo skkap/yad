@@ -24,6 +24,14 @@ func TestCheckHubURL(t *testing.T) {
 		{"ftp://hub.example/v1", false},
 		{"hub.example/v1", false},
 		{"", false},
+		// Userinfo authenticates nothing — every client sends a bearer — and
+		// would put a secret in config.toml, so any of it is refused, on
+		// loopback as anywhere.
+		{"https://runner:hunter2@hub.example/v1", false},
+		{"https://sk-token@hub.example/v1", false},
+		{"https://:hunter2@hub.example/v1", false},
+		{"https://@hub.example/v1", false},
+		{"http://runner@127.0.0.1:7777/v1", false},
 	} {
 		t.Run(tc.url, func(t *testing.T) {
 			if err := CheckHubURL(tc.url); (err == nil) != tc.ok {
@@ -102,6 +110,31 @@ func TestRedactURL(t *testing.T) {
 		t.Run(tc.raw, func(t *testing.T) {
 			if got := RedactURL(tc.raw); got != tc.want {
 				t.Errorf("RedactURL(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// The userinfo refusal is the one an owner meets after pasting a URL they were
+// handed, so it says what to do, names the URL without the secret, and is the
+// same whichever half carries the secret.
+func TestAHubURLWithUserinfoIsRefusedWithTheWayOut(t *testing.T) {
+	for _, raw := range []string{
+		"https://runner:hunter2@hub.example/v1",
+		"https://hunter2@hub.example/v1",
+		"https://:hunter2@hub.example/v1",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			err := CheckHubURL(raw)
+			switch {
+			case err == nil:
+				t.Fatal("accepted")
+			case strings.Contains(err.Error(), "hunter2"):
+				t.Errorf("the refusal carries the credential: %v", err)
+			case !strings.Contains(err.Error(), "redacted@hub.example/v1"):
+				t.Errorf("the refusal does not say which URL: %v", err)
+			case !strings.Contains(err.Error(), "drop the user:password@ part"):
+				t.Errorf("the refusal has no next action: %v", err)
 			}
 		})
 	}

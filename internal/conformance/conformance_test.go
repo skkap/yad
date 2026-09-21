@@ -3,6 +3,8 @@ package conformance
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -595,37 +597,34 @@ func TestASecretTheHubSentIsNotPrinted(t *testing.T) {
 	}
 }
 
-// A credential in the connection URL reaches the report by a route neither the
-// header line nor the known-secrets list covers: a transport error quotes the
-// URL it dialled, and Go strips the password from that and keeps the username,
-// which is where a URL-shaped credential usually sits.
-func TestACredentialInTheURLIsNotPrintedByATransportError(t *testing.T) {
+// A connection URL with userinfo is refused before the suite starts, so the
+// route left for a URL-shaped credential into the report is a hub that
+// redirects to one: the refusal quotes the Location, and Go's transport error
+// quotes it again with only the password starred.
+func TestACredentialInARedirectIsNotPrinted(t *testing.T) {
 	t.Parallel()
 	const secret = "sk-secret-token-abc"
-	// Port 1: nothing is listening, so every call fails at the transport and
-	// every failure carries the URL. The second shape is the one a
-	// replace-the-base-URL redaction misses: Go stars the password, so the
-	// URL it quotes is no longer the base, and the username goes through.
-	for _, base := range []string{
-		"http://" + secret + "@127.0.0.1:1/v1",
-		"http://" + secret + ":password@127.0.0.1:1/v1",
-	} {
-		t.Run(base, func(t *testing.T) {
+	for _, userinfo := range []string{secret, "runner:" + secret} {
+		t.Run(userinfo, func(t *testing.T) {
 			t.Parallel()
-			rep, err := Run(context.Background(), Options{BaseURL: base, Token: fakeToken})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "http://"+userinfo+"@"+r.Host+"/elsewhere", http.StatusTemporaryRedirect)
+			}))
+			t.Cleanup(srv.Close)
+			rep, err := Run(context.Background(), Options{BaseURL: srv.URL + "/v1", Token: fakeToken})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if o := outcome(t, rep, "errors/unknown-path"); o.Status != Failed {
-				t.Fatalf("errors/unknown-path was %s against a hub that is not listening, so no transport error was printed", label(o.Status))
+				t.Fatalf("errors/unknown-path was %s against a hub that only redirects, so no redirect was printed", label(o.Status))
 			}
 			var out strings.Builder
 			rep.Print(&out)
 			if strings.Contains(out.String(), secret) {
-				t.Errorf("the credential in the URL is in the report:\n%s", out.String())
+				t.Errorf("the credential in the redirect is in the report:\n%s", out.String())
 			}
-			if !strings.Contains(out.String(), "127.0.0.1:1") {
-				t.Errorf("the report no longer says which address it could not reach:\n%s", out.String())
+			if !strings.Contains(out.String(), "redirected") {
+				t.Errorf("the report no longer says the hub redirected:\n%s", out.String())
 			}
 		})
 	}
