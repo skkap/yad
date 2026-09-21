@@ -555,15 +555,19 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 	err = l.Store.Tx(ctx, func(q *db.Queries) error {
 		newSession = false
 		sess, err := q.GetSession(ctx, db.GetSessionParams{Connection: l.Connection, ID: run.Session.ID})
+		// Closed and closing come first, whatever else the offer gets wrong:
+		// a run the hub offers again after its claim was withdrawn still says
+		// its session is new, and the answer it needs is that the session is
+		// gone (decision 0035), not that the id is taken.
 		switch {
+		case err == nil && sess.State != "open":
+			return sessionGone(fmt.Sprintf("session %s was closed on this runner (%s); start a new session", run.Session.ID, sess.CloseReason.String))
+		case err == nil && sess.CloseRequestedAt.Valid:
+			return sessionGone(fmt.Sprintf("session %s is closing on this runner (%s) once its run ends; start a new session", run.Session.ID, sess.CloseReason.String))
 		case err == nil && run.Session.New:
 			return refused(fmt.Sprintf("the hub opened session %s as new, and this runner already has a session by that id", run.Session.ID))
 		case err == nil && sess.Harness != run.Harness:
 			return refused(fmt.Sprintf("session %s is a %s session, not %s", run.Session.ID, sess.Harness, run.Harness))
-		case err == nil && sess.State != "open":
-			return sessionGone(fmt.Sprintf("session %s was closed on this runner (%s) and its workdir reclaimed; start a new session", run.Session.ID, sess.CloseReason.String))
-		case err == nil && sess.CloseRequestedAt.Valid:
-			return sessionGone(fmt.Sprintf("session %s is closing on this runner (%s) once its run ends; start a new session", run.Session.ID, sess.CloseReason.String))
 		case errors.Is(err, sql.ErrNoRows) && !run.Session.New:
 			return refused(fmt.Sprintf("this runner does not hold session %s — sessions resume only on the runner that has them", run.Session.ID))
 		case errors.Is(err, sql.ErrNoRows):
@@ -659,16 +663,38 @@ func (l *Loop) withdraw(ctx context.Context, runID string) {
 		if err := q.DeleteUnstartedRun(ctx, db.DeleteUnstartedRunParams{Connection: l.Connection, ID: runID}); err != nil {
 			return err
 		}
-		if !p.newSession {
-			return nil
-		}
-		return q.DeleteEmptySession(ctx, db.DeleteEmptySessionParams{Connection: l.Connection, ID: p.run.Session.ID})
+		return l.settleSession(ctx, q, p.run.Session.ID, p.newSession)
 	})
 	if err != nil {
 		l.Log.Error("withdrawn run not removed", "connection", l.Connection, "run", runID, "err", err)
 	}
-	// A close may have been waiting on the claim.
+	// The session may have closed here, and has a workdir sweep owed.
 	l.Sessions.Wake()
+}
+
+// settleSession is what a withdrawn claim leaves of its session, and every
+// withdrawal goes through it. A close asked for while the claim was held
+// was answered "closing" and is a promise (decision 0035): with nothing held
+// now, the session closes, for the reason asked, and the next sync reports it
+// — so a re-offer of the run is refused as session_closed rather than opening
+// the session again. Otherwise a session the claim opened goes with it, as
+// withdraw explains. DeleteEmptySession itself leaves a session with a close
+// asked for alone, so no caller can lose one by forgetting this order.
+func (l *Loop) settleSession(ctx context.Context, q *db.Queries, id string, opened bool) error {
+	n, err := q.CloseRequestedEmptySession(ctx, db.CloseRequestedEmptySessionParams{
+		Now: sql.NullInt64{Int64: l.Clock.Now().UnixMilli(), Valid: true}, Connection: l.Connection, ID: id,
+	})
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		l.Log.Info("session closed: the close asked for waited on a claim that was withdrawn", "connection", l.Connection, "session", id)
+		return nil
+	}
+	if !opened {
+		return nil
+	}
+	return q.DeleteEmptySession(ctx, db.DeleteEmptySessionParams{Connection: l.Connection, ID: id})
 }
 
 // WithdrawPending gives back every claim this loop recorded and never handed
@@ -841,7 +867,9 @@ func (l *Loop) withdrawOrphan(ctx context.Context, r db.Run) (bool, error) {
 			return err
 		}
 		gone = true
-		return q.DeleteEmptySession(ctx, db.DeleteEmptySessionParams{Connection: l.Connection, ID: r.SessionID})
+		// Whether the claim opened the session is not recorded; a session
+		// any other run used is not empty, and DeleteEmptySession keeps it.
+		return l.settleSession(ctx, q, r.SessionID, true)
 	})
 	if gone && err == nil {
 		l.Log.Warn("a previous process claimed this run and never started it; withdrawn, for the hub to offer again or lose", "connection", l.Connection, "run", r.ID)

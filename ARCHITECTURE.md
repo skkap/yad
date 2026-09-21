@@ -550,7 +550,10 @@ for `codex`); the suite never runs a real harness.
   (default 14 days, reported as expired), and oldest-idle-first while the disk
   under `<data>/workdirs` is below `sessions.disk_floor` (default 5 GiB; a
   session idle under an hour is spared). Never a session with a run held,
-  waiting ones included: its close waits for the run to end. The close is
+  waiting ones included: its close waits for the run to end. A claim
+  withdrawn before it started ends that wait too: the session it opened is
+  deleted with it only when no close was asked for, and otherwise closes, so
+  the close is reported and the run offered again is refused. The close is
   recorded first and the workdir removed by the collector's sweep —
   `workdir.Manager.Reclaim` first takes its worktrees out of their bare caches
   and frees its slots — which retries a removal that failed and touches
