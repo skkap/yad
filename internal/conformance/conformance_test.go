@@ -599,16 +599,28 @@ func TestASecretTheHubSentIsNotPrinted(t *testing.T) {
 
 // A connection URL with userinfo is refused before the suite starts, so the
 // route left for a URL-shaped credential into the report is a hub that
-// redirects to one: the refusal quotes the Location, and Go's transport error
-// quotes it again with only the password starred.
+// redirects to one: the refusal quotes the Location, Go's transport error
+// quotes it again with only the password starred, and a Location that does not
+// parse is quoted whole inside the error net/http builds for it.
 func TestACredentialInARedirectIsNotPrinted(t *testing.T) {
 	t.Parallel()
 	const secret = "sk-secret-token-abc"
-	for _, userinfo := range []string{secret, "runner:" + secret} {
-		t.Run(userinfo, func(t *testing.T) {
+	for _, tc := range []struct{ name, location, says string }{
+		{"token as username", "http://" + secret + "@HOST/elsewhere", "redirected"},
+		{"token as password", "http://runner:" + secret + "@HOST/elsewhere", "redirected"},
+		{"unparseable, token as password", "http://runner:" + secret + "@HOST/%zz", "redirected"},
+		{"unparseable, token as username", "http://" + secret + "@HOST/%zz", "redirected"},
+		{"unparseable host", "http://runner:" + secret + "@[::1/elsewhere", "redirected"},
+		// A byte net/textproto refuses in a header value, so the answer fails
+		// to parse before net/http ever looks for a redirect in it.
+		{"unreadable header", "http://runner:" + secret + "@HOST/\x7f", "the hub's answer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.Redirect(w, r, "http://"+userinfo+"@"+r.Host+"/elsewhere", http.StatusTemporaryRedirect)
+				// Set by hand: http.Redirect would clean a Location it can parse.
+				w.Header().Set("Location", strings.ReplaceAll(tc.location, "HOST", r.Host))
+				w.WriteHeader(http.StatusTemporaryRedirect)
 			}))
 			t.Cleanup(srv.Close)
 			rep, err := Run(context.Background(), Options{BaseURL: srv.URL + "/v1", Token: fakeToken})
@@ -623,8 +635,8 @@ func TestACredentialInARedirectIsNotPrinted(t *testing.T) {
 			if strings.Contains(out.String(), secret) {
 				t.Errorf("the credential in the redirect is in the report:\n%s", out.String())
 			}
-			if !strings.Contains(out.String(), "redirected") {
-				t.Errorf("the report no longer says the hub redirected:\n%s", out.String())
+			if !strings.Contains(out.String(), tc.says) {
+				t.Errorf("the report no longer says %q:\n%s", tc.says, out.String())
 			}
 		})
 	}

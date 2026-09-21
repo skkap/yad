@@ -103,15 +103,7 @@ type client struct {
 func newClient(base string, known ...string) *client {
 	c := &client{
 		base: strings.TrimRight(base, "/"),
-		http: &http.Client{
-			Timeout: requestTimeout,
-			// Go keeps the Authorization header across a same-host redirect
-			// whatever the scheme, so a hub answering 307 to http:// would be
-			// handed the credential in cleartext. No protocol call redirects.
-			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-				return fmt.Errorf("the hub redirected to %s; no protocol call redirects", config.RedactURL(req.URL.String()))
-			},
-		},
+		http: config.HubHTTPClient(requestTimeout),
 	}
 	for _, secret := range known {
 		c.learn(secret)

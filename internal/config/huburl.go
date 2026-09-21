@@ -3,9 +3,13 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/textproto"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // CheckHubURL accepts a hub's base URL only where a bearer secret can travel
@@ -90,16 +94,86 @@ func RedactURL(raw string) string {
 
 // RedactURLError is err with the URL in a *url.Error redacted. That is the
 // error net/http returns for a request that never got an answer, and it
-// quotes the URL it last dialled — a hub's redirect Location among them, which
-// CheckHubURL never saw — with at most the password starred. Every client that
-// dials a hub passes its errors through here before they reach the terminal,
-// the daemon's log or `yad status`.
+// quotes the URL it last dialled with at most the password starred. With
+// HubHTTPClient that is the hub URL CheckHubURL passed, never a Location, but
+// a redirect refused in CheckRedirect would put the Location there as sent.
+// Every client that dials a hub passes its errors through here before they
+// reach the terminal, the daemon's log or `yad status`.
 func RedactURLError(err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) {
 		ue.URL = RedactURL(ue.URL)
 	}
 	return err
+}
+
+// HubHTTPClient is the HTTP client for anything that dials a hub: it never
+// follows a redirect. Go keeps the Authorization header across a same-host
+// redirect whatever the scheme, so an https hub answering 307 to http:// would
+// be handed the bearer in cleartext after CheckHubURL passed; and no call to a
+// hub redirects, so a redirect is a hub URL to correct, not a hop to take.
+//
+// The refusal happens in the transport, where the redirect first arrives, and
+// not only in CheckRedirect: net/http parses the Location before it calls
+// CheckRedirect, and when that parse fails it builds an error quoting the
+// Location whole — userinfo and all — which no rewrite of the url.Error around
+// it reaches. Refused here, net/http never parses the Location. A Location
+// holding a byte HTTP forbids fails earlier still, in net/textproto, whose
+// error quotes the header line; the transport replaces that error too.
+func HubHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: refuseRedirects{http.DefaultTransport},
+		// Unreachable while the transport refuses first; kept so that a
+		// change to Transport can never turn a refusal into a hop that
+		// carries the bearer.
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return redirectRefusal(RedactURL(req.URL.String()))
+		},
+	}
+}
+
+type refuseRedirects struct{ next http.RoundTripper }
+
+func (t refuseRedirects) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(req)
+	var malformed textproto.ProtocolError
+	if errors.As(err, &malformed) {
+		// net/textproto quotes the offending line whole, and a header line
+		// the hub wrote — a Location with a byte it refuses — can carry a
+		// credential. Matched by type: every ProtocolError quotes the hub.
+		return nil, errors.New("the hub's answer is not valid HTTP — what it sent is not repeated, since a header such as a redirect's Location can carry a credential")
+	}
+	if err != nil {
+		return resp, err
+	}
+	// Every 3xx carrying a Location, not only the five codes net/http follows
+	// today: a hub has no use for any of them, and the wider test cannot miss
+	// one a later Go adds.
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode < 300 || resp.StatusCode > 399 || loc == "" {
+		return resp, nil
+	}
+	// A small body is read so the connection stays reusable, by net/http's
+	// own rule before following a redirect; a large one is not waited on.
+	const maxBodySlurpSize = 2 << 10
+	if resp.ContentLength == -1 || resp.ContentLength <= maxBodySlurpSize {
+		_, _ = io.CopyN(io.Discard, resp.Body, maxBodySlurpSize)
+	}
+	resp.Body.Close()
+	// Resolved against the request, so a relative Location still says where;
+	// one that does not parse is not repeated, not even in part, and neither
+	// is url.Parse's error, which quotes it.
+	shown := UnprintableURL
+	if u, err := req.URL.Parse(loc); err == nil {
+		shown = RedactURL(u.String())
+	}
+	return nil, redirectRefusal(shown)
+}
+
+// redirectRefusal takes a target already redacted.
+func redirectRefusal(shown string) error {
+	return fmt.Errorf("the hub redirected to %s — a hub must not redirect; use the hub's final address as its URL", shown)
 }
 
 func loopback(host string) bool {

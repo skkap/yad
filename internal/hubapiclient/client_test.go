@@ -71,20 +71,29 @@ func TestNewRefusesCleartextToAnotherHost(t *testing.T) {
 	}
 }
 
-// The runner's client's rule, for `yad hub run`: a hub that redirects to a URL
-// carrying a credential is refused without the refusal repeating it.
+// The runner's client's rule, for the `yad hub` service commands: a hub that redirects to a URL
+// carrying a credential is refused without the refusal repeating it — a
+// Location that does not parse included, which net/http quotes whole.
 func TestAnErrorNeverQuotesACredentialFromAURL(t *testing.T) {
 	const secret = "sk-secret-token"
-	for _, tc := range []struct{ name, userinfo string }{
-		{"token as username", secret},
-		{"token as password", "runner:" + secret},
+	for _, tc := range []struct{ name, location, says string }{
+		{"token as username", "http://" + secret + "@HOST/elsewhere", "redirected"},
+		{"token as password", "http://runner:" + secret + "@HOST/elsewhere", "redirected"},
+		{"unparseable, token as password", "http://runner:" + secret + "@HOST/%zz", "redirected"},
+		{"unparseable, token as username", "http://" + secret + "@HOST/%zz", "redirected"},
+		{"unparseable host", "http://runner:" + secret + "@[::1/elsewhere", "redirected"},
+		// A byte net/textproto refuses in a header value, so the answer fails
+		// to parse before net/http ever looks for a redirect in it.
+		{"unreadable header", "http://runner:" + secret + "@HOST/\x7f", "the hub's answer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.Redirect(w, r, "http://"+tc.userinfo+"@"+r.Host+"/elsewhere", http.StatusTemporaryRedirect)
+				// Set by hand: http.Redirect would clean a Location it can parse.
+				w.Header().Set("Location", strings.ReplaceAll(tc.location, "HOST", r.Host))
+				w.WriteHeader(http.StatusTemporaryRedirect)
 			}))
 			t.Cleanup(redirect.Close)
-			c, err := New(redirect.URL+"", "a-token")
+			c, err := New(redirect.URL, "a-token")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -94,8 +103,10 @@ func TestAnErrorNeverQuotesACredentialFromAURL(t *testing.T) {
 				t.Fatal("the call succeeded; it was meant to fail and quote a URL")
 			case strings.Contains(err.Error(), secret):
 				t.Errorf("the error carries the credential: %v", err)
+			case !strings.Contains(err.Error(), tc.says):
+				t.Errorf("the error no longer says %q: %v", tc.says, err)
 			case !strings.Contains(err.Error(), "127.0.0.1:"):
-				t.Errorf("the error no longer says where the hub pointed: %v", err)
+				t.Errorf("the error no longer says which hub it was: %v", err)
 			}
 		})
 	}
