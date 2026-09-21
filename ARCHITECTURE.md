@@ -931,7 +931,7 @@ line here is a reviewed change.
   `CLAUDE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, every
   `CLAUDE_CODE_USE_*` provider switch, `CODEX_HOME`, `OPENAI_API_KEY`,
   `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`, `OPENAI_BASE_URL`,
-  `CODEX_REFRESH_TOKEN_URL_OVERRIDE` — `accountGrantNames` in
+  `CODEX_REFRESH_TOKEN_URL_OVERRIDE`, `AWS_BEARER_TOKEN_BEDROCK` — `accountGrantNames` in
   `protocol/v1/grant.go` is the list itself), because a grant is appended after
   `supervise.Scrub` and would put the turn on a credential the run's account
   knows nothing about while its events named the account

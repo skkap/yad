@@ -51,7 +51,10 @@ for every grant).
   `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, and every provider switch
   by its prefix, `CLAUDE_CODE_USE_*`. For Codex, taken from its login code:
   `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`,
-  `OPENAI_BASE_URL` and `CODEX_REFRESH_TOKEN_URL_OVERRIDE`. Matched whole (the
+  `OPENAI_BASE_URL`, `CODEX_REFRESH_TOKEN_URL_OVERRIDE` and
+  `AWS_BEARER_TOKEN_BEDROCK`, which Codex on its Bedrock provider (chosen in
+  the account home's own config, with no switch to refuse) reads ahead of the
+  AWS credential chain. Matched whole (the
   prefix as a prefix) and in any case, as the 0038 deny list is. `HOME`, which
   also moves both harnesses' default homes, was already refused.
 - **The switches go by prefix.** Claude names every cloud provider switch
@@ -64,7 +67,7 @@ for every grant).
   reports none of the account's windows. A header variable can carry an
   `x-api-key` or `Authorization` header, which is a credential by another name.
 - **What is left off, and why.** A provider's own keys, endpoints and
-  workspace ids (`AWS_BEARER_TOKEN_BEDROCK`, `ANTHROPIC_FOUNDRY_API_KEY`,
+  workspace ids (`ANTHROPIC_BEDROCK_BASE_URL`, `ANTHROPIC_FOUNDRY_API_KEY`,
   `ANTHROPIC_AWS_API_KEY`, `ANTHROPIC_AWS_WORKSPACE_ID`,
   `ANTHROPIC_VERTEX_BASE_URL` and the like) take effect only once a
   `CLAUDE_CODE_USE_*` switch is on. The switches are refused, and Scrub

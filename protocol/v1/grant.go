@@ -92,7 +92,7 @@ var deniedGrantPrefixes = []struct{ prefix, why string }{
 // refused by prefix, so that the next provider Claude ships is refused before
 // anyone thinks to add it; Scrub removes every CLAUDE_CODE_* from the owner's
 // environment too. So each provider's own keys, endpoints and workspace ids
-// (AWS_BEARER_TOKEN_BEDROCK, ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_AWS_API_KEY,
+// (ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_AWS_API_KEY, ANTHROPIC_BEDROCK_BASE_URL,
 // ANTHROPIC_AWS_WORKSPACE_ID, ANTHROPIC_VERTEX_BASE_URL and the like) move
 // nothing on their own, and a project that deploys to a cloud keeps its
 // credentials. The same holds for the Workload Identity Federation inputs
@@ -127,6 +127,11 @@ var accountGrantNames = map[string]string{
 	"CODEX_ACCESS_TOKEN":               "is an access token Codex uses in place of the login in the account's home",
 	"OPENAI_BASE_URL":                  "chooses the server that answers and bills Codex's turns",
 	"CODEX_REFRESH_TOKEN_URL_OVERRIDE": "sends the account's refresh token to another server, whose answer Codex then saves as the account's login",
+	// Codex has no switch for its Bedrock provider: an account home whose
+	// config.toml chooses it reads this key ahead of the AWS credential chain,
+	// so for Codex it is not inert the way Claude's provider keys are. The AWS
+	// chain itself stays grantable for a project's deploys.
+	"AWS_BEARER_TOKEN_BEDROCK": "is a Bedrock API key, which Codex on its Bedrock provider uses ahead of the account's own AWS credentials",
 }
 
 // accountGrantPrefixes are families of account-choosing variables refused

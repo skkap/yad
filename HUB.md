@@ -75,8 +75,8 @@ and not your input. Here is all of it:
   `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
   `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, anything beginning
   `CLAUDE_CODE_USE_`, `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY`,
-  `CODEX_ACCESS_TOKEN`, `OPENAI_BASE_URL` and
-  `CODEX_REFRESH_TOKEN_URL_OVERRIDE`, whatever the run's harness. If the project itself needs
+  `CODEX_ACCESS_TOKEN`, `OPENAI_BASE_URL`,
+  `CODEX_REFRESH_TOKEN_URL_OVERRIDE` and `AWS_BEARER_TOKEN_BEDROCK`, whatever the run's harness. If the project itself needs
   one of these keys — to run its tests, say — send it under another name and
   have the brief say which. `protocol/v1/grant.go` is the list itself; this is a
   copy of it.
