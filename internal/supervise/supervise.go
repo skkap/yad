@@ -66,6 +66,9 @@ type Process struct {
 	tail   *tailBuffer
 	done   chan struct{}
 	err    error
+	// ctxKilled is set before done closes, from endedByContext. Run reports
+	// it as TimedOut.
+	ctxKilled bool
 }
 
 // Start runs spec in a new process group. The caller owns Stdout: read it, then
@@ -124,6 +127,9 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 	}()
 	go func() {
 		p.err = cmd.Wait()
+		// Decided here, at the reap, because every later vantage point sees
+		// the deadline and the exit ready together and cannot order them.
+		p.ctxKilled = endedByContext(ctx.Err(), cmd.ProcessState)
 		// The leader is gone; anything left in its group is a descendant holding
 		// pipes or git locks. It dies now, even after a clean exit.
 		p.signalGroup(syscall.SIGKILL)
@@ -149,6 +155,25 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 		}
 	}()
 	return p, nil
+}
+
+// endedByContext says whether ctx's kill, rather than the leader, ended it:
+// ctx had ended by the reap, and the leader died of SIGKILL. The leader leads
+// the group, so the kill always reaches it; ctx.Err is set before Done closes
+// and the kill follows Done, so a kill of ours is never reaped with ctxErr
+// still nil. A leader that exited with a status, or died of any other signal —
+// its own SIGSEGV or SIGABRT — got there on its own, however close the deadline
+// was. A foreign SIGKILL landing in the same instant as the deadline is the one
+// case this cannot tell apart, and calling that a timeout is harmless.
+func endedByContext(ctxErr error, ps *os.ProcessState) bool {
+	if ctxErr == nil {
+		return false
+	}
+	if ps == nil {
+		return true // Wait failed without a status; the deadline is the fact left
+	}
+	ws, ok := ps.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL
 }
 
 // Pid is the leader's pid, which is also the process group id.

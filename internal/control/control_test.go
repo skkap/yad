@@ -4,7 +4,9 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -83,9 +85,12 @@ func TestStopIsAskedOnce(t *testing.T) {
 	var stops atomic.Int32
 	serve(t, p, Handler{Status: func(context.Context) Status { return Status{} }, Stop: func() { stops.Add(1) }})
 	for range 2 {
-		if res, err := Ask(context.Background(), p, "stop"); err != nil || res.PID != os.Getpid() {
-			t.Fatalf("stop: %+v, %v", res, err)
+		if pid, err := Stop(context.Background(), p); err != nil || pid != os.Getpid() {
+			t.Fatalf("stop: %d, %v", pid, err)
 		}
+	}
+	if _, err := Ask(context.Background(), p, OpStop); err == nil || !strings.Contains(err.Error(), "control.Stop") {
+		t.Errorf("a one-line stop: %v, want it refused", err)
 	}
 	if n := stops.Load(); n != 1 {
 		t.Errorf("Stop called %d times, want once", n)
@@ -96,6 +101,162 @@ func TestStopIsAskedOnce(t *testing.T) {
 	}
 	if _, err := Ask(context.Background(), p, "reboot"); err == nil || !strings.Contains(err.Error(), "unknown request") {
 		t.Errorf("unknown op: %v", err)
+	}
+}
+
+// A stop the CLI did not confirm is never acted on (DEV-65). The CLI gives up
+// on an ask whose acknowledgement is late — a daemon slow to accept, an answer
+// slow in transit — and falls back to SIGTERM. Had the daemon acted on the ask
+// too, that SIGTERM would be the runner's second stop and cancel every run it
+// holds (decision 0029).
+func TestAStopNobodyConfirmedIsNeverActedOn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// ask plays the CLI on a raw connection, as far as it got.
+		ask func(t *testing.T, conn net.Conn)
+	}{
+		{"given up before the acknowledgement", func(t *testing.T, conn net.Conn) {
+			if _, err := conn.Write([]byte(`{"op":"stop"}` + "\n")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"acknowledged, never confirmed", func(t *testing.T, conn net.Conn) {
+			if _, err := conn.Write([]byte(`{"op":"stop"}` + "\n")); err != nil {
+				t.Fatal(err)
+			}
+			var ack Response
+			if err := json.NewDecoder(conn).Decode(&ack); err != nil || !ack.Confirm {
+				t.Fatalf("ack %+v, %v — want the stop held for a confirm", ack, err)
+			}
+		}},
+		{"confirmed with something else", func(t *testing.T, conn net.Conn) {
+			if _, err := conn.Write([]byte(`{"op":"stop"}` + "\n" + `{"op":"status"}` + "\n")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := testPaths(t)
+			var stops atomic.Int32
+			d := serve(t, p, Handler{Status: func(context.Context) Status { return Status{} }, Stop: func() { stops.Add(1) }})
+			conn, err := net.Dial("unix", p.Socket())
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.ask(t, conn)
+			// Hung up, and then heard hang up: the daemon closes the
+			// connection only once it is done with the exchange, so what it
+			// did is settled before the assertions.
+			conn.(*net.UnixConn).CloseWrite()
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if _, err := io.Copy(io.Discard, conn); err != nil {
+				t.Fatalf("the daemon did not end the exchange: %v", err)
+			}
+			conn.Close()
+			res, err := Ask(context.Background(), p, "status")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := stops.Load(); n != 0 || res.Status.Stopping || d.stopping.Load() {
+				t.Errorf("an unconfirmed stop was acted on: Stop called %d times, stopping %v", n, res.Status.Stopping)
+			}
+		})
+	}
+}
+
+// A daemon slow to accept has the ask in its socket buffer when the CLI gives
+// up. It reads it later and must not act on it.
+func TestASlowDaemonDoesNotActOnAStopTheCLIGaveUpOn(t *testing.T) {
+	p := testPaths(t)
+	d, err := Claim(p) // listening, not yet serving
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err = Stop(ctx, p)
+	var un *UnresponsiveError
+	if !errors.As(err, &un) || un.PID != os.Getpid() {
+		t.Fatalf("Stop on a daemon not yet serving: %v, want an UnresponsiveError", err)
+	}
+	var stops atomic.Int32
+	sctx, scancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		d.Serve(sctx, Handler{Status: func(context.Context) Status { return Status{} }, Stop: func() { stops.Add(1) }})
+		close(done)
+	}()
+	defer d.Close()
+	// Accepted before this status, which queued behind it; Serve returns only
+	// once every connection it accepted has been handled.
+	if _, err := Ask(context.Background(), p, "status"); err != nil {
+		t.Fatal(err)
+	}
+	scancel()
+	<-done
+	if n := stops.Load(); n != 0 || d.stopping.Load() {
+		t.Errorf("the stale ask was acted on: Stop called %d times, stopping %v", n, d.stopping.Load())
+	}
+}
+
+// What the CLI makes of each way the exchange can end once the daemon has
+// acknowledged: a confirmed stop is delivered whether or not its answer
+// arrives, and a daemon older than the exchange acted on the first line.
+func TestStopOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// daemon answers one connection.
+		daemon     func(conn net.Conn)
+		unanswered bool
+	}{
+		{"answered", func(conn net.Conn) {
+			dec, enc := json.NewDecoder(conn), json.NewEncoder(conn)
+			var req Request
+			dec.Decode(&req)
+			enc.Encode(Response{PID: 4242, Confirm: true})
+			dec.Decode(&req)
+			enc.Encode(Response{PID: 4242})
+		}, false},
+		{"an older daemon, one line", func(conn net.Conn) {
+			var req Request
+			json.NewDecoder(conn).Decode(&req)
+			json.NewEncoder(conn).Encode(Response{PID: 4242})
+		}, false},
+		{"confirmed, last answer never comes", func(conn net.Conn) {
+			dec := json.NewDecoder(conn)
+			var req Request
+			dec.Decode(&req)
+			json.NewEncoder(conn).Encode(Response{PID: 4242, Confirm: true})
+			dec.Decode(&req)
+			time.Sleep(time.Second)
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := testPaths(t)
+			ln, err := net.Listen("unix", p.Socket())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			go func() {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				tc.daemon(conn)
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			defer cancel()
+			pid, err := Stop(ctx, p)
+			var un *UnansweredStopError
+			switch {
+			case tc.unanswered && (!errors.As(err, &un) || un.PID != 4242):
+				t.Errorf("Stop = %d, %v, want an UnansweredStopError naming pid 4242", pid, err)
+			case !tc.unanswered && (err != nil || pid != 4242):
+				t.Errorf("Stop = %d, %v, want pid 4242", pid, err)
+			}
+		})
 	}
 }
 
