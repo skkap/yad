@@ -16,6 +16,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hub"
 	"github.com/skkap/yad/internal/hub/store"
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // cmdHub is `yad hub`: the standalone hub. It listens — it is a server, and the
@@ -66,21 +67,32 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 		return err
 	}
 	defer s.Close()
-	h := hub.New(hub.Options{Store: s, MinVersion: *minVersion})
+	h := hub.New(hub.Options{Store: s, MinVersion: *minVersion, Command: hubAnswerCommand(g.paths, *dbFile)})
 
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w — pick another address with --listen", *listen, err)
 	}
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
-	fmt.Fprintf(w, "yad hub serving protocol v1 at http://%s%s — register a runner with a token from `yad hub token create`\n", ln.Addr(), hub.BasePath)
-	fmt.Fprintf(w, "service API at http://%s%s — submit runs with `yad hub submit` and an admin token from `yad hub admin-token create`\n", ln.Addr(), hubapi.BasePath)
+	// The commands this prints act on this hub: its database when it is not
+	// the profile's default, and its address when it is not the one the
+	// service-API commands assume. Bare, they would issue tokens into another
+	// database and submit runs to another hub.
+	var onDB, onHub []string
+	if *dbFile != g.paths.HubDB() {
+		onDB = []string{"--db", *dbFile}
+	}
+	if *listen != defaultHubListen {
+		onHub = []string{"--hub", "http://" + ln.Addr().String()}
+	}
+	fmt.Fprintf(w, "yad hub serving protocol v1 at http://%s%s — register a runner with a token from `%s`\n", ln.Addr(), hub.BasePath, g.paths.Command(append([]string{"hub", "token", "create"}, onDB...)...))
+	fmt.Fprintf(w, "service API at http://%s%s — submit runs with `%s` and an admin token from `%s`\n", ln.Addr(), hubapi.BasePath, g.paths.Command(append([]string{"hub", "submit"}, onHub...)...), g.paths.Command(append([]string{"hub", "admin-token", "create"}, onDB...)...))
 	if *minVersion != "" {
 		fmt.Fprintf(w, "runners older than yad %s are refused at register and at sync, with the next action `yad upgrade`\n", *minVersion)
 		// A refused runner stops syncing, so whatever it holds stops renewing
 		// too. An operator raising the floor on a working fleet is entitled to
 		// hear that before the sweep records those runs lost.
-		fmt.Fprintln(w, "a runner refused mid-run stops syncing, so the runs it holds lose their leases and are recorded lost — drain it first (`yad hub drain <runner>`) to raise the floor without that")
+		fmt.Fprintf(w, "a runner refused mid-run stops syncing, so the runs it holds lose their leases and are recorded lost — drain it first (`%s`) to raise the floor without that\n", g.paths.Command(append(append([]string{"hub", "drain"}, onHub...), "<runner>")...))
 	}
 
 	errc := make(chan error, 1)
@@ -105,6 +117,19 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 				fmt.Fprintf(w, "%s sweep failed: %v\n", time.Now().Format(time.TimeOnly), err)
 			}
 		}
+	}
+}
+
+// hubAnswerCommand builds the yad commands a hub's answers name, run by its
+// operator against the database it serves. Read by a runner's owner on another
+// machine: the profile is a name, but a --db is a path under this operator's
+// home, and stays a placeholder rather than travel (DEV-67).
+func hubAnswerCommand(p config.Paths, dbFile string) func(args ...string) string {
+	return func(args ...string) string {
+		if dbFile != p.HubDB() {
+			args = append(args[:len(args):len(args)], "--db", "<the database yad hub serve was given>")
+		}
+		return config.YadCommand(p.Profile, args...)
 	}
 }
 
@@ -176,7 +201,7 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 		if *dbFile != g.paths.HubDB() {
 			argv = append(argv, "--db", *dbFile)
 		}
-		return config.YadCommand(g.paths.Profile, argv...)
+		return g.paths.Command(argv...)
 	}
 	switch args[0] {
 	case "create":
@@ -207,6 +232,11 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 		if err := config.WriteSecret(*out, tok); err != nil {
 			return errors.Join(fmt.Errorf("the token was created but not saved to %s — revoke it with `%s`", *out, again("revoke", *name)), err)
 		}
+		if *out != g.paths.HubAdminToken() {
+			// Only the default file is read without being named.
+			fmt.Fprintf(stdout, "admin token %q saved to %s (0600) — `yad hub submit` and `yad hub watch` read it when given `--token-file %s`\n", *name, *out, shellword.Quote(*out))
+			return nil
+		}
 		fmt.Fprintf(stdout, "admin token %q saved to %s (0600) — `yad hub submit` and `yad hub watch` read it from there\n", *name, *out)
 		return nil
 	case "list":
@@ -220,7 +250,7 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 			return err
 		}
 		if len(toks) == 0 {
-			fmt.Fprintln(stdout, "no admin tokens — `yad hub admin-token create` makes one")
+			fmt.Fprintf(stdout, "no admin tokens — `%s` makes one\n", again("create"))
 		}
 		for _, t := range toks {
 			fmt.Fprintf(stdout, "%s\tcreated %s\n", t.Name, time.UnixMilli(t.CreatedAt).Local().Format(time.DateTime))
@@ -232,7 +262,11 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 			return err
 		}
 		defer s.Close()
-		if err := hub.RevokeAdminToken(ctx, s, pos[0]); err != nil {
+		err = hub.RevokeAdminToken(ctx, s, pos[0])
+		if errors.Is(err, hub.ErrNoAdminToken) {
+			return fmt.Errorf("this hub has no admin token called %q — `%s` shows the ones it has", pos[0], again("list"))
+		}
+		if err != nil {
 			return err
 		}
 		fmt.Fprintf(stdout, "admin token %q revoked — it stops working on its next request\n", pos[0])

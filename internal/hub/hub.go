@@ -89,6 +89,11 @@ type Options struct {
 	MinVersion string
 	// Now is the clock, replaced in tests so a lease can lapse without a sleep.
 	Now func() time.Time
+	// Command builds the yad command an operator runs against this hub's own
+	// database, for an answer's next action: the hub is handed a store, not
+	// the profile or the --db that opened it, so only its caller can name
+	// them. Nil, and the answer says in words what to run where.
+	Command func(args ...string) string
 }
 
 // Hub is the protocol server.
@@ -104,11 +109,12 @@ type Hub struct {
 	// minVersion is the floor runners are refused below, and is sent to every
 	// runner in the register and sync responses so it can say why it stopped.
 	minVersion string
+	command    func(args ...string) string
 }
 
 // New builds a hub with every v1 operation registered.
 func New(opts Options) *Hub {
-	h := &Hub{store: opts.Store, now: opts.Now, interval: opts.SyncInterval, minVersion: opts.MinVersion}
+	h := &Hub{store: opts.Store, now: opts.Now, interval: opts.SyncInterval, minVersion: opts.MinVersion, command: opts.Command}
 	if h.now == nil {
 		h.now = time.Now
 	}

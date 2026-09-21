@@ -14,7 +14,6 @@ import (
 
 	"github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hub/store/db"
-	"github.com/skkap/yad/internal/shellword"
 )
 
 // runnerIDPattern bounds what a runner may call itself. The id becomes a path
@@ -72,7 +71,7 @@ func (h *Hub) registerRunner(ctx context.Context, in *registerInput) (*registerO
 			// grants, to whoever holds one.
 			return Fail(http.StatusConflict, v1.CodeConflict,
 				fmt.Sprintf("runner %q is already registered with this hub, and this token is for a new runner", caps.RunnerID),
-				fmt.Sprintf("to replace that runner's credential, create a token for it (`%s`) and run `yad connect` again", shellword.Command("yad", "hub", "token", "create", "--runner", caps.RunnerID)))
+				h.replaceCredentialAction(caps.RunnerID))
 		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -122,4 +121,17 @@ func refusedToken(t db.RegistrationToken, lookup error, now time.Time) error {
 			"the registration token expired at "+time.UnixMilli(t.ExpiresAt).UTC().Format(time.RFC3339), newTokenAction)
 	}
 	return nil
+}
+
+// replaceCredentialAction is the way to re-register a runner the hub already
+// knows: a token issued for it, from this hub's database. A bare `yad hub
+// token create` opens the default profile's database, which need not be this
+// one, and a token issued there is refused here as one this hub never issued.
+// Without Options.Command the hub cannot name its own database, so it says
+// what to run in words instead of printing a command aimed elsewhere.
+func (h *Hub) replaceCredentialAction(runnerID string) string {
+	if h.command == nil {
+		return fmt.Sprintf("to replace that runner's credential, create a registration token for runner %q on this hub's own database (yad hub token create with --runner, and the --db this hub serves) and run `yad connect` again", runnerID)
+	}
+	return fmt.Sprintf("to replace that runner's credential, create a token for it (`%s`) and run `yad connect` again", h.command("hub", "token", "create", "--runner", runnerID))
 }

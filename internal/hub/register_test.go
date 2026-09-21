@@ -100,7 +100,7 @@ func TestOnlyATokenForThatRunnerReRegistersIt(t *testing.T) {
 	f.register(t, "other")
 	newRunner := f.token(t, time.Hour)
 	res, env := post(t, f.hub, "/v1/runners/register", registerBody(t, doc("victim")), headers(newRunner))
-	if res.StatusCode != http.StatusConflict || env.Error.Code != v1.CodeConflict || !strings.Contains(env.Error.NextAction, "--runner victim") {
+	if res.StatusCode != http.StatusConflict || env.Error.Code != v1.CodeConflict || !strings.Contains(env.Error.NextAction, "--runner") || !strings.Contains(env.Error.NextAction, `"victim"`) {
 		t.Fatalf("takeover with a new-runner token: %d %+v", res.StatusCode, env.Error)
 	}
 	if res, _ := f.sync(t, "victim", cred, v1.SyncRequest{RunnerID: "victim"}); res.StatusCode != http.StatusOK {

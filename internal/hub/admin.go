@@ -57,6 +57,11 @@ func IssueAdminToken(ctx context.Context, s *store.Store, name string, now time.
 	return tok, nil
 }
 
+// ErrNoAdminToken is a revoke of a name the hub does not hold. As with
+// ErrAdminTokenNameTaken, the command that lists the names is the caller's to
+// build: it has to open the database this revoke did.
+var ErrNoAdminToken = errors.New("list the ones it has")
+
 // RevokeAdminToken deletes the admin token called name. It stops working on
 // the next request.
 func RevokeAdminToken(ctx context.Context, s *store.Store, name string) error {
@@ -65,7 +70,7 @@ func RevokeAdminToken(ctx context.Context, s *store.Store, name string) error {
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("this hub has no admin token called %q — `yad hub admin-token list` shows the ones it has", name)
+		return fmt.Errorf("this hub has no admin token called %q: %w", name, ErrNoAdminToken)
 	}
 	return nil
 }
