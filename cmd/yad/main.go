@@ -176,9 +176,10 @@ usage: yad [--profile name] <command> [flags]
                       its checksum first. Nothing upgrades on its own, and a
                       runner already running keeps the old binary until it is
                       restarted
-  conformance <url> --token T
+  conformance <url> --token T [--second-token T2]
                       check any hub against v1: every rule it breaks, and
-                      where that rule is written
+                      where that rule is written; a second token checks
+                      that a run one runner holds takes nothing from another
   version             version and build
 
   disconnect · account use

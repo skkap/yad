@@ -116,7 +116,9 @@ Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
 `User-Agent: yad/<version>`. Errors are `{"error": {"code", "message",
 "next_action"}}` — the next action is mandatory, because a runner on a
-customer's machine is debugged by reading it.
+customer's machine is debugged by reading it. The codes v1 names are the
+constants in `protocol/v1/error.go`; a hub's own fault is `internal`, with a
+`5xx`, and a runner retries it as it retries any `5xx`.
 
 A registration token registers one runner once. The exchange kills it, and the
 same token again — for that runner or for another — is refused: runner ids are
@@ -826,9 +828,12 @@ yad hub admin-token create|list|revoke
 yad hub token create [--ttl 1h] [--runner id]
                                    a one-time registration token; --runner re-registers
                                    that runner, the only way to replace its credential
-yad conformance <url> --token T    check any hub against v1: every rule it
+yad conformance <url> --token T [--second-token T2]
+                                   check any hub against v1: every rule it
                                    breaks, where that rule is written, and what
-                                   it does not check
+                                   it does not check; the second token registers
+                                   a runner that must not be able to report on
+                                   the first one's run
 yad upgrade [--check] [--force] [--tag v]
                                    replace this binary with the newest release
 ```

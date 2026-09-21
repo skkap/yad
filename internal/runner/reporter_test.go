@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"slices"
 	"sync"
 	"testing"
@@ -452,4 +453,39 @@ func TestReplayOffersDeferredResults(t *testing.T) {
 
 func (h *scriptedHub) Events(context.Context, string, v1.EventBatch) (v1.EventAck, error) {
 	return v1.EventAck{}, nil
+}
+
+// What a runner does with each refusal a hub can send, by status and code. A
+// hub's internal fault is the case this pins: v1 names it `internal`, and a
+// runner meets it the way it meets any 5xx — the sync loop backs off and the
+// reporter keeps the events and the result to send again. Were either to read
+// it as final, one bad minute on a hub would stop a runner or drop a result
+// the hub never saw.
+func TestWhichRefusalsARunnerGivesUpOn(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		code   string
+		// stops is the sync loop's fatal; drops is the reporter's final.
+		stops, drops bool
+	}{
+		{"an internal fault", http.StatusInternalServerError, v1.CodeInternal, false, false},
+		{"a gateway with no envelope", http.StatusBadGateway, "", false, false},
+		{"another runner holds the run", http.StatusForbidden, v1.CodeNotHolder, false, true},
+		{"an invalid report", http.StatusBadRequest, v1.CodeInvalid, false, true},
+		{"a revoked runner", http.StatusUnauthorized, v1.CodeRunnerRevoked, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			se := &hubclient.StatusError{Status: tc.status}
+			if tc.code != "" {
+				se.Protocol = &v1.Error{Code: tc.code, Message: "m", NextAction: "n"}
+			}
+			if got := fatal(se); got != tc.stops {
+				t.Errorf("the sync loop stops: %v, want %v", got, tc.stops)
+			}
+			if got := final(se); got != tc.drops {
+				t.Errorf("the reporter gives up: %v, want %v", got, tc.drops)
+			}
+		})
+	}
 }

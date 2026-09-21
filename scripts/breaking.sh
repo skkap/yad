@@ -96,8 +96,9 @@ for doc in "${docs[@]}"; do
 	fi
 
 	# The committed document rather than a freshly generated one, on purpose:
-	# this is the artefact a hub author actually downloads. `make check`'s
-	# check-generated is what proves it still matches the Go types.
+	# this is the artefact a hub author actually downloads. `make
+	# check-openapi`, which runs before this in `make check` and in CI, is
+	# what proves it still matches the Go types.
 	was=$base/$(echo "$doc" | tr / _)
 	git show "$tag:$doc" >"$was"
 

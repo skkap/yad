@@ -36,7 +36,7 @@ go vet ./...
 go tool staticcheck ./...        # pinned in go.mod as a tool, so everyone runs the same version
 CGO_ENABLED=1 go test -race ./...
 go build ./cmd/yad
-make generate && git diff --exit-code internal/store/db internal/hub/store/db protocol/v1/openapi.yaml protocol/hubapi/openapi.yaml
+make check-generated             # make check-openapi, then sqlc: git diff --exit-code over every generated file
 scripts/breaking.sh              # oasdiff, both OpenAPI documents, against the last release tag
 GOOS=… GOARCH=… go build ./...   # linux/amd64, linux/arm64, darwin/arm64, darwin/amd64
 GOOS=… GOARCH=… go vet ./...     # the same four — type-checks the tests for each target
@@ -75,13 +75,14 @@ CI. Everything builds with
 CI is one job: `make ci` on `ubuntu-latest`, which is
 
 ```bash
+make check-openapi      # regenerate both OpenAPI documents, fail on any diff — no sqlc
 go vet ./...            # type-checks the tests too, which a build never does
 go build ./cmd/yad
 go test ./...           # no -race
-make check-breaking     # oasdiff — the one machine-independent check CI repeats
+make check-breaking     # oasdiff, against the documents check-openapi has just proved current
 ```
 
-That is the part whose answer can differ on Linux, plus two deliberate
+That is the part whose answer can differ on Linux, plus three deliberate
 exceptions. `vet` is kept despite being machine-independent because it
 type-checks test files — twice a merge here has been textually clean and failed
 to compile, and only `vet` saw it.
@@ -98,7 +99,20 @@ opened it. Seconds of hosted runner against somebody else's outage is not a
 close trade. It needs tags to have a baseline, so `ci.yml` checks out with
 `fetch-depth: 0`; without that it would find no tag and pass for ever.
 
-**CI does not run** `gofmt`, `staticcheck`, `check-generated`, the
+`make check-openapi` is the third, and it exists for the second. The breaking
+check reads the **committed** documents, which is right on its own terms —
+the committed file is what a hub author downloads. But a `protocol/v1` field
+renamed in Go and never regenerated leaves the committed document unchanged,
+and oasdiff then correctly reports no break in a document that no longer
+describes the code. `check-openapi` is the OpenAPI half of `check-generated`:
+`go run ./internal/hub/cmd/openapigen` over both documents and `git diff` over
+the two paths, naming the stale file and showing the diff. It needs no `sqlc`,
+which is what keeps it out of the dependency that took `check-generated` out of
+CI. The suite's `TestOpenAPIIsCurrent` and `TestServiceOpenAPIIsCurrent` catch
+the same drift in `go test ./...`; the make target is the gate named for it,
+runs first, and does not depend on a test file surviving a refactor.
+
+**CI does not run** `gofmt`, `staticcheck`, `check-generated`'s sqlc half, the
 cross-compile matrix, or the race detector. Not because they do not matter —
 they are in `make check` and `make check` is the bar — but because they answer
 the same on any machine, and paying a hosted runner to repeat a local answer
@@ -106,17 +120,10 @@ buys nothing. `-race` is the exception that is about cost rather than
 duplication: it needs cgo and roughly triples the suite.
 
 So, concretely, **these reach master only if someone ran `make check`**: a
-formatting slip, a staticcheck finding, a stale or uncommitted generated file,
+formatting slip, a staticcheck finding, stale or uncommitted sqlc output,
 a darwin-only symbol that breaks the linux build, and a data race. `fly` runs
-`make check` before it pushes, which is what makes that safe.
-
-One seam that is worth naming, because CI's copy of the breaking check does not
-close it: CI reads the **committed** documents, since `check-generated` needs
-`sqlc` and is local-only. A field renamed in a Go type but never regenerated
-therefore reaches neither check — `make check` catches it as generated-file
-drift, and nothing in CI does. That is the pre-existing shape of the sqlc split,
-not something the breaking check introduces, and reading the committed file is
-right on its own terms: the committed file is what a hub author downloads.
+`make check` before it pushes, which is what makes that safe. A stale OpenAPI
+document is not on that list: CI's `check-openapi` fails it by name.
 
 ## What nothing runs, here or in CI
 

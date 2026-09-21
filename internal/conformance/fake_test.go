@@ -36,6 +36,13 @@ type fake struct {
 	spent    bool
 	cred     string
 	runner   string
+	// The second registration token, and the runner it registers: enough
+	// for the holder rules, which need a runner the hub knows that is not
+	// the one holding the run.
+	token2   string
+	spent2   bool
+	cred2    string
+	runner2  string
 	runs     map[string]*fakeRun
 	order    []string
 	interval time.Duration
@@ -43,15 +50,18 @@ type fake struct {
 }
 
 type fakeRun struct {
-	spec    v1.Run
-	state   v1.RunState
-	queued  bool
-	offers  int
-	holder  string
-	expires time.Time
-	events  map[int64]bool
-	through int64
-	final   v1.RunState
+	spec   v1.Run
+	state  v1.RunState
+	queued bool
+	offers int
+	// offeredTo is the runner the open offer went to, whose next sync alone
+	// decides whether it was received.
+	offeredTo string
+	holder    string
+	expires   time.Time
+	events    map[int64]bool
+	through   int64
+	final     v1.RunState
 }
 
 // The flaws, each named for the rule it breaks.
@@ -109,12 +119,26 @@ const (
 	// of the token written \uXXXX, which is legal JSON that no search for a
 	// form somebody thought of will match.
 	flawExoticEscape = "a refusal quotes the token with every character escaped, and names no next action"
+	// Unknown runs are still refused, so the near half of the rule passes and
+	// only a second runner can show the hub is not asking who holds the run.
+	flawNoHolderCheck = "events and a result for a held run are taken from any runner"
+	// Only to the second runner, so the answer errors/next-action prints
+	// first is the one carrying the second credential.
+	flawQuotesTheNonHolder = "a refusal to a runner that does not hold the run quotes its credential, and names no next action"
+	// A refusal, in the envelope, that tells the runner to try again: it
+	// resends for ever what the hub will never take.
+	flawNonHolderGets500 = "a run the caller does not hold is refused with 500 internal"
+	// The answer is right and the write happened anyway: only what the
+	// holder hears afterwards can show it.
+	flawStoresRefusedResult = "a result from a runner that does not hold the run is refused with 403 and stored"
 )
+
+const fakeSecondToken = "fake-second-registration-token"
 
 func newFake(t *testing.T, flaw string, queued ...v1.Run) (*fake, string) {
 	t.Helper()
 	f := &fake{
-		flaw: flaw, token: "fake-registration-token", runs: map[string]*fakeRun{},
+		flaw: flaw, token: "fake-registration-token", token2: fakeSecondToken, runs: map[string]*fakeRun{},
 		// The shortest pair §2 allows, so a test that waits a lease out waits
 		// six seconds rather than a minute.
 		interval: 5 * time.Second, lease: 5 * time.Second,
@@ -199,6 +223,17 @@ func (f *fake) register(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var req v1.RegisterRequest
+	if bearer(r) == f.token2 {
+		if f.spent2 || json.NewDecoder(r.Body).Decode(&req) != nil {
+			f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "that registration token has been used", "ask the hub for a new one")
+			return
+		}
+		f.spent2, f.cred2, f.runner2 = true, "fake-second-credential", req.Capabilities.RunnerID
+		f.write(w, http.StatusOK, v1.RegisterResponse{
+			RunnerCredential: f.cred2, SyncIntervalMS: f.ms(f.interval), LeaseMS: int(f.lease / time.Millisecond),
+		})
+		return
+	}
 	issued := bearer(r) == f.token || f.flaw == flawAcceptsAnyToken && bearer(r) != "" || f.flaw == flawRegistersAnyone
 	if !issued || json.NewDecoder(r.Body).Decode(&req) != nil {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "that is not a registration token this hub issued", "ask the hub for a new one")
@@ -258,7 +293,7 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	if !f.authenticated(w, r, &req, true) {
 		return
 	}
-	if runner != f.runner {
+	if runner != f.caller(r) {
 		f.fail(w, http.StatusForbidden, v1.CodeUnauthorized, "this credential is another runner's", "sync as the runner it was issued to")
 		return
 	}
@@ -307,7 +342,7 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	for _, id := range f.order {
 		run := f.runs[id]
 		// An offer this sync did not list was never received (§2, Sync).
-		if run.holder == "" && !run.queued && !listed[id] && f.flaw != flawForgetsOffers && f.flaw != flawOffersTwiceOver {
+		if run.holder == "" && !run.queued && run.offeredTo == runner && !listed[id] && f.flaw != flawForgetsOffers && f.flaw != flawOffersTwiceOver {
 			// Except for the one this hub keeps losing: re-offering another
 			// run for ever says nothing about the rule for this one.
 			if f.flaw == flawKeepsOneOffer && id == f.order[len(f.order)-1] {
@@ -346,7 +381,7 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 		if f.flaw == flawGrantInTheOpen {
 			spec.Grants = []v1.Grant{{Name: "TOKEN", Value: grantValue, As: v1.GrantEnv}}
 		}
-		run.queued, run.expires = false, now.Add(f.lease)
+		run.queued, run.expires, run.offeredTo = false, now.Add(f.lease), runner
 		run.offers++
 		res.Runs = append(res.Runs, spec)
 		// The same run named twice in one answer: offered once, and never
@@ -372,8 +407,8 @@ func (f *fake) events(w http.ResponseWriter, r *http.Request, runID string, guar
 		return
 	}
 	run := f.runs[runID]
-	if (run == nil || run.holder != f.runner) && f.flaw != flawTakesAnyEvents {
-		f.notHolder(w, runID)
+	if !f.holds(r, run) && f.flaw != flawTakesAnyEvents {
+		f.notHolder(w, r, runID)
 		return
 	}
 	if run == nil {
@@ -401,8 +436,11 @@ func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string, guar
 		return
 	}
 	run := f.runs[runID]
-	if run == nil || run.holder != f.runner && run.final != v1.RunLost {
-		f.notHolder(w, runID)
+	if run == nil || !f.holds(r, run) && run.final != v1.RunLost {
+		if run != nil && run.final == "" && f.flaw == flawStoresRefusedResult {
+			run.final, run.state = res.State, res.State
+		}
+		f.notHolder(w, r, runID)
 		return
 	}
 	switch {
@@ -424,7 +462,7 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 	if f.flaw == flawTakesNoBearer && bearer(r) == "" {
 		return true
 	}
-	if guarded && (bearer(r) != f.cred || f.cred == "") {
+	if guarded && (f.cred == "" || bearer(r) != f.cred && (f.cred2 == "" || bearer(r) != f.cred2)) {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "this hub does not know that runner credential", "register again")
 		return false
 	}
@@ -453,7 +491,34 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 	return true
 }
 
-func (f *fake) notHolder(w http.ResponseWriter, runID string) {
+// caller is the runner a request's credential belongs to. Anything but the
+// second runner's credential is taken as the first's, as it was before there
+// was a second: the flaws about a missing or unread bearer rely on it.
+func (f *fake) caller(r *http.Request) string {
+	if f.cred2 != "" && bearer(r) == f.cred2 {
+		return f.runner2
+	}
+	return f.runner
+}
+
+// holds says the calling runner may report on run: it holds it — or, on the
+// hub with the holder check switched off, somebody does.
+func (f *fake) holds(r *http.Request, run *fakeRun) bool {
+	if run == nil {
+		return false
+	}
+	return run.holder == f.caller(r) || f.flaw == flawNoHolderCheck && run.holder != ""
+}
+
+func (f *fake) notHolder(w http.ResponseWriter, r *http.Request, runID string) {
+	if f.flaw == flawNonHolderGets500 {
+		f.fail(w, http.StatusInternalServerError, v1.CodeInternal, "run "+runID+" could not be matched to this runner", "retry later")
+		return
+	}
+	if f.flaw == flawQuotesTheNonHolder && f.cred2 != "" && bearer(r) == f.cred2 {
+		f.fail(w, http.StatusForbidden, v1.CodeNotHolder, "run "+runID+" is not held by the runner with credential "+bearer(r), "")
+		return
+	}
 	f.fail(w, http.StatusForbidden, v1.CodeNotHolder, "run "+runID+" is not held by this runner", "stop reporting it")
 }
 

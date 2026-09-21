@@ -81,7 +81,7 @@ func newError(service bool, status int, msg string, errs ...error) *ErrorRespons
 		// huma calls NewError(0, "") only to learn the error schema.
 	default:
 		if status >= 500 {
-			code, next = "internal", "retry later; if it persists, the hub's logs have the cause"
+			code, next = v1.CodeInternal, "retry later; if it persists, the hub's logs have the cause"
 		}
 	}
 	return Fail(status, code, msg, next)
