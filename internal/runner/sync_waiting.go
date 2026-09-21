@@ -126,8 +126,11 @@ func (l *Loop) holdWaiting(held []db.Run, res *Reservation) (offerable, map[stri
 // the parked runs that are due, and health takes nothing else, so a request
 // built before the hold does not compile. Built in the wrong order it would
 // advertise those units, a hub with a standing queue would fill them with new
-// runs at every sync, and a parked run would never resume — silently, with
-// every test green.
+// runs at every sync, and a parked run would never resume.
+//
+// Go cannot stop this package writing the literal, so the rule is that only
+// holdWaiting does outside tests; tests that want health on its own go
+// through heldNothing.
 type offerable struct{ res *Reservation }
 
 // Free is what the sync declares: the hub offers no more than this.

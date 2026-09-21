@@ -42,7 +42,9 @@ type Pool struct {
 	// order is the ring, in the order connections joined it, and cursor is
 	// where the deal starts. filled is whether the cursor has already moved
 	// on for the fill in progress: a pool that fills, has a unit put back
-	// and fills again within one sync is one fill, not two.
+	// and fills again within one sync is one fill, not two. A unit leaving
+	// the pool's runs — a release, or a put-back unit returned on Close —
+	// starts the next one.
 	order  []string
 	conns  map[string]*poolConn
 	cursor int
@@ -298,6 +300,9 @@ func (r *Reservation) Close() {
 		// It was offered more than it had work for; the rest of its turn goes
 		// to the other connections until its next sync asks again.
 		r.p.conn(r.conn).asking = false
+		// A unit put back after the pool filled comes free here, and the
+		// next time the pool fills is a fill of its own.
+		r.p.filled = false
 	}
 	r.p.used -= r.n
 	r.n = 0

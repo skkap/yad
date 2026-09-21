@@ -350,6 +350,41 @@ func TestAFreedUnitGoesToTheHubShortOfItsShare(t *testing.T) {
 	}
 }
 
+// TestAPutBackUnitReturnedOnCloseStartsAFill: a claim that is never recorded
+// puts its unit back, and a sync that ends without re-taking it frees it. The
+// pool filling again after that is a fill of its own, and moves the deal on.
+func TestAPutBackUnitReturnedOnCloseStartsAFill(t *testing.T) {
+	p := NewPool(v1.Capacity{Total: 4})
+	for _, name := range []string{"a", "b", "c"} {
+		p.Join(name, 0)
+	}
+	var ends []func()
+	for _, name := range []string{"a", "b"} {
+		_, e := syncOf(t, p, name, 100)
+		ends = append(ends, e...)
+	}
+	r := p.Reserve("c")
+	if _, ok := r.Take("claude"); !ok { // the pool is full, and the deal moves on to b
+		t.Fatal("c could not take its unit")
+	}
+	r.putBack("claude")
+	r.Close()
+	// c's next sync takes the unit; this fill was dealt from b, and the next
+	// one is dealt from c.
+	_, e := syncOf(t, p, "c", 100)
+	for _, end := range append(ends, e...) {
+		end()
+	}
+	for name, want := range map[string]int{"a": 1, "b": 1, "c": 2} {
+		// Offered without taking, so each sync sees the same deal.
+		r := p.Reserve(name)
+		if got := r.Free().Total; got != want {
+			t.Errorf("%s was offered %d in the next fill, want %d", name, got, want)
+		}
+		defer r.Close()
+	}
+}
+
 func permutations(s []string) [][]string {
 	if len(s) <= 1 {
 		return [][]string{append([]string(nil), s...)}
