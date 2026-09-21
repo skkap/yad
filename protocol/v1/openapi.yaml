@@ -310,12 +310,13 @@ components:
             type: string
           type: array
         present:
+          description: "There is a binary the runner would run for this harness. Not that it works: a present harness with an error cannot take runs. A harness absent with an error has a path configured for it that names nothing and none on the runner's PATH either."
           type: boolean
         version:
           description: The version number the harness reported, such as 2.4.1 or 1.0.0-beta.12, and nothing else of what it printed. Absent when it printed no version.
           type: string
         warnings:
-          description: "What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."
+          description: "What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine: a path configured for it that names nothing, so the one on PATH is used; a Codex whose protocol differs from the one the runner was built against. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."
           items:
             type: string
           type: array
@@ -386,7 +387,7 @@ components:
       additionalProperties: true
       properties:
         error:
-          description: "What is wrong with this tool on the runner: a path configured for it that names nothing, a probe that timed out, a binary that would not run, a Docker daemon that is not answering. May accompany present: false, when a configured path names nothing. Carries the next action. A runner with one still registers."
+          description: "What is wrong with this tool on the runner: a path configured for it that names nothing with none on PATH either, a probe that timed out, a binary that would not run, a Docker daemon that is not answering. May accompany present: false, when a configured path names nothing and PATH has no such tool. Carries the next action. A runner with one still registers."
           type: string
         id:
           description: "The tool: git, gh or docker."
@@ -400,11 +401,16 @@ components:
             type: string
           type: array
         present:
-          description: "The binary was found on the runner. Present is not usable: see error and logged_in."
+          description: "There is a binary the runner would run for this tool: the one its configured path names, or the one on PATH when that path names nothing. Present is not usable: see error and logged_in."
           type: boolean
         version:
           description: The version number the tool reported, such as 2.51.0, and nothing else of what it printed. Absent when it printed no version.
           type: string
+        warnings:
+          description: "What is wrong with a tool the runner can still use, each with the next action for whoever owns the machine: a path configured for it that names nothing, so the one on PATH is used. Never a reason to treat the tool as unusable. Written by the runner: it never quotes what the tool printed and never names a path on the machine."
+          items:
+            type: string
+          type: array
       required:
         - id
         - present

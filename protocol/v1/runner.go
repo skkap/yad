@@ -22,10 +22,14 @@ type Capabilities struct {
 // HarnessReport is one harness as it exists on the runner. Accounts appear by
 // label and state only; credentials never leave the machine.
 type HarnessReport struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Kind    string `json:"kind" enum:"first-class,recognised"`
-	Present bool   `json:"present"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Kind  string `json:"kind" enum:"first-class,recognised"`
+	// Present is there being a binary the runner would run for this harness —
+	// the one a YAD_<ID>_PATH override names, or PATH's when the override
+	// names nothing (DEV-68). It says nothing about whether it works; Error
+	// does.
+	Present bool `json:"present" doc:"There is a binary the runner would run for this harness. Not that it works: a present harness with an error cannot take runs. A harness absent with an error has a path configured for it that names nothing and none on the runner's PATH either."`
 	// Version is the version number and nothing else of what the harness
 	// printed: the line around it can hold a path or a credential (DEV-67).
 	Version string `json:"version,omitempty" doc:"The version number the harness reported, such as 2.4.1 or 1.0.0-beta.12, and nothing else of what it printed. Absent when it printed no version."`
@@ -36,10 +40,11 @@ type HarnessReport struct {
 	Accounts []AccountReport `json:"accounts,omitempty"`
 	// Warnings are what the runner found wrong with a harness it can still
 	// drive — an installed Codex whose app-server protocol differs from the
-	// one the adapter was built against. A hub may show them or prefer a
-	// runner without; they never make a harness refuse runs, which Error does.
-	// The same rule as Error binds them (DEV-67).
-	Warnings []string `json:"warnings,omitempty" doc:"What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
+	// one the adapter was built against, a path override naming nothing while
+	// PATH has the harness. A hub may show them or prefer a runner without;
+	// they never make a harness refuse runs, which Error does. The same rule
+	// as Error binds them (DEV-67).
+	Warnings []string `json:"warnings,omitempty" doc:"What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine: a path configured for it that names nothing, so the one on PATH is used; a Codex whose protocol differs from the one the runner was built against. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
 }
 
 // AccountState is what a hub may know about an account, and the whole of it.
@@ -116,8 +121,10 @@ type AccountWindow struct {
 // container. A hub routing on a tool wants `present`, no `error`, and
 // `logged_in` where the tool has a login.
 type HostTool struct {
-	ID      string `json:"id" doc:"The tool: git, gh or docker."`
-	Present bool   `json:"present" doc:"The binary was found on the runner. Present is not usable: see error and logged_in."`
+	ID string `json:"id" doc:"The tool: git, gh or docker."`
+	// Present means what it means for a harness: there is a binary the
+	// runner would run (DEV-68).
+	Present bool   `json:"present" doc:"There is a binary the runner would run for this tool: the one its configured path names, or the one on PATH when that path names nothing. Present is not usable: see error and logged_in."`
 	Version string `json:"version,omitempty" doc:"The version number the tool reported, such as 2.51.0, and nothing else of what it printed. Absent when it printed no version."`
 	// LoggedIn is nil when the tool has no notion of a login, and nil too when
 	// it has one and the runner could not find out — Error says why.
@@ -128,13 +135,17 @@ type HostTool struct {
 	// account name is the machine owner's, not the hub's.
 	LoginHosts []string `json:"login_hosts,omitempty" doc:"Every host the tool is signed in to, such as github.com or a GitHub Enterprise hostname; a gh signed in to two reports both. Never the account it is signed in as."`
 	// Error is what is wrong with this tool on the runner: a path configured
-	// for it that names nothing, a probe that timed out, a binary that would
-	// not run, a Docker daemon that is not answering. It carries the next
-	// action, and it never stops a runner registering — absence and breakage
-	// are both facts a hub routes around. It can accompany present: false: a
-	// tool the owner configured a path for, which is not there, is both absent
-	// and worth explaining.
-	Error string `json:"error,omitempty" doc:"What is wrong with this tool on the runner: a path configured for it that names nothing, a probe that timed out, a binary that would not run, a Docker daemon that is not answering. May accompany present: false, when a configured path names nothing. Carries the next action. A runner with one still registers."`
+	// for it that names nothing with none on PATH either, a probe that timed
+	// out, a binary that would not run, a Docker daemon that is not answering.
+	// It carries the next action, and it never stops a runner registering —
+	// absence and breakage are both facts a hub routes around. It can
+	// accompany present: false: a tool the owner configured a path for, which
+	// is not there, is both absent and worth explaining.
+	Error string `json:"error,omitempty" doc:"What is wrong with this tool on the runner: a path configured for it that names nothing with none on PATH either, a probe that timed out, a binary that would not run, a Docker daemon that is not answering. May accompany present: false, when a configured path names nothing and PATH has no such tool. Carries the next action. A runner with one still registers."`
+	// Warnings are what is wrong with a tool that still works, under the same
+	// rule as HarnessReport.Warnings. Added within v1 for DEV-68, so a hub
+	// generated before it ignores the field.
+	Warnings []string `json:"warnings,omitempty" doc:"What is wrong with a tool the runner can still use, each with the next action for whoever owns the machine: a path configured for it that names nothing, so the one on PATH is used. Never a reason to treat the tool as unusable. Written by the runner: it never quotes what the tool printed and never names a path on the machine."`
 }
 
 // Capacity is how many runs a runner executes at once: one pool, with the

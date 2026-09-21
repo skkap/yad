@@ -154,6 +154,7 @@ func HostTools(found []hostool.Detected) []v1.HostTool {
 		out = append(out, v1.HostTool{
 			ID: d.ID, Present: d.Present, Version: d.Version,
 			LoggedIn: d.LoggedIn, LoginHosts: d.LoginHosts, Error: d.Error,
+			Warnings: d.Warnings,
 		})
 	}
 	return out
