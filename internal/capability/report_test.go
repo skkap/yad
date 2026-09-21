@@ -157,8 +157,17 @@ func TestDocumentCarriesNoChildOutputOrHomePath(t *testing.T) {
 	for _, tool := range hostool.Catalog() {
 		write(tool.Binary, fail)
 	}
-	// Past its version probe, so the protocol check runs and fails.
-	write("codex", "if [ \"$1\" = --version ]; then echo 'codex-cli 0.147.0'; exit 0; fi\n"+fail)
+	// Past its version probe, so the protocol check runs and fails. What it
+	// prints for its version is a home path and a credential around the
+	// number, and only the number may travel.
+	write("codex", "if [ \"$1\" = --version ]; then echo \"codex-cli 0.147.0 (config $HOME/.codex, proxy "+secret+")\"; exit 0; fi\n"+fail)
+	// A version probe that succeeds with a warning line first, as a wrapper
+	// or a node launcher prints: the version is found under it, and nothing
+	// else of it travels.
+	write("gemini", "echo \"Warning: proxy "+secret+" from $HOME/.npmrc\"\necho '0.9.1'\n")
+	write("git", "echo \"git version 2.51.0 $HOME/bin/git "+secret+"\"\n")
+	// A version line with no version in it reports none rather than itself.
+	write("copilot", "echo \"dyld: Library not loaded: $HOME/lib/libnode.dylib\"\n")
 
 	cfg := config.Default()
 	cfg.Name = "r1"
@@ -171,6 +180,12 @@ func TestDocumentCarriesNoChildOutputOrHomePath(t *testing.T) {
 	// Not vacuous: the failures are reported, in the runner's words.
 	if !strings.Contains(s, `"warnings":["yad could not check this codex`) || !strings.Contains(s, `"error":"`) {
 		t.Fatalf("the failures are not in the document: %s", s)
+	}
+	// And the versions are still there, as versions.
+	for _, want := range []string{`"version":"0.147.0"`, `"version":"0.9.1"`, `"version":"2.51.0"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s: %s", want, s)
+		}
 	}
 	leaks := []string{secret, "hunter2", "dyld", "fatal:", home, bin, tmp, "/Users/", "fork/exec",
 		"permission denied", "exit status", "no such file"}

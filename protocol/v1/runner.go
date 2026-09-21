@@ -26,7 +26,9 @@ type HarnessReport struct {
 	Label   string `json:"label"`
 	Kind    string `json:"kind" enum:"first-class,recognised"`
 	Present bool   `json:"present"`
-	Version string `json:"version,omitempty"`
+	// Version is the version number and nothing else of what the harness
+	// printed: the line around it can hold a path or a credential (DEV-67).
+	Version string `json:"version,omitempty" doc:"The version number the harness reported, such as 2.4.1 or 1.0.0-beta.12, and nothing else of what it printed. Absent when it printed no version."`
 	// Error is the runner's own words, never the harness's: a child's output
 	// and the path it was started from stay on the machine (DEV-60).
 	Error    string          `json:"error,omitempty" doc:"Why this harness cannot take runs, and the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
@@ -116,7 +118,7 @@ type AccountWindow struct {
 type HostTool struct {
 	ID      string `json:"id" doc:"The tool: git, gh or docker."`
 	Present bool   `json:"present" doc:"The binary was found on the runner. Present is not usable: see error and logged_in."`
-	Version string `json:"version,omitempty" doc:"The first line the tool prints for its version."`
+	Version string `json:"version,omitempty" doc:"The version number the tool reported, such as 2.51.0, and nothing else of what it printed. Absent when it printed no version."`
 	// LoggedIn is nil when the tool has no notion of a login, and nil too when
 	// it has one and the runner could not find out — Error says why.
 	LoggedIn *bool `json:"logged_in,omitempty" doc:"Whether the tool is signed in. Absent for a tool with no login, and for one whose login state the runner could not find out, where error says why."`

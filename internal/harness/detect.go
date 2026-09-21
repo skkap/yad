@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -151,15 +152,40 @@ func wontAnswer(h Harness) string {
 	return fmt.Sprintf("`%s %s` exited with an error — run it on this machine to see why", h.Binary, strings.Join(h.VersionArgs, " "))
 }
 
-// ParseVersion reduces a CLI's version banner to one line.
+// versionToken is what a version looks like: two to four dotted numbers and
+// an optional pre-release or build suffix of letters, digits and dots, standing
+// as a word of its own — after a space, a bracket, a quote or a "v", before a
+// space, a comma or a closing bracket. The charset is the guarantee: a path
+// needs a slash and a URL a colon, and neither can be in a match. The
+// delimiters keep a number that is part of one out: the address in a proxy
+// URL, a version inside a path.
+var versionToken = regexp.MustCompile(`(?:^|[\s("'])v?(\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)(?:$|[\s,;)"'])`)
+
+// maxVersionLen bounds the token. The longest real one is a pre-release such
+// as 1.0.0-beta.12+build.345, well inside it; the bound keeps a suffix from
+// carrying a sentence.
+const maxVersionLen = 32
+
+// ParseVersion finds the version in what a CLI printed for `--version`, or
+// returns "" when there is none.
 //
-// The CLIs disagree about what `--version` prints: a bare "2.4.1", "claude 2.4.1
-// (Claude Code)", or a banner with an update notice underneath. The first
-// non-empty line is the only thing they share, and what a human wants in a table.
+// The CLIs disagree about what they print: a bare "2.4.1", "claude 2.4.1
+// (Claude Code)", "git version 2.51.0", a banner with an update notice under
+// it, or a launcher's warning above it. What they share is a dotted number,
+// and that is all that is kept. The line around it is the child's own text,
+// and it goes into the capability document every connected hub reads: a
+// wrapper's proxy URL with a password in it, the path it was installed under
+// in the owner's home (DEV-67). The first line holding a version wins, so a
+// warning printed first does not hide it; one holding none reports no version
+// rather than itself.
 func ParseVersion(raw string) string {
 	for _, line := range strings.Split(raw, "\n") {
-		if s := strings.TrimSpace(line); s != "" {
-			return s
+		if m := versionToken.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			v := m[1]
+			if len(v) > maxVersionLen {
+				v = strings.TrimRight(v[:maxVersionLen], ".-+")
+			}
+			return v
 		}
 	}
 	return ""

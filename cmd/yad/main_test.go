@@ -191,7 +191,7 @@ func TestDoctorReportsCodexProtocolDrift(t *testing.T) {
 	}
 	t.Setenv("CODEX_TEST_SCHEMA", schema)
 	code, out, errs := yad(t, "doctor")
-	if code != 0 || !regexp.MustCompile(`Codex +ready +codex-cli 0.147.0`).MatchString(out) || strings.Contains(out, "warning:") {
+	if code != 0 || !regexp.MustCompile(`Codex +ready +0\.147\.0`).MatchString(out) || strings.Contains(out, "warning:") {
 		t.Fatalf("pinned codex: exit %d:\n%s%s", code, out, errs)
 	}
 

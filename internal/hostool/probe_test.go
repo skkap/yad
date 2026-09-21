@@ -183,7 +183,7 @@ func TestCatalogIsTheThree(t *testing.T) {
 func TestGitIsVersionOnly(t *testing.T) {
 	install(t, "git", tool{version: answer{out: "git version 2.51.0\n"}})
 	d := probe(t, "git")
-	if !d.Present || d.Version != "git version 2.51.0" || d.Error != "" {
+	if !d.Present || d.Version != "2.51.0" || d.Error != "" {
 		t.Errorf("git = %+v", d)
 	}
 	if d.LoggedIn != nil || d.LoginHosts != nil {
@@ -424,7 +424,7 @@ func TestDockerReportsTheDaemonNotTheBinary(t *testing.T) {
 	t.Run("daemon up", func(t *testing.T) {
 		install(t, "docker", tool{version: answer{out: dockerVersion}, plain: answer{out: "29.1.3\n"}})
 		d := probe(t, "docker")
-		if !d.Present || d.Version != "Docker version 29.1.3, build f52814d" || d.Error != "" {
+		if !d.Present || d.Version != "29.1.3" || d.Error != "" {
 			t.Errorf("docker = %+v", d)
 		}
 	})
@@ -502,8 +502,8 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 	}{
 		{"git hangs on --version", "git", "/bin/sleep 60\n", nothingToAnswer, "no answer to `git --version`", ""},
 		{"gh hangs on --version", "gh", "/bin/sleep 60\n", nothingToAnswer, "no answer to `gh --version`", ""},
-		{"gh hangs on auth status", "gh", answersVersion("gh version 2.98.0"), afterAVersion, "gh auth status", "gh version 2.98.0"},
-		{"docker hangs on the daemon", "docker", answersVersion("Docker version 29.1.3"), afterAVersion, "did not answer", "Docker version 29.1.3"},
+		{"gh hangs on auth status", "gh", answersVersion("gh version 2.98.0"), afterAVersion, "gh auth status", "2.98.0"},
+		{"docker hangs on the daemon", "docker", answersVersion("Docker version 29.1.3"), afterAVersion, "did not answer", "29.1.3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			old := probeTimeout

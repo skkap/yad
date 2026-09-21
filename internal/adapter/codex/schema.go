@@ -329,8 +329,8 @@ func schemaWarning(ctx context.Context, bin string) (warning string, final bool,
 		known = append(known, v)
 	}
 	slices.Sort(known)
-	// The installed version is not repeated here: it is the first line codex
-	// printed, which the report's version field already carries, and a warning
-	// quotes nothing a child wrote.
+	// The installed version is not repeated here: the report's version field
+	// beside the warning carries it, and the warning's text stays wholly the
+	// runner's.
 	return fmt.Sprintf("this codex's app-server protocol differs from the one this yad was built against (codex %s) in the parts the adapter uses — runs may fail; install a pinned codex or a yad that knows this one", strings.Join(known, ", ")), true, nil
 }
