@@ -216,7 +216,8 @@ func (e *Exec) setStarted(ctx context.Context, c Claim, at time.Time) {
 // the next sync reads it — but it cannot be what a run is parked on, because
 // nothing can say when that will happen.
 func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64, reason string) bool {
-	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config)
+	now := time.Now()
+	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config, now)
 	if err != nil {
 		e.Log.Warn("could not read account states; the run is not parked", "connection", c.Connection, "run", c.Run.RunID, "err", err)
 		return false
@@ -225,7 +226,6 @@ func (e *Exec) park(ctx context.Context, c Claim, prog *progress, lastSeq *int64
 	if at.IsZero() {
 		return false
 	}
-	now := time.Now()
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	// A cap already spent is not a wait the run gets to start. Checked here
 	// as well as in the sync loop, so a run whose hub allowed it less time

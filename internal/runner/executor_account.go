@@ -27,7 +27,10 @@ func (e *Exec) pickAccount(ctx context.Context, harness string) (account.Account
 	if !account.Supported(harness) {
 		return account.Account{}, false, nil
 	}
-	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config)
+	// One moment for the whole choice: the states Load derives and the
+	// resets Soonest ranks are then judged against the same instant.
+	now := time.Now()
+	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config, now)
 	if err != nil {
 		return account.Account{}, false, err
 	}
@@ -35,7 +38,7 @@ func (e *Exec) pickAccount(ctx context.Context, harness string) (account.Account
 	if len(all) == 0 {
 		return account.Account{}, false, nil
 	}
-	if a, ok := account.Soonest(accounts, harness, time.Now()); ok {
+	if a, ok := account.Soonest(accounts, harness, now); ok {
 		return a, true, nil
 	}
 	return account.Account{}, false, &noFreeAccountError{paths: e.Paths, harness: harness, accounts: all}
