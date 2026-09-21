@@ -106,11 +106,12 @@ func isolate(t *testing.T, envPath, path string) {
 	t.Helper()
 	forgetGHLogin()
 	t.Cleanup(forgetGHLogin)
-	absent := filepath.Join(t.TempDir(), "absent")
 	t.Setenv("PATH", t.TempDir())
 	for _, other := range Catalog() {
-		// Not "": an empty override falls back to PATH.
-		t.Setenv(other.EnvPath, absent)
+		// Unset rather than pointed at nothing: PATH is empty, so an unset
+		// override leaves the tool absent, where one naming nothing would
+		// add an error to every entry but the one under test.
+		t.Setenv(other.EnvPath, "")
 	}
 	t.Setenv(envPath, path)
 }
@@ -134,8 +135,8 @@ func ageGHLogin(by time.Duration) {
 	}
 }
 
-// probe runs detection and returns the one tool the test set up.
-func probe(t *testing.T, id string) Detected {
+// detect runs detection and returns the one tool the test set up.
+func detect(t *testing.T, id string) Detected {
 	t.Helper()
 	for _, d := range Detect(context.Background()) {
 		if d.ID == id {
@@ -182,7 +183,7 @@ func TestCatalogIsTheThree(t *testing.T) {
 // git has no login and no daemon: present, a version, and nothing else to say.
 func TestGitIsVersionOnly(t *testing.T) {
 	install(t, "git", tool{version: answer{out: "git version 2.51.0\n"}})
-	d := probe(t, "git")
+	d := detect(t, "git")
 	if !d.Present || d.Version != "2.51.0" || d.Error != "" {
 		t.Errorf("git = %+v", d)
 	}
@@ -239,7 +240,7 @@ func TestGHLoginState(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			install(t, "gh", tc.gh)
-			d := probe(t, "gh")
+			d := detect(t, "gh")
 			if !d.Present || d.Error != "" {
 				t.Fatalf("gh = %+v", d)
 			}
@@ -262,7 +263,7 @@ func TestGHUnconfirmedLoginIsNotAnAnswer(t *testing.T) {
 				version: answer{out: ghVersion},
 				asJSON:  answer{out: `{"hosts":{"ghe.example.com":[{"state":"` + state + `","login":"octocat"}]}}`},
 			})
-			d := probe(t, "gh")
+			d := detect(t, "gh")
 			if d.LoggedIn != nil {
 				t.Errorf("LoggedIn = %v, want nothing claimed", *d.LoggedIn)
 			}
@@ -288,14 +289,14 @@ func TestGHUnconfirmedLoginIsNotAnAnswer(t *testing.T) {
 // every few seconds and the login changes when somebody signs in or out.
 func TestGHLoginIsRememberedBetweenProbes(t *testing.T) {
 	install(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{out: ghJSON}})
-	if d := probe(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
+	if d := detect(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
 		t.Fatalf("first probe: %+v", d)
 	}
 	// The same gh, now unable to answer at all. The remembered answer stands:
 	// a link that was down for one probe is not news that the login changed,
 	// and a flapping document would make every hub re-read it.
 	swap(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{code: 1}, plain: answer{code: 1}})
-	d := probe(t, "gh")
+	d := detect(t, "gh")
 	if d.LoggedIn == nil || !*d.LoggedIn || !slices.Equal(d.LoginHosts, []string{"github.com"}) {
 		t.Errorf("second probe = %+v, want the remembered answer", d)
 	}
@@ -304,7 +305,7 @@ func TestGHLoginIsRememberedBetweenProbes(t *testing.T) {
 	}
 	// With nothing remembered, the same silent gh is reported as unknown.
 	forgetGHLogin()
-	if d := probe(t, "gh"); d.LoggedIn != nil || d.Error == "" {
+	if d := detect(t, "gh"); d.LoggedIn != nil || d.Error == "" {
 		t.Errorf("with nothing remembered = %+v, want no claim and an error", d)
 	}
 }
@@ -330,7 +331,7 @@ func TestARememberedLoginIsNotServedForever(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			install(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{out: ghJSON}})
-			if d := probe(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
+			if d := detect(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
 				t.Fatalf("first probe: %+v", d)
 			}
 			swap(t, "gh", tc.gh)
@@ -338,13 +339,13 @@ func TestARememberedLoginIsNotServedForever(t *testing.T) {
 			// Just past the point where the answer is asked for again, and
 			// still inside the window a transient is allowed.
 			ageGHLogin(ghLoginTTL + time.Minute)
-			if d := probe(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
+			if d := detect(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
 				t.Errorf("while the failure could still be a blip = %+v, want the remembered answer", d)
 			}
 
 			// Past the window. The runner stops claiming what it cannot check.
 			ageGHLogin(ghLoginStale)
-			d := probe(t, "gh")
+			d := detect(t, "gh")
 			if d.LoggedIn != nil {
 				t.Errorf("LoggedIn = %v, want nothing claimed once the answer is stale", *d.LoggedIn)
 			}
@@ -362,7 +363,7 @@ func TestARememberedLoginIsNotServedForever(t *testing.T) {
 // out once the answer is stale, without restarting the runner.
 func TestGHLoginIsAskedAgainWhenStale(t *testing.T) {
 	install(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{out: ghJSON}})
-	if d := probe(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
+	if d := detect(t, "gh"); d.LoggedIn == nil || !*d.LoggedIn {
 		t.Fatalf("first probe: %+v", d)
 	}
 	old := ghLoginTTL
@@ -370,7 +371,7 @@ func TestGHLoginIsAskedAgainWhenStale(t *testing.T) {
 	t.Cleanup(func() { ghLoginTTL = old })
 
 	swap(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{out: `{"hosts":{}}`}})
-	d := probe(t, "gh")
+	d := detect(t, "gh")
 	if d.LoggedIn == nil || *d.LoggedIn || d.LoginHosts != nil {
 		t.Errorf("after signing out = %+v, want the new answer", d)
 	}
@@ -380,7 +381,7 @@ func TestGHLoginIsAskedAgainWhenStale(t *testing.T) {
 // would route pull-request work away from a machine that may well do it.
 func TestGHSilenceIsNotAnAnswer(t *testing.T) {
 	install(t, "gh", tool{version: answer{out: ghVersion}, asJSON: answer{code: 1}, plain: answer{code: 1}})
-	d := probe(t, "gh")
+	d := detect(t, "gh")
 	if d.LoggedIn != nil {
 		t.Errorf("LoggedIn = %v, want nothing claimed", *d.LoggedIn)
 	}
@@ -405,7 +406,7 @@ func TestGHReportCarriesNothingButTheHost(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			install(t, "gh", f)
-			raw, err := json.Marshal(probe(t, "gh"))
+			raw, err := json.Marshal(detect(t, "gh"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -423,7 +424,7 @@ func TestGHReportCarriesNothingButTheHost(t *testing.T) {
 func TestDockerReportsTheDaemonNotTheBinary(t *testing.T) {
 	t.Run("daemon up", func(t *testing.T) {
 		install(t, "docker", tool{version: answer{out: dockerVersion}, plain: answer{out: "29.1.3\n"}})
-		d := probe(t, "docker")
+		d := detect(t, "docker")
 		if !d.Present || d.Version != "29.1.3" || d.Error != "" {
 			t.Errorf("docker = %+v", d)
 		}
@@ -431,7 +432,7 @@ func TestDockerReportsTheDaemonNotTheBinary(t *testing.T) {
 
 	t.Run("daemon down", func(t *testing.T) {
 		install(t, "docker", tool{version: answer{out: dockerVersion}, plain: answer{err: dockerNoDaemn, code: 1}})
-		d := probe(t, "docker")
+		d := detect(t, "docker")
 		if !d.Present || d.Version == "" {
 			t.Errorf("a daemon that is down must not hide the client: %+v", d)
 		}
@@ -453,7 +454,7 @@ func TestDockerReportsTheDaemonNotTheBinary(t *testing.T) {
 	// 0; an empty server version is still no daemon.
 	t.Run("daemon silent", func(t *testing.T) {
 		install(t, "docker", tool{version: answer{out: dockerVersion}, plain: answer{}})
-		if d := probe(t, "docker"); !strings.Contains(d.Error, "not answering") {
+		if d := detect(t, "docker"); !strings.Contains(d.Error, "not answering") {
 			t.Errorf("Error = %q, want the daemon reported down", d.Error)
 		}
 	})
@@ -472,7 +473,7 @@ func hanging(t *testing.T, id, body string) Detected {
 		t.Fatal(err)
 	}
 	isolate(t, entry.EnvPath, path)
-	return probe(t, id)
+	return detect(t, id)
 }
 
 // The acceptance criterion, at the probe: a tool that never answers is reported
@@ -565,9 +566,15 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 // A binary that is there but will not run is reported broken, not dropped —
 // and the report says so without quoting the machine it is on.
 func TestBrokenBinaryIsReported(t *testing.T) {
-	dir := t.TempDir() // a directory is not an executable
-	isolate(t, "YAD_GIT_PATH", dir)
-	d := probe(t, "git")
+	dir := t.TempDir()
+	// A file without its execute bit: installed, and not runnable. A directory
+	// used to stand in for one, and is now an override naming nothing (DEV-68).
+	bin := filepath.Join(dir, "git")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'git version 2.51.0'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolate(t, "YAD_GIT_PATH", bin)
+	d := detect(t, "git")
 	if !d.Present || d.Error == "" {
 		t.Fatalf("git = %+v, want it present and broken", d)
 	}
@@ -579,8 +586,10 @@ func TestBrokenBinaryIsReported(t *testing.T) {
 			t.Errorf("Error carries %q: %q", leak, d.Error)
 		}
 	}
-	if !strings.Contains(d.Error, "check on this machine") {
-		t.Errorf("Error = %q, want the next action", d.Error)
+	// The override is what to fix: it names a file, and nothing more has
+	// been proved about it (DEV-68 aligned this with the harnesses).
+	if !strings.Contains(d.Error, "YAD_GIT_PATH") || !strings.Contains(d.Error, "point it at an executable git") {
+		t.Errorf("Error = %q, want the override and the next action", d.Error)
 	}
 }
 
@@ -590,7 +599,7 @@ func TestBrokenBinaryIsReported(t *testing.T) {
 func TestToolOutputIsNeverQuotedInTheReport(t *testing.T) {
 	const secret = "https://user:hunter2@proxy.internal/"
 	install(t, "git", tool{version: answer{err: "fatal: unable to access " + secret + "\n", code: 128}})
-	d := probe(t, "git")
+	d := detect(t, "git")
 	if d.Error == "" {
 		t.Fatalf("git = %+v, want the failure reported", d)
 	}

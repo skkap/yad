@@ -135,6 +135,19 @@ you offered and the next sync does not list was never received, and is yours
 to offer again — to this runner or another. A hub that treats the offer as the
 claim loses every run a runner never got.
 
+**Offer a run only for a harness the runner can drive.** In the capability
+document, `present` means the runner found a binary for a harness or a host
+tool, and for a harness it is the one every run starts. It does not mean the
+binary works. A harness can take runs
+when it is `first-class`, `present` and has no `error`. A host tool is usable
+when it is `present` with no `error`, and `logged_in` too for a tool that has a
+login. `warnings` never make either one unusable. They are for whoever owns the
+machine, for example a path override that names nothing, so the one on `PATH`
+is used. An `error` with `present: false` means an override that names nothing,
+and nothing on `PATH` either. Harnesses and host tools follow the same rule. A
+runner refuses a run for a harness it cannot drive, but the run has held your
+queue until then.
+
 **Never offer more than the free capacity, on either count.** The sync
 request's `health.free_capacity` is **already net of the runs the runner
 holds**, on both counts — `total` after everything it holds, and each

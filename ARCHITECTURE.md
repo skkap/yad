@@ -67,6 +67,7 @@ internal/store           SQLite: schema, migrations, sqlc-generated queries
 internal/harness         the catalog, detection, versions
 internal/capability      the capability document and its fingerprint
 internal/hostool         probing host tools (git, gh, docker) and how far each works
+internal/probe           what both share: which binary an override or PATH names, and the words for what is wrong with it (0044)
 internal/account         accounts per harness, homes, limit state, failover
 internal/service         yad service: launchd agent and systemd user unit, login PATH (0028)
 internal/adapter         the Adapter interface and event normalisation
@@ -204,10 +205,24 @@ plain-text 404 or 405.
   two hubs that both want everything hold half each, three over four units
   hold two, one and one whatever order they sync in, the extra unit of an
   uneven division goes round the ring from fill to fill, and a unit freed goes
-  to whoever's turn it is rather than to whoever asks first. A connection that
-  leaves units unused has no work for them and is out of the deal — keeping
-  what it holds — until its next sync asks again, so one busy hub still fills
-  a pool the others have no queue for. The owner's `cap` on a
+  to whoever's turn it is rather than to whoever asks first: what is free is
+  dealt from the same cursor to the connections short of their share, so a hub
+  that ends a run and syncs again at once cannot take the unit back from one
+  still waiting. Each harness's `cap` is dealt the same way, from a cursor of
+  its own, and a sync advertises for that harness only its connection's turn
+  at the cap, held for it like the rest of its reservation until the sync
+  ends — so two hubs that both want only Claude under a cap of two run
+  one each, and neither can refill the cap every time its own run ends. A
+  connection that leaves units unused has no work for them and is out of the
+  deal — keeping what it holds — until its next sync asks again, so one busy
+  hub still fills a pool the others have no queue for. Units left over because
+  a harness's cap gave the sync none are not that: the hub may have had only
+  that harness's work, so the connection keeps its turn at the cap, and at as
+  much of the pool as the cap has free for it. One given room at a harness
+  that spent the sync on other work passes on that harness until its cap next
+  fills, so a hub whose queue starts with other work does not hold a turn at a
+  cap it never uses. A unit held for a turn its hub turns out not to want waits
+  at most until that hub's next sync. The owner's `cap` on a
   connection bounds what a sync *asks* for and is checked nowhere else: a run
   over it is never claimed and then found to be over it.
 - **Start on acknowledgement** — [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md).

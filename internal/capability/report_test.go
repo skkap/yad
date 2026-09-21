@@ -93,7 +93,7 @@ func TestDocumentIsPublicSafe(t *testing.T) {
 func TestHostToolReportIsPublicSafe(t *testing.T) {
 	in, out := true, false
 	reps := HostTools([]hostool.Detected{
-		{ID: "git", Path: "/opt/homebrew/bin/git", Present: true, Version: "git version 2.51.0"},
+		{ID: "git", Path: "/opt/homebrew/bin/git", Present: true, Version: "git version 2.51.0", Warnings: []string{"YAD_GIT_PATH names no file"}},
 		{ID: "gh", Path: "/opt/homebrew/bin/gh", Present: true, Version: "gh 2.98.0", LoggedIn: &in, LoginHosts: []string{"ghe.example.com", "github.com"}},
 		{ID: "docker", Path: "/usr/local/bin/docker", Present: true, Version: "Docker 29.1.3", Error: "the Docker daemon is not answering — start it"},
 		{ID: "podman", Present: false, LoggedIn: &out},
@@ -106,7 +106,7 @@ func TestHostToolReportIsPublicSafe(t *testing.T) {
 	for _, want := range []string{
 		`"id":"git"`, `"present":true`, `"version":"git version 2.51.0"`,
 		`"login_hosts":["ghe.example.com","github.com"]`, `"logged_in":true`,
-		`"error":"the Docker daemon`,
+		`"error":"the Docker daemon`, `"warnings":["YAD_GIT_PATH names no file"]`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %s: %s", want, s)

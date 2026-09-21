@@ -2,14 +2,11 @@ package hostool
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/probe"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -18,14 +15,21 @@ type Detected struct {
 	ID      string `json:"id"`
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
-	Present bool   `json:"present"`
+	// Present is there being a binary detection found and probed: Path. Not
+	// that it works — Error says whether it does — and not that a run uses
+	// it: workdir's git and a harness's children look the tool up on PATH.
+	Present bool `json:"present"`
 	// Error is what went wrong with this tool: a path override that names
-	// nothing, a probe that timed out, a binary that would not run, a Docker
-	// daemon that does not answer. It is a fact about the machine, never a
-	// failure of detection, and it carries the next action wherever there is
-	// one. The first of those comes with Present false — the tool is not
-	// there, and the owner still needs to hear why.
+	// nothing with no binary on PATH either, a probe that timed out, a binary
+	// that would not run, a Docker daemon that does not answer. It is a fact
+	// about the machine, never a failure of detection, and it carries the next
+	// action wherever there is one. The first of those comes with Present
+	// false — the tool is not there, and the owner still needs to hear why.
 	Error string `json:"error,omitempty"`
+	// Warnings are what is wrong with a tool that still works: an override
+	// naming nothing while PATH has the binary, which is the one used. The
+	// same rule as Error binds them.
+	Warnings []string `json:"warnings,omitempty"`
 	// LoggedIn is nil for a tool with no notion of a login, and nil too when
 	// the tool has one and the probe could not find out — Error says why.
 	LoggedIn *bool `json:"logged_in,omitempty"`
@@ -105,57 +109,31 @@ func Detect(ctx context.Context) []Detected {
 	return out
 }
 
-// locate finds the tool's binary. The second return says whether the override
-// names something that is not there, which is the owner's mistake to hear about
-// rather than a machine that simply has no docker: falling through to PATH
-// would hide a mistyped override behind "no docker here".
-func locate(t Tool) (path string, misconfigured bool) {
-	if path := os.Getenv(t.EnvPath); path != "" {
-		if _, err := os.Stat(path); err != nil {
-			return "", true
-		}
-		return path, false
-	}
-	// LookPath, unlike the override above, already checks the file is there and
-	// can be executed.
-	path, err := exec.LookPath(t.Binary)
-	if err != nil {
-		return "", false
-	}
-	return path, false
-}
-
 func probeOne(ctx context.Context, t Tool) Detected {
 	d := Detected{ID: t.ID}
 
-	path, misconfigured := locate(t)
-	switch {
-	case misconfigured:
-		// Not present: `present` means the binary was found, and a path that
-		// names nothing did not find one.
-		d.Error = t.EnvPath + " names a file that is not there — point it at the " + t.Binary + " binary, or unset it and let PATH decide"
-		return d
-	case path == "":
-		return d // absent, and that is not an error
+	bin := probe.Find(t.EnvPath, t.Binary, t.VersionArgs)
+	d.Error = bin.Error
+	if bin.Warning != "" {
+		d.Warnings = append(d.Warnings, bin.Warning)
 	}
-	d.Path, d.Present = path, true
+	if bin.Path == "" {
+		return d // absent, and that is not an error unless an override was set
+	}
+	d.Path, d.Present = bin.Path, true
 
-	out, err := run(ctx, path, t.VersionArgs, false, versionWait())
+	out, err := run(ctx, bin.Path, t.VersionArgs, false, versionWait())
+	// None of the three quotes the wrapped error or the child: see
+	// internal/probe.
 	switch {
 	case err != nil:
-		d.Error = wontRun(t.Binary)
+		d.Error = bin.WontStart()
 		return d
 	case out.TimedOut:
-		d.Error = noAnswer(t.Binary+" "+strings.Join(t.VersionArgs, " "), versionWait())
+		d.Error = probe.NoAnswer(bin.Command(), versionWait())
 		return d
 	case out.Err != nil:
-		// Neither the wrapped error nor the child's stderr is quoted. The
-		// error names the binary's absolute path — under /Users/<name> on a
-		// Mac, which is the owner's name DEV-31 says never to send — and a
-		// tool's own stderr is unbounded text nobody vetted. What a hub can
-		// act on is that the tool does not work; what its owner needs is the
-		// next action, and running it by hand tells them more than a tail.
-		d.Error = t.Binary + " " + strings.Join(t.VersionArgs, " ") + " exited with an error — run it on this machine to see why"
+		d.Error = probe.WontAnswer(bin.Command())
 		return d
 	}
 	// The same banner-to-one-line rule the harnesses need: these three disagree
@@ -163,7 +141,7 @@ func probeOne(ctx context.Context, t Tool) Detected {
 	d.Version = harness.ParseVersion(string(out.Stdout))
 
 	if t.status != nil {
-		t.status(ctx, path, &d)
+		t.status(ctx, bin, &d)
 	}
 	return d
 }
@@ -180,15 +158,4 @@ func run(ctx context.Context, path string, args []string, mergeStderr bool, time
 	// and a probe must fail at once rather than wait for a person who is not
 	// there.
 	return supervise.Run(ctx, supervise.Spec{Path: path, Args: args, NoTTY: true, MergeStderr: mergeStderr}, outputCap)
-}
-
-// wontRun and noAnswer are the two things that go wrong with a tool that is
-// installed, said without quoting the tool: what a child printed and the path
-// it printed it from are this machine's business, and the report is public.
-func wontRun(binary string) string {
-	return binary + " is installed but will not run — check on this machine that it is an executable file"
-}
-
-func noAnswer(what string, waited time.Duration) string {
-	return fmt.Sprintf("no answer to `%s` within %s — the tool is installed but not usable until it answers", what, waited)
 }

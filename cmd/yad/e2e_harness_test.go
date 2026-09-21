@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/capability"
+	"github.com/skkap/yad/internal/harness"
 )
 
 // The end-to-end tests run once per harness with an adapter. The runner, the
@@ -160,5 +165,49 @@ func TestE2EBothHarnessesAtOnce(t *testing.T) {
 	code, _, errs := m.p.yad("", m.submitAs(codexE2E, "--session", "both-claude", "And now?")...)
 	if code == 0 || !strings.Contains(errs, "claude session") {
 		t.Errorf("a codex run in a claude session: exit %d: %s", code, errs)
+	}
+}
+
+// An override naming nothing is not the end of a runner: detection falls back
+// to PATH, advertises the harness with a warning rather than an error, and the
+// run starts the binary detection found — PATH's, not the one the dead
+// override named (DEV-68). Only the fake on PATH can play the turn here, so a
+// run that succeeds is one that started it.
+func TestE2EAnOverrideNamingNothingRunsPATHs(t *testing.T) {
+	eachHarness(t, testE2EAnOverrideNamingNothingRunsPATHs)
+}
+
+func testE2EAnOverrideNamingNothingRunsPATHs(t *testing.T, h *e2eHarness) {
+	m := newMachine(t, h)
+	entry, _ := harness.Lookup(h.name)
+	fake := os.Getenv(entry.EnvPath)
+	onPATH := t.TempDir()
+	if err := os.Symlink(fake, filepath.Join(onPATH, entry.Binary)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", onPATH)
+	t.Setenv(entry.EnvPath, filepath.Join(t.TempDir(), "uninstalled", entry.Binary))
+
+	var doc v1.Capabilities
+	if err := json.Unmarshal([]byte(m.ok("harnesses")), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range doc.Harnesses {
+		if r.ID != h.name {
+			continue
+		}
+		if !r.Present || r.Error != "" || len(r.Warnings) == 0 || !strings.Contains(r.Warnings[0], entry.EnvPath) {
+			t.Fatalf("%s is reported %+v, want it present and drivable, with a warning naming %s", h.name, r, entry.EnvPath)
+		}
+	}
+	if !capability.Drivable(doc, h.name) {
+		t.Fatalf("%s is not drivable after falling back to PATH", h.name)
+	}
+
+	m.submit("fallback-1")
+	d := m.daemon()
+	code, out, errs := m.watch("fallback-1")
+	if code != 0 || !strings.Contains(out, e2eAnswer) || !strings.Contains(out, "── succeeded in") {
+		t.Fatalf("watch exit %d: %s\n%s\ndaemon:\n%s", code, errs, out, d.out.String())
 	}
 }
