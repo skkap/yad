@@ -27,6 +27,8 @@ import (
 // run on the hub.
 type hubFlags struct {
 	url, tokenFile *string
+	// The defaults, kept to tell which flags a follow-up command must carry.
+	defURL, defTokenFile string
 }
 
 func addHubFlags(fs *flag.FlagSet, g global) hubFlags {
@@ -35,6 +37,7 @@ func addHubFlags(fs *flag.FlagSet, g global) hubFlags {
 		def = "http://" + defaultHubListen
 	}
 	return hubFlags{
+		defURL: def, defTokenFile: g.paths.HubAdminToken(),
 		url:       fs.String("hub", def, "the hub's URL, as `yad hub serve` prints it, without /api/v1 ($YAD_HUB_URL)"),
 		tokenFile: fs.String("token-file", g.paths.HubAdminToken(), "file holding the admin token (0600)"),
 	}
@@ -49,6 +52,27 @@ func (f hubFlags) client() (*hubapiclient.Client, error) {
 		return nil, fmt.Errorf("admin token file %s: %w — revoke that token on the hub and create another", *f.tokenFile, err)
 	}
 	return hubapiclient.New(*f.url, tok)
+}
+
+// watchCommand is `yad hub watch` for a run, on the hub and with the token
+// file this command was given: a bare one watches the default hub with the
+// default token, and answers "no such run" about a run that exists.
+//
+// A hub URL whose query or fragment RedactURL would take out is not printed:
+// the query is where a signed URL keeps its signature, and a redacted copy
+// pasted back would ask a different URL.
+func (f hubFlags) watchCommand(g global, runID string) string {
+	args := []string{"hub", "watch"}
+	if u := *f.url; u != f.defURL {
+		if config.RedactURL(u) != u {
+			u = "<the same --hub URL>"
+		}
+		args = append(args, "--hub", u)
+	}
+	if *f.tokenFile != f.defTokenFile {
+		args = append(args, "--token-file", *f.tokenFile)
+	}
+	return config.YadCommand(g.paths.Profile, append(args, runID)...)
 }
 
 const submitUsage = "usage: yad hub submit --harness h --model m [--context text | --context-file f] [--session id | --new-session id] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
@@ -130,7 +154,7 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 		return err
 	}
 	fmt.Fprintln(stdout, run.RunID)
-	fmt.Fprintf(stderr, "queued in session %s — follow it with `yad hub watch %s`\n", run.SessionID, run.RunID)
+	fmt.Fprintf(stderr, "queued in session %s — follow it with `%s`\n", run.SessionID, hf.watchCommand(g, run.RunID))
 	if !*watch {
 		return nil
 	}
@@ -213,7 +237,7 @@ func cmdHubControl(ctx context.Context, g global, verb string, args []string, st
 	case run.State.Terminal():
 		fmt.Fprintf(stdout, "run %s is %s\n", run.RunID, run.State)
 	case verb == "cancel":
-		fmt.Fprintf(stdout, "run %s is %s; its runner cancels it at its next sync — `yad hub watch %s` shows the end\n", run.RunID, run.State, run.RunID)
+		fmt.Fprintf(stdout, "run %s is %s; its runner cancels it at its next sync — `%s` shows the end\n", run.RunID, run.State, hf.watchCommand(g, run.RunID))
 	case verb == "interrupt":
 		fmt.Fprintf(stdout, "run %s is %s; its runner interrupts the turn at its next sync\n", run.RunID, run.State)
 	default:

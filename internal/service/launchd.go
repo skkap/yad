@@ -14,6 +14,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // Launchd installs a runner as a launchd agent in the owner's GUI domain: it
@@ -195,7 +197,7 @@ func (l *Launchd) bootout(ctx context.Context, profile string) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("launchd still holds %s after %s — check `launchctl print %s`, then run this again", l.Name(profile), settle, l.target(profile))
+			return fmt.Errorf("launchd still holds %s after %s — check `%s`, then run this again", l.Name(profile), settle, shellword.Command("launchctl", "print", l.target(profile)))
 		}
 		select {
 		case <-ctx.Done():

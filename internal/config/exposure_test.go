@@ -451,7 +451,7 @@ func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 	// `yad hub admin-token create` refuses while the file is still there —
 	// revoke only touches hub.db — so an advice line that skips the delete
 	// sends the owner into that refusal.
-	if !strings.Contains(got, "delete "+p.HubAdminToken()) {
+	if !strings.Contains(got, "`rm "+p.HubAdminToken()+"`") {
 		t.Errorf("the admin-token advice skips deleting the file, which is what makes create refuse:\n%s", got)
 	}
 	// The runner id is not a secret, and saying it is would have an owner
@@ -485,7 +485,7 @@ func TestNextActionsSurviveAPathWithASpace(t *testing.T) {
 		t.Errorf("the credential command is not pasteable:\n%s", got)
 	}
 	// A path needing no quoting keeps none, so the ordinary message stays
-	// readable — which is the whole reason shellArg checks before quoting.
+	// readable — which is the whole reason shellword.Quote checks before quoting.
 	// Checked on the command alone: these messages are prose and carry
 	// apostrophes of their own ("every run's events").
 	plain := paths(t)

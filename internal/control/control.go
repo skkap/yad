@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"syscall"
 	"time"
+
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // A stop is the one request that takes two lines, so that the CLI can tell a
@@ -155,7 +157,7 @@ func checkDir(dir string) error {
 		return fmt.Errorf("%s is not a directory — point YAD_DATA_DIR at a directory", dir)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("the data directory %s is %v, and the control socket needs it private — chmod 700 %s", dir, fi.Mode().Perm(), dir)
+		return fmt.Errorf("the data directory %s is %v, and the control socket needs it private — `%s`", dir, fi.Mode().Perm(), shellword.Command("chmod", "700", dir))
 	}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
 		return fmt.Errorf("the data directory %s belongs to uid %d, not to you (%d) — run yad as its owner, or set YAD_DATA_DIR to a directory of your own", dir, st.Uid, os.Getuid())

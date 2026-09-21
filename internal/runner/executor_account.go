@@ -8,6 +8,7 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter"
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/store/db"
 	v1 "github.com/skkap/yad/protocol/v1"
 )
@@ -37,12 +38,13 @@ func (e *Exec) pickAccount(ctx context.Context, harness string) (account.Account
 	if a, ok := account.Soonest(accounts, harness, time.Now()); ok {
 		return a, true, nil
 	}
-	return account.Account{}, false, &noFreeAccountError{harness: harness, accounts: all}
+	return account.Account{}, false, &noFreeAccountError{profile: e.Profile, harness: harness, accounts: all}
 }
 
 // noFreeAccountError says which accounts were in the way and what ends it, so
 // the message names the next action rather than the fact.
 type noFreeAccountError struct {
+	profile  string
 	harness  string
 	accounts []account.Account
 }
@@ -69,7 +71,7 @@ func (e *noFreeAccountError) Error() string {
 	}
 	msg := "no free " + e.harness + " account on this runner"
 	if len(needsLogin) > 0 {
-		msg += " — " + list(needsLogin) + " need login: run `yad account add " + e.harness + " " + needsLogin[0] + "` at the machine"
+		msg += " — " + list(needsLogin) + " need login: run `" + config.YadCommand(e.profile, "account", "add", e.harness, needsLogin[0]) + "` at the machine"
 	}
 	if len(limited) > 0 {
 		msg += " — " + list(limited)
@@ -134,7 +136,7 @@ func (e *Exec) checkLogin(ctx context.Context, a account.Account, binary string,
 	}
 	if state == v1.AccountNeedsLogin {
 		log.Warn("the account has no working login; it is skipped until the owner logs it in again",
-			"next_action", "yad account add "+a.Harness+" "+a.Label)
+			"next_action", config.YadCommand(e.Profile, "account", "add", a.Harness, a.Label))
 		return
 	}
 	log.Info("the account is logged in again")

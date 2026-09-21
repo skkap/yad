@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // The test binary doubles as the harness. Re-executed with
@@ -355,7 +357,7 @@ func TestATimedOutCheckIsNotAnAnswer(t *testing.T) {
 	// home variable, without which the paste reads the owner's own default
 	// home and answers about a different account.
 	// Single-quoted, not Go-quoted: a shell expands $ inside double quotes.
-	want := fmt.Sprintf("CODEX_HOME='%s' '%s' login status", home, bin)
+	want := "CODEX_HOME=" + shellword.Quote(home) + " " + shellword.Quote(bin) + " login status"
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("the next action is not the command yad ran:\n  want to contain: %s\n  got: %v", want, err)
 	}
@@ -375,7 +377,7 @@ func TestTheSuggestedCommandSurvivesAShell(t *testing.T) {
 		// What a POSIX shell would produce for the value, reconstructed the
 		// way sh unquotes it: everything between single quotes is literal,
 		// and '\'' is the one escape.
-		want := "CODEX_HOME='" + strings.ReplaceAll(home, "'", `'\''`) + "' '/bin/codex' login status"
+		want := "CODEX_HOME='" + strings.ReplaceAll(home, "'", `'\''`) + "' /bin/codex login status"
 		if got != want {
 			t.Errorf("suggest(%q) = %s, want %s", home, got, want)
 		}
@@ -405,7 +407,7 @@ func TestTheSuggestedCommandIsReadBackByARealShell(t *testing.T) {
 		// Swap the harness for a probe that prints what sh resolved, leaving
 		// the quoting of the environment assignment exactly as suggest wrote it.
 		probe := strings.Replace(line,
-			shellQuote(binary)+" login status",
+			shellword.Quote(binary)+" login status",
 			`sh -c 'printf "%s|%s|%s" "$CODEX_HOME" "$1" "$2"' _ login status`, 1)
 		if probe == line {
 			t.Fatalf("the probe did not replace the command, so this proves nothing: %s", line)
