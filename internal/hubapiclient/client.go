@@ -212,7 +212,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		// url.Error carries the URL, never the headers, so the bearer stays
 		// out — but the URL is the connection's own, userinfo and all, with
 		// only its password starred by Go.
-		return hubclient.RedactTransport(err)
+		return config.RedactURLError(err)
 	}
 	defer resp.Body.Close()
 	// A page is at most hubapi.MaxPage events of at most a few tens of KiB.

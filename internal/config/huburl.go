@@ -63,8 +63,11 @@ func RedactURL(raw string) string {
 		u.Fragment, u.RawFragment, changed = "redacted", "", true
 	}
 	// Opaque ("runner:secret@host", read as scheme runner) and a credential
-	// in the path of a URL with no host both parse, with no userinfo to find.
-	if strings.Contains(u.String(), "@") {
+	// in the path of a URL with no host both parse, with no userinfo to find —
+	// and either may spell its @ as %40, which String writes back as it was.
+	// Path is already decoded; Opaque is not.
+	if strings.Contains(u.String(), "@") || strings.Contains(u.Path, "@") ||
+		strings.Contains(strings.ToLower(u.Opaque), "%40") {
 		return UnprintableURL
 	}
 	if !changed {
@@ -76,6 +79,19 @@ func RedactURL(raw string) string {
 		u.User = url.User("redacted")
 	}
 	return u.String()
+}
+
+// RedactURLError is err with the URL in a *url.Error redacted. That is the
+// error net/http returns for a request that never got an answer, and it
+// quotes the URL it dialled with only the password starred, so a token held
+// as the username reaches the terminal, the daemon's log and `yad status`
+// unless every client that dials a hub passes its errors through here.
+func RedactURLError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = RedactURL(ue.URL)
+	}
+	return err
 }
 
 func loopback(host string) bool {

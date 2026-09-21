@@ -86,15 +86,7 @@ type answer struct {
 // and those three are what the checks read.
 type client struct {
 	base string
-	// redactedBase is base with its credentials taken out, and the two differ
-	// only when the connection URL carries any. A transport error quotes the
-	// URL it dialled — `Post "http://<token>@host/v1/…": dial tcp …` — and
-	// Go's own stripping covers the password and leaves the username, which
-	// is where a URL-shaped credential usually sits. Replacing the base URL
-	// whole cannot mis-fire the way a bare word would: `runner` as a username
-	// would otherwise redact the word "runner" everywhere in the report.
-	redactedBase string
-	http         *http.Client
+	http *http.Client
 	// seen is every answer in order, for the checks that judge all of them —
 	// the error envelope, and the controls a hub may send.
 	seen []*answer
@@ -110,15 +102,14 @@ type client struct {
 
 func newClient(base string, known ...string) *client {
 	c := &client{
-		base:         strings.TrimRight(base, "/"),
-		redactedBase: config.RedactURL(strings.TrimRight(base, "/")),
+		base: strings.TrimRight(base, "/"),
 		http: &http.Client{
 			Timeout: requestTimeout,
 			// Go keeps the Authorization header across a same-host redirect
 			// whatever the scheme, so a hub answering 307 to http:// would be
 			// handed the credential in cleartext. No protocol call redirects.
 			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-				return fmt.Errorf("the hub redirected to %s; no protocol call redirects", req.URL.Redacted())
+				return fmt.Errorf("the hub redirected to %s; no protocol call redirects", config.RedactURL(req.URL.String()))
 			},
 		},
 	}
@@ -151,9 +142,6 @@ func (c *client) learn(secret string) {
 // needles, and no pattern matching: a redactor with false positives is one
 // somebody switches off.
 func (c *client) hide(text string) string {
-	if c.redactedBase != c.base {
-		text = strings.ReplaceAll(text, c.base, c.redactedBase)
-	}
 	text = c.hideKnown(text)
 	for _, secret := range c.known {
 		if needle := encoded(secret); needle != "" {
@@ -215,7 +203,10 @@ func (c *client) do(ctx context.Context, in call) (*answer, error) {
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", method, in.path, err)
+		// A transport error quotes the URL it dialled, with only the password
+		// starred by Go — and the username is where a URL-shaped credential
+		// usually sits.
+		return nil, fmt.Errorf("%s %s: %w", method, in.path, config.RedactURLError(err))
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(res.Body, readLimit))

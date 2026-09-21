@@ -49,6 +49,9 @@ func TestARefusedHubURLNeverCarriesItsCredential(t *testing.T) {
 		// so there is no userinfo for a redactor to find.
 		"runner:" + secret + "@hub.example/v1",
 		secret + "@hub.example/v1",
+		// The same two with the @ escaped, which String writes back as given.
+		"runner:" + secret + "%40hub.example/v1",
+		"https:///runner:" + secret + "%40hub.example/v1",
 		// No host: the credential is in the path, not the userinfo.
 		"https:///" + secret + "@hub.example/v1",
 		// url.Parse refuses both, and its own error quotes the URL.
