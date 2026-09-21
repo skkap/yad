@@ -80,3 +80,60 @@ func TestTheHubEnforcesWhatTheSchemaDescribes(t *testing.T) {
 		})
 	}
 }
+
+// Generating the document must not change how a hub answers.
+//
+// constrainSources writes into a schema registry, and in huma the document a
+// hub hands out *is* the registry it validates bodies against. While
+// generating was a method, a hub that generated its own document began
+// enforcing the oneOf: the same request that had been 400 with "set git or
+// path, not both" came back 422 with huma's "matched multiple". Measured, on
+// one hub, with a single ServiceOpenAPI() call between two identical requests.
+//
+// The measurement that missed it was taken on a fresh hub — the configuration
+// that cannot show the difference — rather than on one that had generated the
+// document, which is the configuration that varies.
+//
+// This cannot be made red against the code as it stands, and that is the fix
+// rather than a gap in the test: generating is no longer a method, so a hub
+// has no way to generate its own document and the defect is not expressible.
+// What this holds is the behaviour through the route that does exist.
+func TestGeneratingTheDocumentDoesNotChangeHowAHubAnswers(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	both := `{"harness":"claude","model":"sonnet","brief":{"instruction":"hi"},"sources":[{"git":{"url":"https://e.com/r.git"},"path":"/tmp/x"}]}`
+	for _, when := range []string{"before generating", "after generating"} {
+		code, env := f.api(t, "POST", "/runs", tok, both, nil)
+		if code != http.StatusBadRequest || env.Message != "sources[0]: set git or path, not both" {
+			t.Errorf("%s: HTTP %d %q; want 400 and the message that names the rule", when, code, env.Message)
+		}
+		if when == "before generating" {
+			for _, gen := range []func() ([]byte, error){OpenAPIYAML, ServiceOpenAPIYAML} {
+				if _, err := gen(); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+}
+
+// And the invariant itself, which is what catches a future method: whatever
+// has been generated, the schemas a serving hub validates against carry no
+// oneOf. This one does go red against a generator that mutates the hub it is
+// given — it is the assertion, not the symptom.
+func TestAServingHubsRegistryNeverCarriesTheConstraint(t *testing.T) {
+	h := New(Options{})
+	if _, err := ServiceOpenAPIYAML(); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately the same shape a method would have had.
+	constrained := constrainSources(New(Options{}).service.OpenAPI())
+	if constrained.Components.Schemas.Map()["Source"].OneOf == nil {
+		t.Fatal("constrainSources added nothing, so this test proves nothing")
+	}
+	for name, doc := range map[string]*huma.OpenAPI{"protocol": h.api.OpenAPI(), "service": h.service.OpenAPI()} {
+		if src := doc.Components.Schemas.Map()["Source"]; src != nil && src.OneOf != nil {
+			t.Errorf("%s: a live hub's Source schema carries the oneOf, so this hub validates against it", name)
+		}
+	}
+}

@@ -42,15 +42,19 @@ func constrainSources(doc *huma.OpenAPI) *huma.OpenAPI {
 }
 
 // addSourceOneOf walks a schema and constrains every Source-shaped object it
-// finds. Source is inlined rather than named — only GitSource gets a component
-// of its own — so there is no single place to reach for, and it appears in
-// both documents: Run.sources in the protocol, SubmitRequest.sources in the
-// service API.
+// finds.
 //
-// Shape is the whole test: an object whose properties are exactly git and
-// path. Nothing else in either document has those two and nothing else should
-// gain the constraint, which is why this is one named rule rather than a
-// general pass over the document.
+// Source is a named component in both documents — protocol/v1's and the
+// service API's — so the walk is not there for want of somewhere to reach:
+// the test reaches for it by name. It is there because the constraint is
+// defined by shape rather than by that name, an object whose properties are
+// exactly git and path, so a second type of the same shape would be caught
+// and a renamed Source would not be missed. Nothing else in either document
+// has those two properties.
+//
+// That is also why this is one named rule and not a general pass over the
+// document: a hook that can add anything to a generated file eventually
+// will.
 func addSourceOneOf(s *huma.Schema, seen map[*huma.Schema]bool) {
 	if s == nil || seen[s] {
 		return

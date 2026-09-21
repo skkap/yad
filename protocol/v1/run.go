@@ -181,8 +181,10 @@ func (r Run) Validate() error {
 	return errors.Join(errs...)
 }
 
-// Validate enforces exactly one of git or path. The generated schema cannot
-// say "exactly one", so this is where the rule lives.
+// Validate enforces exactly one of git or path. The generated schema says it
+// too, as a oneOf, but this is where the rule is enforced: huma validates
+// against its own registry rather than that document, and a TypeScript union
+// generated from a oneOf is not exclusive. The schema describes; this refuses.
 func (s Source) Validate() error {
 	switch {
 	case s.Git != nil && s.Path != "":

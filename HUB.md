@@ -6,12 +6,15 @@ It is generic on purpose: how a particular product queues work, authenticates
 people, or stores runs is that product's own business. What follows is only
 the part a runner can tell the difference about.
 
-**[`ARCHITECTURE.md §2`](ARCHITECTURE.md#2-the-protocol--v1) is the protocol.**
-This document does not restate it, and where the two disagree §2 is right —
-two copies of a wire description drift, and a reader cannot tell which is
-current. §2 gives the calls, the field-by-field shapes and the rules. This
-gives the things you would get wrong anyway: what the generated types cannot
-say, what a hub must *do* rather than accept, and what is checked.
+**The shapes are in `protocol/v1/openapi.yaml`; the rules are here.** Every
+behaviour a hub can fail `yad conformance` for not knowing is written below —
+you should not need anything else to build one. Field-by-field definitions
+live in the spec, which your generator reads, and
+[`ARCHITECTURE.md §2`](ARCHITECTURE.md#2-the-protocol--v1) is their authority
+and settles any disagreement: two copies of a wire description drift, and a
+reader cannot tell which is current. But §2 is not a prerequisite for this
+page. If you find yourself needing it to answer a question about *behaviour*,
+that is a gap here and worth reporting.
 
 ## Start from the document, not from this page
 
@@ -22,8 +25,10 @@ the contract.
 npx openapi-typescript protocol/v1/openapi.yaml -o src/protocol.ts
 ```
 
-Everything a runner sends and expects is in there. Two wire rules that the
-types express but people override anyway, both from §2:
+Every *body* a runner sends and expects is in there. Headers are not: the
+documents declare no header parameters, so `Yad-Protocol` and the bearer are
+yours to read from this page. Two wire rules the types do express, and which
+hand-written encoders override anyway:
 
 - **An absent list is an empty list.** A list that can be empty is omitted, not
   sent as `[]` or `null`. Your encoder must do the same, or a runner that
@@ -34,13 +39,41 @@ types express but people override anyway, both from §2:
 
 ### What the types cannot tell you
 
-**A `Source` is exactly one of `git` or `path`.** The document says this with
-a `oneOf`, so generated types give you a union and TypeScript will keep you
-honest. `yad hub` enforces the same rule in code rather than from the schema,
-so a run naming both comes back `400 invalid` with
-`sources[0]: set git or path, not both` rather than a schema-shaped
-complaint. Enforce it however you like; just do not accept both, and do not
-accept neither.
+**A `Source` is exactly one of `git` or `path` — and your generated types will
+not enforce it.** The document says the rule with a `oneOf`, but
+`openapi-typescript` renders `oneOf` as a plain union rather than an exclusive
+one; its own documentation notes this "mimics behavior closer to `anyOf`". So
+the generated `Source` will happily accept both fields set, and both unset.
+The constraint is in the document for you and for tooling that reads it, not
+as a type you can lean on. **Check it yourself.** A run naming both, or
+neither, must be refused.
+
+**Every run you offer must satisfy rules beyond the schema**, and conformance
+checks that you refuse one that does not — whole, not partially. A run with no
+model. Two grants sharing a name. Two *file* grants whose names differ only by
+case, which on a case-folding filesystem become one file and silently the
+second value. The `Source` rule above is one of this family, not a special
+case.
+
+**`Yad-Protocol` is on every request and appears nowhere in the spec.** The
+generated documents declare no header parameters at all, so a client generated
+from `openapi.yaml` alone gives you no hint it exists. It is required, and a
+request missing it or naming another version is refused before its body is
+read — see below.
+
+## Authenticating a runner
+
+**`register` is authenticated by a registration token your hub issued**, as the
+bearer. Register no runner without one, and none with a bearer you did not
+issue.
+
+**A registration token registers one runner once.** Presented a second time,
+for any runner, it is refused. It is spent whether or not the runner it
+registered still exists.
+
+**`register` exchanges that token for a runner credential**, and that
+credential authenticates **every later call**. A sync, an events batch or a
+result carrying no bearer, or one you did not issue, is refused.
 
 ## What a hub must do
 
@@ -53,15 +86,29 @@ you offered and the next sync does not list was never received, and is yours
 to offer again — to this runner or another. A hub that treats the offer as the
 claim loses every run a runner never got.
 
-**Never offer more than the free capacity.** The sync request's
-`health.free_capacity` is what the runner has already reserved for you. Offer
-more and the surplus is refused, having occupied your queue in the meantime.
+**Never offer more than the free capacity, on either count.** The sync
+request's `health.free_capacity` is what the runner has already reserved for
+you. `total` bounds the whole response — and `by_harness` bounds each harness
+**independently of it**: a sync declaring `total: 4` with `by_harness:
+{claude: 1}` will take one Claude run, not four. That per-harness figure is the
+owner's cap on their own machine. Offer past either and the surplus is refused,
+having occupied your queue in the meantime.
+
+**A run the runner does not hold, but which its sync listed, is answered with a
+`cancel` for that run.** This is the other direction of claim-by-listing and it
+is a separate obligation: the run may have been offered to another runner,
+already finished, or never offered at all. Silence leaves the runner holding
+something you have no record of.
 
 **Leases.** Every sync renews the lease on every run it lists. A run whose
 lease lapses — `yad hub` uses four missed intervals — is **lost**: the runner
 is gone or has stopped talking, and the run will not be reported. Decide what
 lost means for you, but decide it; a run in a non-terminal state that nothing
 will ever end is a queue that only grows.
+
+**The interval you name must be between 5 s and 60 s.** `sync_interval_ms` at
+register and `next_sync_ms` in every sync response are both bounded, inclusive.
+A hub naming 2 s or 5 min is refused by conformance and clamped by a runner.
 
 **Never name a `lease_ms` shorter than the `next_sync_ms` beside it.** This is
 the one timing rule you cannot derive from the field names, and getting it
@@ -71,11 +118,25 @@ back the runs of a runner doing everything right. Four intervals is the
 default and one interval is the floor. Fewer than four is fine; fewer than one
 is the bug.
 
-**Events are idempotent by `(run, seq)`.** A resent event is not a new one.
-Answer with `acked_through`: the highest `seq` below which you hold every
-event with no gap. It is authoritative — the runner resends everything after
-it — so returning a number you have not actually stored contiguously loses
-events silently.
+**Events are idempotent by `(run, seq)`, and sequences start at 1.** A resent
+event is not a new one. **`seq` is one-based** — an empty stream is
+acknowledged through `0`, and a zero-based implementation silently never
+acknowledges anything, because it treats the runner's first event as filling a
+gap that does not exist.
+
+Answer with `acked_through`: the highest `seq` below which you hold every event
+**with no gap**. It is authoritative — the runner resends everything after it —
+so returning a number you have not actually stored contiguously loses events
+silently. A batch leaving a gap does not move it past the gap; the batch that
+fills the gap moves it over everything already held.
+
+**Only the runner a run was claimed by may append to it.** Events for a run you
+cannot match to the calling runner are refused: `403 not_holder`, or
+`404 not_found` for a run you have never heard of. The same holds for results.
+
+**Keep accepting events after the run has ended.** A batch still in the
+runner's spool when the result landed is not late, it is owed — reject it and
+the record of the run is permanently short of what happened in it.
 
 **Results are idempotent, and applied at most once.** The same terminal state
 again is acknowledged. A *different* terminal state is `409`, and yours
@@ -120,6 +181,7 @@ one to whoever asked for it.
 | `drain` | the `drain` control |
 | `close_session` | the `close_session` control, and `closed_sessions` in sync |
 | `start_at` | a run carrying `start_at` — offer one only to a runner that advertises it |
+| `live_sessions` | a run whose `session.mode` is `live` — offer one only to a runner that advertises it. The spec lists `live` as an enum value and connects it to no feature, so this pairing exists only here |
 
 Send a gated control to a runner that does not advertise its feature and
 nothing happens, for ever. `yad hub` answers such a request `409` rather than

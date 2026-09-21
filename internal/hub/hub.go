@@ -232,10 +232,22 @@ func (r *recorder) WriteHeader(status int)      { r.status = status }
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
 
 // OpenAPI returns the protocol's generated document as YAML.
-func (h *Hub) OpenAPI() ([]byte, error) { return constrainSources(h.api.OpenAPI()).YAML() }
+// The document is a property of the code, not of a hub instance, so it is not
+// a method. constrainSources writes into the schema registry the document is
+// made of — huma's document *is* its registry — so applying it to a hub that
+// serves requests makes that hub validate against the oneOf and answer 422
+// where Run.Validate should answer 400. Each of these builds a hub of its own
+// for the purpose, unreachable and discarded, so no serving hub is ever
+// touched.
+//
+// A method would be the obvious reach for anyone adding a spec endpoint, and
+// would reintroduce exactly that. There is none to reach for.
+func OpenAPIYAML() ([]byte, error) { return constrainSources(New(Options{}).api.OpenAPI()).YAML() }
 
 // ServiceOpenAPI returns the service API's generated document as YAML.
-func (h *Hub) ServiceOpenAPI() ([]byte, error) { return constrainSources(h.service.OpenAPI()).YAML() }
+func ServiceOpenAPIYAML() ([]byte, error) {
+	return constrainSources(New(Options{}).service.OpenAPI()).YAML()
+}
 
 // Config is the OpenAPI frame. Its version is the protocol's, never the
 // binary's, so a yad release that changes no wire type changes no byte of the
