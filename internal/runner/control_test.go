@@ -31,13 +31,26 @@ func (e *env) api(t *testing.T) *hubapiclient.Client {
 	return c
 }
 
-// started claims the env's queued run and starts it on x, without waiting for
-// it to end.
+// started claims the env's queued run and hands it to x, without waiting for
+// it to end — or to begin: the run's goroutine may still be preparing, and a
+// control that lands then stops a run with no harness in it.
 func started(t *testing.T, l *Loop, x *Exec) {
 	t.Helper()
 	l.Executor = x
 	mustSync(t, l)
 	mustSync(t, l)
+}
+
+// running is started, and then waits until run id's harness is up. A control
+// meant for the turn must not be sent before this: the runner marks a run
+// running only once its interrupt can reach the turn, and one that arrives
+// earlier ends the run before the harness is spawned (DEV-92).
+func running(t *testing.T, e *env, l *Loop, x *Exec, id string) {
+	t.Helper()
+	started(t, l, x)
+	eventually(t, "run "+id+" is running", func() bool {
+		return localRun(t, e, id).State == string(v1.RunRunning)
+	})
 }
 
 // ended waits for every run on x, failing rather than hanging.
@@ -101,7 +114,7 @@ func TestCancelClimbsTheLadder(t *testing.T) {
 			e.enqueue(t, testRun("a", "s1"))
 			ad := fakeHarness(tc.script)
 			x := e.executor(ad)
-			started(t, l, x)
+			running(t, e, l, x, "a")
 			view, err := e.api(t).Cancel(context.Background(), "a")
 			if err != nil || view.CancelRequestedAt == nil {
 				t.Fatalf("cancel: %+v %v", view, err)
@@ -199,7 +212,7 @@ func TestInterruptEndsTheTurn(t *testing.T) {
 			e.enqueue(t, testRun("a", "s1"))
 			ad := fakeHarness(tc.script)
 			x := e.executor(ad)
-			started(t, l, x)
+			running(t, e, l, x, "a")
 			if _, err := e.api(t).Interrupt(context.Background(), "a"); err != nil {
 				t.Fatal(err)
 			}
@@ -226,7 +239,7 @@ func TestAnswerBeforeTheCancelStands(t *testing.T) {
 	e.enqueue(t, testRun("a", "s1"))
 	limited := adapter.Outcome{State: v1.RunFailed, Error: &v1.RunError{Class: adapter.ClassUsageLimit, Message: "limit reached"}}
 	x := e.executor(fakeHarness(fake.Script{Hang: true, Stopped: &limited}))
-	started(t, l, x)
+	running(t, e, l, x, "a")
 	if _, err := e.api(t).Cancel(context.Background(), "a"); err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +266,7 @@ func TestSteerReachesTheTurn(t *testing.T) {
 			}
 			ad := fakeHarness(script)
 			x := e.executor(ad)
-			started(t, l, x)
+			running(t, e, l, x, "a")
 			api := e.api(t)
 			if _, err := api.Steer(context.Background(), "a", "use tabs"); err != nil {
 				t.Fatal(err)
@@ -299,7 +312,7 @@ func TestTheHubsCancelStopsAHeldRun(t *testing.T) {
 	l := e.loop(t, 1)
 	e.enqueue(t, testRun("a", "s1"))
 	x := e.executor(fakeHarness(fake.Script{Hang: true}))
-	started(t, l, x)
+	running(t, e, l, x, "a")
 	// The lease lapses on the hub's clock: the run is lost there.
 	e.skew.Store(int64(24 * time.Hour))
 	if err := e.hub.Sweep(context.Background()); err != nil {
@@ -328,7 +341,7 @@ func TestWatchdogWinsOverAnInterrupt(t *testing.T) {
 	e.enqueue(t, run)
 	exited := adapter.Outcome{State: v1.RunFailed, Error: &v1.RunError{Class: adapter.ClassHarnessExited, Message: "killed"}}
 	x := e.executor(fakeHarness(fake.Script{Hang: true, IgnoreInterrupt: true, Stopped: &exited}))
-	started(t, l, x)
+	running(t, e, l, x, "a")
 	if _, err := e.api(t).Interrupt(context.Background(), "a"); err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +361,7 @@ func TestAFailedInterruptIsRetried(t *testing.T) {
 	e.enqueue(t, testRun("a", "s1"))
 	ad := fakeHarness(fake.Script{Hang: true, InterruptFails: 1})
 	x := e.executor(ad)
-	started(t, l, x)
+	running(t, e, l, x, "a")
 	if _, err := e.api(t).Interrupt(context.Background(), "a"); err != nil {
 		t.Fatal(err)
 	}

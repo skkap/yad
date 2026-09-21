@@ -396,6 +396,32 @@ func TestPlainTurn(t *testing.T) {
 	}
 }
 
+// The context file is gone by the time the turn says it is over (DEV-92). A
+// runner stopping after its last turn exits once that turn is waited for, and
+// anything still to be cleaned up then is left behind in the shared temp
+// directory with the brief's context in it. The removal is made slow so that
+// cleanup running after Wait fails here every time: TestPlainTurn checks the
+// same thing at full speed, and caught it only on a loaded machine.
+func TestTheContextFileIsGoneWhenTheTurnIs(t *testing.T) {
+	old := remove
+	remove = func(path string) error {
+		time.Sleep(200 * time.Millisecond)
+		return old(path)
+	}
+	t.Cleanup(func() { remove = old })
+	h := &harness{fixture: fixture("plain")}
+	spec := h.spec(t)
+	spec.Brief.Context = "You are terse."
+	drive(t, context.Background(), spec, nil)
+	file, ok := h.seen(t).flag("--append-system-prompt-file")
+	if !ok {
+		t.Fatal("no context file was passed, so this test proved nothing")
+	}
+	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("context file %s outlived the turn: %v", file, err)
+	}
+}
+
 func TestToolEvents(t *testing.T) {
 	h := &harness{fixture: fixture("tool")}
 	evs, _, _ := drive(t, context.Background(), h.spec(t), nil)
@@ -708,7 +734,14 @@ func TestTerminateEndsADeafClaude(t *testing.T) {
 		}
 		tr.Interrupt()
 		go func() {
-			time.Sleep(100 * time.Millisecond) // the interrupt went unanswered
+			// Terminated once the fake has read the interrupt, not a fixed
+			// while after sending it: on a loaded machine the SIGTERM used
+			// to land first, and the log held no interrupt (DEV-92).
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+				if b, _ := os.ReadFile(h.log); strings.Contains(string(b), "control_request") {
+					break
+				}
+			}
 			tr.Terminate()
 		}()
 		return true

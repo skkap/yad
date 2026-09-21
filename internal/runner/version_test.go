@@ -72,7 +72,7 @@ func TestTheUpdateControlIsIgnored(t *testing.T) {
 	e.enqueue(t, testRun("a", "s1"))
 	ad := fakeHarness(fake.Script{Hang: true})
 	x := e.executor(ad)
-	started(t, l, x)
+	running(t, e, l, x, "a")
 
 	x.Control(context.Background(), "hub", v1.Control{Kind: v1.ControlUpdate, RunID: "a"})
 	mustSync(t, l)

@@ -830,14 +830,18 @@ func TestACancelledRunStillReportsWhatTheAccountBeforeItSpent(t *testing.T) {
 
 	l := e.loop(t, 1)
 	e.enqueue(t, testRun("a", "s1"))
-	x, _ := e.accountExecutor(t, accountConfig("work", "personal"), byHome(map[string]fake.Script{
+	ad := byHome(map[string]fake.Script{
 		"work": first,
 		// The turn the cancel lands in: it never answers on its own.
 		"personal": {Hang: true, Outcome: adapter.Outcome{NativeSessionID: "native-1"}},
-	}))
+	})
+	x, _ := e.accountExecutor(t, accountConfig("work", "personal"), ad)
 	started(t, l, x)
-	eventually(t, "the run reaches the second account", func() bool {
-		return localRun(t, e, "a").Account.String == "personal"
+	// The second turn itself, not the account the run moved to: the account is
+	// recorded before that turn is started, and a cancel landing in between
+	// ends the run before the turn this test is about (DEV-92).
+	eventually(t, "the second account's turn has started", func() bool {
+		return len(ad.Turns()) == 2
 	})
 	if view, err := e.api(t).Cancel(ctx, "a"); err != nil || view.CancelRequestedAt == nil {
 		t.Fatalf("cancel: %+v %v", view, err)
