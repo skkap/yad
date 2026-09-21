@@ -66,6 +66,10 @@ type Process struct {
 	tail   *tailBuffer
 	done   chan struct{}
 	err    error
+	// ctxKilled is set before done closes: ctx ended before the leader was
+	// reaped, and the leader did not exit on its own. Run reports it as
+	// TimedOut.
+	ctxKilled bool
 }
 
 // Start runs spec in a new process group. The caller owns Stdout: read it, then
@@ -124,6 +128,14 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 	}()
 	go func() {
 		p.err = cmd.Wait()
+		// Decided here, at the reap, because every later vantage point sees
+		// the deadline and the exit ready together and cannot order them. A
+		// leader that exited with a status got there on its own, however close
+		// the deadline was; one ended by a signal after ctx ended was ended by
+		// ctx's kill — the leader leads the group, so that kill always reaches
+		// it. ctx.Err is set before Done closes and the kill follows Done, so
+		// a kill of ours is never reaped with ctx.Err still nil.
+		p.ctxKilled = ctx.Err() != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Exited())
 		// The leader is gone; anything left in its group is a descendant holding
 		// pipes or git locks. It dies now, even after a clean exit.
 		p.signalGroup(syscall.SIGKILL)

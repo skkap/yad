@@ -15,9 +15,12 @@ type Capture struct {
 	// Stderr is the tail of the child's standard error, empty when the spec
 	// merged it into Stdout.
 	Stderr string
-	// TimedOut reports that ctx ended before the leader exited. The group was
-	// killed — but a descendant that left it with setsid can still survive,
-	// for the reason Run describes below.
+	// TimedOut reports that ctx ended before the leader exited on its own: the
+	// group was killed for it, and Err is that kill rather than anything the
+	// child decided. A leader that exited with a status keeps it, however close
+	// the deadline was. Callers hold ctx; its Err says whether it was a
+	// deadline or a cancel. A descendant that left the group with setsid can
+	// still survive the kill, for the reason Run describes below.
 	TimedOut bool
 	// Err is the leader's exit error, nil when it exited 0. Exit status is not
 	// success: the caller decides that from Stdout.
@@ -56,13 +59,12 @@ func Run(ctx context.Context, spec Spec, limit int) (Capture, error) {
 	select {
 	case c.Stdout = <-read:
 		gotEOF = true
+	// These three only say when to stop waiting. Once a deadline fires all of
+	// them are ready — its kill ends the leader and closes the pipe — and Go
+	// picks among ready cases at random, so none of them may decide TimedOut
+	// (DEV-70). The reap in Start does.
 	case <-p.Done():
 	case <-ctx.Done():
-		select {
-		case <-p.Done():
-		default:
-			c.TimedOut = true
-		}
 	}
 	if !gotEOF {
 		drain := time.NewTimer(runDrain)
@@ -78,6 +80,7 @@ func Run(ctx context.Context, spec Spec, limit int) (Capture, error) {
 		c.Stdout = <-read // ReadAll returns what it read before the close
 	}
 	c.Err = p.Wait()
+	c.TimedOut = p.ctxKilled
 	c.Stderr = p.Stderr()
 	return c, nil
 }
