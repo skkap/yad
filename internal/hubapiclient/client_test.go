@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -67,5 +68,38 @@ func TestNewRefusesCleartextToAnotherHost(t *testing.T) {
 	}
 	if _, err := New("http://127.0.0.1:7878", "yadadm_t"); err != nil {
 		t.Error(err)
+	}
+}
+
+// The runner's client's rule, for `yad hub run`: --hub and $YAD_HUB_URL may
+// carry a credential in their userinfo, and an unreachable or redirecting hub
+// is quoted back in the error that command prints.
+func TestAnErrorNeverQuotesACredentialFromAURL(t *testing.T) {
+	const secret = "sk-secret-token"
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+secret+"-2@"+r.Host+"/elsewhere", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirect.Close)
+	for _, tc := range []struct{ name, base string }{
+		// Port 1: nothing listens, so the call fails at the transport.
+		{"unreachable, token as username", "http://" + secret + "@127.0.0.1:1"},
+		{"unreachable, token as password", "http://runner:" + secret + "@127.0.0.1:1"},
+		{"redirected", "http://" + secret + "@" + strings.TrimPrefix(redirect.URL, "http://") + ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := New(tc.base, "a-token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = c.Runners(context.Background())
+			switch {
+			case err == nil:
+				t.Fatal("the call succeeded; it was meant to fail and quote a URL")
+			case strings.Contains(err.Error(), secret):
+				t.Errorf("the error carries the credential: %v", err)
+			case !strings.Contains(err.Error(), "127.0.0.1:"):
+				t.Errorf("the error no longer says which hub it could not reach: %v", err)
+			}
+		})
 	}
 }

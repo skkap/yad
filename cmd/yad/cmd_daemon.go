@@ -294,7 +294,9 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		if !ok {
 			cs.State = runner.ConnStarting
 		}
-		conn := control.Connection{Name: c.Name, URL: c.URL, State: cs.State, LastError: cs.LastError, Held: cs.Held, Cap: cs.Cap}
+		// Redacted here rather than where status prints it, so nothing that
+		// reads the control socket is handed a credential from the URL.
+		conn := control.Connection{Name: c.Name, URL: config.RedactURL(c.URL), State: cs.State, LastError: cs.LastError, Held: cs.Held, Cap: cs.Cap}
 		if !cs.LastSync.IsZero() {
 			conn.LastSync = &cs.LastSync
 		}

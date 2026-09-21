@@ -9,6 +9,8 @@ import (
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/config"
 )
 
 const fakeToken = "fake-registration-token"
@@ -163,7 +165,7 @@ func TestTheSuiteRefusesWhatItCannotCheckSafely(t *testing.T) {
 // A failure prints what the hub answered, and the answer to the rule about a
 // spent token is a registration that carries a live runner credential. The
 // report is read in a terminal and kept in a pipeline's log, so the credential
-// must not be in it (CLAUDE.md, Guardrails).
+// must not be in it (AGENTS.md, Guardrails).
 func TestNoSecretReachesTheReport(t *testing.T) {
 	t.Parallel()
 	f, url := newFake(t, flawTokenIsReusable, fakeRunSpec(0), fakeRunSpec(1))
@@ -553,7 +555,7 @@ func TestASecretInWhatACheckWritesIsNotPrinted(t *testing.T) {
 // well have been given one with a password in it.
 func TestAPasswordInTheURLIsNotPrinted(t *testing.T) {
 	t.Parallel()
-	rep := &Report{BaseURL: redactedURL("https://runner:hunter2@hub.example/v1"), Harness: DefaultHarness}
+	rep := &Report{BaseURL: config.RedactURL("https://runner:hunter2@hub.example/v1"), Harness: DefaultHarness}
 	var out strings.Builder
 	rep.Print(&out)
 	if strings.Contains(out.String(), "hunter2") {
@@ -599,23 +601,33 @@ func TestASecretTheHubSentIsNotPrinted(t *testing.T) {
 // which is where a URL-shaped credential usually sits.
 func TestACredentialInTheURLIsNotPrintedByATransportError(t *testing.T) {
 	t.Parallel()
-	// Port 1: nothing is listening, so every call fails at the transport and
-	// every failure carries the URL.
 	const secret = "sk-secret-token-abc"
-	rep, err := Run(context.Background(), Options{BaseURL: "http://" + secret + "@127.0.0.1:1/v1", Token: fakeToken})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if o := outcome(t, rep, "errors/unknown-path"); o.Status != Failed {
-		t.Fatalf("errors/unknown-path was %s against a hub that is not listening, so no transport error was printed", label(o.Status))
-	}
-	var out strings.Builder
-	rep.Print(&out)
-	if strings.Contains(out.String(), secret) {
-		t.Errorf("the credential in the URL is in the report:\n%s", out.String())
-	}
-	if !strings.Contains(out.String(), "127.0.0.1:1") {
-		t.Errorf("the report no longer says which address it could not reach:\n%s", out.String())
+	// Port 1: nothing is listening, so every call fails at the transport and
+	// every failure carries the URL. The second shape is the one a
+	// replace-the-base-URL redaction misses: Go stars the password, so the
+	// URL it quotes is no longer the base, and the username goes through.
+	for _, base := range []string{
+		"http://" + secret + "@127.0.0.1:1/v1",
+		"http://" + secret + ":password@127.0.0.1:1/v1",
+	} {
+		t.Run(base, func(t *testing.T) {
+			t.Parallel()
+			rep, err := Run(context.Background(), Options{BaseURL: base, Token: fakeToken})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if o := outcome(t, rep, "errors/unknown-path"); o.Status != Failed {
+				t.Fatalf("errors/unknown-path was %s against a hub that is not listening, so no transport error was printed", label(o.Status))
+			}
+			var out strings.Builder
+			rep.Print(&out)
+			if strings.Contains(out.String(), secret) {
+				t.Errorf("the credential in the URL is in the report:\n%s", out.String())
+			}
+			if !strings.Contains(out.String(), "127.0.0.1:1") {
+				t.Errorf("the report no longer says which address it could not reach:\n%s", out.String())
+			}
+		})
 	}
 }
 

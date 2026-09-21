@@ -126,6 +126,11 @@ wanted any of this could simply ask the harness for it.
 - **Tokens are never logged, printed or transmitted** beyond where they are
   delivered. A registration token typed into `yad connect` is the one
   exception ([0020](decisions/0020-the-registration-token-may-be-typed.md)).
+  A hub URL can carry one too, as `https://user:secret@hub/…`: wherever yad
+  prints, logs or reports a hub URL — `yad connect`, `yad status`, a refused
+  URL, an unreachable hub — the userinfo, query and fragment are taken out
+  first, and a URL that does not parse is not repeated at all
+  (`config.RedactURL`).
 
 ### Where a grant actually lands
 

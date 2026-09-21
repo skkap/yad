@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"runtime"
 	"slices"
-	"strings"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -217,11 +216,7 @@ type timing struct {
 // wrong is in the report, not in the error.
 func Run(ctx context.Context, opts Options) (*Report, error) {
 	if err := config.CheckHubURL(opts.BaseURL); err != nil {
-		// The refusal quotes the URL it refused, and a URL is a place people
-		// are handed credentials — `https://runner:secret@hub/v1`. This is
-		// the one error of this suite's that a person sees before anything is
-		// redacted, because it happens before there is a report.
-		return nil, errors.New(strings.ReplaceAll(err.Error(), opts.BaseURL, redactedURL(opts.BaseURL)))
+		return nil, err
 	}
 	if opts.Token == "" {
 		return nil, errors.New("a registration token is needed: create one on the hub (`yad hub token create`, or the hub's Add runner) and pass it with --token")
@@ -247,7 +242,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		fingerprint: fp,
 		offered:     map[string]v1.Run{},
 	}
-	rep := &Report{BaseURL: redactedURL(opts.BaseURL), Harness: opts.Harness}
+	rep := &Report{BaseURL: config.RedactURL(opts.BaseURL), Harness: opts.Harness}
 	all := checks()
 	for i, ch := range all {
 		rep.Outcomes = append(rep.Outcomes, s.make(ctx, ch))
@@ -512,20 +507,6 @@ func (s *session) claimable() []string {
 		}
 	}
 	return ids
-}
-
-// redactedURL is a connection URL with any password in it replaced, because
-// the report prints it at the top and `https://user:secret@hub.example/v1` is
-// a URL a person may well have been given.
-func redactedURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.User == nil {
-		return raw
-	}
-	// Both halves, not the password alone: `https://<token>@host/` puts a
-	// credential in the username, and url.Redacted keeps that.
-	u.User = url.User("redacted")
-	return u.String()
 }
 
 // newID is a fresh identifier for this run of the suite, so two suites against
