@@ -160,7 +160,13 @@ Connect the hubs you would hand that much to, and nothing else.
 What that means in practice. A run's grants may be named anything a shell
 accepts as a variable, except `PATH`, `HOME` and the loader variables `LD_*` and
 `DYLD_*` — refused whatever their case, and only because a hub's mistake there
-would make every run fail for no visible reason. `IS_SANDBOX` is accepted as a
+would make every run fail for no visible reason. Nor may a grant name the
+variables that choose which login a harness uses — `ANTHROPIC_API_KEY`,
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENAI_API_KEY` and a few more
+(`protocol/v1/grant.go`): the accounts you configured decide what a run spends,
+and a hub's key must not quietly replace them while `yad account list` still
+names yours ([0040](docs/decisions/0040-a-grant-may-not-move-a-run-off-its-account.md)).
+`IS_SANDBOX` is accepted as a
 name and then dropped before Claude starts: only you declare that, in the
 runner's own environment. A grant reaches the harness process alone, never the
 prompt, the logs or the events, as `NAME=value` or a `0600` file under the

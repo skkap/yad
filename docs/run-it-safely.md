@@ -96,6 +96,17 @@ wanted any of this could simply ask the harness for it.
   mistake must not unset `PATH` and make every run fail in a way nobody can
   trace back.
   0024's secret-shaped suffix rule and its reserved namespaces are gone.
+- **Account names.** A grant may not name a variable that chooses whose
+  credential a harness uses or which home it logs in from —
+  `ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENAI_API_KEY`, the
+  base-URL overrides and the rest of `accountGrantNames` in the same file
+  ([0040](decisions/0040-a-grant-may-not-move-a-run-off-its-account.md)). This
+  is not a defence either: a brief could still tell the harness to run itself
+  with any key. It keeps your accounts honest. A grant lands after the runner
+  scrubs your own `ANTHROPIC_API_KEY`, so without it a hub's key would run the
+  turn while the run's events, health and `yad account list` named your
+  account — and that account's limits would never fire, failover would never
+  move, and health would call it free for ever.
 - **`IS_SANDBOX` is two facts that only make sense together.** It is an
   acceptable *grant name* — no namespace rule refuses it any more — and the
   Claude adapter still strips it from the run's environment before starting

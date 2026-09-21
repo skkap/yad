@@ -237,10 +237,13 @@ plain-text 404 or 405.
 
 `session.mode = "live"` is reserved and refused until a runner advertises it.
 A grant's `name` is any valid environment variable name except `PATH`, `HOME`,
-`LD_*` and `DYLD_*` in any case, no two grants share a name, and no two `file`
-grants have names differing only by case — one file on a case-folding
-filesystem. The schema cannot say any of that, so both sides check it and a run
-breaking it is refused whole (`Run.Validate`, decision 0038).
+`LD_*` and `DYLD_*`, and except the variables that choose a harness's
+credential or home (`ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and
+the rest of `accountGrantNames` in `protocol/v1/grant.go`), all in any case; no
+two grants share a name, and no two `file` grants have names differing only by
+case — one file on a case-folding filesystem. The schema cannot say any of
+that, so both sides check it and a run breaking it is refused whole
+(`Run.Validate`, decisions 0038 and 0040).
 
 ### Run states
 
@@ -450,7 +453,9 @@ for `codex`); the suite never runs a real harness.
 - **One spawn point.** Every child — harness, git, setup hook, `--version` probe —
   starts through `supervise.Start`: its own process group, a scrubbed environment
   (`CLAUDECODE`, every `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY` unless configured,
-  anything `YAD_*`), and a stderr tail kept at 2 KiB. git and setup hooks start
+  anything `YAD_*`), and a stderr tail kept at 2 KiB. A run's grants are added
+  after the scrub, which is why a grant may not name `ANTHROPIC_API_KEY` or any
+  other variable that chooses the harness's credential (0040). git and setup hooks start
   with `NoTTY` — a session of their own, no controlling terminal — so nothing
   they run can prompt. `Start` hands back the raw
   stdout pipe; the 32 MiB line cap belongs to the adapters' line reader
@@ -919,7 +924,16 @@ line here is a reviewed change.
   name is any valid environment variable name
   (`[A-Za-z_][A-Za-z0-9_]*`, which is also a plain file name) except four that
   would break the run rather than attack it: `PATH`, `HOME`, `LD_*` and
-  `DYLD_*`, matched whatever their case. Two `file` grants whose names differ
+  `DYLD_*`, matched whatever their case — and the variables that choose whose
+  credential a harness uses or which home it logs in from
+  (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `CLAUDE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, the
+  `CLAUDE_CODE_USE_*` provider switches, `CODEX_HOME`, `OPENAI_API_KEY`,
+  `CODEX_API_KEY`, `OPENAI_BASE_URL`), because a grant is appended after
+  `supervise.Scrub` and would put the turn on a credential the run's account
+  knows nothing about while its events named the account
+  ([0040](docs/decisions/0040-a-grant-may-not-move-a-run-off-its-account.md)).
+  Two `file` grants whose names differ
   only by case are refused too: on a case-folding filesystem they are one file,
   written in order, so the second truncates the first and both names end up
   pointing at the second grant's value. `protocol/v1`
