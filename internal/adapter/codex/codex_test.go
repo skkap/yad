@@ -644,21 +644,28 @@ func TestStubbornProcesses(t *testing.T) {
 	defer func(a, b, c, d time.Duration) {
 		handshakeTimeout, exitGrace, drainGrace, termGrace = a, b, c, d
 	}(handshakeTimeout, exitGrace, drainGrace, termGrace)
-	handshakeTimeout, exitGrace, drainGrace, termGrace = 300*time.Millisecond, 100*time.Millisecond, 200*time.Millisecond, 200*time.Millisecond
+	exitGrace, drainGrace, termGrace = 100*time.Millisecond, 200*time.Millisecond, 200*time.Millisecond
+	shipped := handshakeTimeout
 
 	for _, tc := range []struct {
 		name, mode string
 		state      v1.RunState
 		class      string
+		// handshake is short only where it is meant to run out. The server
+		// that answers must be given the shipped bound: its first answer comes
+		// from a race-instrumented test binary still starting, which takes
+		// longer than any short bound on a loaded machine (DEV-100).
+		handshake time.Duration
 	}{
 		// The turn is over; the server ignores its closed input and SIGTERM.
-		{name: "linger", mode: "linger", state: v1.RunSucceeded},
+		{name: "linger", mode: "linger", state: v1.RunSucceeded, handshake: shipped},
 		// It closes its output and lingers.
-		{name: "mute", mode: "mute", state: v1.RunSucceeded},
+		{name: "mute", mode: "mute", state: v1.RunSucceeded, handshake: shipped},
 		// It never answers initialize.
-		{name: "silent", mode: "silent", state: v1.RunFailed, class: adapter.ClassHarness},
+		{name: "silent", mode: "silent", state: v1.RunFailed, class: adapter.ClassHarness, handshake: 300 * time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			handshakeTimeout = tc.handshake
 			h := &harness{fixture: fixture("plain"), env: map[string]string{"CODEX_TEST_MODE": tc.mode}}
 			start := time.Now()
 			_, out, _ := drive(t, context.Background(), h.spec(t), nil)
