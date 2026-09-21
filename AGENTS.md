@@ -44,14 +44,18 @@ rebuilds them and `make check` fails when they drift.
   `"not implemented"`. Protocol errors carry a `next_action` field for the same
   reason.
 - **A next action that is a command is an executable artifact.** It is pasted,
-  so it must run as printed: built from argv with `shellword.Command` (or
-  `config.YadCommand`, which adds the profile), never formatted by hand and
-  never with Go's `%q` — every interpolated word POSIX-quoted, whether or not
-  its validation lets it hold a special character today. It carries every
-  variable the reader needs: the profile, the account's home, the `--hub` or
-  `--db` the command it follows was given. Set it apart in backticks, and test
-  it by running it through a real `sh` (`shellwordtest.Check`), not by reading
-  it.
+  so it must run as printed: built from argv with `shellword.Command`, never
+  formatted by hand and never with Go's `%q` — every interpolated word
+  POSIX-quoted, whether or not its validation lets it hold a special character
+  today. It carries every variable the reader needs: the profile and the
+  directory variables it resolved with (`Paths.Command`), the account's home,
+  `YAD_REPO` for an upgrade, the `--hub`, `--token-file` or `--db` the command
+  it follows was given. A command that leaves the machine — in a run's error,
+  a hub's answer — carries no path under anyone's home (DEV-67):
+  `config.YadCommand` names the profile alone, and a home or a database stays
+  a `<placeholder>` beside the command that shows it. Set it apart in
+  backticks, and test it by running it through a real `sh`
+  (`shellwordtest.Check`, `CheckEnv`), not by reading it.
 - **Tests never spend a token and never touch the network.** Adapters replay
   recorded fixtures; children are the fake harness (the test binary,
   re-executed); the runner is tested against `yad hub` in process.
