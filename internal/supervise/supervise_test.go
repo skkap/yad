@@ -60,6 +60,31 @@ func child(mode string) {
 		fmt.Println(gc.Process.Pid)
 	case "sleep":
 		time.Sleep(time.Hour)
+	case "close-stdout-sleep":
+		// A wrapper that redirects its output away and then waits on
+		// something: the reader sees EOF long before the leader exits.
+		os.Stdout.Close()
+		time.Sleep(time.Hour)
+	case "self-kill", "self-term":
+		// Killed by a signal nobody's deadline sent. SIGTERM stands in for a
+		// crash: with no handler installed the runtime dies of it.
+		sig := syscall.SIGKILL
+		if mode == "self-term" {
+			sig = syscall.SIGTERM
+		}
+		syscall.Kill(os.Getpid(), sig)
+		time.Sleep(time.Hour)
+	case "detached":
+		// A descendant that leaves the group with setsid, holding stdout, and a
+		// leader that answers and exits: EOF never comes.
+		gc := exec.Command(os.Args[0])
+		gc.Env = append(os.Environ(), "SUPERVISE_TEST_CHILD=sleep")
+		gc.Stdout = os.Stdout
+		gc.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := gc.Start(); err != nil {
+			os.Exit(9)
+		}
+		fmt.Println(gc.Process.Pid)
 	case "deaf-grandchild":
 		// A leader that dies on SIGTERM, leaving behind a descendant in its
 		// group that ignores it and holds our stdout — a harness whose tool

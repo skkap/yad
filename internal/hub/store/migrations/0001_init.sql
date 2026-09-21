@@ -5,8 +5,9 @@
 -- All three secret kinds — registration token, runner credential, admin token
 -- — are stored only as SHA-256 hashes. Each is 256 random bits, so a fast hash
 -- is enough: there is no password to brute-force, and a leaked database gives
--- none of the three back. It does give up a run's grants, which are plaintext
--- inside runs.spec below; see the note there.
+-- none of the three back. It does give up the grants of every run that has
+-- not ended yet, which are plaintext inside runs.spec below; see the note
+-- there.
 
 CREATE TABLE registration_tokens (
     hash       TEXT PRIMARY KEY,
@@ -55,10 +56,11 @@ CREATE TABLE runs (
     harness    TEXT NOT NULL,
     model      TEXT NOT NULL,
     -- The run exactly as it will be offered — brief, sources and grants — as
-    -- JSON. Nothing clears this: FinishRun settles a run's state and no query
-    -- deletes one, so every grant this hub has been given stays in the file.
-    -- Narrowing that is a decision, not a patch; an exposed hub.db is exposed
-    -- secrets and `yad doctor` says so.
+    -- JSON. A grant's value is held only while the run can still use it
+    -- (decision 0041): runs_forget_grants below blanks every value the moment
+    -- the run reaches a terminal state, and keeps each grant's name and
+    -- delivery, so the spec still says what the run was given. A waiting run
+    -- is not terminal and keeps its values, because its resume needs them.
     spec       TEXT NOT NULL,
     state      TEXT NOT NULL CHECK (state IN (
         'queued', 'offered',
@@ -73,6 +75,28 @@ CREATE TABLE runs (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+-- A trigger rather than a query every terminal path must remember to call:
+-- a run ends by a result, a cancel, a lapsed lease, a closed session or a
+-- deregistered runner, and the next way it ends will be written by someone
+-- who never read this. Anything that moves state onto a terminal value
+-- passes through here. The grants are rebuilt in order with only "value"
+-- emptied, so a reader still unmarshals a whole v1.Run. Each json() puts
+-- back the JSON-ness a value loses crossing a subquery, without which the
+-- list comes back as strings that hold objects. The order is an
+-- ordered subquery rather than ORDER BY inside json_group_array because sqlc
+-- 1.31.1 cannot parse the latter, and SQLite never flattens an ordered
+-- subquery into an aggregate, so the rows reach it in that order.
+CREATE TRIGGER runs_forget_grants AFTER UPDATE OF state ON runs
+WHEN NEW.state IN ('succeeded', 'failed', 'cancelled', 'timed_out', 'lost')
+  AND json_array_length(NEW.spec, '$.grants') > 0
+BEGIN
+    UPDATE runs SET spec = json_set(spec, '$.grants', json((
+        SELECT json_group_array(json(blank)) FROM (
+            SELECT json_set(g.value, '$.value', '') AS blank
+            FROM json_each(NEW.spec, '$.grants') AS g ORDER BY g.key))))
+    WHERE id = NEW.id;
+END;
 
 CREATE INDEX runs_by_state ON runs (state, created_at);
 CREATE INDEX runs_by_runner ON runs (runner_id, state);

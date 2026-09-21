@@ -11,9 +11,9 @@ import (
 // everything the suite is silent about for something the protocol does not
 // require.
 var unchecked = []struct{ rule, section, why string }{{
-	rule:    "POST /runners/{runner}/deregister — the credential dies, and the hub marks the runs that runner held lost.",
+	rule:    "POST /runners/{runner}/deregister — the credential dies; the runs that runner held are lost, its offers go back in the queue, and its sessions close with the runs queued in them ended.",
 	section: sectionCalls,
-	why:     "`yad hub`, the implementation this suite is run against, answers 501 there while the behaviour is built (yad DEV-81). A hub you write should implement it.",
+	why:     "the suite holds one registration token, and deregistering retires the only runner it has. `yad hub` implements it; a hub you write should too.",
 }, {
 	rule:    "The controls — cancel, interrupt, steer, close_session, drain — their repetition until the runner acts, and the single delivery of a steer.",
 	section: sectionSync,

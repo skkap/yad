@@ -108,7 +108,7 @@ below is relative to it, so a hub can mount the protocol anywhere.
 | `POST /runners/{runner}/sync` | the periodic call: state and health in; runs, control messages and the next interval out |
 | `POST /runs/{run}/events` | a batch of events, idempotent by `(run, seq)`; answers `acked_through` |
 | `POST /runs/{run}/result` | the terminal state, idempotent; retried from the outbox until acknowledged |
-| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost |
+| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost, requeues its offers, and closes its sessions, ending the runs queued in them |
 
 Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
@@ -761,6 +761,11 @@ queries in `internal/hub/store/*.sql`. Tables: `registration_tokens`,
 `runners` and `admin_tokens` (secrets only as SHA-256 hashes), `sessions` (the runner each is bound
 to), `runs`, `events` (unique `(run_id, seq)`) and `results` (one per run). A
 run's hub-side state adds two before the protocol's: `queued` and `offered`.
+A run's spec holds its grants' values only until the run reaches a terminal
+state: the `runs_forget_grants` trigger blanks them then and keeps their names
+([0041](docs/decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md)),
+and both databases are opened with `secure_delete`, so freed bytes are zeroed
+rather than left in the file.
 
 ## §5 The local surface
 
@@ -822,8 +827,10 @@ its socket; `--foreground` is what service units run. Logs are JSON through
 `log/slog`, rotated by size; a foreground daemon whose stdout is a file or pipe
 (a service unit's `service.log`) writes nothing more there once that log is
 open. The control socket is `0600` in a data directory
-that must itself be private, one JSON request and answer per connection; its
-protocol is internal and unversioned. The daemon holds `yad.lock` with
+that must itself be private, one JSON request and answer per connection — but
+a stop, which the daemon acknowledges and acts on only once the CLI confirms
+it ([0027](docs/decisions/0027-stop-asks-then-signals-and-restart-checks-first.md));
+its protocol is internal and unversioned. The daemon holds `yad.lock` with
 `flock(2)` for its life, which is the single-instance lock per profile: a
 socket file a crash left behind never blocks a start
 ([0026](docs/decisions/0026-the-daemon-lock-is-a-held-flock-beside-the-socket.md)).

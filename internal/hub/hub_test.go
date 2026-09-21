@@ -64,7 +64,7 @@ func TestErrorsHaveTheProtocolShape(t *testing.T) {
 		status                   int
 		code                     string
 	}{
-		{"not built yet", "POST", "/v1/runners/r/deregister", `{}`, proto, 501, v1.CodeNotImplemented},
+		{"deregister with no credential", "POST", "/v1/runners/r/deregister", `{}`, proto, 401, v1.CodeUnauthorized},
 		{"missing protocol header", "POST", "/v1/runners/r/sync", `{}`, nil, 426, v1.CodeUnsupportedProtocol},
 		{"another protocol version", "POST", "/v1/runners/r/sync", `{}`, map[string]string{v1.HeaderProtocol: "2"}, 426, v1.CodeUnsupportedProtocol},
 		{"malformed body", "POST", "/v1/runs/r/events", `{`, proto, 400, v1.CodeInvalid},

@@ -54,8 +54,9 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			return err
 		}
 		// Read again inside the transaction: a drain asked for since the
-		// credential was checked must stop this sync's offers.
-		runner, err := q.GetRunner(ctx, runner.ID)
+		// credential was checked must stop this sync's offers, and a
+		// credential retired since must stop the sync.
+		runner, err := current(ctx, q, runner)
 		if err != nil {
 			return err
 		}

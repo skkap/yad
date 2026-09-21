@@ -251,6 +251,45 @@ func TestSubmit(t *testing.T) {
 	}
 }
 
+// A retry is still a retry after the run has ended, although the hub no longer
+// holds the grant values it would once have compared (decision 0041): the
+// names and deliveries it kept are what the retry is held to.
+func TestRetryOfAnEndedRunWithGrants(t *testing.T) {
+	grants := func(name, value string) []v1.Grant { return []v1.Grant{{Name: name, Value: value, As: v1.GrantEnv}} }
+	for _, tc := range []struct {
+		name   string
+		grants []v1.Grant
+		want   int
+	}{
+		{"the same content", grants("ZUMINO_TOKEN", "secret-1"), 201},
+		{"a value rotated since", grants("ZUMINO_TOKEN", "secret-2"), 201},
+		{"another grant", grants("OTHER_TOKEN", "secret-1"), 409},
+		{"no grant", nil, 409},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			tok := f.admin(t, "cli")
+			req := submission("do it")
+			req.RunID, req.Grants = "r1", grants("ZUMINO_TOKEN", "secret-1")
+			if code, e := f.api(t, "POST", "/runs", tok, req, nil); code != 201 {
+				t.Fatalf("submit: %d %s", code, e.Message)
+			}
+			if code, e := f.api(t, "POST", "/runs/r1/cancel", tok, nil, nil); code != 200 {
+				t.Fatalf("cancel: %d %s", code, e.Message)
+			}
+			req.Grants = tc.grants
+			var got hubapi.Run
+			code, e := f.api(t, "POST", "/runs", tok, req, &got)
+			if code != tc.want {
+				t.Fatalf("retry: %d (%s), want %d", code, e.Message, tc.want)
+			}
+			if code == 201 && got.State != hubapi.RunState(v1.RunCancelled) {
+				t.Errorf("retry answered %s, want the run as it is now: cancelled", got.State)
+			}
+		})
+	}
+}
+
 // A submitted run reaches a runner exactly as submitted, grants included — and
 // the service API never hands a grant back.
 func TestSubmittedRunIsOfferedAndGrantsStayHidden(t *testing.T) {

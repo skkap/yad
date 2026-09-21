@@ -640,15 +640,10 @@ func TestGHFromProse(t *testing.T) {
 }
 
 // A probe whose deadline fires reports the timeout, never the exit status of
-// the child its own kill produced. supervise.Run decides TimedOut in a select
-// between the deadline, the leader's exit and the pipe's EOF; a child that
-// reaches EOF first settles that select before the deadline exists, so Run
-// blocks in Wait, the deadline kills the child there, and the capture comes
-// back with a kill for an error and TimedOut false. Holding stdout instead
-// leaves all three ready at once and the choice random — green on an idle
-// machine, red on a loaded one, which is how CI found this in both packages
-// (DEV-69). The rule itself is decidable and is tested in
-// harness.TestProbeTimedOutIsTheDeadlinesCall.
+// the child its own kill produced. Whether it timed out is supervise.Run's to
+// say, and supervise.TestRunTimedOutIsTheLeadersFate proves it says so every
+// time; this is the same pair of children seen through the host-tool report,
+// which is where DEV-69 found them going red.
 func TestATimedOutProbeIsNeverReportedAsAnExit(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		// PATH is empty inside isolate, so sleep is named in full.

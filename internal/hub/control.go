@@ -16,8 +16,9 @@ import (
 	"github.com/skkap/yad/internal/hub/store/db"
 )
 
-// unstartedReason is what a run cancelled before any runner started it says.
-const unstartedReason = "cancelled on the hub before a runner started it"
+// cancelledBeforeStart is what a run cancelled before any runner started it
+// says.
+var cancelledBeforeStart = unstartedEnd{v1.RunCancelled, "cancelled on the hub before a runner started it"}
 
 type (
 	runInput struct {
@@ -71,7 +72,8 @@ func (h *Hub) registerControls(api huma.API) {
 // control records what the service API asked of a run and answers the run as
 // it is now.
 func (h *Hub) control(ctx context.Context, runID string, kind v1.ControlKind, text string) (*runOutput, error) {
-	now := store.Ms(h.now())
+	at := h.now()
+	now := store.Ms(at)
 	var view hubapi.Run
 	err := h.store.Tx(ctx, func(q *db.Queries) error {
 		run, err := q.GetRun(ctx, runID)
@@ -83,9 +85,7 @@ func (h *Hub) control(ctx context.Context, runID string, kind v1.ControlKind, te
 		}
 		switch state := v1.RunState(run.State); {
 		case kind == v1.ControlCancel && (run.State == "queued" || run.State == "offered"):
-			if _, err := q.CancelUnstartedRun(ctx, db.CancelUnstartedRunParams{
-				Reason: sql.NullString{String: unstartedReason, Valid: true}, UpdatedAt: now, ID: run.ID,
-			}); err != nil {
+			if err := endUnstarted(ctx, q, run.ID, cancelledBeforeStart, at); err != nil {
 				return err
 			}
 		case run.State == "queued" || run.State == "offered":
