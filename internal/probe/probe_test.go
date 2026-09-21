@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
 // The rule for an override, in every shape a path can take. What each outcome
@@ -109,4 +112,18 @@ func file(t *testing.T, dir string, mode os.FileMode) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// Every command a message sets apart is pasted, so it must run as printed —
+// proved by a real sh, with an argument no catalog entry has yet but nothing
+// stops one having (AGENTS.md).
+func TestCommandsRunAsPrinted(t *testing.T) {
+	f := Found{envVar: "YAD_TOOL_PATH", name: "tool", versionArgs: []string{"--version", "a b'c"}}
+	for _, msg := range []string{f.WontStart(), NoAnswer(f.Command(), time.Second), WontAnswer(f.Command())} {
+		cmds := shellwordtest.Commands(msg, "tool ")
+		if len(cmds) != 1 {
+			t.Fatalf("%q sets apart %d commands, want 1", msg, len(cmds))
+		}
+		shellwordtest.Check(t, cmds[0], "tool", "--version", "a b'c")
+	}
 }

@@ -21,9 +21,10 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"time"
+
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // Found is where a catalog entry's binary is, and what finding it had to say.
@@ -95,9 +96,11 @@ func namesNothing(path string) bool {
 	return false
 }
 
-// Command is the version probe as its owner would type it.
+// Command is the version probe as its owner would paste it: built from argv,
+// every word quoted, because the messages below set it apart as a command to
+// run (AGENTS.md) whatever a catalog entry's name holds today.
 func (f Found) Command() string {
-	return strings.TrimSpace(f.name + " " + strings.Join(f.versionArgs, " "))
+	return shellword.Command(append([]string{f.name}, f.versionArgs...)...)
 }
 
 // WontStart is a binary that was found and could not be started.
@@ -116,7 +119,8 @@ func (f Found) WontStart() string {
 	return fmt.Sprintf("the %s on PATH will not start — run `%s` on this machine to see what stops it", f.name, f.Command())
 }
 
-// NoAnswer is a probe the binary never came back from. It names the command
+// NoAnswer is a probe the binary never came back from; command is built with
+// shellword.Command, as Found.Command builds it. It names the command
 // and the wait and nothing else, and gives the action because this is the case
 // where it is worth most: a CLI that hangs on its own version flag has stopped
 // telling its owner anything at all.

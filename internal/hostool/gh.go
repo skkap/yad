@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/skkap/yad/internal/probe"
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // ghLoginTTL is how long gh's answer about its login is reused before gh is
@@ -141,7 +142,7 @@ func askGH(ctx context.Context, bin probe.Found) (in bool, hosts []string, failu
 	case err != nil:
 		return false, nil, bin.WontStart()
 	case out.TimedOut:
-		return false, nil, probe.NoAnswer("gh auth status", statusWait())
+		return false, nil, probe.NoAnswer(shellword.Command("gh", "auth", "status"), statusWait())
 	}
 	// The exit status is not consulted: with `--json` gh exits 0 whatever it
 	// finds wrong with an account, and non-zero only on a fatal error — which
@@ -167,7 +168,7 @@ func askGH(ctx context.Context, bin probe.Found) (in bool, hosts []string, failu
 	case err != nil:
 		return false, nil, bin.WontStart()
 	case out.TimedOut:
-		return false, nil, probe.NoAnswer("gh auth status", statusWait())
+		return false, nil, probe.NoAnswer(shellword.Command("gh", "auth", "status"), statusWait())
 	}
 	if hosts := ghFromProse(string(out.Stdout)); len(hosts) > 0 {
 		return true, hosts, ""
