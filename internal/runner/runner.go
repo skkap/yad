@@ -48,7 +48,8 @@ type Options struct {
 // stops alone; the others carry on, and Serve reports it when it returns.
 //
 // Serve returns when every connection has stopped, when a drain has run its
-// course, or when ctx ends. The end of ctx is the way down's last step, exit
+// course, or when ctx ends. A runner with no connection configured has none to
+// stop: it collects until it is drained or ctx ends. The end of ctx is the way down's last step, exit
 // now: runs in hand are killed where they stand and stay held, for the next
 // start to report lost.
 //
@@ -64,14 +65,11 @@ func Serve(ctx context.Context, o Options) error {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
 	sweepGrants(o.Paths.Data, o.Log)
-	if len(o.Config.Connections) == 0 {
-		o.Monitor.markReady()
-		select {
-		case <-ctx.Done():
-		case <-o.Drain.Draining():
-		}
-		return nil
-	}
+	// A runner with no connection still opens its store and runs the
+	// collector: reclaiming disk and expiring what is left over belong to
+	// the machine, not to a hub. The sessions and parked runs of a hub the
+	// owner disconnected while no daemon ran are on this disk, and no hub
+	// will come back to close them.
 	st, err := store.Open(ctx, o.Paths.StateDB())
 	if err != nil {
 		return err
@@ -96,7 +94,8 @@ func Serve(ctx context.Context, o Options) error {
 	defer o.Monitor.attach(nil, nil, nil)
 
 	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, pool: pool,
-		log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{}}
+		log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{},
+		hubless: len(o.Config.Connections) == 0}
 	sv.probe = &LoginProbe{Store: st, Config: o.Config, Data: o.Paths.Data, Log: o.Log}
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
@@ -199,6 +198,10 @@ type server struct {
 	reporters map[string]*Reporter
 	log       *slog.Logger
 	monitor   *Monitor
+	// hubless is a runner with no connection configured. Having no loop is
+	// what it was asked for, not every connection having stopped: it keeps
+	// collecting until it is told to go.
+	hubless bool
 
 	mu   sync.Mutex
 	errs []error
@@ -249,6 +252,16 @@ func (s *server) run(ctx context.Context) error {
 	bg.Go(func() { s.probe.Run(lctx) })
 	go func() { bg.Wait(); close(background) }()
 	defer func() { stopLoops(); <-background }()
+	if s.hubless {
+		// Nothing is claimed, so nothing is held and there is no drain to
+		// run: a drain or the end of ctx is simply the end.
+		s.monitor.markReady()
+		select {
+		case <-ctx.Done():
+		case <-s.drain.Draining():
+		}
+		return nil
+	}
 	var wg sync.WaitGroup
 	ended := make([]chan struct{}, len(s.loops))
 	for i, l := range s.loops {

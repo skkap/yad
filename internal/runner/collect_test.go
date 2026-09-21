@@ -17,6 +17,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 	"github.com/skkap/yad/internal/workdir"
@@ -582,5 +583,66 @@ func TestPruneFollowsAReclaimAndBlocksNothing(t *testing.T) {
 	e.sweep(t)
 	if prunes != 1 {
 		t.Errorf("pruned again with nothing new reclaimed: %d", prunes)
+	}
+}
+
+// A runner with no hub connected still collects. Reclaiming disk belongs to
+// the machine: the owner who disconnected their only hub while no daemon ran
+// left its sessions and workdirs here, and no hub will come back to close
+// them. Serve used to return before opening the store when there was no
+// connection, so nothing expired and nothing was reclaimed — until a hub was
+// connected again, which might be never.
+func TestARunnerWithNoConnectionStillCollects(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	dir := filepath.Join(e.paths.Data, "workdirs", "disconnected", "s1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	// The idle TTL alone: the real disk's free space is no business of a test.
+	cfg.Sessions.DiskFloor = 0
+	idle := time.Now().Add(-cfg.Sessions.IdleTTL.Duration - day).UnixMilli()
+	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "disconnected", ID: "s1", Harness: "claude", Workdir: dir, CreatedAt: idle, LastUsedAt: idle}); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewMonitor()
+	d := NewDrain()
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, Options{Paths: e.paths, Config: cfg, RunnerID: "r",
+			Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
+			Log:          slog.New(slog.DiscardHandler), Monitor: m, Drain: d})
+	}()
+	eventually(t, "the expired session's workdir is reclaimed", func() bool { return gone(dir) })
+	s, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "disconnected", ID: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.State != "expired" {
+		t.Errorf("the session is %s, want expired", s.State)
+	}
+	if !m.Ready() {
+		t.Error("a runner with no connection is not ready")
+	}
+	// Having no loop is what it was asked for, not every connection having
+	// stopped: it waits to be told to go, and going is a clean exit.
+	select {
+	case err := <-done:
+		t.Fatalf("Serve returned %v before it was asked to stop", err)
+	default:
+	}
+	d.Stop("test")
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return after a stop")
 	}
 }

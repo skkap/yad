@@ -279,8 +279,8 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 	st := control.Status{
 		Ready:   m.Ready(),
 		Profile: p.Profile, RunnerID: doc.RunnerID, Name: doc.Name, Version: buildinfo.Version, Started: started,
-		// No pool exists without a connection, and nothing is claimed: all of
-		// it is free.
+		// No pool exists until the runner has set up, and nothing is
+		// claimed before it: all of it is free.
 		Capacity: control.Capacity{Total: doc.Capacity.Total, Free: doc.Capacity.Total},
 	}
 	snap, err := m.Snapshot(ctx)

@@ -489,15 +489,14 @@ func TestGrantFilesAreSweptAfterACrash(t *testing.T) {
 	}
 
 	// A start that claims nothing still sweeps: the runner has no connection,
-	// and the context has already ended.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	// and it is asked to go as soon as it has started.
+	ctx := context.Background()
 	var logged strings.Builder
 	cfg := config.Default()
 	if err := Serve(ctx, Options{
 		Paths: e.paths, Config: cfg, RunnerID: "r",
 		Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
-		Log:          slog.New(slog.NewTextHandler(&logged, nil)),
+		Log:          slog.New(slog.NewTextHandler(&logged, nil)), Drain: drained(),
 	}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
@@ -522,7 +521,7 @@ func TestGrantFilesAreSweptAfterACrash(t *testing.T) {
 	if err := Serve(ctx, Options{
 		Paths: e.paths, Config: cfg, RunnerID: "r",
 		Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
-		Log:          slog.New(slog.NewTextHandler(&logged, nil)),
+		Log:          slog.New(slog.NewTextHandler(&logged, nil)), Drain: drained(),
 	}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
@@ -734,12 +733,11 @@ func TestASweepThatFailsNamesNoGrant(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(dir, 0o700) })
 
 	var logged strings.Builder
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	ctx := context.Background()
 	if err := Serve(ctx, Options{
 		Paths: e.paths, Config: config.Default(), RunnerID: "r",
 		Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
-		Log:          slog.New(slog.NewTextHandler(&logged, nil)),
+		Log:          slog.New(slog.NewTextHandler(&logged, nil)), Drain: drained(),
 	}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
@@ -817,4 +815,12 @@ func TestAFailedGrantCleanupNamesNoGrant(t *testing.T) {
 	if strings.Contains(got, "AWS_SECRET_ACCESS_KEY") || strings.Contains(got, "file-secret") {
 		t.Errorf("the failure line names a grant:\n%s", got)
 	}
+}
+
+// drained is a way down already under way, so a Serve with no connection
+// returns as soon as it has started.
+func drained() *Drain {
+	d := NewDrain()
+	d.Begin("test")
+	return d
 }
