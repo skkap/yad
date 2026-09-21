@@ -1,36 +1,79 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/skkap/yad/internal/shellword"
 )
 
-// YadCommand is the yad command an owner pastes to act on profile: args after
-// the global --profile, every word quoted for a POSIX shell.
+// YadCommand is the yad command an owner pastes to act on this profile: args
+// after the global --profile, every word quoted for a POSIX shell.
 //
-// The profile is carried whenever it is not the default, because the message
-// offering the command was produced under it and the reader's shell may not
-// be: `yad account add claude work` pasted bare adds the account to the
-// default runner, and says nothing about having picked the wrong one. The
-// global flag rather than a per-command one, because every command reads it.
+// The profile is carried whenever the reader's shell could pick another one.
+// The message offering the command was produced under this profile and the
+// reader's shell may not be: `yad account add claude work` pasted into a shell
+// that exports YAD_PROFILE adds the account to that runner, and says nothing
+// about having picked the wrong one. So a non-default profile is always named,
+// and the default one too unless it is the only profile on the machine —
+// there no YAD_PROFILE can name another runner, and the command stays as bare
+// as a single-runner owner expects. The global flag rather than a per-command
+// one, because every command reads it; and it beats YAD_PROFILE, which is only
+// the flag's default.
 //
 // It names the profile and nothing else, which makes it the one for a command
-// that leaves the machine — in a run's error to a hub, or a hub's answer to a
-// runner. A command read on the machine that printed it is Paths.Command,
-// which also carries the directories the profile resolved to; those are paths
-// under the owner's home, and none of them may travel (DEV-67).
-func YadCommand(profile string, args ...string) string {
-	return shellword.Command(yadArgv(profile, args)...)
-}
-
-func yadArgv(profile string, args []string) []string {
+// that leaves the machine — a hub's answer to a runner. A command read on the
+// machine that printed it is Command, which also carries the directories the
+// profile resolved to; those are paths under the owner's home, and none of
+// them may travel (DEV-67).
+func (p Paths) YadCommand(args ...string) string {
 	argv := []string{"yad"}
-	if profile != "" && profile != DefaultProfile {
+	profile := p.Profile
+	if profile == "" {
+		profile = DefaultProfile
+	}
+	if profile != DefaultProfile || !p.onlyProfile() {
 		argv = append(argv, "--profile", profile)
 	}
-	return append(argv, args...)
+	return shellword.Command(append(argv, args...)...)
+}
+
+// onlyProfile says the default profile is the one profile on this machine: no
+// other profile's directory exists inside either of its own. Every other
+// profile lives in a profiles/ directory inside the default's (Resolve), so
+// two directory listings answer it, cheap enough to take each time a command
+// is printed — a daemon runs for weeks, and a profile added since it started
+// is one its messages must account for.
+//
+// Anything it cannot see counts as another profile, since being wrong that way
+// costs a --profile default nobody needed: a directory a YAD_ variable chose,
+// which has no profiles/ inside it to read; a Paths that never went through
+// Resolve; a listing that fails. A profile whose directories are both chosen
+// by variables lives wherever its owner put it and is invisible from here — a
+// machine carrying one beside a bare default is the one case this gets wrong.
+func (p Paths) onlyProfile() bool {
+	for i, dir := range [2]string{p.Config, p.Data} {
+		if dir == "" || p.env[i][0] == dirEnv[i][0] {
+			return false
+		}
+		entries, err := os.ReadDir(filepath.Join(dir, "profiles"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false
+		}
+		for _, e := range entries {
+			// A name no profile can have is not one: .DS_Store is not a
+			// runner.
+			if profileName.MatchString(e.Name()) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // dirEnv are the variables that decided a profile's directories (Resolve), in
@@ -74,7 +117,7 @@ func resolvedEnv() [2][2]string {
 // empty profile — and answers as if that were the one asked about. A variable
 // already exported in the reader's shell is repeated harmlessly.
 func (p Paths) Command(args ...string) string {
-	cmd := YadCommand(p.Profile, args...)
+	cmd := p.YadCommand(args...)
 	prefix := ""
 	for _, kv := range p.env {
 		if kv[0] != "" {
@@ -91,7 +134,7 @@ func (p Paths) Command(args ...string) string {
 // empty profile. So each variable Resolve was given is kept, its value a
 // placeholder naming it: the reader sees that it is needed and what to put.
 func (p Paths) RemoteCommand(args ...string) string {
-	cmd := YadCommand(p.Profile, args...)
+	cmd := p.YadCommand(args...)
 	prefix := ""
 	for _, kv := range p.env {
 		if kv[0] != "" {
