@@ -45,6 +45,12 @@ type Pool struct {
 	caps      map[string]int
 	used      int // held runs plus units reserved by syncs in flight
 	byHarness map[string]int
+	// reservedBy is the units of each capped harness that syncs in flight
+	// have advertised and not yet taken. They are out of every other sync's
+	// deal for the same reason used is: two syncs must not both promise one
+	// unit of a cap, or the hub that answers second is offered a run the
+	// runner then cannot take.
+	reservedBy map[string]int
 
 	// order is the ring, in the order connections joined it. whole is the
 	// turn over the total capacity, harness the turn over each capped
@@ -72,6 +78,8 @@ type poolConn struct {
 	held     int
 	reserved int // units its syncs in flight hold and have not yet taken
 	heldBy   map[string]int
+	// reservedBy is reserved, per capped harness.
+	reservedBy map[string]int
 	// asking is whether this connection still wants what its turn would give
 	// it. A sync that closes its reservation with units left over had no work
 	// for them and passes until it asks again, which covers a hub with an
@@ -98,7 +106,8 @@ func NewPool(c v1.Capacity) *Pool {
 	for id, n := range c.ByHarness {
 		caps[id], harness[id] = n, &turn{}
 	}
-	return &Pool{total: c.Total, caps: caps, byHarness: map[string]int{}, conns: map[string]*poolConn{}, harness: harness}
+	return &Pool{total: c.Total, caps: caps, byHarness: map[string]int{}, reservedBy: map[string]int{},
+		conns: map[string]*poolConn{}, harness: harness}
 }
 
 // Join puts a connection in the ring under the owner's cap for it, where 0 is
@@ -132,7 +141,8 @@ func (p *Pool) conn(name string) *poolConn {
 	if c, ok := p.conns[name]; ok {
 		return c
 	}
-	c := &poolConn{name: name, idx: len(p.order), asking: true, heldBy: map[string]int{}, passed: map[string]bool{}}
+	c := &poolConn{name: name, idx: len(p.order), asking: true, heldBy: map[string]int{},
+		reservedBy: map[string]int{}, passed: map[string]bool{}}
 	p.conns[name], p.order = c, append(p.order, name)
 	return c
 }
@@ -227,8 +237,10 @@ func (p *Pool) split(units, free int, t turn, stake func(*poolConn) (holding, li
 // own cap leaves room for.
 func (p *Pool) harnessSplit(h string) split {
 	cap := p.caps[h]
-	return p.split(cap, max(cap-p.byHarness[h], 0), *p.harness[h], func(c *poolConn) (int, int, bool) {
-		return c.heldBy[h], c.heldBy[h] + p.headroom(c), (c.asking || c.waits[h]) && !c.passed[h]
+	free := max(cap-p.byHarness[h]-p.reservedBy[h], 0)
+	return p.split(cap, free, *p.harness[h], func(c *poolConn) (int, int, bool) {
+		holding := c.heldBy[h] + c.reservedBy[h]
+		return holding, holding + p.headroom(c), (c.asking || c.waits[h]) && !c.passed[h]
 	})
 }
 
@@ -272,12 +284,15 @@ func (p *Pool) Reserve(conn string) *Reservation {
 	n := p.wholeSplit().room[conn]
 	p.used += n
 	c.reserved += n
-	r := &Reservation{p: p, conn: conn, n: n, by: map[string]int{}}
+	r := &Reservation{p: p, conn: conn, n: n, by: map[string]int{}, hold: map[string]int{}}
 	for h := range p.caps {
 		// Spare units of a cap nobody in its deal is short of go to whoever
 		// asks, so a harness one hub alone wants is never held idle.
 		s := p.harnessSplit(h)
 		r.by[h] = min(s.room[conn]+s.spare, n)
+		r.hold[h] = r.by[h]
+		p.reservedBy[h] += r.by[h]
+		c.reservedBy[h] += r.by[h]
 	}
 	return r
 }
@@ -306,7 +321,15 @@ type Reservation struct {
 	p    *Pool
 	conn string
 	n    int
-	by   map[string]int
+	// by is this sync's turn at each capped harness, less what it has taken
+	// of it: what Close reads to tell a hub with no work for a harness from
+	// one its cap gave none.
+	by map[string]int
+	// hold is the units of each capped harness reserved for this sync — by,
+	// but never more than n, since a unit taken for one harness is a unit no
+	// other can have. What it holds is what it advertises and what Take may
+	// turn into a run.
+	hold map[string]int
 	took bool // whether this sync turned any unit into a run
 }
 
@@ -317,9 +340,9 @@ func emptyReservation() *Reservation { return &Reservation{p: nil, by: map[strin
 // Free is what the sync declares: the hub offers no more than this.
 func (r *Reservation) Free() v1.Capacity {
 	c := v1.Capacity{Total: r.n}
-	if len(r.by) > 0 {
+	if len(r.hold) > 0 {
 		c.ByHarness = map[string]int{}
-		for id, n := range r.by {
+		for id, n := range r.hold {
 			c.ByHarness[id] = n
 		}
 	}
@@ -327,9 +350,9 @@ func (r *Reservation) Free() v1.Capacity {
 }
 
 // Take turns one reserved unit into a held run of harness h. It fails when the
-// reservation is spent, or h is capped and this sync's turn at it is spent or
-// the cap is full. release returns the unit to the pool and is safe to call
-// more than once.
+// reservation is spent, or h is capped and nothing of it is reserved for this
+// sync. release returns the unit to the pool and is safe to call more than
+// once.
 func (r *Reservation) Take(h string) (release func(), ok bool) {
 	if r.p == nil {
 		return nil, false
@@ -340,19 +363,29 @@ func (r *Reservation) Take(h string) (release func(), ok bool) {
 	if r.n == 0 {
 		return nil, false
 	}
-	// The global check as well as the turn: two syncs in flight may both
-	// have been advertised a unit that a deal moved between them.
-	cap, capped := p.caps[h]
-	if capped && (r.by[h] <= 0 || p.byHarness[h] >= cap) {
+	_, capped := p.caps[h]
+	if capped && r.hold[h] <= 0 {
 		return nil, false
 	}
+	c := p.conn(r.conn)
 	r.n--
 	r.took = true
 	if capped {
 		r.by[h]--
+		r.hold[h]--
+		p.reservedBy[h]--
+		c.reservedBy[h]--
+	}
+	// One unit fewer to take means one fewer of every other harness too:
+	// held past n, they would be kept from other syncs for nothing.
+	for id, held := range r.hold {
+		if over := held - r.n; over > 0 {
+			r.hold[id] -= over
+			p.reservedBy[id] -= over
+			c.reservedBy[id] -= over
+		}
 	}
 	p.byHarness[h]++
-	c := p.conn(r.conn)
 	c.reserved--
 	c.held++
 	c.heldBy[h]++
@@ -418,12 +451,18 @@ func (r *Reservation) putBack(h string) {
 	p := r.p
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	c := p.conn(r.conn)
 	r.n++
+	// The unit goes back to this sync's hold at h, which it came from. The
+	// holds Take trimmed from other harnesses stay trimmed: another sync may
+	// have been dealt those units since.
 	if _, capped := p.caps[h]; capped {
 		r.by[h]++
+		r.hold[h]++
+		p.reservedBy[h]++
+		c.reservedBy[h]++
 	}
 	p.byHarness[h]--
-	c := p.conn(r.conn)
 	c.reserved++
 	c.held--
 	c.heldBy[h]--
@@ -466,6 +505,11 @@ func (r *Reservation) Close() {
 	p.used -= r.n
 	c.reserved -= r.n
 	r.n = 0
+	for h, held := range r.hold {
+		p.reservedBy[h] -= held
+		c.reservedBy[h] -= held
+		r.hold[h] = 0
+	}
 	// A unit put back after its units filled comes free here, and the next
 	// time they fill is a fill of their own.
 	held := 0

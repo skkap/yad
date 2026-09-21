@@ -209,7 +209,8 @@ plain-text 404 or 405.
   that ends a run and syncs again at once cannot take the unit back from one
   still waiting. Each harness's `cap` is dealt the same way, from a cursor of
   its own, and a sync advertises for that harness only its connection's turn
-  at the cap — so two hubs that both want only Claude under a cap of two run
+  at the cap, held for it like the rest of its reservation until the sync
+  ends — so two hubs that both want only Claude under a cap of two run
   one each, and neither can refill the cap every time its own run ends. A
   connection that leaves units unused has no work for them and is out of the
   deal — keeping what it holds — until its next sync asks again, so one busy

@@ -432,6 +432,49 @@ func syncHungry(t *testing.T, p *Pool, hub hungry) []func() {
 	return ends
 }
 
+// TestTwoSyncsInFlightNeverPromiseOneUnitOfACap: a harness unit advertised
+// by one sync is held for it until it closes, exactly as a unit of the pool
+// is. Otherwise a second sync is dealt it again, both hubs offer a run for
+// it, and whichever is claimed second is a run the runner cannot take.
+func TestTwoSyncsInFlightNeverPromiseOneUnitOfACap(t *testing.T) {
+	p := NewPool(v1.Capacity{Total: 4, ByHarness: map[string]int{"claude": 2}})
+	p.Join("first", 2)
+	p.Join("second", 0)
+	p.Pass("second")
+
+	first := p.Reserve("first")
+	if got := first.Free(); got.Total != 2 || got.ByHarness["claude"] != 2 {
+		t.Fatalf("first was offered %+v, want 2 and the whole Claude cap", got)
+	}
+	second := p.Reserve("second")
+	if got := second.Free(); got.Total+first.Free().Total > 4 || got.ByHarness["claude"]+first.Free().ByHarness["claude"] > 2 {
+		t.Errorf("second was offered %+v while first holds %+v: one unit is promised twice", got, first.Free())
+	}
+	for range 2 {
+		if _, ok := first.Take("claude"); !ok {
+			t.Fatal("first could not take a Claude unit it was offered")
+		}
+	}
+	first.Close()
+	second.Close()
+
+	// A take for one harness trims what the sync holds of another to the
+	// units it has left, so those go back to the other syncs at once.
+	p = NewPool(v1.Capacity{Total: 2, ByHarness: map[string]int{"claude": 2, "codex": 2}})
+	p.Join("a", 0)
+	r := p.Reserve("a")
+	if _, ok := r.Take("codex"); !ok {
+		t.Fatal("take codex")
+	}
+	if got := r.Free(); got.Total != 1 || got.ByHarness["claude"] != 1 {
+		t.Errorf("after one take a holds %+v, want 1 unit and 1 of Claude", got)
+	}
+	r.Close()
+	if got := p.Reserve("a").Free(); got.ByHarness["claude"] != 1 {
+		t.Errorf("after close a is offered %+v of Claude, want the 1 codex leaves", got)
+	}
+}
+
 // TestAHubCappedOutOfItsHarnessKeepsItsTurn is DEV-106 as it was filed. One
 // hub holds the whole Claude cap, taken while the other had nothing queued.
 // The other's work arrives: it is offered total capacity and no Claude, so its
