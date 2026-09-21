@@ -30,10 +30,13 @@ func destroyGrants(dir string, log *slog.Logger) bool {
 		return true
 	}
 	writableDirs(dir)
-	emptyErr := emptyGrantFiles(dir)
 	if err = os.RemoveAll(dir); err == nil {
 		return true
 	}
+	// Only now, when unlinking is out of reach: emptying writes through
+	// whatever sits at a grant's path, and removal is the step that cannot
+	// touch anything outside the tree.
+	emptyErr := emptyGrantFiles(dir)
 	files, holding, unseen := grantsLeft(dir)
 	if holding == 0 && !unseen {
 		log.Error("grant files could not be removed; their contents were destroyed and the empty files remain — delete them by hand",
@@ -70,9 +73,12 @@ func writableDirs(dir string) {
 // it; on one that copies on write it buys nothing, and costs a few bytes.
 //
 // A harness runs as the owner and can replace a grant file with a link to
-// anything the owner has, so a link is never opened through: O_NOFOLLOW for a
-// symlink, O_NONBLOCK so a FIFO swapped in cannot hang the cleanup, and the
-// opened file must still be a regular one. It returns the first error.
+// anything the owner has, so a link is never written through: O_NOFOLLOW for a
+// symlink, O_NONBLOCK so a FIFO swapped in cannot hang the cleanup, the opened
+// file must still be a regular one, and it must have no other name — a hard
+// link to an owner's file is a regular file too, and the grant yad wrote has
+// exactly one. A file refused here is left whole and counted as still holding
+// a secret. It returns the first error.
 func emptyGrantFiles(dir string) error {
 	var first error
 	keep := func(err error) {
@@ -107,6 +113,9 @@ func emptyFile(path string) error {
 	}
 	if !fi.Mode().IsRegular() {
 		return &fs.PathError{Op: "empty", Path: path, Err: errors.New("not a regular file")}
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || st.Nlink != 1 {
+		return &fs.PathError{Op: "empty", Path: path, Err: errors.New("the file has another name, so emptying it would reach past the grant")}
 	}
 	if _, err := io.CopyN(f, zeros{}, fi.Size()); err != nil {
 		return err

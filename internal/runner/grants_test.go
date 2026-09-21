@@ -156,38 +156,90 @@ func TestDestroyGrants(t *testing.T) {
 	}
 }
 
-// A harness runs as the owner and can put a link where a grant file was.
-// Emptying the grants must destroy the grant and never what a link points at
-// — an owner's file would be the casualty.
-func TestEmptyingGrantsFollowsNoLink(t *testing.T) {
+// linkKinds are the two ways a harness, running as the owner, can put an
+// owner's file at a grant's path. Both are regular-looking to a walk that
+// does not ask, and emptying through either would destroy the owner's file.
+var linkKinds = []struct {
+	name string
+	link func(target, at string) error
+}{
+	{"a symbolic link", os.Symlink},
+	{"a hard link", os.Link},
+}
+
+// Emptying the grants destroys the grant and never what a link reaches.
+func TestEmptyingGrantsWritesThroughNoLink(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the permission bits this case takes away")
 	}
-	base := t.TempDir()
-	outside := filepath.Join(base, "owners-file")
-	if err := os.WriteFile(outside, []byte("keep me"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(base, "grants", "hub", "a")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, testGrantName), []byte(testGrantValue), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(dir, "LINKED")); err != nil {
-		t.Fatal(err)
-	}
-	unlockTree(t, filepath.Join(base, "grants"))
-	// Without the directory's write bit, so emptying is all that can happen.
-	chmod(t, dir, 0o500)
+	for _, lk := range linkKinds {
+		t.Run(lk.name, func(t *testing.T) {
+			base := t.TempDir()
+			outside := filepath.Join(base, "owners-file")
+			if err := os.WriteFile(outside, []byte("keep me"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(base, "grants", "hub", "a")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, testGrantName), []byte(testGrantValue), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := lk.link(outside, filepath.Join(dir, "LINKED")); err != nil {
+				t.Fatal(err)
+			}
+			unlockTree(t, filepath.Join(base, "grants"))
+			// Without the directory's write bit, so emptying is all that
+			// can happen.
+			chmod(t, dir, 0o500)
 
-	emptyGrantFiles(dir)
+			err := emptyGrantFiles(dir)
 
-	if b, err := os.ReadFile(outside); err != nil || string(b) != "keep me" {
-		t.Errorf("the file a link pointed at is %q, %v", b, err)
+			if b, rerr := os.ReadFile(outside); rerr != nil || string(b) != "keep me" {
+				t.Errorf("the file a link reached is %q, %v", b, rerr)
+			}
+			if b, rerr := os.ReadFile(filepath.Join(dir, testGrantName)); rerr != nil || len(b) != 0 {
+				t.Errorf("the grant file holds %q, %v", b, rerr)
+			}
+			if lk.name == "a hard link" && err == nil {
+				t.Error("a hard link it refused to empty was not reported")
+			}
+		})
 	}
-	if b, err := os.ReadFile(filepath.Join(dir, testGrantName)); err != nil || len(b) != 0 {
-		t.Errorf("the grant file holds %q, %v", b, err)
+}
+
+// Emptying is the fallback for a tree that cannot be removed, never a step
+// before removal: a missing write bit is got past by restoring it, so a link
+// the harness left there is unlinked with the tree and what it reached is
+// never written.
+func TestDestroyGrantsRemovesALinkRatherThanEmptyingIt(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits this case takes away")
+	}
+	for _, lk := range linkKinds {
+		t.Run(lk.name, func(t *testing.T) {
+			base := t.TempDir()
+			outside := filepath.Join(base, "owners-file")
+			if err := os.WriteFile(outside, []byte("keep me"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(base, "grants", "hub", "a")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := lk.link(outside, filepath.Join(dir, testGrantName)); err != nil {
+				t.Fatal(err)
+			}
+			unlockTree(t, filepath.Join(base, "grants"))
+			chmod(t, dir, 0o500)
+
+			if !destroyGrants(dir, slog.New(slog.DiscardHandler)) {
+				t.Error("a tree the write bit could be restored on was not removed")
+			}
+			if b, err := os.ReadFile(outside); err != nil || string(b) != "keep me" {
+				t.Errorf("the file a link reached is %q, %v", b, err)
+			}
+		})
 	}
 }
