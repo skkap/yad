@@ -137,16 +137,25 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	defer signal.Stop(sigs)
 	go runner.OnSignals(runCtx, sigs, drain, stop, log)
 
+	// The one copy of the owner's account lists every part of the runner
+	// reads, and the one `yad account add` and `remove` reload through the
+	// control socket (decision 0043). The rest of cfg is fixed until restart.
+	lists := runner.NewAccounts(g.paths.Data, account.ListsOf(cfg))
+	lists.Log = log
 	// Account states come from the state database, read-only and closed
 	// again: the runner's own store is opened inside runner.Serve, and a
 	// document built before it exists must still name the owner's accounts.
 	// A read that fails is not a reason not to start — the labels are still
 	// reported, free, which is what a runner with no limits would say.
-	accounts, err := account.Read(runCtx, g.paths, cfg, time.Now())
-	if err != nil {
-		log.Warn("could not read account states; reporting the owner's accounts as free", "err", err)
+	build := func() v1.Capabilities {
+		now := lists.Lists()
+		accounts, err := account.Read(runCtx, g.paths, now, time.Now())
+		if err != nil {
+			log.Warn("could not read account states; reporting the owner's accounts as free", "err", err)
+		}
+		return capability.Build(runCtx, id, now.Apply(cfg), accounts)
 	}
-	doc := capability.Build(runCtx, id, cfg, accounts)
+	doc := build()
 	last := capability.Fingerprint(doc)
 	fmt.Fprintf(w, "runner %s (%s) — profile %s, %s/%s, yad %s, capacity %d\n", doc.Name, id, g.paths.Profile, doc.OS, doc.Arch, doc.YadVersion, cfg.Capacity)
 	if len(cfg.Connections) > 0 {
@@ -167,6 +176,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 		return doc
 	}
 	monitor := runner.NewMonitor()
+	// An account change rebuilds the document now rather than at the next
+	// tick, so a hub hears of the new account within one sync.
+	rebuild := make(chan struct{}, 1)
 
 	// The socket outlives the runner's context: while a stop is under way,
 	// `yad status` is how the owner sees what it is waiting on.
@@ -183,6 +195,26 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				res, err := monitor.CloseSession(ctx, conn, id)
 				return control.SessionClose{Outcome: res.Outcome, Reason: string(res.Reason), LiveRun: res.LiveRun}, err
 			},
+			AccountsChanged: func(ctx context.Context, ch control.AccountChange) (control.AccountResult, error) {
+				if ch.Keep {
+					return control.AccountResult{}, lists.Keep(account.Ref{Harness: ch.Harness, Label: ch.Label})
+				}
+				// config.toml as it reads now, not as it read at start: the
+				// CLI wrote the change there before it asked.
+				now, err := config.Load(g.paths)
+				if err != nil {
+					return control.AccountResult{}, err
+				}
+				res, err := lists.Reload(ctx, account.ListsOf(now), account.Ref{Harness: ch.Harness, Label: ch.Label}, ch.Removed)
+				if err != nil {
+					return control.AccountResult{}, err
+				}
+				select {
+				case rebuild <- struct{}{}:
+				default:
+				}
+				return control.AccountResult{State: string(res.State), Runs: res.Runs}, nil
+			},
 		})
 	}()
 	defer func() {
@@ -193,7 +225,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	served := make(chan error, 1)
 	go func() {
 		served <- runner.Serve(runCtx, runner.Options{
-			Paths: g.paths, Config: cfg, RunnerID: id, Capabilities: current,
+			Paths: g.paths, Config: cfg, Accounts: lists, RunnerID: id, Capabilities: current,
 			// The catalog decides what is advertised; an adapter here with a
 			// harness still recognised there is never offered a run.
 			Adapters: runner.NewRegistry(claude.Adapter{}, codex.Adapter{}),
@@ -209,6 +241,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
+		var t time.Time
 		select {
 		case err := <-served:
 			switch {
@@ -225,21 +258,19 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				log.Error("daemon exiting: the runner stopped on its own", "err", err)
 			}
 			return err
-		case t := <-tick.C:
-			accounts, err := account.Read(runCtx, g.paths, cfg, time.Now())
-			if err != nil {
-				log.Warn("could not read account states", "err", err)
-			}
-			next := capability.Build(runCtx, id, cfg, accounts)
-			if fp := capability.Fingerprint(next); fp != last {
-				log.Info("capabilities changed", "from", last, "to", fp)
-				fmt.Fprintf(w, "%s capabilities changed %s → %s\n", t.Format(time.TimeOnly), last, fp)
-				last = fp
-			}
-			mu.Lock()
-			doc = next
-			mu.Unlock()
+		case t = <-tick.C:
+		case <-rebuild:
+			t = time.Now()
 		}
+		next := build()
+		if fp := capability.Fingerprint(next); fp != last {
+			log.Info("capabilities changed", "from", last, "to", fp)
+			fmt.Fprintf(w, "%s capabilities changed %s → %s\n", t.Format(time.TimeOnly), last, fp)
+			last = fp
+		}
+		mu.Lock()
+		doc = next
+		mu.Unlock()
 	}
 }
 

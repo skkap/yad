@@ -494,8 +494,13 @@ func Child() bool {
 	return filepath.Base(os.Args[0]) == "codex" && (os.Getenv("CODEX_TEST_FIXTURE") != "" || os.Getenv("CODEX_TEST_SCHEMA") != "")
 }
 
-// Main is the fake codex: --version, app-server generate-json-schema, and the
-// app-server itself.
+// Main is the fake codex: --version, app-server generate-json-schema, login
+// and login status, and the app-server itself.
+//
+// The login keeps a stand-in credential in CODEX_HOME, as codex keeps
+// auth.json there, and login status answers from it in codex's own words and
+// exit status; CODEX_TEST_LOGIN=fails makes the login exit 1 having written
+// nothing, which is the owner walking away from it.
 func Main() {
 	args := os.Args[1:]
 	switch {
@@ -503,6 +508,21 @@ func Main() {
 		os.Stdout.WriteString(Version + "\n")
 	case len(args) > 1 && args[0] == "app-server" && args[1] == "generate-json-schema":
 		schema()
+	case len(args) == 1 && args[0] == "login":
+		if os.Getenv("CODEX_TEST_LOGIN") == "fails" {
+			os.Stderr.WriteString("login cancelled\n")
+			os.Exit(1)
+		}
+		if err := os.WriteFile(filepath.Join(os.Getenv("CODEX_HOME"), "auth.json"), []byte(`{"stand_in":true}`), 0o600); err != nil {
+			os.Stderr.WriteString(err.Error())
+			os.Exit(1)
+		}
+	case len(args) == 2 && args[0] == "login" && args[1] == "status":
+		if _, err := os.Stat(filepath.Join(os.Getenv("CODEX_HOME"), "auth.json")); err != nil {
+			os.Stdout.WriteString("Not logged in\n")
+			os.Exit(1)
+		}
+		os.Stdout.WriteString("Logged in using ChatGPT\n")
 	default:
 		play()
 	}

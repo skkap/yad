@@ -14,22 +14,17 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/control"
 	"github.com/skkap/yad/internal/harness"
-	"github.com/skkap/yad/internal/store"
-	"github.com/skkap/yad/internal/store/db"
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
 const accountUsage = "usage: yad account add <harness> <label> | list [--json] | remove <harness> <label> [--yes]"
 
-// daemonRestartNotice is printed by both commands that write config.toml. A
-// running runner holds the config it started with, so neither an added nor a
-// removed account reaches it until it restarts — the same thing `yad connect`
-// says about a connection it has just written. One constant because add's copy
-// cannot be exercised from a test: the command refuses without a terminal.
-func daemonRestartNotice(p config.Paths) string {
-	return "A runner already running holds the config it started with — `" + p.Command("daemon", "restart") + "` for it to pick this up."
-}
+// Neither command here opens the state database for writing (decision 0043).
+// It is the daemon's: they change config.toml, and tell a running daemon over
+// the control socket, which re-reads the lists and writes what follows. With
+// no daemon running nothing is written, and the daemon catches up at start.
 
 func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error {
 	if len(args) == 0 {
@@ -48,13 +43,16 @@ func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error
 	return fmt.Errorf("unknown account subcommand %q — %s", args[0], accountUsage)
 }
 
-// accountAdd makes an account's harness home and runs the harness's own login
-// in it, with the owner at the terminal (decision 0039).
+// accountAdd makes an account's harness home, runs the harness's own login in
+// it with the owner at the terminal (decision 0039), and adds the account to
+// config.toml only once the harness's own login check says the home is logged
+// in (decision 0043).
 //
 // YAD reads nothing the login writes. What it learns afterwards is one bit,
-// from the harness's own login check: whether the home has a login. A home
-// with none is an account in needs-login — it is kept, it is reported, and it
-// is skipped for runs until the owner finishes the login.
+// from the check the login probe uses. Anything short of a definite yes — a
+// login walked away from, a check that could not answer — leaves config.toml
+// as it was and keeps the home, so running the command again picks up where
+// this one stopped; an account that cannot take runs is never added.
 func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account add", flag.ContinueOnError)
 	pos, err := positional(fs, args, 2, "usage: yad account add <harness> <label>")
@@ -68,37 +66,36 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	if err := config.ValidName(label); err != nil {
 		return fmt.Errorf("account label: %w", err)
 	}
+	again := g.paths.Command("account", "add", id, label)
 	// A login is a person at a terminal: it prints a code, opens a browser and
-	// waits. Run from a script it would hang or fail silently and leave a home
-	// with no login behind it, which is exactly the half-made account this
-	// command must not produce without saying so.
+	// waits. Run from a script it would hang or fail silently.
 	if !interactive() {
-		return fmt.Errorf("`%s` runs the harness's own login and needs you at the terminal — run it from a shell on this machine (finishing a login from elsewhere is DEV-57, backlog)", g.paths.Command("account", "add", id, label))
+		return fmt.Errorf("`%s` runs the harness's own login and needs you at the terminal — run it from a shell on this machine (finishing a login from elsewhere is DEV-57, backlog)", again)
 	}
 	bin, ok := harness.Locate(id)
 	if !ok {
 		return fmt.Errorf("%s is not installed on this machine — `%s` shows where it was looked for", id, g.paths.Command("doctor"))
 	}
-	cfg, err := config.Load(g.paths)
-	if err != nil {
+	// Loaded here only to refuse a config.toml that does not parse before the
+	// owner has spent a login on it; it is read again before it is written.
+	if _, err := config.Load(g.paths); err != nil {
 		return err
 	}
 	if err := g.paths.Ensure(); err != nil {
 		return err
 	}
-	// Before the home and the login, not after: this command ends by writing
-	// the account's state, and finding out then that it cannot would leave
-	// the owner having completed a login for nothing.
-	if err := checkStateDB(ctx, g.paths); err != nil {
-		return err
-	}
+	// Before the home is made or reused: a label removed while a run was on
+	// it has a home the daemon deletes when that run ends, which could be in
+	// the middle of this login (decision 0043). Nothing to act on if it fails:
+	// with no daemon there is nothing pending, and a daemon that cannot
+	// answer this will not answer the change either, which says so.
+	// Bounded tighter than a change: the daemon reads nothing for this, and
+	// the owner is waiting for the login to start.
+	kctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	_, _ = tellDaemon(kctx, g.paths, control.AccountChange{Harness: id, Label: label, Keep: true})
+	cancel()
 	home, err := account.Ensure(g.paths.Data, id, label)
 	if err != nil {
-		return err
-	}
-	// Recorded before the login runs: a login interrupted half way leaves an
-	// account the owner can see and finish, not a directory nothing names.
-	if err := addToConfig(g.paths, cfg, id, label); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "%s account %q: running %s's own login in %s\n", id, label, id, home)
@@ -106,31 +103,84 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 
 	loginErr := account.Login(ctx, id, bin, home, stdin, w, os.Stderr)
 	in, checkErr := account.LoggedIn(ctx, id, bin, home)
-	if checkErr != nil {
-		// The account is configured and its home exists; what is unknown is
-		// whether the login took. It is left free rather than marked, because
-		// a check that cannot run is no evidence against the login — a run
-		// that fails asks the same question again and settles it.
-		return errors.Join(loginErr, fmt.Errorf("%s account %q is configured, but its login state could not be read: %w", id, label, checkErr))
+	if checkErr != nil || !in {
+		// Not added, and said as a failure: a non-zero exit is how a script
+		// finds out. The login's own error, if it had one, goes with it.
+		why := "the login did not complete"
+		if checkErr != nil {
+			why = fmt.Sprintf("whether the login took could not be read (%v)", checkErr)
+		}
+		return errors.Join(loginErr, fmt.Errorf("%s account %q was not added: %s. config.toml is unchanged, and %s is kept for the next try — run `%s` again when you can finish the login", id, label, why, home, again))
 	}
-	state := v1.AccountNeedsLogin
-	if in {
-		state = v1.AccountFree
+
+	// Read again, not the copy from before the login: that took minutes, and
+	// a `yad connect` in another terminal meanwhile must not be written over.
+	cfg, err := config.Load(g.paths)
+	if err != nil {
+		return err
 	}
-	recordErr := recordState(ctx, g.paths, id, label, state)
-	if in {
-		fmt.Fprintf(w, "\n%s account %q is free and will take runs.\n", id, label)
-		fmt.Fprintln(w, daemonRestartNotice(g.paths))
-		return recordErr
+	if err := addToConfig(g.paths, cfg, id, label); err != nil {
+		return err
 	}
-	// Not an error in the state model — the account exists and is reported —
-	// but not a success either, and a non-zero exit is how a script finds out.
-	// Said whatever happened to the state write: what the owner has to know
-	// is that the login did not take, and a state error is joined to that
-	// rather than printed in its place.
-	fmt.Fprintf(w, "\n%s account %q needs login: the home exists, it is reported to every hub, and no run will use it.\n", id, label)
-	return errors.Join(fmt.Errorf("the login did not complete — run `%s` again when you can finish it", g.paths.Command("account", "add", id, label)), recordErr)
+	res, err := tellDaemon(ctx, g.paths, control.AccountChange{Harness: id, Label: label})
+	var refused *daemonRefusal
+	switch {
+	case errors.Is(err, control.ErrNotRunning):
+		fmt.Fprintf(w, "\n%s account %q is added and free; no daemon is running, and `%s` starts one that uses it.\n", id, label, g.paths.Command("daemon", "start"))
+		return nil
+	case errors.As(err, &refused):
+		return fmt.Errorf("%s account %q is added to config.toml, and %w", id, label, err)
+	case err != nil:
+		return fmt.Errorf("%s account %q is added to config.toml, but the running daemon did not take it up (%v) — `%s` makes it read the file again", id, label, err, g.paths.Command("daemon", "restart"))
+	}
+	// The daemon's word for the state, not this command's: it is what a run
+	// will read.
+	switch v1.AccountState(res.State) {
+	case v1.AccountFree:
+		fmt.Fprintf(w, "\n%s account %q is added, and the running daemon has taken it up: it is free and will take runs.\n", id, label)
+		return nil
+	case v1.AccountNeedsLogin:
+		// The daemon asked the same check a moment later and heard no. It
+		// wrote that down, so no run will use the account, and the owner is
+		// the one who can settle it.
+		return fmt.Errorf("%s account %q is added, but the running daemon's own check finds no login in %s — run `%s` again", id, label, home, again)
+	case v1.AccountLimited:
+		// Logged in and at a usage limit a run recorded under this label:
+		// nothing for the owner to do but wait, which `list` dates.
+		fmt.Fprintf(w, "\n%s account %q is added, and the running daemon has taken it up: it is at a usage limit, and `%s` says until when.\n", id, label, g.paths.Command("account", "list"))
+		return nil
+	}
+	return fmt.Errorf("%s account %q is added, but the running daemon could not say what state it is in — `%s` shows it", id, label, g.paths.Command("account", "list"))
 }
+
+// tellDaemon is OpAccountsChanged: the daemon re-reads config.toml's account
+// lists and acts on this one account, and has done so when this returns. No
+// daemon is control.ErrNotRunning; a daemon that answered with a refusal is a
+// *daemonRefusal, which is not the same as one that did not answer.
+func tellDaemon(ctx context.Context, p config.Paths, ch control.AccountChange) (control.AccountResult, error) {
+	// Past the daemon's own bound, so its answer — a timeout of its own
+	// included — arrives rather than this side giving up first.
+	ctx, cancel := context.WithTimeout(ctx, control.AccountsDeadline+5*time.Second)
+	defer cancel()
+	res, err := control.Send(ctx, p, control.Request{Op: control.OpAccountsChanged, Account: &ch})
+	switch {
+	case err != nil && res.PID != 0:
+		return control.AccountResult{}, &daemonRefusal{err: err}
+	case err != nil:
+		return control.AccountResult{}, err
+	case res.Account == nil:
+		return control.AccountResult{}, fmt.Errorf("the daemon answered without saying what it did — `%s` after an upgrade", p.Command("daemon", "restart"))
+	}
+	return *res.Account, nil
+}
+
+// daemonRefusal is a daemon that answered, and said no.
+type daemonRefusal struct{ err error }
+
+func (e *daemonRefusal) Error() string {
+	return "the running daemon refused the change: " + e.err.Error()
+}
+func (e *daemonRefusal) Unwrap() error { return e.err }
 
 func accountList(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account list", flag.ContinueOnError)
@@ -142,7 +192,7 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 	if err != nil {
 		return err
 	}
-	accounts, err := account.Read(ctx, g.paths, cfg, time.Now())
+	accounts, err := account.Read(ctx, g.paths, account.ListsOf(cfg), time.Now())
 	if err != nil {
 		return err
 	}
@@ -213,10 +263,18 @@ func windowsColumn(ws []v1.AccountWindow) string {
 	return strings.Join(parts, ", ")
 }
 
-// accountRemove deletes an account's harness home and forgets the account.
+// accountRemove takes an account out of config.toml and deletes its harness
+// home.
 //
 // The home holds the login, so this is the owner logging that account out of
 // this machine, and it is not undoable: it asks first unless told not to.
+//
+// Who deletes the home depends on whether a daemon is running. With none, this
+// command does, and nothing else is written — the daemon forgets the account's
+// state at its next start (decision 0043). With one, the daemon does: it is the
+// only one that knows whether a run is on the account, and a run that is
+// finishes there, in a home that must still be on disk; the last run to let go
+// of it deletes it.
 func accountRemove(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account remove", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "do not ask; the login in that home is deleted")
@@ -234,12 +292,6 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 	if err := config.ValidName(label); err != nil {
 		return fmt.Errorf("account label: %w", err)
 	}
-	// Before anything is deleted: this command ends by clearing the account's
-	// state row, and discovering then that it cannot would report a schema
-	// number to an owner whose login is already gone.
-	if err := checkStateDB(ctx, g.paths); err != nil {
-		return err
-	}
 	home := account.HomeDir(g.paths.Data, id, label)
 	if !*yes {
 		if !interactive() {
@@ -252,13 +304,12 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 			return nil
 		}
 	}
-	if err := account.Remove(g.paths.Data, id, label); err != nil {
-		return err
-	}
 	cfg, err := config.Load(g.paths)
 	if err != nil {
 		return err
 	}
+	// Out of config.toml first: from here no daemon, running or starting,
+	// gives the account a new run.
 	if h, ok := cfg.Harness[id]; ok {
 		if i := slices.Index(h.Accounts, label); i >= 0 {
 			h.Accounts = slices.Delete(slices.Clone(h.Accounts), i, i+1)
@@ -268,19 +319,28 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 			}
 		}
 	}
-	// The home is gone and the label is out of config.toml, so the removal
-	// happened; a state row nothing reads any more is not worth reporting as
-	// a failure over the top of it. Said, not swallowed.
-	forgetErr := forgetState(ctx, g.paths, id, label)
-	fmt.Fprintf(w, "removed %s account %q; %s is gone and the shared transcripts are untouched\n", id, label, home)
-	if forgetErr != nil {
-		fmt.Fprintf(w, "note: the account's state row could not be cleared (%v) — nothing reads it now that the label is out of config.toml\n", forgetErr)
+	res, err := tellDaemon(ctx, g.paths, control.AccountChange{Harness: id, Label: label, Removed: true})
+	again := g.paths.Command("account", "remove", id, label, "--yes")
+	var refused *daemonRefusal
+	switch {
+	case errors.Is(err, control.ErrNotRunning):
+		if err := account.Remove(g.paths.Data, id, label); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "removed %s account %q; %s is gone and the shared transcripts are untouched\n", id, label, home)
+		return nil
+	case errors.As(err, &refused):
+		return fmt.Errorf("%s account %q is out of config.toml, and %w — run `%s` again", id, label, err, again)
+	case err != nil:
+		// Not deleted: a run may be on it, and only the daemon could say.
+		return fmt.Errorf("%s account %q is out of config.toml, but the running daemon did not answer (%v), so its home %s is kept in case a run is using it — once `%s` answers, run `%s` again", id, label, err, home, g.paths.Command("status"), again)
 	}
-	// A runner already running holds the config it started with, so the label
-	// stays in its reports until it restarts. It will not use the account —
-	// a home that is not on disk reads as needs-login, so runs skip it — but
-	// saying nothing here makes the line above look like the whole story.
-	fmt.Fprintln(w, daemonRestartNotice(g.paths))
+	if len(res.Runs) == 0 {
+		fmt.Fprintf(w, "removed %s account %q; the running daemon has let it go, %s is gone, and the shared transcripts are untouched\n", id, label, home)
+		return nil
+	}
+	fmt.Fprintf(w, "removed %s account %q; no new run takes it. Still on it, and finishing there: %s. %s is deleted when the last of them ends; the shared transcripts are untouched\n",
+		id, label, strings.Join(res.Runs, ", "), home)
 	return nil
 }
 
@@ -300,6 +360,8 @@ func checkHarness(id string) error {
 }
 
 // addToConfig appends a label to the harness's account order if it is not
+
+// addToConfig appends a label to the harness's account order if it is not
 // already there. Appending is the whole of the ordering: the owner's list is
 // the order runs take, and rearranging it is editing config.toml.
 func addToConfig(p config.Paths, cfg config.Config, id, label string) error {
@@ -315,79 +377,10 @@ func addToConfig(p config.Paths, cfg config.Config, id, label string) error {
 	return config.Save(p, cfg)
 }
 
-// checkStateDB refuses a state database this binary would migrate, before the
-// command does anything it cannot take back.
-//
-// The same check happens again inside openForAccountWrite, because that is
-// where the open actually is; this one exists for its timing. Run only at the
-// write, it fires after `yad account add` has made the home and walked the
-// owner through an interactive login, or after `yad account remove` has
-// deleted the login and rewritten config.toml — and reports a schema number
-// instead of what just happened.
-func checkStateDB(ctx context.Context, p config.Paths) error {
-	st, err := store.OpenProfile(ctx, p)
-	if errors.Is(err, store.ErrNoState) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return st.Close()
-}
-
-// openForAccountWrite opens the runner's state database for the one row these
-// commands own.
-//
-// store.Open migrates unconditionally, and the database is the daemon's: a CLI
-// newer than the daemon must not change the schema under it (store.go, and
-// decision 0035 for why `yad sessions close` goes through the socket rather
-// than writing its row here). OpenReadOnly is the only thing that refuses a
-// skewed database, so its check is made first and its message — which names
-// `yad daemon restart` — is what the owner gets.
-//
-// Routing this write through the control socket, as a session close is routed,
-// is the fuller answer and belongs with the daemon work rather than here.
-func openForAccountWrite(ctx context.Context, p config.Paths) (*store.Store, error) {
-	switch ro, err := store.OpenProfile(ctx, p); {
-	case errors.Is(err, store.ErrNoState):
-		// No database yet: nothing to migrate under anyone.
-	case err != nil:
-		return nil, err
-	default:
-		ro.Close()
-	}
-	return store.Open(ctx, p.StateDB())
-}
-
-func recordState(ctx context.Context, p config.Paths, id, label string, state v1.AccountState) error {
-	st, err := openForAccountWrite(ctx, p)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	return account.SetState(ctx, st.Queries, id, label, state, time.Now())
-}
-
-func forgetState(ctx context.Context, p config.Paths, id, label string) error {
-	// No state database means no state to forget, and a remove is no reason
-	// to create one.
-	if _, err := os.Stat(p.StateDB()); errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	st, err := openForAccountWrite(ctx, p)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	if err := st.DeleteAccountWindows(ctx, db.DeleteAccountWindowsParams{Harness: id, Label: label}); err != nil {
-		return err
-	}
-	return st.DeleteAccount(ctx, db.DeleteAccountParams{Harness: id, Label: label})
-}
-
 // interactive says a person is at the terminal: both a keyboard to type the
-// login into and a screen for it to draw on.
-func interactive() bool {
+// login into and a screen for it to draw on. A variable so a test can stand
+// at the terminal; nothing else assigns it.
+var interactive = func() bool {
 	return charDevice(stdin) && charDevice(os.Stdout)
 }
 

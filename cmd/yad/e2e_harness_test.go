@@ -34,6 +34,9 @@ type e2eHarness struct {
 	// makes it deaf to an interrupt at the gate when set to "deaf", and a
 	// file in its working directory whose contents replace the answer.
 	gate, atGate, pid, starts, deaf, read string
+	// login is the variable that, set to "fails", makes the fake's own login
+	// exit non-zero having written nothing.
+	login string
 	// install points the runner at the fake, playing the recorded turn.
 	install func(t *testing.T)
 	// remember makes the fake keep a conversation per native session id in
@@ -52,7 +55,7 @@ var claudeE2E = &e2eHarness{
 	instruction: "Use the Read tool to read note.txt, then reply with its contents only.",
 	tool:        "→ Read",
 	gate:        fakeClaudeGate, atGate: fakeClaudeAtGate, pid: fakeClaudePID,
-	starts: fakeClaudeArgs, deaf: fakeClaudeDeaf, read: fakeClaudeRead,
+	starts: fakeClaudeArgs, deaf: fakeClaudeDeaf, read: fakeClaudeRead, login: fakeClaudeLogin,
 	install: func(t *testing.T) {
 		self, err := os.Executable()
 		if err != nil {
@@ -71,7 +74,7 @@ var codexE2E = &e2eHarness{
 	instruction: "Run the shell command `cat note.txt` and reply with its output only.",
 	tool:        "→ shell",
 	gate:        "CODEX_TEST_GATE", atGate: "CODEX_TEST_AT_GATE", pid: "CODEX_TEST_PID",
-	starts: "CODEX_TEST_STARTS", deaf: "CODEX_TEST_MODE", read: "CODEX_TEST_READ",
+	starts: "CODEX_TEST_STARTS", deaf: "CODEX_TEST_MODE", read: "CODEX_TEST_READ", login: "CODEX_TEST_LOGIN",
 	install: func(t *testing.T) {
 		t.Setenv("YAD_CODEX_PATH", fakeCodexBin(t))
 		t.Setenv("CODEX_TEST_FIXTURE", abs(t, codexFixtures+"tool.jsonl"))

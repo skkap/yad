@@ -434,7 +434,7 @@ func (e *env) server(l *Loop, x *Exec, d *Drain, wait time.Duration) *server {
 	// Wired as Serve wires them, so a test that drives the server drives the
 	// login probe and the collector's end of a parked run too.
 	return &server{drain: d, wait: wait, store: e.store, exec: x, loops: []*Loop{l},
-		probe:     &LoginProbe{Store: e.store, Config: x.Config, Data: e.paths.Data, Log: slog.New(slog.DiscardHandler)},
+		probe:     &LoginProbe{Store: e.store, Accounts: x.Accounts, Log: slog.New(slog.DiscardHandler)},
 		sessions:  &Collector{Store: e.store, Workdirs: filepath.Join(e.paths.Data, "workdirs"), Runs: x, Log: slog.New(slog.DiscardHandler)},
 		reporters: map[string]*Reporter{l.Connection: rep}, log: slog.New(slog.DiscardHandler)}
 }

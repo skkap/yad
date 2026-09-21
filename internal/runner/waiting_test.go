@@ -99,7 +99,7 @@ func syncAt(t *testing.T, l *Loop, x *Exec, now time.Time) {
 	t.Helper()
 	l.Executor = x
 	l.Clock = &stepClock{now: now}
-	l.Data, l.Config = x.Data, x.Config
+	l.Accounts = x.Accounts
 	mustSync(t, l)
 	x.Wait()
 }
@@ -1396,7 +1396,7 @@ func TestASyncThatCannotReadItsAccountsReadsThemOnceAndSaysWhatIsLost(t *testing
 	broken.Close()
 
 	var logged bytes.Buffer
-	l := &Loop{Connection: "hub", Store: broken, Data: e.paths.Data, Config: accountConfig("work"),
+	l := &Loop{Connection: "hub", Store: broken, Accounts: accountsOf(e.paths.Data, accountConfig("work")),
 		Log: slog.New(slog.NewJSONHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 	l.init()
 	l.loadAccounts(ctx)

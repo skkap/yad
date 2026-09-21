@@ -141,6 +141,10 @@ func fakeClaude() {
 		os.Stdout.WriteString("2.1.276 (Claude Code)\n")
 		return
 	}
+	if len(args) == 2 && args[0] == "auth" {
+		fakeClaudeAuth(args[1])
+		return
+	}
 	session, resume := "", false
 	for i, a := range args {
 		if (a == "--session-id" || a == "--resume") && i+1 < len(args) {

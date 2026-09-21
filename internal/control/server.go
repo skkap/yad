@@ -30,6 +30,9 @@ type Handler struct {
 	// CloseSession is the owner's close of one session. It records the
 	// close and returns; the workdir goes afterwards.
 	CloseSession func(ctx context.Context, connection, session string) (SessionClose, error)
+	// AccountsChanged re-reads config.toml's account lists and acts on the
+	// one account the owner changed.
+	AccountsChanged func(ctx context.Context, change AccountChange) (AccountResult, error)
 }
 
 // Daemon is one process's hold on its profile: the lock, and the socket.
@@ -53,6 +56,13 @@ const lockWait = 500 * time.Millisecond
 // connDeadline bounds one exchange on the socket, so a client that connects
 // and says nothing holds a goroutine for seconds, not forever.
 const connDeadline = 10 * time.Second
+
+// AccountsDeadline bounds an OpAccountsChanged, on both ends. It is longer
+// than connDeadline because the answer waits on the harness's own login
+// check, which account.LoggedIn allows ten seconds, and on the store writes
+// after it: a daemon that gave up at connDeadline would answer with a timeout
+// for a check that was about to answer.
+const AccountsDeadline = 30 * time.Second
 
 // Claim makes this process the profile's daemon: it takes the lock, removes a
 // socket a dead daemon left behind, and listens. A profile whose daemon is
@@ -180,6 +190,22 @@ func (d *Daemon) answer(ctx context.Context, conn *net.UnixConn, h Handler) {
 			break
 		}
 		res.Closed = &closed
+	case OpAccountsChanged:
+		if h.AccountsChanged == nil || req.Account == nil {
+			res.Error = "this daemon takes no account changes — `" + d.paths.Command("daemon", "restart") + "` after an upgrade"
+			break
+		}
+		// The request has been read, so only the answer is left to bound,
+		// and connDeadline is too short for it (AccountsDeadline).
+		conn.SetDeadline(time.Now().Add(AccountsDeadline))
+		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), AccountsDeadline)
+		result, err := h.AccountsChanged(actx, *req.Account)
+		cancel()
+		if err != nil {
+			res.Error = err.Error()
+			break
+		}
+		res.Account = &result
 	default:
 		res.Error = fmt.Sprintf("unknown request %q — the CLI and the daemon are different yad versions; `%s` after an upgrade", strings.TrimSpace(req.Op), d.paths.Command("daemon", "restart"))
 	}

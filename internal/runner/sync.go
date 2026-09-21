@@ -16,7 +16,6 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/capability"
-	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/logfile"
 	"github.com/skkap/yad/internal/store"
@@ -130,11 +129,10 @@ type Loop struct {
 	Log  *slog.Logger
 	// Monitor, when set, hears how every sync went.
 	Monitor *Monitor
-	// Config and Data are what account.Load reads: the owner's account order
-	// and where the homes live. Health reports account state through the same
-	// call the executor picks an account with, so the two cannot disagree.
-	Config config.Config
-	Data   string
+	// Accounts is the owner's account lists, the one source the executor
+	// picks an account from too: health reports account state through the
+	// same read, so the two cannot disagree. Nil is no accounts.
+	Accounts *Accounts
 	// Sessions closes sessions for the hub's close_session control and
 	// measures the disk for health. Nil ignores the control, and the hub
 	// hears of no close.

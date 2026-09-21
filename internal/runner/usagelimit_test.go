@@ -129,8 +129,7 @@ func TestHealthCarriesTheAccountsStateWindowsAndReset(t *testing.T) {
 	weekly := time.Now().Add(72 * time.Hour).UTC().Truncate(time.Second)
 
 	l := e.loop(t, 1)
-	l.Data = e.paths.Data
-	l.Config = accountConfig("work")
+	l.Accounts = accountsOf(e.paths.Data, accountConfig("work"))
 	e.enqueue(t, testRun("a", "s1"))
 	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
 		Outcome: adapter.Outcome{
@@ -193,8 +192,7 @@ func TestASucceededRunStillRecordsItsWindows(t *testing.T) {
 	reset := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
 
 	l := e.loop(t, 1)
-	l.Data = e.paths.Data
-	l.Config = accountConfig("work")
+	l.Accounts = accountsOf(e.paths.Data, accountConfig("work"))
 	e.enqueue(t, testRun("a", "s1"))
 	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
 		Outcome: adapter.Outcome{
@@ -231,7 +229,7 @@ func TestARunIsNotClaimedWhileEveryAccountIsLimited(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := e.loop(t, 1)
-	l.Data, l.Config = e.paths.Data, accountConfig("work")
+	l.Accounts = accountsOf(e.paths.Data, accountConfig("work"))
 	e.enqueue(t, testRun("a", "s1"))
 	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
 		Outcome: adapter.Outcome{State: v1.RunSucceeded},

@@ -95,7 +95,7 @@ func TestAnExpiredLimitReadsFreeEverywhere(t *testing.T) {
 		t.Fatalf("stored rows %+v, want one limited row", rows)
 	}
 
-	loaded, err := Load(ctx, st.Queries, data, cfg, time.Now())
+	loaded, err := Load(ctx, st.Queries, data, ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestALiveLimitReadsLimitedEverywhere(t *testing.T) {
 	if err := SetLimit(ctx, st.Queries, "claude", "work", reset, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	got, err := Load(ctx, st.Queries, data, cfg, time.Now())
+	got, err := Load(ctx, st.Queries, data, ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestALimitIsJudgedAgainstTheMomentLoadIsGiven(t *testing.T) {
 			if err := SetLimit(ctx, st.Queries, "claude", "work", reset, reset.Add(-time.Hour)); err != nil {
 				t.Fatal(err)
 			}
-			got, err := Load(ctx, st.Queries, data, cfg, now)
+			got, err := Load(ctx, st.Queries, data, ListsOf(cfg), now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -190,7 +190,7 @@ func TestAnUndatedLimitIsDatedRatherThanPermanent(t *testing.T) {
 	if err := SetLimit(ctx, st.Queries, "claude", "work", time.Time{}, now); err != nil {
 		t.Fatal(err)
 	}
-	got, err := Load(ctx, st.Queries, data, cfg, time.Now())
+	got, err := Load(ctx, st.Queries, data, ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestWindowsAreMergedPerNameAcrossRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := Load(ctx, st.Queries, data, cfg, time.Now())
+	got, err := Load(ctx, st.Queries, data, ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestAWindowWithNoResetReportsNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := Load(ctx, st.Queries, data, cfg, time.Now())
+	got, err := Load(ctx, st.Queries, data, ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestAWindowWithNoResetReportsNone(t *testing.T) {
 // data, and a window at zero is a claim nothing made.
 func TestAnAccountWithNoRunsReportsNoWindows(t *testing.T) {
 	ctx, st, data, cfg := limitEnv(t)
-	got, err := Load(ctx, st.Queries, data, cfg, time.Now())
+	got, err := Load(ctx, st.Queries, data, ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestSetLimitRefusesAResetThatHasAlreadyPassed(t *testing.T) {
 			if err := SetLimit(ctx, st.Queries, "claude", "work", now.Add(c.offset), now); err != nil {
 				t.Fatal(err)
 			}
-			got, err := Load(ctx, st.Queries, data, cfg, time.Now())
+			got, err := Load(ctx, st.Queries, data, ListsOf(cfg), time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -392,7 +392,7 @@ func TestAnOlderWindowObservationDoesNotOverwriteANewerOne(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := Load(ctx, st.Queries, data, cfg, time.Now())
+	got, err := Load(ctx, st.Queries, data, ListsOf(cfg), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestAnOlderWindowObservationDoesNotOverwriteANewerOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err = Load(ctx, st.Queries, data, cfg, time.Now()); err != nil {
+	if got, err = Load(ctx, st.Queries, data, ListsOf(cfg), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if ws := got[0].Report().Windows; ws[0].UsedPercent != 91 {
