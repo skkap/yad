@@ -14,6 +14,7 @@ import (
 
 	"github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hub/store/db"
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // runnerIDPattern bounds what a runner may call itself. The id becomes a path
@@ -21,12 +22,40 @@ import (
 // It starts with a letter or digit so "." and ".." can never be one.
 var runnerIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
-const newTokenAction = "create a new registration token (`yad hub token create`, or the hub's Add runner) and run `yad connect` again"
+// connectAgain is the `yad connect` a refused runner's owner runs on the
+// runner. The hub knows none of what it needs: the profile the runner is, the
+// URL it dials this hub by — behind a proxy, not the one this hub listens on —
+// or the name it gave the connection. So each is a placeholder saying what
+// goes there, and pasted unfilled it is refused as a profile no runner can
+// have, rather than registering the default runner, or a new one, in its
+// place.
+var connectAgain = shellword.Command("yad", "--profile", "<runner profile>", "connect", "<hub url>", "--name", "<connection name>", "--token", "<new token>")
+
+// tokenCommand is the command, run on the hub's machine, that issues a
+// registration token this hub will accept: Options.Command's when the hub was
+// given one. Without it the hub knows neither the profile nor the --db it was
+// opened with, and a bare `yad hub token create` issues into the default
+// profile's database, whose token this hub refuses; both are placeholders.
+func (h *Hub) tokenCommand(args ...string) string {
+	args = append([]string{"hub", "token", "create"}, args...)
+	if h.command != nil {
+		return h.command(args...)
+	}
+	argv := append([]string{"yad", "--profile", "<hub profile>"}, args...)
+	return shellword.Command(append(argv, "--db", "<the database yad hub serve was given>")...)
+}
+
+// newTokenAction is the next action for a runner whose token or credential
+// this hub will not take. It reaches the runner's owner, who may be at the
+// runner and not the hub, so it says which command runs on which machine.
+func (h *Hub) newTokenAction() string {
+	return "create a new registration token on the hub's machine (`" + h.tokenCommand() + "`), then on the runner run `" + connectAgain + "`, filled in with its profile and the URL and connection name it reaches this hub by"
+}
 
 func (h *Hub) registerRunner(ctx context.Context, in *registerInput) (*registerOutput, error) {
 	tok := bearer(ctx)
 	if tok == "" {
-		return nil, Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "register needs the registration token as the bearer", newTokenAction)
+		return nil, Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "register needs the registration token as the bearer", h.newTokenAction())
 	}
 	caps := in.Body.Capabilities
 	if !runnerIDPattern.MatchString(caps.RunnerID) {
@@ -54,16 +83,16 @@ func (h *Hub) registerRunner(ctx context.Context, in *registerInput) (*registerO
 		hash := hashSecret(tok)
 		t, err := q.GetRegistrationToken(ctx, hash)
 		if err != nil {
-			return refusedToken(t, err, now)
+			return h.refusedToken(t, err, now)
 		}
-		if err := refusedToken(t, nil, now); err != nil {
+		if err := h.refusedToken(t, nil, now); err != nil {
 			return err
 		}
 		// Checked before the burn, so a refused request leaves the token
 		// usable for what it was issued for.
 		if t.ForRunner.Valid && t.ForRunner.String != caps.RunnerID {
 			return Fail(http.StatusUnauthorized, v1.CodeUnauthorized,
-				fmt.Sprintf("this registration token re-registers runner %q, not %q", t.ForRunner.String, caps.RunnerID), newTokenAction)
+				fmt.Sprintf("this registration token re-registers runner %q, not %q", t.ForRunner.String, caps.RunnerID), h.newTokenAction())
 		}
 		if _, err := q.GetRunner(ctx, caps.RunnerID); err == nil && !t.ForRunner.Valid {
 			// Runner ids are not secret. Replacing a known runner's
@@ -81,7 +110,7 @@ func (h *Hub) registerRunner(ctx context.Context, in *registerInput) (*registerO
 		}
 		if n == 0 {
 			// Burned by a concurrent exchange between the read and here.
-			return Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "the registration token was already used; a token registers one runner once", newTokenAction)
+			return Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "the registration token was already used; a token registers one runner once", h.newTokenAction())
 		}
 		// The fingerprint is left empty: the runner's first sync carries its
 		// document and the fingerprint that goes with it, and hashing the
@@ -107,18 +136,18 @@ func (h *Hub) registerRunner(ctx context.Context, in *registerInput) (*registerO
 // refusedToken says why a token cannot register anything, or returns nil when
 // it can. Which reason it was is safe to tell the caller — they hold the
 // token — and saves the owner a guess.
-func refusedToken(t db.RegistrationToken, lookup error, now time.Time) error {
+func (h *Hub) refusedToken(t db.RegistrationToken, lookup error, now time.Time) error {
 	switch {
 	case errors.Is(lookup, sql.ErrNoRows):
-		return Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "this hub never issued that registration token", newTokenAction)
+		return Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "this hub never issued that registration token", h.newTokenAction())
 	case lookup != nil:
 		return lookup
 	case t.UsedAt.Valid:
 		return Fail(http.StatusUnauthorized, v1.CodeUnauthorized,
-			"the registration token was already used, at "+time.UnixMilli(t.UsedAt.Int64).UTC().Format(time.RFC3339)+"; a token registers one runner once", newTokenAction)
+			"the registration token was already used, at "+time.UnixMilli(t.UsedAt.Int64).UTC().Format(time.RFC3339)+"; a token registers one runner once", h.newTokenAction())
 	case t.ExpiresAt <= store.Ms(now):
 		return Fail(http.StatusUnauthorized, v1.CodeUnauthorized,
-			"the registration token expired at "+time.UnixMilli(t.ExpiresAt).UTC().Format(time.RFC3339), newTokenAction)
+			"the registration token expired at "+time.UnixMilli(t.ExpiresAt).UTC().Format(time.RFC3339), h.newTokenAction())
 	}
 	return nil
 }
@@ -127,11 +156,6 @@ func refusedToken(t db.RegistrationToken, lookup error, now time.Time) error {
 // knows: a token issued for it, from this hub's database. A bare `yad hub
 // token create` opens the default profile's database, which need not be this
 // one, and a token issued there is refused here as one this hub never issued.
-// Without Options.Command the hub cannot name its own database, so it says
-// what to run in words instead of printing a command aimed elsewhere.
 func (h *Hub) replaceCredentialAction(runnerID string) string {
-	if h.command == nil {
-		return fmt.Sprintf("to replace that runner's credential, create a registration token for runner %q on this hub's own database (yad hub token create with --runner, and the --db this hub serves) and run `yad connect` again", runnerID)
-	}
-	return fmt.Sprintf("to replace that runner's credential, create a token for it (`%s`) and run `yad connect` again", h.command("hub", "token", "create", "--runner", runnerID))
+	return "to replace that runner's credential, create a token for it on the hub's machine (`" + h.tokenCommand("--runner", runnerID) + "`), then on the runner run `" + connectAgain + "` with the profile, URL and connection name it already uses"
 }

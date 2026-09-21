@@ -378,7 +378,7 @@ func TestRunnerFailuresNameNoPathOnTheMachine(t *testing.T) {
 					t.Errorf("message carries %q: %q", leak, msg)
 				}
 			}
-			if !strings.Contains(msg, "`yad daemon logs`") {
+			if !strings.Contains(msg, "`yad --profile default daemon logs`") {
 				t.Errorf("message = %q, want it to send the owner to the log", msg)
 			}
 			if !strings.Contains(logged.String(), "permission denied") && !strings.Contains(logged.String(), "not a directory") {

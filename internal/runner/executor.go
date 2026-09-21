@@ -557,7 +557,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 					"from_account", prog.account, "account_switches", prog.switches)
 			}
 			prog.account = acct.Label
-			e.setRunAccount(bg, c, acct.Label)
+			e.setRunAccount(bg, c, acct.Label, prog.switches)
 			// The label and nothing else. Which account ran a turn is how an
 			// owner tells two subscriptions' work apart, and the label is the
 			// only thing about an account that may leave this machine.
@@ -654,9 +654,11 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			return
 		}
 		// Folded in before the result is built, so the result is the whole
-		// run's rather than this turn's — and so a park that follows carries
-		// this turn's cost with it.
+		// run's rather than this turn's — and written down at once, so a park
+		// that follows carries this turn's cost with it and a restart that
+		// finds the run lost before it ends or parks still reports it.
 		prog.absorb(out, w, turnStarted, time.Now())
+		e.setSpent(bg, c, prog.spent)
 		res := e.result(out, w, &prog)
 		if res.Error != nil {
 			res.Error.Class = hubClass(res.Error.Class, spec.NativeSessionID != "")

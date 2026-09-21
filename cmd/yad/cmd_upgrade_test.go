@@ -124,7 +124,7 @@ func TestRestartAdviceCarriesTheProfile(t *testing.T) {
 		{"work", "`yad --profile work service install`", "`yad --profile work daemon restart`"},
 		{"default", "`yad service install`", "`yad daemon restart`"},
 	} {
-		line := restartAdvice(config.Paths{Profile: c.profile})
+		line := restartAdvice(config.Paths{Profile: c.profile, Config: t.TempDir(), Data: t.TempDir()})
 		if !strings.Contains(line, c.wantService) {
 			t.Errorf("profile %s: advice %q, want it to offer %s", c.profile, line, c.wantService)
 		}

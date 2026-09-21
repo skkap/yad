@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -250,5 +251,105 @@ func TestAnUnreadableSpentLeavesNoHalfDecodedNumbers(t *testing.T) {
 	}
 	if !strings.Contains(logged.String(), "carries none of it") {
 		t.Errorf("the failure was not reported:\n%s", logged.String())
+	}
+}
+
+// A run that moves accounts in process and is lost before it ever parks
+// (DEV-86). What it cost is written as each turn ends and each move is made,
+// not only by a park, so the restart that reports it lost still has every
+// finished turn's usage and every move to report. It used to report zeros:
+// the park was the only writer, and this run never parked.
+//
+// The turn the runner dies in contributes nothing, and that is the honest
+// answer rather than a gap: a harness reports usage when its turn ends, so
+// a turn that never ended has no figure anybody could have written down.
+func TestARunLostAfterAMoveReportsEveryTurnItFinished(t *testing.T) {
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	limited := func(input, output int64, tool string, retries int) fake.Script {
+		s := limitScript("five_hour", reset, "native-1")
+		s.Events = []v1.Event{{Kind: v1.EventToolCall, Tool: &v1.ToolEvent{ID: tool, Name: "Bash", Input: "ls"}}}
+		s.Outcome.Usage = map[string]v1.Usage{"opus": {Model: "opus", Input: input, Output: output}}
+		s.Outcome.APIRetries = retries
+		return s
+	}
+	hangs := fake.Script{Hang: true, Outcome: adapter.Outcome{NativeSessionID: "native-1"}}
+	tests := []struct {
+		name     string
+		accounts []string
+		scripts  map[string]fake.Script
+		// dies is the account whose turn the runner is killed in.
+		dies      string
+		usage     v1.Usage
+		switches  int
+		toolCalls int
+		retries   int
+	}{
+		{
+			name:     "one move, lost on the second account",
+			accounts: []string{"work", "personal"},
+			scripts:  map[string]fake.Script{"work": limited(900, 400, "t1", 2), "personal": hangs},
+			dies:     "personal",
+			usage:    v1.Usage{Model: "opus", Input: 900, Output: 400},
+			switches: 1, toolCalls: 1, retries: 2,
+		},
+		{
+			name:     "two moves, lost on the third account",
+			accounts: []string{"work", "personal", "spare"},
+			scripts: map[string]fake.Script{
+				"work": limited(900, 400, "t1", 2), "personal": limited(70, 30, "t2", 1), "spare": hangs,
+			},
+			dies:     "spare",
+			usage:    v1.Usage{Model: "opus", Input: 970, Output: 430},
+			switches: 2, toolCalls: 2, retries: 3,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			for _, label := range tt.accounts {
+				plantCredential(t, e.paths.Data, label)
+			}
+			l := e.loop(t, 1)
+			e.enqueue(t, testRun("a", "s1"))
+			ad := byHome(tt.scripts)
+			x, _ := e.accountExecutor(t, accountConfig(tt.accounts...), ad)
+			l.Executor = x
+			mustSync(t, l)
+			// The run's goroutine lives on the context of the sync that
+			// starts it, so cancelling that is the runner going down under it.
+			runCtx, kill := context.WithCancel(ctx)
+			defer kill()
+			if _, err := l.SyncOnce(runCtx); err != nil {
+				t.Fatal(err)
+			}
+			eventually(t, "the turn on "+tt.dies+" starts", func() bool {
+				return len(ad.Turns()) == len(tt.accounts)
+			})
+			kill()
+			x.Wait()
+			if got := filepath.Base(ad.Starts[len(ad.Starts)-1].Home); got != tt.dies {
+				t.Fatalf("the last turn ran on %q, want %q", got, tt.dies)
+			}
+			if r := localRun(t, e, "a"); r.State != string(v1.RunRunning) {
+				t.Fatalf("the run is %s before the restart, want running: it must never have parked", r.State)
+			}
+
+			if err := restartedAs(t, e, l, e.exec).Recover(ctx); err != nil {
+				t.Fatal(err)
+			}
+			res, ok := outboxResult(t, e, "a")
+			if !ok || res.State != v1.RunLost {
+				t.Fatalf("result = %+v, %v, want lost", res, ok)
+			}
+			if got := res.Usage.ByModel["opus"]; got != tt.usage {
+				t.Errorf("usage = %+v, want %+v: every turn that finished before the runner died", got, tt.usage)
+			}
+			m := res.Metrics
+			if m.AccountSwitches != tt.switches || m.ToolCalls != tt.toolCalls || m.APIRetries != tt.retries {
+				t.Errorf("account_switches = %d, tool_calls = %d, api_retries = %d; want %d, %d, %d",
+					m.AccountSwitches, m.ToolCalls, m.APIRetries, tt.switches, tt.toolCalls, tt.retries)
+			}
+		})
 	}
 }

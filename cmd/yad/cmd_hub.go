@@ -131,7 +131,7 @@ func hubAnswerCommand(p config.Paths, dbFile string) func(args ...string) string
 		if dbFile != p.HubDB() || p.DataRelocated() {
 			args = append(args[:len(args):len(args)], "--db", "<the database yad hub serve was given>")
 		}
-		return config.YadCommand(p.Profile, args...)
+		return p.YadCommand(args...)
 	}
 }
 

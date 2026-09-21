@@ -142,7 +142,7 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 	if err != nil {
 		return err
 	}
-	accounts, err := account.Read(ctx, g.paths, cfg)
+	accounts, err := account.Read(ctx, g.paths, cfg, time.Now())
 	if err != nil {
 		return err
 	}
