@@ -455,7 +455,7 @@ func TestALimitIsJudgedOnTheLoopsClockNotTheWall(t *testing.T) {
 			}
 			l := healthLoop(t, e, "work")
 
-			hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
+			hh := l.health(ctx, heldNothing(l.Pool.Reserve(l.Connection))).Harnesses[0]
 			if len(hh.Accounts) != 1 || hh.Accounts[0].State != c.wantState {
 				t.Fatalf("accounts = %+v, want work %s at %s with the limit ending %s", hh.Accounts, c.wantState, e.clock.Now(), reset)
 			}
