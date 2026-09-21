@@ -134,6 +134,20 @@ func TestEnv(t *testing.T) {
 	}
 }
 
+// Every variable that points a harness at an account's home is one a hub may
+// not grant: a grant is delivered beside the home, and when the harness has no
+// account configured nothing overrides it at all (decision 0040). The list
+// lives in protocol/v1 so the hub and the runner refuse the same names; this
+// keeps a harness that gains account homes from being missed there.
+func TestHomeVariablesAreNotGrantable(t *testing.T) {
+	for harness, name := range homeVar {
+		err := v1.Grant{Name: name, Value: "/elsewhere", As: v1.GrantEnv}.Validate()
+		if err == nil || !strings.Contains(err.Error(), "0040") {
+			t.Errorf("%s's home variable %s as a grant: err %v, want the account refusal", harness, name, err)
+		}
+	}
+}
+
 // With nothing to choose between them on reset times, the owner's order
 // decides, and an account that cannot run a turn is skipped whether it is
 // limited or needs login.

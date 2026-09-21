@@ -214,8 +214,16 @@ _Avoid_: slot for a unit of capacity
 **Grant** — a short-lived secret a hub attaches to one run, scoped to it — a
 Zumino token limited to one task. Delivered in the environment or a `0600` file,
 never argv, and destroyed when the run ends — on the runner, and in the hub's
-store, which keeps its name and blanks its value once the run is terminal.
-_See_: [0009](docs/decisions/0009-machine-owns-credentials-hubs-grant-per-run.md), [0041](docs/decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md)
+store, which keeps its name and blanks its value once the run is terminal. A
+grant is for the work, never for the harness's own login: it may not name a
+variable that chooses whose credential a harness uses or which home it logs in
+from (`ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and the rest of
+`protocol/v1/grant.go`'s list), because that would move the run off its
+**account**.
+_See_: [0009](docs/decisions/0009-machine-owns-credentials-hubs-grant-per-run.md),
+[0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md),
+[0040](docs/decisions/0040-a-grant-may-not-move-a-run-off-its-account.md),
+[0041](docs/decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md)
 
 ### The lifecycle
 

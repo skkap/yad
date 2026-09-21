@@ -1,4 +1,5 @@
 ---
+status: amended by 0040 — a grant may not name a variable that moves a run off its account (ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR, CODEX_HOME and the rest of protocol/v1's list)
 date: 2026-09-19
 ---
 
@@ -36,6 +37,12 @@ What stays:
 - **Owner configuration is never a protocol field.** Permission mode, sandbox,
   capacity, caps and accounts are set on the machine. This is about who decides
   the machine's settings, not about distrust of hubs.
+- **A grant may not move a run off its account**
+  ([0040](0040-a-grant-may-not-move-a-run-off-its-account.md)). The variables
+  that choose a harness's credential or home — `ANTHROPIC_API_KEY`,
+  `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and the rest of the list in
+  `protocol/v1/grant.go` — are refused as grant names, so that an account's
+  limits, failover, health and event labels stay true.
 - **Hub input is data to YAD itself.** YAD never executes a hub string, never
   passes one to a shell, and still refuses git argument injection (a leading
   `-`, remote helpers). Those guards prevent bugs, not attacks.
