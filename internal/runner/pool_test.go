@@ -369,9 +369,16 @@ func TestAPutBackUnitReturnedOnCloseStartsAFill(t *testing.T) {
 	}
 	r.putBack("claude")
 	r.Close()
-	// c's next sync takes the unit; this fill was dealt from b, and the next
-	// one is dealt from c.
-	_, e := syncOf(t, p, "c", 100)
+	// This fill was dealt from b, which is as short of its share as c and
+	// comes first: c's next sync is offered nothing and b's takes the unit.
+	// The pool fills again, and the next fill is dealt from c.
+	if got := take(t, p, "c", 100); got != 0 {
+		t.Errorf("c was offered %d of the unit that is b's turn, want 0", got)
+	}
+	_, e := syncOf(t, p, "b", 100)
+	if len(e) != 1 {
+		t.Fatalf("b took %d of the freed unit, want 1", len(e))
+	}
 	for _, end := range append(ends, e...) {
 		end()
 	}
@@ -397,4 +404,219 @@ func permutations(s []string) [][]string {
 		}
 	}
 	return out
+}
+
+// hungry is a hub whose queue holds runs of one harness only, deeper than
+// anything it could be offered.
+type hungry struct{ name, harness string }
+
+// syncHungry is one sync of such a hub: it takes every unit the reservation
+// advertises room for, in its harness.
+func syncHungry(t *testing.T, p *Pool, hub hungry) []func() {
+	t.Helper()
+	r := p.Reserve(hub.name)
+	free := r.Free()
+	n := free.Total
+	if room, capped := free.ByHarness[hub.harness]; capped {
+		n = min(n, room)
+	}
+	var ends []func()
+	for range n {
+		end, ok := r.Take(hub.harness)
+		if !ok {
+			t.Fatalf("%s could not take a %s unit it was offered", hub.name, hub.harness)
+		}
+		ends = append(ends, end)
+	}
+	r.Close()
+	return ends
+}
+
+// TestTwoSyncsInFlightNeverPromiseOneUnitOfACap: a harness unit advertised
+// by one sync is held for it until it closes, exactly as a unit of the pool
+// is. Otherwise a second sync is dealt it again, both hubs offer a run for
+// it, and whichever is claimed second is a run the runner cannot take.
+func TestTwoSyncsInFlightNeverPromiseOneUnitOfACap(t *testing.T) {
+	p := NewPool(v1.Capacity{Total: 4, ByHarness: map[string]int{"claude": 2}})
+	p.Join("first", 2)
+	p.Join("second", 0)
+	p.Pass("second")
+
+	first := p.Reserve("first")
+	if got := first.Free(); got.Total != 2 || got.ByHarness["claude"] != 2 {
+		t.Fatalf("first was offered %+v, want 2 and the whole Claude cap", got)
+	}
+	second := p.Reserve("second")
+	if got := second.Free(); got.Total+first.Free().Total > 4 || got.ByHarness["claude"]+first.Free().ByHarness["claude"] > 2 {
+		t.Errorf("second was offered %+v while first holds %+v: one unit is promised twice", got, first.Free())
+	}
+	for range 2 {
+		if _, ok := first.Take("claude"); !ok {
+			t.Fatal("first could not take a Claude unit it was offered")
+		}
+	}
+	first.Close()
+	second.Close()
+
+	// A take for one harness trims what the sync holds of another to the
+	// units it has left, so those go back to the other syncs at once.
+	p = NewPool(v1.Capacity{Total: 2, ByHarness: map[string]int{"claude": 2, "codex": 2}})
+	p.Join("a", 0)
+	r := p.Reserve("a")
+	if _, ok := r.Take("codex"); !ok {
+		t.Fatal("take codex")
+	}
+	if got := r.Free(); got.Total != 1 || got.ByHarness["claude"] != 1 {
+		t.Errorf("after one take a holds %+v, want 1 unit and 1 of Claude", got)
+	}
+	r.Close()
+	if got := p.Reserve("a").Free(); got.ByHarness["claude"] != 1 {
+		t.Errorf("after close a is offered %+v of Claude, want the 1 codex leaves", got)
+	}
+}
+
+// TestAHubCappedOutOfItsHarnessKeepsItsTurn is DEV-106 as it was filed. One
+// hub holds the whole Claude cap, taken while the other had nothing queued.
+// The other's work arrives: it is offered total capacity and no Claude, so its
+// hub offers nothing and the units go back unused. That is not a hub with no
+// work, and the Claude unit that frees next is its turn — not the first hub's,
+// however soon that one syncs again.
+func TestAHubCappedOutOfItsHarnessKeepsItsTurn(t *testing.T) {
+	p := NewPool(v1.Capacity{Total: 4, ByHarness: map[string]int{"claude": 2}})
+	p.Join("first", 0)
+	p.Join("second", 0)
+	first, second := hungry{"first", "claude"}, hungry{"second", "claude"}
+
+	take(t, p, "second", 0) // nothing queued yet: it passes
+	ends := syncHungry(t, p, first)
+	if len(ends) != 2 {
+		t.Fatalf("the only hub asking took %d of the Claude cap of 2", len(ends))
+	}
+	r := p.Reserve("second")
+	if got := r.Free(); got.Total == 0 || got.ByHarness["claude"] != 0 {
+		t.Fatalf("second was offered %+v, want total capacity and no Claude", got)
+	}
+	r.Close()
+
+	ends[0]()
+	if got := syncHungry(t, p, first); len(got) != 0 {
+		t.Errorf("the hub holding the cap took %d of the Claude unit its own run freed", len(got))
+	}
+	if got := syncHungry(t, p, second); len(got) != 1 {
+		t.Errorf("the hub waiting for Claude took %d of the freed unit, want 1", len(got))
+	}
+}
+
+// TestAHarnessCapGoesRoundTheHubs is DEV-106: a harness's cap is dealt round
+// the hubs the way the whole pool is, and a hub its cap gave nothing to is
+// still waiting for it rather than taken for one with no work.
+//
+// The order is the adversarial one: runs end oldest first, and the hub whose
+// run ended syncs again at once, before anyone else — a loop that syncs when
+// its runs end does exactly that. Before the fix, a hub that took the whole
+// cap refilled it every time, and the other passed on every sync that offered
+// it total capacity and none of the harness, and waited indefinitely.
+func TestAHarnessCapGoesRoundTheHubs(t *testing.T) {
+	claude := func(names ...string) []hungry {
+		var hubs []hungry
+		for _, n := range names {
+			hubs = append(hubs, hungry{n, "claude"})
+		}
+		return hubs
+	}
+	for _, tc := range []struct {
+		name  string
+		total int
+		caps  map[string]int
+		hubs  []hungry
+	}{
+		{"two hubs over a cap of two", 4, map[string]int{"claude": 2}, claude("a", "b")},
+		{"three hubs over a cap of two", 6, map[string]int{"claude": 2}, claude("a", "b", "c")},
+		{"two hubs over a cap of one", 4, map[string]int{"claude": 1}, claude("a", "b")},
+		{"three hubs over a cap of one", 4, map[string]int{"claude": 1}, claude("a", "b", "c")},
+		{"an uncapped hub first, a capped one second", 4, map[string]int{"claude": 1},
+			[]hungry{{"codex-only", "codex"}, {"claude-only", "claude"}}},
+		{"a capped hub first, an uncapped one second", 4, map[string]int{"claude": 1},
+			[]hungry{{"claude-only", "claude"}, {"codex-only", "codex"}}},
+		{"two over a cap of two, one uncapped", 4, map[string]int{"claude": 2},
+			[]hungry{{"a", "claude"}, {"b", "claude"}, {"c", "codex"}}},
+		{"both harnesses capped", 4, map[string]int{"claude": 1, "codex": 3},
+			[]hungry{{"a", "codex"}, {"b", "claude"}, {"c", "claude"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewPool(v1.Capacity{Total: tc.total, ByHarness: tc.caps})
+			for _, hub := range tc.hubs {
+				p.Join(hub.name, 0)
+			}
+			type run struct {
+				hub int
+				end func()
+			}
+			var running []run
+			started := make([]int, len(tc.hubs))
+			last := make([]int, len(tc.hubs))
+			gap := make([]int, len(tc.hubs))
+			sync := func(i, step int) {
+				for _, end := range syncHungry(t, p, tc.hubs[i]) {
+					running = append(running, run{i, end})
+					started[i]++
+					gap[i] = max(gap[i], step-last[i])
+					last[i] = step
+				}
+			}
+			sweep := func(step int) {
+				for i := range tc.hubs {
+					sync(i, step)
+				}
+			}
+			// What the hubs can use between them with every queue deep: the
+			// pool, or the caps of the only harnesses they want.
+			usable := 0
+			for _, h := range []string{"claude", "codex"} {
+				wanted := false
+				for _, hub := range tc.hubs {
+					wanted = wanted || hub.harness == h
+				}
+				if cap, capped := tc.caps[h]; wanted && capped {
+					usable += cap
+				} else if wanted {
+					usable += tc.total
+				}
+			}
+			usable = min(usable, tc.total)
+
+			// A unit dealt to a hub that cannot use it — its harness is at its
+			// cap — waits until that hub's next sync passes on it, so every
+			// hub syncing once more than there are hubs is enough for the
+			// pool to be as full as the queues can make it.
+			settle := func(step int) {
+				for range len(tc.hubs) + 1 {
+					sweep(step)
+				}
+				if used := tc.total - p.Free(); used != usable {
+					t.Fatalf("step %d: %d of %d units in use, want %d: capacity idle with every queue deep", step, used, tc.total, usable)
+				}
+			}
+			settle(0)
+			const steps = 60
+			for step := 1; step <= steps; step++ {
+				oldest := running[0]
+				running = running[1:]
+				oldest.end()
+				sync(oldest.hub, step)
+				settle(step)
+			}
+			// No hub goes longer without a start than a few run ends per hub:
+			// long enough for its turn to come round, and far short of the
+			// whole test, which is what waiting indefinitely looks like.
+			bound := 3 * len(tc.hubs)
+			for i, hub := range tc.hubs {
+				gap[i] = max(gap[i], steps-last[i])
+				if started[i] == 0 || gap[i] > bound {
+					t.Errorf("%s started %d %s runs, and went %d of %d run ends without one (bound %d)",
+						hub.name, started[i], hub.harness, gap[i], steps, bound)
+				}
+			}
+		})
+	}
 }
