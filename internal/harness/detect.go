@@ -55,7 +55,6 @@ const versionTimeout = 5 * time.Second
 // fails on any shipped file of the module that assigns it, this one included.
 var VersionTimeoutForTests time.Duration
 
-// versionWait is how long one version probe may take.
 func versionWait() time.Duration {
 	if VersionTimeoutForTests > 0 {
 		return VersionTimeoutForTests
