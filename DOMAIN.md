@@ -87,6 +87,18 @@ installs itself.
 _Rules_: Long-lived credentials behind host tools belong to the machine and never
 travel in the protocol.
 
+**Present** — there is a binary the runner would run for a harness or a host
+tool: the file its `YAD_<ID>_PATH` override names, or the one on `PATH`. It
+does not mean the binary works. A present harness with an `error` takes no
+runs.
+_Rules_: One rule for harnesses and host tools. An override **names nothing**
+when nothing is at the path or it is a directory. Then `PATH` decides and the
+override is reported: as a warning when `PATH` has the binary, which is still
+usable, and as an error beside `present: false` when it has none. A file that
+is there but will not run is present, with an error.
+_Avoid_: installed, found — each has meant a different one of these
+_See_: [0044](docs/decisions/0044-an-override-that-names-nothing-lets-path-decide.md), `internal/probe`
+
 **Capacity** — how many runs a runner executes at once. One shared pool, with an
 optional cap per connection and per harness, all set by the owner.
 _Avoid_: slots (that word is `WT_SLOT`'s), concurrency, max tasks
