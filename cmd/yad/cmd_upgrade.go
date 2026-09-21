@@ -11,6 +11,7 @@ import (
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/control"
+	"github.com/skkap/yad/internal/shellword"
 	"github.com/skkap/yad/internal/upgrade"
 )
 
@@ -35,7 +36,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	// either side of it — but the argument still means something this command
 	// does not do.)
 	if len(pos) > 0 {
-		return fmt.Errorf("unexpected argument %q — a release goes in --tag, as `yad upgrade --tag %s`", pos[0], pos[0])
+		return fmt.Errorf("unexpected argument %q — a release goes in --tag, as `%s`", pos[0], shellword.Command("yad", "upgrade", "--tag", pos[0]))
 	}
 	src := releaseSource()
 
@@ -139,12 +140,12 @@ func restartNote(profile string, pid int, running bool, err error) string {
 // — and `service install` would bootstrap a supervised unit for a profile
 // nobody meant to run as a service (0028).
 func restartAdvice(profile string) string {
-	global, sub := "", ""
+	service := []string{"yad", "service", "install"}
 	if profile != config.DefaultProfile {
-		global = " --profile " + profile
-		sub = " --profile " + profile
+		service = append(service, "--profile", profile)
 	}
-	return fmt.Sprintf("restart it to pick this one up: `yad service install%s` if this profile runs as a service (0028: install replaces the unit and starts it again), otherwise `yad%s daemon restart`", sub, global)
+	return fmt.Sprintf("restart it to pick this one up: `%s` if this profile runs as a service (0028: install replaces the unit and starts it again), otherwise `%s`",
+		shellword.Command(service...), config.YadCommand(profile, "daemon", "restart"))
 }
 
 // checkLine is the one sentence that says where this build stands, and what
@@ -158,7 +159,7 @@ func checkLine(state upgrade.State, tag string, named bool) string {
 	replace := "`yad upgrade`"
 	if named {
 		newest = ""
-		install = fmt.Sprintf("`yad upgrade --tag %s`", tag)
+		install = "`" + shellword.Command("yad", "upgrade", "--tag", tag) + "`"
 		replace = install
 	}
 	switch state {

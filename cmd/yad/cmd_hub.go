@@ -169,13 +169,22 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 		return err
 	}
 	open := func() (*store.Store, error) { return store.Open(ctx, *dbFile) }
+	// A follow-up command acts on the database this one did, or it revokes a
+	// token in some other hub.
+	again := func(sub ...string) string {
+		argv := append([]string{"hub", "admin-token"}, sub...)
+		if *dbFile != g.paths.HubDB() {
+			argv = append(argv, "--db", *dbFile)
+		}
+		return config.YadCommand(g.paths.Profile, argv...)
+	}
 	switch args[0] {
 	case "create":
 		// Checked before the token exists: a token issued and then not
 		// saved is a live secret nobody holds.
 		if *out != "-" {
 			if _, err := os.Stat(*out); err == nil {
-				return fmt.Errorf("%s already holds an admin token — revoke that one (`yad hub admin-token list`, then revoke), delete the file, and create again; or pass --out elsewhere", *out)
+				return fmt.Errorf("%s already holds an admin token — revoke that one (`%s`, then revoke), delete the file, and create again; or pass --out elsewhere", *out, again("list"))
 			}
 		}
 		s, err := open()
@@ -193,7 +202,7 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 			return nil
 		}
 		if err := config.WriteSecret(*out, tok); err != nil {
-			return errors.Join(fmt.Errorf("the token was created but not saved to %s — revoke it with `yad hub admin-token revoke %s`", *out, *name), err)
+			return errors.Join(fmt.Errorf("the token was created but not saved to %s — revoke it with `%s`", *out, again("revoke", *name)), err)
 		}
 		fmt.Fprintf(stdout, "admin token %q saved to %s (0600) — `yad hub submit` and `yad hub watch` read it from there\n", *name, *out)
 		return nil

@@ -43,7 +43,7 @@ func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error
 	case "use":
 		return errors.New("`yad account use` arrives with failover (DEV-28, Zumino yad/dev) — until then the order in config.toml's `accounts` is the order runs take, and `yad account add` appends to it")
 	}
-	return fmt.Errorf("unknown `yad account %s` — %s", args[0], accountUsage)
+	return fmt.Errorf("unknown account subcommand %q — %s", args[0], accountUsage)
 }
 
 // accountAdd makes an account's harness home and runs the harness's own login
@@ -127,7 +127,7 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	// is that the login did not take, and a state error is joined to that
 	// rather than printed in its place.
 	fmt.Fprintf(w, "\n%s account %q needs login: the home exists, it is reported to every hub, and no run will use it.\n", id, label)
-	return errors.Join(fmt.Errorf("the login did not complete — run `yad account add %s %s` again when you can finish it", id, label), recordErr)
+	return errors.Join(fmt.Errorf("the login did not complete — run `%s` again when you can finish it", config.YadCommand(g.paths.Profile, "account", "add", id, label)), recordErr)
 }
 
 func accountList(ctx context.Context, g global, args []string, w io.Writer) error {
@@ -186,7 +186,7 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 	}
 	for _, a := range accounts {
 		if a.State == v1.AccountNeedsLogin {
-			fmt.Fprintf(w, "\n%s %q needs login: `yad account add %s %s`\n", a.Harness, a.Label, a.Harness, a.Label)
+			fmt.Fprintf(w, "\n%s %q needs login: `%s`\n", a.Harness, a.Label, config.YadCommand(g.paths.Profile, "account", "add", a.Harness, a.Label))
 		}
 	}
 	return nil

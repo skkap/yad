@@ -121,6 +121,9 @@ type Exec struct {
 	// Data is the profile's data directory; workdirs and grant files live
 	// under it.
 	Data string
+	// Profile is the runner's, carried by every yad command a message offers:
+	// pasted without it, the command acts on the default runner instead.
+	Profile string
 	// Workdirs turns a run's sources into its workdir; nil is one built from
 	// Config's [workdirs] and Data.
 	Workdirs *workdir.Manager
