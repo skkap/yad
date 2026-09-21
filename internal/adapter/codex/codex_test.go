@@ -667,15 +667,20 @@ func TestStubbornProcesses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			handshakeTimeout = tc.handshake
 			h := &harness{fixture: fixture("plain"), env: map[string]string{"CODEX_TEST_MODE": tc.mode}}
-			// The reap is timed from the server's last word, not from the
-			// spawn: a slow start is the machine's, and it is what the shipped
-			// handshake above is there to absorb. A server that never spoke is
-			// timed from the start, which its short handshake bounds whether
-			// it has finished starting or not.
-			last := time.Now()
+			// A server that answers is timed from its first event, not from
+			// the spawn: a slow start is the machine's, and it is what the
+			// shipped handshake above is there to absorb. The first, because
+			// any later one may come from the outcome, which is decided after
+			// the reap — usage, an error, text still buffered — and would leave
+			// nothing to time. For the same reason silent, whose only event is
+			// its error, is timed from the start, which its short handshake
+			// bounds whether the child has finished starting or not.
+			from := time.Now()
 			_, out, _ := drive(t, context.Background(), h.spec(t), func(adapter.Turn, v1.Event) bool {
-				last = time.Now()
-				return false
+				if tc.class == "" {
+					from = time.Now()
+				}
+				return true
 			})
 			if out.State != tc.state || (tc.class != "") != (out.Error != nil) || out.Error != nil && out.Error.Class != tc.class {
 				t.Fatalf("outcome = %+v (%+v)", out, out.Error)
@@ -683,7 +688,7 @@ func TestStubbornProcesses(t *testing.T) {
 			if tc.mode == "silent" && !strings.Contains(out.Error.Message, "initialize") {
 				t.Errorf("message = %q, want the request that went unanswered", out.Error.Message)
 			}
-			if d := time.Since(last); d > 5*time.Second {
+			if d := time.Since(from); d > 5*time.Second {
 				t.Errorf("took %s to reap", d)
 			}
 		})
