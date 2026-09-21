@@ -32,7 +32,8 @@ func Quote(s string) string {
 // argv[0] is the program. A placeholder the reader is meant to replace, such as
 // "<new token>", is quoted like any other word: pasted unedited it arrives as
 // one literal argument the program can refuse, rather than as a redirection
-// the shell acts on, and a value typed between its quotes is protected too.
+// the shell acts on. What the reader types over it is theirs to quote: a value
+// typed between the quotes is literal unless it holds a single quote itself.
 func Command(argv ...string) string {
 	words := make([]string, len(argv))
 	for i, a := range argv {

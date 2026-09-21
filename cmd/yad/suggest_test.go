@@ -155,3 +155,20 @@ func TestAdminTokenListCommandCarriesTheDatabase(t *testing.T) {
 	}
 	shellwordtest.Check(t, onlyCommand(t, errs, "yad hub admin-token"), "yad", "hub", "admin-token", "list", "--db", db)
 }
+
+// A name the hub already holds is revoked on that hub, on that profile: the
+// default name is "cli", so a bare revoke would take a live token off the
+// default profile's hub instead.
+func TestAdminTokenNameTakenCommandCarriesTheHub(t *testing.T) {
+	p := newProfile(t)
+	db := filepath.Join(t.TempDir(), "it's a hub.db")
+	create := []string{"--profile", "side", "hub", "admin-token", "create", "--db", db, "--out", "-"}
+	if code, _, errs := p.yad("", create...); code != 0 {
+		t.Fatalf("create: exit %d: %s", code, errs)
+	}
+	code, _, errs := p.yad("", create...)
+	if code == 0 {
+		t.Fatal("a second token took the same name")
+	}
+	shellwordtest.Check(t, onlyCommand(t, errs, "yad "), "yad", "--profile", "side", "hub", "admin-token", "revoke", "cli", "--db", db)
+}

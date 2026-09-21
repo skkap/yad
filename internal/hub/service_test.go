@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -573,7 +574,7 @@ func TestAdminTokens(t *testing.T) {
 	if !strings.HasPrefix(tok, adminTokenPrefix) {
 		t.Errorf("token %q lacks its prefix", tok[:4])
 	}
-	if _, err := IssueAdminToken(ctx, f.store, "cli", f.clock.Now()); err == nil {
+	if _, err := IssueAdminToken(ctx, f.store, "cli", f.clock.Now()); !errors.Is(err, ErrAdminTokenNameTaken) {
 		t.Error("a second token took an existing name")
 	}
 	if _, err := IssueAdminToken(ctx, f.store, "Bad Name", f.clock.Now()); err == nil {

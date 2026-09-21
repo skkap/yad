@@ -193,6 +193,9 @@ func cmdHubAdminToken(ctx context.Context, g global, args []string, stdout, stde
 		}
 		defer s.Close()
 		tok, err := hub.IssueAdminToken(ctx, s, *name, time.Now())
+		if errors.Is(err, hub.ErrAdminTokenNameTaken) {
+			return fmt.Errorf("this hub already has an admin token called %q — revoke it first (`%s`) or pick another --name", *name, again("revoke", *name))
+		}
 		if err != nil {
 			return err
 		}

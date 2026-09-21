@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // Systemd installs a runner as a systemd --user unit: it runs in the owner's
@@ -206,7 +208,7 @@ func (s *Systemd) lingerNotes(ctx context.Context) []string {
 	}
 	return []string{
 		fmt.Sprintf("lingering is off for %s, so this runner stops when you log out and starts only at your next login", user),
-		fmt.Sprintf("to keep it running with nobody logged in — and after a reboot — run: loginctl enable-linger %s", user),
+		fmt.Sprintf("to keep it running with nobody logged in — and after a reboot — run: `%s`", shellword.Command("loginctl", "enable-linger", user)),
 	}
 }
 
