@@ -11,8 +11,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
+
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // closeAnd is a next action: the chmod, plus the rotation when what is behind
@@ -20,26 +21,21 @@ import (
 // path, so a file that holds a secret and one that does not cannot be told
 // apart by accident.
 func closeAnd(path, rotate string) string {
-	fix := "chmod 600 " + shellArg(path)
+	fix := chmod("600", path)
 	if rotate == "" {
 		return fix
 	}
 	return fix + " stops the next reader, but not the one who already read it, so " + rotate
 }
 
-// shellArg quotes a path so the command a warning prints can be pasted and
-// run. A profile directory comes from YAD_CONFIG_DIR, YAD_DATA_DIR, XDG_* or
+// chmod is the command that closes path to mode, set apart in backticks. A
+// profile directory comes from YAD_CONFIG_DIR, YAD_DATA_DIR, XDG_* or
 // $HOME and none of those is constrained to shell-safe characters: under
 // YAD_DATA_DIR="/Volumes/My Disk/yad" the unquoted advice runs
 // `chmod 700 /Volumes/My` and leaves the exposure open. A next action that
 // does not work is the defect this whole file is about.
-func shellArg(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t\n\v\\\"'`$&|;<>()*?[]{}!#~=%") {
-		return s
-	}
-	// POSIX single quotes take everything literally; the only character that
-	// cannot appear inside them is the quote itself.
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+func chmod(mode, path string) string {
+	return "`" + shellword.Command("chmod", mode, path) + "`"
 }
 
 // geteuid is swapped by tests, the same seam the Claude adapter uses for its
@@ -96,14 +92,14 @@ func privateFiles(p Paths) []privateFile {
 		// and a ForRunner token for a different runner, so the id alone is
 		// not enough. It is here because yad writes it 0600 and something
 		// changed that, which is a fact about the directory it sits in.
-		{runnerID, "yad writes this 0600 and something has changed it; the id itself is not a secret, but the credentials beside it are", "chmod 600 " + shellArg(runnerID)},
+		{runnerID, "yad writes this 0600 and something has changed it; the id itself is not a secret, but the credentials beside it are", chmod("600", runnerID)},
 		// Not a secret either — no credential is written here, and a hub URL
 		// carrying one is refused at load (CheckHubURL) — and on this list for
 		// the reason config.Save gives for writing it 0600: it names the hubs
 		// this runner connects to and the accounts it holds, which is enough to
 		// be worth keeping private. An owner who wrote it by hand under a normal umask is the
 		// common case, so the fix is the mode and nothing more.
-		{p.ConfigFile(), "it names the hubs this runner connects to and the accounts it holds, which is why yad writes it 0600", "chmod 600 " + shellArg(p.ConfigFile())},
+		{p.ConfigFile(), "it names the hubs this runner connects to and the accounts it holds, which is why yad writes it 0600", chmod("600", p.ConfigFile())},
 		// The sequence `yad hub admin-token create` itself prints when it
 		// refuses: revoke only touches hub.db, so create refuses while this
 		// file is still here, and deleting it is the step between.
@@ -113,7 +109,7 @@ func privateFiles(p Paths) []privateFile {
 		// point a remote hub's owner at a local hub.db that never issued it.
 		// The delete is named because revoke only touches the database, and
 		// create refuses while the file is still there.
-		{admin, "it is an admin token for a hub's service API", "chmod 600 " + shellArg(admin) + " stops the next reader, but not the one who already read it, so revoke it at the hub that issued it — for a hub this machine serves that is `yad hub admin-token list` then revoke, delete " + shellArg(admin) + ", and `yad hub admin-token create` again"},
+		{admin, "it is an admin token for a hub's service API", chmod("600", admin) + " stops the next reader, but not the one who already read it, so revoke it at the hub that issued it — for a hub this machine serves that is `" + YadCommand(p.Profile, "hub", "admin-token", "list") + "` then revoke, `" + shellword.Command("rm", admin) + "`, and `" + YadCommand(p.Profile, "hub", "admin-token", "create") + "` again"},
 	}
 	// Each store contributes its own entry and its two sidecars together, from
 	// one description, so a sidecar cannot end up saying something different
@@ -154,9 +150,9 @@ func privateFiles(p Paths) []privateFile {
 		// the database's and says so.
 		files = append(files,
 			privateFile{st.path + "-wal", "SQLite gave it " + base + "'s mode, and it holds the pages " + base + " has not yet checkpointed — so it gives up " + st.holds,
-				closeAnd(st.path+"-wal", st.rotate) + ", and fix " + shellArg(st.path) + " too or the next start hands the mode straight back"},
+				closeAnd(st.path+"-wal", st.rotate) + ", and " + chmod("600", st.path) + " too, or the next start hands the mode straight back"},
 			privateFile{st.path + "-shm", "SQLite gave it " + base + "'s mode; it indexes " + base + "-wal and holds no run data itself, so the mode is what to fix",
-				"chmod 600 " + shellArg(st.path+"-shm") + ", and fix " + shellArg(st.path) + " too or the next start hands the mode straight back"},
+				chmod("600", st.path+"-shm") + ", and " + chmod("600", st.path) + " too, or the next start hands the mode straight back"},
 		)
 	}
 	// Credentials are one file per connection and named by the owner, so they
@@ -175,7 +171,7 @@ func privateFiles(p Paths) []privateFile {
 			// The same next action config.Credential gives when ReadSecret
 			// refuses this file outright, so an owner who meets it here and
 			// there is told to do one thing, not two.
-			"chmod 600 " + shellArg(path) + " stops the next reader, but not the one who already read it, so revoke this credential at the hub and run `yad connect` again",
+			chmod("600", path) + " stops the next reader, but not the one who already read it, so revoke this credential at the hub and run `yad connect` again",
 		})
 	}
 	return files
@@ -232,7 +228,7 @@ func Exposures(p Paths) []string {
 			continue
 		}
 		if fi.Mode().Perm()&otherUsers != 0 {
-			out = append(out, fmt.Sprintf("the %s directory %s is %v — another user on this machine can reach what is in it; chmod 700 %s", d.what, d.path, fi.Mode().Perm(), shellArg(d.path)))
+			out = append(out, fmt.Sprintf("the %s directory %s is %v — another user on this machine can reach what is in it; %s", d.what, d.path, fi.Mode().Perm(), chmod("700", d.path)))
 		}
 		// A 0700 directory owned by somebody else passes the mode check and is
 		// still theirs to read and replace. control.checkDir makes the same

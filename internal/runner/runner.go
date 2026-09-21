@@ -100,7 +100,7 @@ func Serve(ctx context.Context, o Options) error {
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
-		Store: st, Adapters: o.Adapters, Config: o.Config, Data: o.Paths.Data, Workdirs: workdirs, Log: o.Log,
+		Store: st, Adapters: o.Adapters, Config: o.Config, Data: o.Paths.Data, Profile: o.Paths.Profile, Workdirs: workdirs, Log: o.Log,
 		Report: func(conn string) {
 			if r := sv.reporters[conn]; r != nil {
 				r.Wake()

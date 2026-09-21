@@ -41,16 +41,7 @@ func New(baseURL, credential string) (*Client, error) {
 	return &Client{
 		base:       strings.TrimRight(baseURL, "/"),
 		credential: credential,
-		http: &http.Client{
-			Timeout: requestTimeout,
-			// A redirect is refused, not followed. Go keeps the Authorization
-			// header across a same-host redirect whatever the scheme, so an
-			// https hub answering 307 to http:// would get the credential in
-			// cleartext after CheckHubURL passed. No protocol call redirects.
-			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-				return fmt.Errorf("the hub redirected to %s — a hub must not redirect; set the connection URL to the hub's final address", config.RedactURL(req.URL.String()))
-			},
-		},
+		http:       config.HubHTTPClient(requestTimeout),
 	}, nil
 }
 
@@ -129,9 +120,7 @@ func (c *Client) do(ctx context.Context, bearer, path string, in, out any) error
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// url.Error carries the URL, never the headers, so the bearer stays
-		// out. The base URL carries no userinfo — CheckHubURL refused it — but
-		// a hub's redirect names a Location of its own choosing, and the
-		// refusal of it is quoted here whole.
+		// out; the redaction is for whatever URL a later change lets in.
 		return config.RedactURLError(err)
 	}
 	defer resp.Body.Close()

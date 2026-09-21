@@ -24,6 +24,11 @@ var adminNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 const newAdminTokenAction = "create one on the hub's machine with `yad hub admin-token create`, and send it as `Authorization: Bearer <token>`"
 
+// ErrAdminTokenNameTaken is a create under a name the hub already holds. The
+// next action is left to the caller: it is a command naming this hub's database
+// and profile, which only the CLI that opened the store knows.
+var ErrAdminTokenNameTaken = errors.New("revoke that token first, or pick another --name")
+
 // IssueAdminToken creates an admin token called name and returns it. Only its
 // hash is stored: the returned string is the one copy there will ever be.
 func IssueAdminToken(ctx context.Context, s *store.Store, name string, now time.Time) (string, error) {
@@ -41,7 +46,7 @@ func IssueAdminToken(ctx context.Context, s *store.Store, name string, now time.
 		}
 		for _, t := range existing {
 			if t.Name == name {
-				return fmt.Errorf("this hub already has an admin token called %q — revoke it first (`yad hub admin-token revoke %s`) or pick another --name", name, name)
+				return fmt.Errorf("this hub already has an admin token called %q: %w", name, ErrAdminTokenNameTaken)
 			}
 		}
 		return q.CreateAdminToken(ctx, db.CreateAdminTokenParams{Hash: hashSecret(tok), Name: name, CreatedAt: store.Ms(now)})

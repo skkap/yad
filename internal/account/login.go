@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/skkap/yad/internal/shellword"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -72,27 +73,13 @@ func suggest(harness, binary, home string, args []string) string {
 	// The binary is quoted for the same reason the home is: it is a path yad
 	// resolved, not a word the reader typed, and a space or a $ in it makes
 	// the line mean something else when pasted.
-	cmd := shellQuote(binary)
-	for _, a := range args {
-		cmd += " " + a
-	}
+	cmd := shellword.Command(append([]string{binary}, args...)...)
 	env := Env(harness, home)
 	if len(env) == 0 {
 		return cmd
 	}
 	name, value, _ := strings.Cut(env[0], "=")
-	return name + "=" + shellQuote(value) + " " + cmd
-}
-
-// shellQuote makes one word a shell will pass through unchanged.
-//
-// Single quotes rather than Go's %q: inside double quotes a shell still
-// expands $, ` and \, so a home under a directory with a $ in its name would
-// be silently rewritten by the very paste this text exists to make work.
-// Inside single quotes nothing is special, and the only case to handle is a
-// single quote itself.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return name + "=" + shellword.Quote(value) + " " + cmd
 }
 
 // CanLogIn says whether `yad account add` knows how to log this harness in.
