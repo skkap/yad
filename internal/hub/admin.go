@@ -13,6 +13,7 @@ import (
 
 	"github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hub/store/db"
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // adminTokenPrefix marks the third kind of secret, so a leaked one says what
@@ -41,7 +42,7 @@ func IssueAdminToken(ctx context.Context, s *store.Store, name string, now time.
 		}
 		for _, t := range existing {
 			if t.Name == name {
-				return fmt.Errorf("this hub already has an admin token called %q — revoke it first (`yad hub admin-token revoke %s`) or pick another --name", name, name)
+				return fmt.Errorf("this hub already has an admin token called %q — revoke it first (`%s`) or pick another --name", name, shellword.Command("yad", "hub", "admin-token", "revoke", name))
 			}
 		}
 		return q.CreateAdminToken(ctx, db.CreateAdminTokenParams{Hash: hashSecret(tok), Name: name, CreatedAt: store.Ms(now)})

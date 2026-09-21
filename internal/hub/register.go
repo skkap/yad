@@ -14,6 +14,7 @@ import (
 
 	"github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hub/store/db"
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // runnerIDPattern bounds what a runner may call itself. The id becomes a path
@@ -71,7 +72,7 @@ func (h *Hub) registerRunner(ctx context.Context, in *registerInput) (*registerO
 			// grants, to whoever holds one.
 			return Fail(http.StatusConflict, v1.CodeConflict,
 				fmt.Sprintf("runner %q is already registered with this hub, and this token is for a new runner", caps.RunnerID),
-				fmt.Sprintf("to replace that runner's credential, create a token for it (`yad hub token create --runner %s`) and run `yad connect` again", caps.RunnerID))
+				fmt.Sprintf("to replace that runner's credential, create a token for it (`%s`) and run `yad connect` again", shellword.Command("yad", "hub", "token", "create", "--runner", caps.RunnerID)))
 		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
