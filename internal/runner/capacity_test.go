@@ -2,8 +2,13 @@ package runner
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -230,4 +235,81 @@ func TestAConnectionCapBoundsWhatTheSyncAsksFor(t *testing.T) {
 	if len(hub.results) != 0 {
 		t.Errorf("results sent %v, want none", hub.results)
 	}
+}
+
+// A connection that stops on a fatal sync gives back what it claimed and never
+// started, and the connections still running get the whole pool. The claim is
+// caught where the leak lived: offered, recorded and holding a unit, with the
+// sync that would list it answered by a refused credential. Before the loop
+// withdrew what it held on the way out, that unit — and one of its harness's
+// cap — stayed counted for the life of the daemon, and the healthy hub was
+// never offered more than the pool less the leak.
+func TestAFatalSyncGivesBackItsPendingClaim(t *testing.T) {
+	e := newEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	healthy := e.loop(t, 2)
+	healthy.Clock = shortClock{}
+	x := e.executor()
+	sv := e.server(healthy, x, NewDrain(), time.Hour)
+	// The recording executor holds what it is handed and never releases it,
+	// so how many runs the healthy hub gets started is how much of the pool
+	// it could reach.
+	healthy.Executor = e.exec
+	sv.pool = NewPool(v1.Capacity{Total: 2, ByHarness: map[string]int{"claude": 2}})
+	healthy.Pool = sv.pool
+	sv.pool.Join(healthy.Connection, 0)
+	sv.pool.Join("refused", 0)
+
+	hub := &refusesAfterOffering{offer: testRun("caught", "s-caught")}
+	stops := &Loop{Connection: "refused", RunnerID: "r", Hub: hub, Store: e.store, Pool: sv.pool,
+		Capabilities: healthy.Capabilities, Executor: e.exec, Drain: sv.drain, Clock: shortClock{}}
+	sv.loops = append(sv.loops, stops)
+	sv.reporters["refused"] = NewReporter("refused", refusingHub{}, e.store, slog.New(slog.DiscardHandler))
+
+	done := make(chan error, 1)
+	go func() { done <- sv.run(ctx) }()
+	eventually(t, "the refused connection has stopped", func() bool {
+		sv.mu.Lock()
+		defer sv.mu.Unlock()
+		return len(sv.errs) == 1
+	})
+	if n := hub.syncs.Load(); n != 2 {
+		t.Fatalf("the refused hub saw %d syncs, want the offer and the refusal", n)
+	}
+	if held, _ := sv.pool.Held("refused"); held != 0 {
+		t.Errorf("the stopped connection still holds %d unit(s) of the pool", held)
+	}
+	if _, err := e.store.GetRun(context.Background(), dbRun("refused", "caught")); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("the claim it never started is still in the store: %v", err)
+	}
+
+	// The other connection is still running, and can reach every unit.
+	e.enqueue(t, testRun("a", "s-a"), testRun("b", "s-b"))
+	eventually(t, "the healthy hub has both runs started", func() bool { return len(e.exec.ids()) == 2 })
+	res := sv.pool.Reserve(healthy.Connection)
+	defer res.Close()
+	if got := res.Free(); got.ByHarness["claude"] != 0 {
+		t.Errorf("claude cap has %d free with both units running, want 0 — the leaked unit was not counted there", got.ByHarness["claude"])
+	}
+	cancel()
+	<-done
+}
+
+// refusesAfterOffering offers one run, then refuses the runner's credential:
+// the sync that would have listed the claim is the one that stops the loop.
+type refusesAfterOffering struct {
+	offer v1.Run
+	syncs atomic.Int32
+}
+
+func (h *refusesAfterOffering) Sync(context.Context, string, v1.SyncRequest) (v1.SyncResponse, error) {
+	if h.syncs.Add(1) == 1 {
+		return v1.SyncResponse{NextSyncMS: 15000, Runs: []v1.Run{h.offer}}, nil
+	}
+	return v1.SyncResponse{}, errUnauthorized
+}
+
+func (h *refusesAfterOffering) Result(context.Context, string, v1.Result) error {
+	return errUnauthorized
 }

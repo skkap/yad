@@ -57,9 +57,9 @@ func (m *Monitor) attach(p *Pool, st *store.Store, sessions *Collector) {
 	m.pool, m.store, m.sessions = p, st, sessions
 }
 
-// ErrNoSessions is a close asked of a runner with no store open: no
-// connection configured, or not yet started.
-var ErrNoSessions = errors.New("the runner holds no sessions yet — it has no hub connected, or is still starting; try again in a moment")
+// ErrNoSessions is a close asked of a runner whose store is not open yet: it is
+// still starting.
+var ErrNoSessions = errors.New("the runner is still starting and has not opened its sessions yet; try again in a moment")
 
 // CloseSession is the owner's `yad sessions close`: the session closes now,
 // or once the run held in it ends, and its hub hears it was closed by the
@@ -83,8 +83,8 @@ func (m *Monitor) markReady() {
 	m.ready = true
 }
 
-// Ready is whether Serve got past its setup: the store is open and at least
-// one connection's loop is running, or there is no connection to run. What a
+// Ready is whether Serve got past its setup: the store is open, and at least
+// one connection's loop is running or there is no connection to run. What a
 // hub answers to the first sync comes later, and shows in Connections.
 func (m *Monitor) Ready() bool {
 	m.mu.Lock()
@@ -123,8 +123,8 @@ func (m *Monitor) failed(conn string, err error, at time.Time, state string) {
 // Snapshot is the runner at one moment.
 type Snapshot struct {
 	Connections map[string]ConnectionState
-	// Capacity is nil while no pool exists: a runner with no connection
-	// holds none, and claims nothing.
+	// Capacity is nil while no pool exists: before Serve has set up, or
+	// after it has returned.
 	Capacity *struct{ Total, Free int }
 	Held     []db.Run
 	Sessions int

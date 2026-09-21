@@ -219,8 +219,10 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				fmt.Fprintln(w, "\ndrained — every run held has ended")
 				log.Info("daemon stopped", "drained", true, "reason", drain.Reason())
 			default:
-				// Every connection stopped on its own: nothing left to do.
-				log.Error("daemon exiting: every connection stopped", "err", err)
+				// Every connection stopped on its own, or the runner could
+				// not set up at all — its store would not open, say, which a
+				// runner with no hub now meets too. The error says which.
+				log.Error("daemon exiting: the runner stopped on its own", "err", err)
 			}
 			return err
 		case t := <-tick.C:
@@ -279,8 +281,8 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 	st := control.Status{
 		Ready:   m.Ready(),
 		Profile: p.Profile, RunnerID: doc.RunnerID, Name: doc.Name, Version: buildinfo.Version, Started: started,
-		// No pool exists without a connection, and nothing is claimed: all of
-		// it is free.
+		// No pool exists until the runner has set up, and nothing is
+		// claimed before it: all of it is free.
 		Capacity: control.Capacity{Total: doc.Capacity.Total, Free: doc.Capacity.Total},
 	}
 	snap, err := m.Snapshot(ctx)

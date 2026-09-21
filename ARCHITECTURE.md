@@ -555,6 +555,9 @@ for `codex`); the suite never runs a real harness.
   `workdir.Manager.Reclaim` first takes its worktrees out of their bare caches
   and frees its slots — which retries a removal that failed and touches
   nothing outside `<data>/workdirs`.
+  The collector runs whether or not any hub is connected: the disk is the
+  machine's, and a hub disconnected while no daemon ran leaves sessions no
+  hub will ever close.
   A missing last-used timestamp is unknown, never ancient: the TTL counts from
   the sweep that first sees it. Every close goes to the session's hub in
   `closed_sessions`.
