@@ -70,7 +70,7 @@ func TestMonitorThroughServe(t *testing.T) {
 	if serr != nil {
 		t.Fatalf("a snapshot after Serve returned: %v", serr)
 	}
-	if c := s.Connections["gone"]; c.State != ConnStopped || !strings.Contains(c.LastError, "yad connect") {
+	if c := s.Connections["gone"]; c.State != ConnStopped || !strings.Contains(c.LastError, "connect '<hub url>' --name gone") {
 		t.Errorf("connection without a credential: %+v", c)
 	}
 	if s.Capacity != nil {

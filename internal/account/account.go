@@ -206,6 +206,10 @@ func TranscriptDir(data, harness string) string {
 	return filepath.Join(data, "transcripts", harness)
 }
 
+// HomeVar is the variable a harness reads its home from, for a command that
+// names it; empty for a harness with no home of its own.
+func HomeVar(harness string) string { return homeVar[harness] }
+
 // Env is the single variable that points a harness at an account's home, ready
 // to append to a child's environment. Empty for a harness with no home of its
 // own, whose runs use the harness's default.
@@ -669,7 +673,7 @@ func SetWindows(ctx context.Context, q *db.Queries, harness, label string, windo
 // owner configured is read by the same rule as any other: free when its home
 // is on disk, needs_login when it is not.
 func Read(ctx context.Context, paths config.Paths, cfg config.Config) ([]Account, error) {
-	st, err := store.OpenReadOnly(ctx, paths.StateDB())
+	st, err := store.OpenProfile(ctx, paths)
 	if errors.Is(err, store.ErrNoState) {
 		return Load(ctx, nil, paths.Data, cfg)
 	}

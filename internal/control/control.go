@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/shellword"
 )
 
@@ -166,14 +167,17 @@ func checkDir(dir string) error {
 }
 
 // ErrNotRunning is a profile with no daemon.
-var ErrNotRunning = errors.New("no daemon is running for this profile — `yad daemon start` starts one")
+var ErrNotRunning = errors.New("no daemon is running for this profile")
 
 // RunningError is a profile whose daemon is already up.
 type RunningError struct {
 	PID    int
 	Socket string
+	// Paths is the profile the daemon runs for, which the commands the error
+	// offers act on.
+	Paths config.Paths
 }
 
 func (e *RunningError) Error() string {
-	return fmt.Sprintf("a daemon is already running for this profile (pid %d, socket %s) — `yad daemon stop` first, or `yad daemon restart`", e.PID, e.Socket)
+	return fmt.Sprintf("a daemon is already running for this profile (pid %d, socket %s) — `%s` first, or `%s`", e.PID, e.Socket, e.Paths.Command("daemon", "stop"), e.Paths.Command("daemon", "restart"))
 }

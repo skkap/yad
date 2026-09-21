@@ -72,7 +72,7 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 // Start spawns Claude for one run and writes the instruction to it.
 func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, error) {
 	if spec.Binary == "" {
-		return nil, errors.New("no claude binary resolved — run `yad doctor` to see where claude was looked for")
+		return nil, fmt.Errorf("no claude binary resolved — run `%s` to see where claude was looked for", spec.YadCommand("doctor"))
 	}
 	session := spec.NativeSessionID
 	if session == "" {
@@ -104,6 +104,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		ctx:       ctx,
 		p:         p,
 		session:   session,
+		check:     spec.HarnessCheck("claude", "-p", "hello"),
 		frames:    make(chan []byte, 16),
 		written:   1,
 		q:         adapter.NewQueue(),
@@ -246,6 +247,8 @@ type turn struct {
 	ctx     context.Context
 	p       *supervise.Process
 	session string
+	// check is the login check for the owner, in the run's account home.
+	check string
 
 	// Every write to stdin goes through frames, so the instruction, steers,
 	// interrupts and permission answers never interleave.
@@ -465,6 +468,7 @@ loop:
 		exitErr:     exitErr,
 		stderr:      t.p.Stderr(),
 		final:       t.settled,
+		check:       t.check,
 	}
 	t.mu.Unlock()
 	t.outcome = tr.outcome(e)

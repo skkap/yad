@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,38 +31,56 @@ import (
 // starts with. Where it ends is read the way sh reads it: a backtick inside a
 // single-quoted word, or escaped by a backslash, is part of the word, and
 // shellword.Quote quotes every word holding one, so the first bare backtick
-// is the end.
+// is the end. Variable assignments ahead of the program — NAME=value, as
+// config.Paths.Command writes the profile's directories — are part of the
+// command and are skipped before the prefix is matched.
 func Commands(msg, prefix string) []string {
 	var out []string
-	for {
-		_, rest, ok := strings.Cut(msg, "`"+prefix)
-		if !ok {
-			return out
+	for i := 0; i < len(msg); i++ {
+		if msg[i] != '`' {
+			continue
 		}
-		rest = prefix + rest
-		quoted, escaped := false, false
-		end := -1
-		for i, r := range rest {
-			switch {
-			case escaped:
-				escaped = false
-			case r == '\\' && !quoted:
-				escaped = true
-			case r == '\'':
-				quoted = !quoted
-			case r == '`' && !quoted:
-				end = i
-			}
-			if end >= 0 {
+		start := i + 1
+		at := start
+		for assignment.MatchString(msg[at:]) {
+			n := wordEnd(msg[at:], ' ')
+			if n < 0 {
 				break
 			}
+			at += n + 1
 		}
+		if !strings.HasPrefix(msg[at:], prefix) {
+			continue
+		}
+		end := wordEnd(msg[start:], '`')
 		if end < 0 {
 			return out
 		}
-		out = append(out, rest[:end])
-		msg = rest[end+1:]
+		out = append(out, msg[start:start+end])
+		i = start + end
 	}
+	return out
+}
+
+var assignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// wordEnd is the offset of the first stop outside single quotes and not
+// escaped by a backslash, read as sh reads it; -1 when there is none.
+func wordEnd(s string, stop rune) int {
+	quoted, escaped := false, false
+	for i, r := range s {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && !quoted:
+			escaped = true
+		case r == '\'':
+			quoted = !quoted
+		case r == stop && !quoted:
+			return i
+		}
+	}
+	return -1
 }
 
 // Run has /bin/sh run line with a stub standing in for each of programs, and
@@ -79,13 +98,34 @@ func Commands(msg, prefix string) []string {
 // may still have been parsed right, and one parsed wrong is caught by the argv.
 func Run(t testing.TB, line string, programs ...string) [][]string {
 	t.Helper()
+	var argvs [][]string
+	for _, c := range run(t, line, nil, programs) {
+		argvs = append(argvs, c.argv)
+	}
+	return argvs
+}
+
+type call struct {
+	argv []string
+	env  map[string]string
+}
+
+// unset stands for a variable the program did not see; no test value is it.
+const unset = "\x01unset"
+
+func run(t testing.TB, line string, vars, programs []string) []call {
+	t.Helper()
 	dir := t.TempDir()
 	var script strings.Builder
 	for _, p := range programs {
 		// Length-prefixed and NUL-separated: an argument may hold a newline
 		// or be empty, and neither may blur where one argument or invocation
-		// ends.
-		script.WriteString(p + `() { printf '%s\0' "$#" ` + p + ` "$@" >> "$STUB_LOG"; }` + "\n")
+		// ends. The variables follow, a fixed number of them.
+		script.WriteString(p + `() { printf '%s\0' "$#" ` + p + ` "$@"`)
+		for _, v := range vars {
+			script.WriteString(` "${` + v + `-` + unset + `}"`)
+		}
+		script.WriteString(` >> "$STUB_LOG"; }` + "\n")
 	}
 	script.WriteString(line)
 	log := filepath.Join(dir, "argv")
@@ -108,14 +148,20 @@ func Run(t testing.TB, line string, programs ...string) [][]string {
 		t.Fatal(err)
 	}
 	fields := strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00")
-	var calls [][]string
+	var calls []call
 	for len(fields) > 0 {
 		n, err := strconv.Atoi(fields[0])
-		if err != nil || len(fields) < n+2 {
+		if err != nil || len(fields) < n+2+len(vars) {
 			t.Fatalf("the stub log is not one this package wrote: %q", b)
 		}
-		calls = append(calls, fields[1:n+2])
-		fields = fields[n+2:]
+		c := call{argv: fields[1 : n+2], env: map[string]string{}}
+		for i, v := range vars {
+			if val := fields[n+2+i]; val != unset {
+				c.env[v] = val
+			}
+		}
+		calls = append(calls, c)
+		fields = fields[n+2+len(vars):]
 	}
 	return calls
 }
@@ -124,9 +170,36 @@ func Run(t testing.TB, line string, programs ...string) [][]string {
 // exactly want as its argv. want[0] is the program's name and the one stub.
 func Check(t testing.TB, line string, want ...string) {
 	t.Helper()
-	calls := Run(t, line, want[0])
-	if len(calls) != 1 || !slices.Equal(calls[0], want) {
-		t.Errorf("sh ran\n  %s\nas %q, want one call of %q", line, calls, want)
+	CheckEnv(t, line, nil, want...)
+}
+
+// CheckEnv is Check, and also fails t unless the program saw exactly env for
+// the variables env names — one mapped to "" must not be set at all. The shell
+// starts with none of them, so what the program sees is what the line set.
+func CheckEnv(t testing.TB, line string, env map[string]string, want ...string) {
+	t.Helper()
+	var vars []string
+	for v := range env {
+		vars = append(vars, v)
+	}
+	slices.Sort(vars)
+	calls := run(t, line, vars, want[:1])
+	if len(calls) != 1 || !slices.Equal(calls[0].argv, want) {
+		var argvs [][]string
+		for _, c := range calls {
+			argvs = append(argvs, c.argv)
+		}
+		t.Errorf("sh ran\n  %s\nas %q, want one call of %q", line, argvs, want)
+		return
+	}
+	for _, v := range vars {
+		got, set := calls[0].env[v]
+		switch {
+		case env[v] == "" && set:
+			t.Errorf("sh ran\n  %s\nwith %s=%q, want it unset", line, v, got)
+		case env[v] != "" && got != env[v]:
+			t.Errorf("sh ran\n  %s\nwith %s=%q, want %q", line, v, got, env[v])
+		}
 	}
 }
 

@@ -5,8 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/upgrade"
 )
+
+// bareUpgrade builds the upgrade commands of a default-profile, upstream install.
+func bareUpgrade(args ...string) string { return upgrade.Command("", nil, args...) }
 
 // `yad upgrade` is the next action the hub's version_too_old refusal names, so
 // it has to be the command rather than the placeholder that named epic E9.
@@ -84,7 +88,7 @@ var everyState = []upgrade.State{upgrade.Behind, upgrade.Current, upgrade.Ahead,
 func TestCheckLineCarriesANextAction(t *testing.T) {
 	for _, state := range everyState {
 		for _, named := range []bool{false, true} {
-			line := checkLine(state, "v0.4.0", named)
+			line := checkLine(state, "v0.4.0", named, bareUpgrade)
 			if !strings.Contains(line, "yad upgrade") {
 				t.Errorf("state %v (named=%v) says %q, with nothing to type next", state, named, line)
 			}
@@ -102,27 +106,25 @@ func TestCheckLineCarriesANextAction(t *testing.T) {
 // that tags "latest", and blaming the installed build for it contradicts the
 // `installed  v0.4.0` line printed two lines above.
 func TestCheckLineBlamesTheUnreadableSide(t *testing.T) {
-	if line := checkLine(upgrade.UnreadableTag, "stable", true); strings.Contains(line, "this build carries no release version") {
+	if line := checkLine(upgrade.UnreadableTag, "stable", true, bareUpgrade); strings.Contains(line, "this build carries no release version") {
 		t.Errorf("an unreadable tag says %q, blaming the build for it", line)
 	} else if !strings.Contains(line, `"stable" is not a version number`) {
 		t.Errorf("an unreadable tag says %q, without naming the tag as the problem", line)
 	}
-	if line := checkLine(upgrade.Unstamped, "v0.4.0", false); !strings.Contains(line, "this build carries no release version") {
+	if line := checkLine(upgrade.Unstamped, "v0.4.0", false, bareUpgrade); !strings.Contains(line, "this build carries no release version") {
 		t.Errorf("an unstamped build says %q, without naming the build as the problem", line)
 	}
 }
 
 // The restart advice names a profile, so the commands it offers have to act on
-// that profile. They take it in different places — `yad service install` has
-// its own --profile, `yad daemon restart` has none and reads the global one —
-// and a bare `yad service install` would bootstrap a supervised unit for the
-// default profile, which is a state change nobody asked for (0028).
+// that profile: a bare `yad service install` would bootstrap a supervised unit
+// for the default profile, which is a state change nobody asked for (0028).
 func TestRestartAdviceCarriesTheProfile(t *testing.T) {
 	for _, c := range []struct{ profile, wantService, wantDaemon string }{
-		{"work", "`yad service install --profile work`", "`yad --profile work daemon restart`"},
+		{"work", "`yad --profile work service install`", "`yad --profile work daemon restart`"},
 		{"default", "`yad service install`", "`yad daemon restart`"},
 	} {
-		line := restartAdvice(c.profile)
+		line := restartAdvice(config.Paths{Profile: c.profile})
 		if !strings.Contains(line, c.wantService) {
 			t.Errorf("profile %s: advice %q, want it to offer %s", c.profile, line, c.wantService)
 		}
@@ -141,10 +143,10 @@ func TestRestartAdviceCarriesTheProfile(t *testing.T) {
 // there the runner in question is under some other profile, and every command
 // available here *starts* something rather than restarting it.
 func TestRestartNoteOffersACommandOnlyWhereItKnowsTheProfile(t *testing.T) {
-	commands := []string{"yad service install", "daemon restart"}
+	commands := []string{"service install", "daemon restart"}
 
 	t.Run("no runner under this profile", func(t *testing.T) {
-		note := restartNote("default", 0, false, nil)
+		note := restartNote(config.Paths{Profile: "default"}, 0, false, nil)
 		for _, c := range commands {
 			if strings.Contains(note, c) {
 				t.Errorf("note %q offers %q against the one profile that does not need it", note, c)
@@ -156,11 +158,11 @@ func TestRestartNoteOffersACommandOnlyWhereItKnowsTheProfile(t *testing.T) {
 	})
 
 	t.Run("a runner is running here", func(t *testing.T) {
-		note := restartNote("work", 4711, true, nil)
+		note := restartNote(config.Paths{Profile: "work"}, 4711, true, nil)
 		if !strings.Contains(note, "pid 4711") {
 			t.Errorf("note %q does not name the runner it found", note)
 		}
-		for _, want := range []string{"`yad service install --profile work`", "`yad --profile work daemon restart`"} {
+		for _, want := range []string{"`yad --profile work service install`", "`yad --profile work daemon restart`"} {
 			if !strings.Contains(note, want) {
 				t.Errorf("note %q, want it to offer %s", note, want)
 			}
@@ -175,7 +177,7 @@ func TestRestartNoteOffersACommandOnlyWhereItKnowsTheProfile(t *testing.T) {
 	t.Run("the lock could not be read", func(t *testing.T) {
 		// A runner may be there, and if it is, it is this profile's — so the
 		// advice is the right advice, and the uncertainty is stated.
-		note := restartNote("work", 0, false, errors.New("permission denied"))
+		note := restartNote(config.Paths{Profile: "work"}, 0, false, errors.New("permission denied"))
 		if !strings.Contains(note, "could not tell") || !strings.Contains(note, "permission denied") {
 			t.Errorf("note %q does not report that the state is unknown", note)
 		}
@@ -187,7 +189,7 @@ func TestRestartNoteOffersACommandOnlyWhereItKnowsTheProfile(t *testing.T) {
 
 func TestCheckLineOnANamedTag(t *testing.T) {
 	for _, state := range everyState {
-		line := checkLine(state, "v0.1.0", true)
+		line := checkLine(state, "v0.1.0", true, bareUpgrade)
 		if strings.Contains(line, "newest release") {
 			t.Errorf("state %v says %q, calling a named tag the newest release", state, line)
 		}

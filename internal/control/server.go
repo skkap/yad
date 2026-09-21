@@ -41,6 +41,8 @@ type Daemon struct {
 	wg       sync.WaitGroup
 	once     sync.Once
 	closed   chan struct{}
+	// paths is the profile served, which the commands an answer offers act on.
+	paths config.Paths
 }
 
 // lockWait is how long Claim retries a lock it finds taken. A CLI probing
@@ -78,13 +80,13 @@ func Claim(p config.Paths) (*Daemon, error) {
 	if errors.Is(err, syscall.EWOULDBLOCK) {
 		pid := readPID(f)
 		f.Close()
-		return nil, &RunningError{PID: pid, Socket: sock}
+		return nil, &RunningError{PID: pid, Socket: sock, Paths: p}
 	}
 	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("lock %s: %w", p.Lock(), err)
 	}
-	d := &Daemon{sock: sock, lock: f, closed: make(chan struct{})}
+	d := &Daemon{sock: sock, lock: f, closed: make(chan struct{}), paths: p}
 	if err := d.claim(); err != nil {
 		d.release()
 		return nil, err
@@ -169,7 +171,7 @@ func (d *Daemon) answer(ctx context.Context, conn *net.UnixConn, h Handler) {
 		return
 	case "close_session":
 		if h.CloseSession == nil {
-			res.Error = "this daemon closes no sessions — `yad daemon restart` after an upgrade"
+			res.Error = "this daemon closes no sessions — `" + d.paths.Command("daemon", "restart") + "` after an upgrade"
 			break
 		}
 		closed, err := h.CloseSession(ctx, req.Connection, req.Session)
@@ -179,7 +181,7 @@ func (d *Daemon) answer(ctx context.Context, conn *net.UnixConn, h Handler) {
 		}
 		res.Closed = &closed
 	default:
-		res.Error = fmt.Sprintf("unknown request %q — the CLI and the daemon are different yad versions; `yad daemon restart` after an upgrade", strings.TrimSpace(req.Op))
+		res.Error = fmt.Sprintf("unknown request %q — the CLI and the daemon are different yad versions; `%s` after an upgrade", strings.TrimSpace(req.Op), d.paths.Command("daemon", "restart"))
 	}
 	enc.Encode(res)
 }

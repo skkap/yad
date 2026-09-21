@@ -74,7 +74,7 @@ func TestConnectRoundTrip(t *testing.T) {
 	}
 	// A token for a new runner cannot replace this one's credential; a token
 	// issued for it can, under the same name.
-	if _, _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err == nil || !strings.Contains(err.Error(), "--runner "+id) {
+	if _, _, _, err := Connect(ctx, e.paths, e.url, e.token(t), "home"); err == nil || !strings.Contains(err.Error(), "--runner") || !strings.Contains(err.Error(), id) {
 		t.Errorf("re-connect with a new-runner token: %v", err)
 	}
 	if _, res2, _, err := Connect(ctx, e.paths, e.url, e.token(t, id), "home"); err != nil || res2.RunnerCredential == res.RunnerCredential {

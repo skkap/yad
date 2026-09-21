@@ -27,8 +27,12 @@ import (
 // run on the hub.
 type hubFlags struct {
 	url, tokenFile *string
-	// The defaults, kept to tell which flags a follow-up command must carry.
+	// What a bare follow-up command would use, to tell which flags it must
+	// carry. defURL is the built-in address, not $YAD_HUB_URL: a URL taken
+	// from the environment is carried too, since the shell the command is
+	// pasted into need not have the variable.
 	defURL, defTokenFile string
+	paths                config.Paths
 }
 
 func addHubFlags(fs *flag.FlagSet, g global) hubFlags {
@@ -37,7 +41,7 @@ func addHubFlags(fs *flag.FlagSet, g global) hubFlags {
 		def = "http://" + defaultHubListen
 	}
 	return hubFlags{
-		defURL: def, defTokenFile: g.paths.HubAdminToken(),
+		defURL: "http://" + defaultHubListen, defTokenFile: g.paths.HubAdminToken(), paths: g.paths,
 		url:       fs.String("hub", def, "the hub's URL, as `yad hub serve` prints it, without /api/v1 ($YAD_HUB_URL)"),
 		tokenFile: fs.String("token-file", g.paths.HubAdminToken(), "file holding the admin token (0600)"),
 	}
@@ -46,7 +50,11 @@ func addHubFlags(fs *flag.FlagSet, g global) hubFlags {
 func (f hubFlags) client() (*hubapiclient.Client, error) {
 	tok, err := config.ReadSecret(*f.tokenFile)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no admin token at %s — on the hub's machine, `yad hub admin-token create` saves one there; elsewhere, save one at 0600 and pass --token-file", *f.tokenFile)
+		create := []string{"hub", "admin-token", "create"}
+		if *f.tokenFile != f.defTokenFile {
+			create = append(create, "--out", *f.tokenFile)
+		}
+		return nil, fmt.Errorf("no admin token at %s — on the hub's machine, `%s` saves one there; elsewhere, save one at 0600 and pass --token-file", *f.tokenFile, f.paths.Command(create...))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("admin token file %s: %w — revoke that token on the hub and create another", *f.tokenFile, err)
@@ -61,7 +69,7 @@ func (f hubFlags) client() (*hubapiclient.Client, error) {
 // A hub URL whose query or fragment RedactURL would take out is not printed:
 // the query is where a signed URL keeps its signature, and a redacted copy
 // pasted back would ask a different URL.
-func (f hubFlags) watchCommand(g global, runID string) string {
+func (f hubFlags) watchCommand(runID string) string {
 	args := []string{"hub", "watch"}
 	if u := *f.url; u != f.defURL {
 		if config.RedactURL(u) != u {
@@ -72,7 +80,7 @@ func (f hubFlags) watchCommand(g global, runID string) string {
 	if *f.tokenFile != f.defTokenFile {
 		args = append(args, "--token-file", *f.tokenFile)
 	}
-	return config.YadCommand(g.paths.Profile, append(args, runID)...)
+	return f.paths.Command(append(args, runID)...)
 }
 
 const submitUsage = "usage: yad hub submit --harness h --model m [--context text | --context-file f] [--session id | --new-session id] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
@@ -154,7 +162,7 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 		return err
 	}
 	fmt.Fprintln(stdout, run.RunID)
-	fmt.Fprintf(stderr, "queued in session %s — follow it with `%s`\n", run.SessionID, hf.watchCommand(g, run.RunID))
+	fmt.Fprintf(stderr, "queued in session %s — follow it with `%s`\n", run.SessionID, hf.watchCommand(run.RunID))
 	if !*watch {
 		return nil
 	}
@@ -237,7 +245,7 @@ func cmdHubControl(ctx context.Context, g global, verb string, args []string, st
 	case run.State.Terminal():
 		fmt.Fprintf(stdout, "run %s is %s\n", run.RunID, run.State)
 	case verb == "cancel":
-		fmt.Fprintf(stdout, "run %s is %s; its runner cancels it at its next sync — `%s` shows the end\n", run.RunID, run.State, hf.watchCommand(g, run.RunID))
+		fmt.Fprintf(stdout, "run %s is %s; its runner cancels it at its next sync — `%s` shows the end\n", run.RunID, run.State, hf.watchCommand(run.RunID))
 	case verb == "interrupt":
 		fmt.Fprintf(stdout, "run %s is %s; its runner interrupts the turn at its next sync\n", run.RunID, run.State)
 	default:
@@ -479,7 +487,7 @@ func cmdHubRunners(ctx context.Context, g global, args []string, stdout io.Write
 // draw rows of its own in the operator's terminal.
 func printRunners(w io.Writer, runners []hubapi.Runner, now time.Time) {
 	if len(runners) == 0 {
-		fmt.Fprintln(w, "no runners registered — `yad hub token create` makes a registration token for one")
+		fmt.Fprintln(w, "no runners registered — on the hub's machine, yad hub token create against the database it serves makes a registration token for one")
 		return
 	}
 	for i, r := range runners {

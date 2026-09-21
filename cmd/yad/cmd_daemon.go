@@ -150,9 +150,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	last := capability.Fingerprint(doc)
 	fmt.Fprintf(w, "runner %s (%s) — profile %s, %s/%s, yad %s, capacity %d\n", doc.Name, id, g.paths.Profile, doc.OS, doc.Arch, doc.YadVersion, cfg.Capacity)
 	if len(cfg.Connections) > 0 {
-		fmt.Fprintf(w, "syncing with %d hub(s); runs are claimed for the harnesses `yad doctor` shows as first-class\n", len(cfg.Connections))
+		fmt.Fprintf(w, "syncing with %d hub(s); runs are claimed for the harnesses `%s` shows as first-class\n", len(cfg.Connections), g.paths.Command("doctor"))
 	} else {
-		fmt.Fprintln(w, "no hub connected — `yad connect <url> --token …` to add one; nothing will be claimed")
+		fmt.Fprintf(w, "no hub connected — `%s` to add one; nothing will be claimed\n", g.paths.Command("connect", "<hub url>", "--token", "<token>"))
 	}
 	fmt.Fprintf(w, "capabilities %s\n", last)
 	log.Info("daemon started", "profile", g.paths.Profile, "runner_id", id, "version", buildinfo.Version, "connections", len(cfg.Connections), "capabilities", last)
@@ -338,7 +338,7 @@ func daemonStatus(ctx context.Context, g global, args []string, w io.Writer) err
 	res, err := control.Ask(ctx, g.paths, "status")
 	switch {
 	case errors.Is(err, control.ErrNotRunning):
-		fmt.Fprintf(w, "not running — profile %s; `yad daemon start` starts it\n", g.paths.Profile)
+		fmt.Fprintf(w, "not running — profile %s; `%s` starts it\n", g.paths.Profile, g.paths.Command("daemon", "start"))
 		return errNotRunning
 	case err != nil:
 		return err

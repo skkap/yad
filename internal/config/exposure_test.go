@@ -114,7 +114,7 @@ func TestExposures(t *testing.T) {
 				// A chmod stops the next reader, not the one who already read
 				// it, so the action a leaked secret needs is the rotation.
 				"not the one who already read it",
-				"revoke this credential at the hub and run `yad connect` again",
+				"revoke this credential at the hub and run `yad connect '<hub url>' --name yashiki --token '<new token>'` again",
 			},
 		},
 		{

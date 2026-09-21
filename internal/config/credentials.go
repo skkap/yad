@@ -31,12 +31,19 @@ func (p Paths) SaveCredential(connection, credential string) error {
 func (p Paths) Credential(connection string) (string, error) {
 	c, err := ReadSecret(p.credentialPath(connection))
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("no credential for connection %q — run `yad connect` again", connection)
+		return "", fmt.Errorf("no credential for connection %q — run `%s` again", connection, p.reconnect(connection))
 	}
 	if errors.Is(err, errExposed) {
-		return "", fmt.Errorf("credential for %q %w — revoke it at the hub, then `yad connect` again", connection, err)
+		return "", fmt.Errorf("credential for %q %w — revoke it at the hub, then `%s` again", connection, err, p.reconnect(connection))
 	}
 	return c, err
+}
+
+// reconnect is the command that gives connection a fresh credential: the
+// same name, the hub's URL as config.toml has it, and a token the hub issued
+// for this runner.
+func (p Paths) reconnect(connection string) string {
+	return p.Command("connect", "<hub url>", "--name", connection, "--token", "<new token>")
 }
 
 // CheckCredential is the local half of proving a connection can authenticate:
@@ -55,13 +62,13 @@ func (p Paths) CheckCredential(connection string) error {
 		return err
 	}
 	if c == "" {
-		return fmt.Errorf("the credential for %q is empty — run `yad connect` again", connection)
+		return fmt.Errorf("the credential for %q is empty — run `%s` again", connection, p.reconnect(connection))
 	}
 	for _, r := range c {
 		// Visible ASCII is what a bearer token may hold; anything else is a
 		// file that was edited or truncated, and every sync would fail on it.
 		if r <= ' ' || r > '~' {
-			return fmt.Errorf("the credential for %q is not a single token (it holds whitespace or a non-ASCII character) — run `yad connect` again", connection)
+			return fmt.Errorf("the credential for %q is not a single token (it holds whitespace or a non-ASCII character) — run `%s` again", connection, p.reconnect(connection))
 		}
 	}
 	return nil

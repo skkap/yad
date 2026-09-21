@@ -109,7 +109,7 @@ func privateFiles(p Paths) []privateFile {
 		// point a remote hub's owner at a local hub.db that never issued it.
 		// The delete is named because revoke only touches the database, and
 		// create refuses while the file is still there.
-		{admin, "it is an admin token for a hub's service API", chmod("600", admin) + " stops the next reader, but not the one who already read it, so revoke it at the hub that issued it — for a hub this machine serves that is `" + YadCommand(p.Profile, "hub", "admin-token", "list") + "` then revoke, `" + shellword.Command("rm", admin) + "`, and `" + YadCommand(p.Profile, "hub", "admin-token", "create") + "` again"},
+		{admin, "it is an admin token for a hub's service API", chmod("600", admin) + " stops the next reader, but not the one who already read it, so revoke it at the hub that issued it — for a hub this machine serves that is `" + p.Command("hub", "admin-token", "list") + "` then revoke, `" + shellword.Command("rm", admin) + "`, and `" + p.Command("hub", "admin-token", "create") + "` again"},
 	}
 	// Each store contributes its own entry and its two sidecars together, from
 	// one description, so a sidecar cannot end up saying something different
@@ -171,7 +171,7 @@ func privateFiles(p Paths) []privateFile {
 			// The same next action config.Credential gives when ReadSecret
 			// refuses this file outright, so an owner who meets it here and
 			// there is told to do one thing, not two.
-			chmod("600", path) + " stops the next reader, but not the one who already read it, so revoke this credential at the hub and run `yad connect` again",
+			chmod("600", path) + " stops the next reader, but not the one who already read it, so revoke this credential at the hub and run `" + p.reconnect(e.Name()) + "` again",
 		})
 	}
 	return files

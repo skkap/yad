@@ -51,7 +51,7 @@ func TestUpgradeArgumentRefusalRunsAsPrinted(t *testing.T) {
 func TestCheckLineCommandsRunAsPrinted(t *testing.T) {
 	for _, tag := range shellwordtest.Hostile {
 		for _, state := range []upgrade.State{upgrade.Behind, upgrade.Ahead, upgrade.Unstamped, upgrade.UnreadableTag} {
-			line := checkLine(state, tag, true)
+			line := checkLine(state, tag, true, bareUpgrade)
 			for _, cmd := range shellwordtest.Commands(line, "yad upgrade") {
 				shellwordtest.Check(t, cmd, "yad", "upgrade", "--tag", tag)
 			}
@@ -64,11 +64,11 @@ func TestRestartAdviceRunsAsPrinted(t *testing.T) {
 		profile         string
 		service, daemon []string
 	}{
-		{"work", []string{"yad", "service", "install", "--profile", "work"}, []string{"yad", "--profile", "work", "daemon", "restart"}},
+		{"work", []string{"yad", "--profile", "work", "service", "install"}, []string{"yad", "--profile", "work", "daemon", "restart"}},
 		{config.DefaultProfile, []string{"yad", "service", "install"}, []string{"yad", "daemon", "restart"}},
 	} {
-		line := restartAdvice(tc.profile)
-		shellwordtest.Check(t, onlyCommand(t, line, "yad service"), tc.service...)
+		line := restartAdvice(config.Paths{Profile: tc.profile})
+		shellwordtest.Check(t, onlyCommand(t, line, strings.Join(tc.service[:len(tc.service)-1], " ")), tc.service...)
 		shellwordtest.Check(t, onlyCommand(t, line, strings.Join(tc.daemon[:len(tc.daemon)-1], " ")), tc.daemon...)
 	}
 }

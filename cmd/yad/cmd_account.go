@@ -27,7 +27,9 @@ const accountUsage = "usage: yad account add <harness> <label> | list [--json] |
 // removed account reaches it until it restarts — the same thing `yad connect`
 // says about a connection it has just written. One constant because add's copy
 // cannot be exercised from a test: the command refuses without a terminal.
-const daemonRestartNotice = "A runner already running holds the config it started with — `yad daemon restart` for it to pick this up."
+func daemonRestartNotice(p config.Paths) string {
+	return "A runner already running holds the config it started with — `" + p.Command("daemon", "restart") + "` for it to pick this up."
+}
 
 func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error {
 	if len(args) == 0 {
@@ -71,11 +73,11 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	// with no login behind it, which is exactly the half-made account this
 	// command must not produce without saying so.
 	if !interactive() {
-		return errors.New("`yad account add` runs the harness's own login and needs you at the terminal — run it from a shell on this machine (finishing a login from elsewhere is DEV-57, backlog)")
+		return fmt.Errorf("`%s` runs the harness's own login and needs you at the terminal — run it from a shell on this machine (finishing a login from elsewhere is DEV-57, backlog)", g.paths.Command("account", "add", id, label))
 	}
 	bin, ok := harness.Locate(id)
 	if !ok {
-		return fmt.Errorf("%s is not installed on this machine — `yad doctor` shows where it was looked for", id)
+		return fmt.Errorf("%s is not installed on this machine — `%s` shows where it was looked for", id, g.paths.Command("doctor"))
 	}
 	cfg, err := config.Load(g.paths)
 	if err != nil {
@@ -118,7 +120,7 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	recordErr := recordState(ctx, g.paths, id, label, state)
 	if in {
 		fmt.Fprintf(w, "\n%s account %q is free and will take runs.\n", id, label)
-		fmt.Fprintln(w, daemonRestartNotice)
+		fmt.Fprintln(w, daemonRestartNotice(g.paths))
 		return recordErr
 	}
 	// Not an error in the state model — the account exists and is reported —
@@ -127,7 +129,7 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	// is that the login did not take, and a state error is joined to that
 	// rather than printed in its place.
 	fmt.Fprintf(w, "\n%s account %q needs login: the home exists, it is reported to every hub, and no run will use it.\n", id, label)
-	return errors.Join(fmt.Errorf("the login did not complete — run `%s` again when you can finish it", config.YadCommand(g.paths.Profile, "account", "add", id, label)), recordErr)
+	return errors.Join(fmt.Errorf("the login did not complete — run `%s` again when you can finish it", g.paths.Command("account", "add", id, label)), recordErr)
 }
 
 func accountList(ctx context.Context, g global, args []string, w io.Writer) error {
@@ -165,7 +167,7 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 		return writeJSON(w, out)
 	}
 	if len(accounts) == 0 {
-		fmt.Fprintln(w, "no accounts — runs use each harness's own login; `yad account add <harness> <label>` adds one")
+		fmt.Fprintf(w, "no accounts — runs use each harness's own login; `%s` adds one\n", g.paths.Command("account", "add", "<harness>", "<label>"))
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -186,7 +188,7 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 	}
 	for _, a := range accounts {
 		if a.State == v1.AccountNeedsLogin {
-			fmt.Fprintf(w, "\n%s %q needs login: `%s`\n", a.Harness, a.Label, config.YadCommand(g.paths.Profile, "account", "add", a.Harness, a.Label))
+			fmt.Fprintf(w, "\n%s %q needs login: `%s`\n", a.Harness, a.Label, g.paths.Command("account", "add", a.Harness, a.Label))
 		}
 	}
 	return nil
@@ -278,7 +280,7 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 	// stays in its reports until it restarts. It will not use the account —
 	// a home that is not on disk reads as needs-login, so runs skip it — but
 	// saying nothing here makes the line above look like the whole story.
-	fmt.Fprintln(w, daemonRestartNotice)
+	fmt.Fprintln(w, daemonRestartNotice(g.paths))
 	return nil
 }
 
@@ -323,7 +325,7 @@ func addToConfig(p config.Paths, cfg config.Config, id, label string) error {
 // deleted the login and rewritten config.toml — and reports a schema number
 // instead of what just happened.
 func checkStateDB(ctx context.Context, p config.Paths) error {
-	st, err := store.OpenReadOnly(ctx, p.StateDB())
+	st, err := store.OpenProfile(ctx, p)
 	if errors.Is(err, store.ErrNoState) {
 		return nil
 	}
@@ -346,7 +348,7 @@ func checkStateDB(ctx context.Context, p config.Paths) error {
 // Routing this write through the control socket, as a session close is routed,
 // is the fuller answer and belongs with the daemon work rather than here.
 func openForAccountWrite(ctx context.Context, p config.Paths) (*store.Store, error) {
-	switch ro, err := store.OpenReadOnly(ctx, p.StateDB()); {
+	switch ro, err := store.OpenProfile(ctx, p); {
 	case errors.Is(err, store.ErrNoState):
 		// No database yet: nothing to migrate under anyone.
 	case err != nil:

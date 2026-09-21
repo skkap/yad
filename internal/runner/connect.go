@@ -64,7 +64,7 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 				again = "<the same URL>"
 			}
 			return conn, none, notes, fmt.Errorf("this runner is already connected to %s as %q — a runner has one connection per hub; to register it again, run `%s`",
-				shown, c.Name, config.YadCommand(p.Profile, "connect", again, "--name", c.Name, "--token", "<new token>"))
+				shown, c.Name, p.Command("connect", again, "--name", c.Name, "--token", "<new token>"))
 		case c.Name == name:
 			existing, conn = i, c
 		}

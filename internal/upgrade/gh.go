@@ -16,6 +16,9 @@ import (
 type GH struct {
 	// Repo is owner/name; empty means DefaultRepo.
 	Repo string
+	// Yad builds the yad commands its errors offer, carrying the caller's
+	// profile; nil builds bare ones.
+	Yad func(args ...string) string
 }
 
 func (g GH) repo() string {
@@ -60,7 +63,7 @@ func (g GH) Download(ctx context.Context, tag string, assets []string, dir strin
 	// message could have told them: check what they typed.
 	var ge *ghError
 	if errors.As(err, &ge) && strings.Contains(ge.stderr, "release not found") {
-		return fmt.Errorf("%s has no release %s — `yad upgrade --check` says what the newest one is", g.repo(), tag)
+		return fmt.Errorf("%s has no release %s — `%s` says what the newest one is", g.repo(), tag, Command(g.Repo, g.Yad, "--check"))
 	}
 	return err
 }
