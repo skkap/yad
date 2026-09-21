@@ -283,14 +283,21 @@ Nothing checks this from outside, so it is yours to get right.
 {"error": {"code": "invalid", "message": "...", "next_action": "..."}}
 ```
 
-v1 names nine codes: `not_implemented`, `unauthorized`, `runner_revoked`,
+v1 names ten codes: `not_implemented`, `unauthorized`, `runner_revoked`,
 `version_too_old`, `conflict`, `not_found`, `invalid`,
-`unsupported_protocol`, `not_holder`. They are not a closed set — the spec
-types `code` as a plain string — and two ordinary cases fit them awkwardly. A
-wrong method takes `invalid`, which is what `yad hub` sends. An internal fault
-has **no code in v1**: `yad hub` sends `internal`, which is not among the nine,
-and the protocol does not yet name one. Send the status that is true and a
-`next_action` a person can act on; that pair is what a runner's operator reads.
+`unsupported_protocol`, `not_holder`, `internal`. They are not a closed set —
+the spec types `code` as a plain string — so a runner meeting one it does not
+know goes by the status and shows `message` and `next_action` to a person. A
+wrong method takes `invalid`, which is what `yad hub` sends.
+
+**`internal` is a fault on your side**, sent with a `5xx`: the request may have
+been fine and the same one later may succeed. A runner treats it as any `5xx`
+— the sync loop backs off and tries again, and events and a result stay
+spooled and are sent again until you take them — so it never stops a runner
+and never loses a report. That is exactly why it must not stand in for a
+refusal: a request you will never accept, sent back as `internal`, is retried
+for ever. Send the status that is true and a `next_action` a person can act on;
+that pair is what a runner's operator reads.
 
 Every error response under your base path carries this envelope — an unknown
 path and a wrong method included. A plain-text 404 is a protocol violation,

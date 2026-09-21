@@ -116,7 +116,9 @@ Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
 `User-Agent: yad/<version>`. Errors are `{"error": {"code", "message",
 "next_action"}}` — the next action is mandatory, because a runner on a
-customer's machine is debugged by reading it.
+customer's machine is debugged by reading it. The codes v1 names are the
+constants in `protocol/v1/error.go`; a hub's own fault is `internal`, with a
+`5xx`, and a runner retries it as it retries any `5xx`.
 
 A registration token registers one runner once. The exchange kills it, and the
 same token again — for that runner or for another — is refused: runner ids are
