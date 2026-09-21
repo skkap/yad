@@ -391,11 +391,63 @@ func placeLink(from, to string) error {
 // (~1.8 MB per home before any work, DEV-24); RemoveAll takes them with the
 // rest, which is why the home is a directory to delete and not a file to
 // unlink.
+//
+// Any copy of the home set aside for deletion and never finished goes with it
+// (RemoveSetAside): it holds the same login.
 func Remove(data, harness, label string) error {
 	if err := checkNames(harness, label); err != nil {
 		return err
 	}
-	return os.RemoveAll(HomeDir(data, harness, label))
+	return errors.Join(os.RemoveAll(HomeDir(data, harness, label)), RemoveSetAside(data, harness, label))
+}
+
+// asidePrefix names a home set aside for deletion: a leading dot and a
+// suffix no label can carry (config.ValidName), so it is never read as an
+// account.
+func asidePrefix(label string) string { return "." + label + ".removed-" }
+
+// SetAside moves an account's home out of its path, to be deleted by
+// RemoveSetAside. A rename in one directory is immediate whatever the home
+// holds, so a caller deciding under a lock that a home goes can make it go
+// from the account's path in the same step, and do the slow delete after.
+// A home already gone is no error.
+func SetAside(data, harness, label string) error {
+	if err := checkNames(harness, label); err != nil {
+		return err
+	}
+	home := HomeDir(data, harness, label)
+	aside := filepath.Join(filepath.Dir(home), fmt.Sprintf("%s%d", asidePrefix(label), time.Now().UnixNano()))
+	if err := os.Rename(home, aside); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// RemoveSetAside deletes every copy of an account's home that SetAside moved
+// and nothing has deleted yet — the one just set aside, and any an earlier
+// delete failed on or a process died in the middle of. They hold a login the
+// owner was told would go, so a retried removal is what finishes one left
+// behind rather than reporting the account gone while its credential sits
+// under a hidden name.
+func RemoveSetAside(data, harness, label string) error {
+	if err := checkNames(harness, label); err != nil {
+		return err
+	}
+	dir := filepath.Dir(HomeDir(data, harness, label))
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), asidePrefix(label)) {
+			errs = append(errs, os.RemoveAll(filepath.Join(dir, e.Name())))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // checkNames guards the two strings that become path elements under

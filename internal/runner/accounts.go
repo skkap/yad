@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -131,11 +128,13 @@ func (a *Accounts) release(h *accountHold) {
 	}
 	removed := last && !a.lists.Has(h.ref)
 	doomed := removed && a.doomed[h.ref]
-	var aside string
 	var asideErr error
 	if doomed {
 		delete(a.doomed, h.ref)
-		aside, asideErr = a.setAside(h.ref)
+		// Out of the account's path under the lock, so a Keep or an add
+		// that comes after finds no home there and makes a new one rather
+		// than logging into one about to be deleted.
+		asideErr = account.SetAside(a.data, h.ref.Harness, h.ref.Label)
 	}
 	st := a.store
 	a.mu.Unlock()
@@ -152,7 +151,7 @@ func (a *Accounts) release(h *accountHold) {
 	if !doomed {
 		return
 	}
-	if err := errors.Join(asideErr, removeAside(aside)); err != nil {
+	if err := errors.Join(asideErr, account.RemoveSetAside(a.data, h.ref.Harness, h.ref.Label)); err != nil {
 		log.Warn("the last run on a removed account has ended and its home could not be deleted", "err", err)
 		return
 	}
@@ -181,33 +180,6 @@ func checkRef(r account.Ref) error {
 		return fmt.Errorf("account label: %w", err)
 	}
 	return nil
-}
-
-// setAside moves a home out of the way under a.mu, so the decision to delete
-// it and its disappearing from the account's path are one step: a Keep or an
-// add that comes after it finds no home there and gets a new one, rather than
-// logging into a directory about to be removed. A rename in one directory is
-// immediate whatever the home holds; the delete itself, removeAside, runs
-// after the lock is let go. Empty with no error is a home already gone.
-func (a *Accounts) setAside(r account.Ref) (string, error) {
-	home := account.HomeDir(a.data, r.Harness, r.Label)
-	// A leading dot and a suffix no label can carry (config.ValidName), so
-	// it can never be read as an account.
-	aside := filepath.Join(filepath.Dir(home), fmt.Sprintf(".%s.removed-%d", r.Label, time.Now().UnixNano()))
-	switch err := os.Rename(home, aside); {
-	case errors.Is(err, fs.ErrNotExist):
-		return "", nil
-	case err != nil:
-		return "", err
-	}
-	return aside, nil
-}
-
-func removeAside(aside string) error {
-	if aside == "" {
-		return nil
-	}
-	return os.RemoveAll(aside)
 }
 
 // attach gives the source the runner's store once Serve has opened it, and
@@ -281,7 +253,6 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 	a.mu.Lock()
 	a.lists = lists
 	var runs []string
-	var aside string
 	var asideErr error
 	if removed {
 		for h := range a.held[r] {
@@ -291,7 +262,7 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 		if len(runs) > 0 {
 			a.doomed[r] = true
 		} else {
-			aside, asideErr = a.setAside(r)
+			asideErr = account.SetAside(a.data, r.Harness, r.Label)
 		}
 	} else {
 		// Logged in again under a label whose old home was waiting to go:
@@ -308,7 +279,7 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 		}
 	}
 	if removed {
-		if err := errors.Join(asideErr, removeAside(aside)); err != nil {
+		if err := errors.Join(asideErr, account.RemoveSetAside(a.data, r.Harness, r.Label)); err != nil {
 			return Changed{}, fmt.Errorf("%s account %q is removed, and its home could not be deleted: %w", r.Harness, r.Label, err)
 		}
 		log.Info("the owner removed the account", "runs_still_on_it", len(runs))

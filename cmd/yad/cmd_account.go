@@ -330,7 +330,7 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 		fmt.Fprintf(w, "removed %s account %q; %s is gone and the shared transcripts are untouched\n", id, label, home)
 		return nil
 	case errors.As(err, &refused):
-		return fmt.Errorf("%s account %q is out of config.toml, and %w — its home %s is kept; run `%s` again", id, label, err, home, again)
+		return fmt.Errorf("%s account %q is out of config.toml, and %w — run `%s` again", id, label, err, again)
 	case err != nil:
 		// Not deleted: a run may be on it, and only the daemon could say.
 		return fmt.Errorf("%s account %q is out of config.toml, but the running daemon did not answer (%v), so its home %s is kept in case a run is using it — once `%s` answers, run `%s` again", id, label, err, home, g.paths.Command("status"), again)

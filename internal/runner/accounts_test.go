@@ -375,3 +375,34 @@ func TestReloadWaitsForTheStore(t *testing.T) {
 		t.Fatal("still waiting after the store was attached")
 	}
 }
+
+// A home an earlier delete could not finish — set aside, then the RemoveAll
+// failed or the daemon died — still holds a login. Running the removal again
+// is the way out the error names, and it has to find that one too rather than
+// report the account gone while its credential sits under a hidden name.
+func TestARetriedRemovalFinishesAHomeLeftAside(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := accountsOf(e.paths.Data, accountConfig())
+	a.attach(ctx, e.store)
+	dir := filepath.Dir(account.HomeDir(e.paths.Data, "claude", "work"))
+	left := filepath.Join(dir, ".work.removed-1")
+	other := filepath.Join(dir, ".spare.removed-1")
+	for _, d := range []string{left, other} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, ".credentials.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := a.Reload(ctx, claudeLists(), account.Ref{Harness: "claude", Label: "work"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if exists(left) {
+		t.Error("the retried removal left the home an earlier delete set aside")
+	}
+	if !exists(other) {
+		t.Error("the removal of work deleted what another account left aside")
+	}
+}
