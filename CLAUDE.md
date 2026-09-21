@@ -43,6 +43,11 @@ rebuilds them and `make check` fails when they drift.
 - **Errors carry the next action.** `"yad connect arrives in epic E2"`, not
   `"not implemented"`. Protocol errors carry a `next_action` field for the same
   reason.
+- **A next action that is a command is an executable artifact.** It is pasted,
+  so it must run as printed: shell-quoted (POSIX single quotes, `'\''` for an
+  embedded one — `shellQuote` in `internal/account`), never Go's `%q`, and
+  carrying every variable the reader needs, such as the account's home. Test it
+  by running it through a real `sh`, not by reading it.
 - **Tests never spend a token and never touch the network.** Adapters replay
   recorded fixtures; children are the fake harness (the test binary,
   re-executed); the runner is tested against `yad hub` in process.
