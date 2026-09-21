@@ -400,7 +400,7 @@ func TestGrantsAreDeliveredAndDestroyed(t *testing.T) {
 			run := testRun("a", "s1")
 			run.Grants = []v1.Grant{
 				{Name: "ZUMINO_TOKEN", Value: "env-secret", As: v1.GrantEnv},
-				{Name: "ANTHROPIC_BASE_URL", Value: "https://env-secret-url", As: v1.GrantEnv},
+				{Name: "GIT_SSH_COMMAND", Value: "ssh -i env-secret-key", As: v1.GrantEnv},
 				{Name: "DATABASE_URL", Value: "file-secret", As: v1.GrantFile},
 			}
 			e.enqueue(t, run)
@@ -427,7 +427,7 @@ func TestGrantsAreDeliveredAndDestroyed(t *testing.T) {
 
 			mu.Lock()
 			defer mu.Unlock()
-			for _, want := range []string{"ZUMINO_TOKEN=env-secret", "ANTHROPIC_BASE_URL=https://env-secret-url"} {
+			for _, want := range []string{"ZUMINO_TOKEN=env-secret", "GIT_SSH_COMMAND=ssh -i env-secret-key"} {
 				if !contains(seen.Env, want) {
 					t.Errorf("env grant %q missing from %v", want, seen.Env)
 				}

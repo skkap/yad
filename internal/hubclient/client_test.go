@@ -6,12 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/hub"
+	hubstore "github.com/skkap/yad/internal/hub/store"
 )
 
 func TestSendsProtocolHeadersAndDecodes(t *testing.T) {
@@ -60,18 +62,26 @@ func TestRegisterUsesTheRegistrationToken(t *testing.T) {
 	}
 }
 
-// Against the real hub stub, the envelope decodes into a code a runner can act
+// Against the real hub, the envelope decodes into a code a runner can act
 // on — and the credential appears nowhere in the error text.
 func TestDecodesHubErrors(t *testing.T) {
-	srv := httptest.NewServer(hub.New(hub.Options{}))
+	ctx := context.Background()
+	hs, err := hubstore.Open(ctx, filepath.Join(t.TempDir(), "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hs.Close()
+	srv := httptest.NewServer(hub.New(hub.Options{Store: hs}))
 	defer srv.Close()
 	c, _ := New(srv.URL+hub.BasePath, "super-secret-credential")
-	err := c.Deregister(context.Background(), "r1", "retiring")
+	// A credential this hub never issued: an error with the protocol's shape,
+	// carrying the way out, and naming no secret.
+	err = c.Deregister(ctx, "r1", "retiring")
 	var se *StatusError
-	if !errors.As(err, &se) || se.Status != http.StatusNotImplemented || Code(err) != v1.CodeNotImplemented {
+	if !errors.As(err, &se) || se.Status != http.StatusUnauthorized || Code(err) != v1.CodeUnauthorized {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "ARCHITECTURE.md") {
+	if !strings.Contains(err.Error(), "yad hub token create") {
 		t.Errorf("the next action is lost: %v", err)
 	}
 	if strings.Contains(err.Error(), "super-secret-credential") {

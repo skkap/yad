@@ -113,7 +113,10 @@ Report what is **material**, not merely true.
 - **The registration token may be typed in argv** (0020); nothing else may.
 - **The owner trusts the hubs it connects** (0038). Hub-supplied grant names and
   folder sources are not filtered for safety. That is by design, not a gap to
-  report.
+  report. The one grant-name rule that is not about breaking the run is 0040's:
+  a grant may not name a variable that moves a run off its account. A grant
+  name that selects a harness's credential or home and is missing from
+  `accountGrantNames` is a finding.
 - **Lost is final**, even against a later `succeeded` from the runner (0023).
 - **Multica is read for shapes, never code** (0014). A missing Multica feature is
   not a defect.

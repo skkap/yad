@@ -7,8 +7,8 @@
 // — the operations below are declared over the protocol/v1 types, and the
 // document is generated from them (decision 0017).
 //
-// Register, sync, events and result are served; deregister is declared and
-// documented, and answers not_implemented until it lands.
+// Every operation the v1 protocol has is served: register, sync, events,
+// result and deregister.
 //
 // Beside the protocol, under hubapi.BasePath, is the service API — submit a
 // run, read it, long-poll its events — which only this hub has, behind its own
@@ -367,18 +367,14 @@ func (h *Hub) register(api huma.API) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "deregister", Method: http.MethodPost, Path: "/runners/{runner}/deregister",
-		Summary:     "Retire this runner's credential",
-		Description: "Runs the runner still holds become lost on the hub's side.",
-		Security:    security, Errors: []int{401, 426},
-	}, func(ctx context.Context, in *deregisterInput) (*ackOutput, error) {
-		return nil, notYet("deregister")
-	})
-}
-
-func notYet(op string) error {
-	return Fail(http.StatusNotImplemented, v1.CodeNotImplemented,
-		"yad hub does not implement "+op+" yet",
-		"the hub's behaviour arrives in epic E2 (Zumino yad/dev) — see ARCHITECTURE.md §9")
+		Summary: "Retire this runner's credential",
+		Description: "Runs the runner still holds become lost on the hub's side; runs offered to it and never claimed go back in the queue. " +
+			"Every session bound to that runner closes, and the runs still queued in them fail: a session is resumable only on the " +
+			"runner that holds it, so a run left in one would be offerable to no runner at all. The binding is never cleared instead — " +
+			"the session's state is on that machine. The credential stops working at once. The runner's id and its history stay, so " +
+			"registering again with a token issued for that runner brings it back, with new sessions.",
+		Security: security, Errors: []int{401, 403, 426},
+	}, h.deregister)
 }
 
 // bearerFrom returns the request's bearer secret, or "" when it has none.
