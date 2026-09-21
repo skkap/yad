@@ -25,9 +25,9 @@ the contract.
 npx openapi-typescript protocol/v1/openapi.yaml -o src/protocol.ts
 ```
 
-Every *body* a runner sends and expects is in there. Headers are not: the
-documents declare no header parameters, so `Yad-Protocol` and the bearer are
-yours to read from this page. Two wire rules the types do express, and which
+Every *body* a runner sends and expects is in there, and so are the two headers
+a hub checks: `Yad-Protocol` is a required header parameter on each operation,
+and the bearer is the `runner` security scheme. Two wire rules the types do express, and which
 hand-written encoders override anyway:
 
 - **An absent list is an empty list.** A list that can be empty is omitted, not
@@ -88,12 +88,11 @@ and not your input. Here is all of it:
 A run breaking any of them is refused **whole**, not stripped of the offending
 part.
 
-**`Yad-Protocol: 1` is on every request and appears nowhere in the spec.** The
-value is the protocol's major version, `1`, and that is the only value a v1 hub
-accepts. The generated documents declare no header parameters at all, so a
-client generated from `openapi.yaml` alone gives you no hint the header exists,
-let alone what to put in it. A request missing it or naming another version is
-refused before its body is read — see below.
+**`Yad-Protocol: 1` is on every request.** The value is the protocol's major
+version, `1`, and that is the only value a v1 hub accepts. `openapi.yaml`
+declares it on every operation as a required header whose only value is `"1"`,
+beside the `426` that refusing it produces. A request missing it or naming
+another version is refused before its body is read — see below.
 
 ## Authenticating a runner
 

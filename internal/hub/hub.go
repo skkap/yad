@@ -283,41 +283,47 @@ func Config() huma.Config {
 	return c
 }
 
-// protocolHeader is on every request so a hub can refuse a version it does not
-// host before decoding the body. protocolRoutes enforces it with a 426; the
-// declaration here is what puts it in openapi.yaml.
-type protocolHeader struct {
+// ProtocolHeader is on every request so a hub can refuse a version it does not
+// host before decoding the body. protocolRoutes enforces it with a 426, before
+// huma sees the request; embedding this in an operation's input is what
+// declares it in protocol/v1/openapi.yaml, so a generated client sends it.
+//
+// It is exported only because huma skips unexported fields, and an embedded
+// field takes its type's name: embedded as protocolHeader, it silently
+// declared nothing (DEV-93). TestProtocolHeaderIsDeclaredWhereEnforced holds
+// the declaration and the enforcement to each other.
+type ProtocolHeader struct {
 	Protocol string `header:"Yad-Protocol" required:"true" enum:"1" doc:"The protocol major version."`
 }
 
 type (
 	registerInput struct {
-		protocolHeader
+		ProtocolHeader
 		Body v1.RegisterRequest
 	}
 	registerOutput struct{ Body v1.RegisterResponse }
 
 	syncInput struct {
-		protocolHeader
+		ProtocolHeader
 		Runner string `path:"runner" doc:"The runner id."`
 		Body   v1.SyncRequest
 	}
 	syncOutput struct{ Body v1.SyncResponse }
 
 	eventsInput struct {
-		protocolHeader
+		ProtocolHeader
 		Run  string `path:"run" doc:"The run id."`
 		Body v1.EventBatch
 	}
 	eventsOutput struct{ Body v1.EventAck }
 
 	resultInput struct {
-		protocolHeader
+		ProtocolHeader
 		Run  string `path:"run" doc:"The run id."`
 		Body v1.Result
 	}
 	deregisterInput struct {
-		protocolHeader
+		ProtocolHeader
 		Runner string `path:"runner" doc:"The runner id."`
 		Body   v1.DeregisterRequest
 	}
