@@ -133,6 +133,13 @@ func closeHere(ctx context.Context, q *db.Queries, id string, reason v1.SessionC
 	}); err != nil {
 		return err
 	}
+	return endSessionRuns(ctx, q, id, end, now)
+}
+
+// endSessionRuns ends every run still waiting in a session that has closed,
+// however it closed. A closed session takes no run, so one left queued would
+// be offered only to be refused, or to nobody at all.
+func endSessionRuns(ctx context.Context, q *db.Queries, id string, end unstartedEnd, now time.Time) error {
 	runs, err := q.UnstartedRunsInSession(ctx, id)
 	if err != nil {
 		return err
@@ -143,6 +150,18 @@ func closeHere(ctx context.Context, q *db.Queries, id string, reason v1.SessionC
 		}
 	}
 	return nil
+}
+
+// closedByRunner is what becomes of a run still waiting in a session its
+// runner reports closed. The hub's own close was asked for, so its runs are
+// cancelled as closeHere cancels them; any other reason — the runner's owner,
+// its idle TTL, disk pressure — is the runner's act, and the submitter's work
+// is not done: it needs a new session to go to.
+func closedByRunner(runnerID string, reason v1.SessionCloseReason) unstartedEnd {
+	if reason == v1.SessionClosed {
+		return closedBeforeStart
+	}
+	return unstartedEnd{v1.RunFailed, fmt.Sprintf("its session was closed on runner %s (%s) before a runner started it; submit the work to a new session", runnerID, reason)}
 }
 
 // endUnstarted ends a run no runner has started, on the hub alone. An offered

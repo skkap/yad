@@ -82,4 +82,5 @@ type Session struct {
 	CloseRequestedAt sql.NullInt64
 	ClosedAt         sql.NullInt64
 	CloseReason      sql.NullString
+	OfferedTo        sql.NullString
 }

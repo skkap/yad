@@ -644,31 +644,51 @@ func TestStubbornProcesses(t *testing.T) {
 	defer func(a, b, c, d time.Duration) {
 		handshakeTimeout, exitGrace, drainGrace, termGrace = a, b, c, d
 	}(handshakeTimeout, exitGrace, drainGrace, termGrace)
-	handshakeTimeout, exitGrace, drainGrace, termGrace = 300*time.Millisecond, 100*time.Millisecond, 200*time.Millisecond, 200*time.Millisecond
+	exitGrace, drainGrace, termGrace = 100*time.Millisecond, 200*time.Millisecond, 200*time.Millisecond
+	shipped := handshakeTimeout
 
 	for _, tc := range []struct {
 		name, mode string
 		state      v1.RunState
 		class      string
+		// handshake is short only where it is meant to run out. The server
+		// that answers must be given the shipped bound: its first answer comes
+		// from a race-instrumented test binary still starting, which takes
+		// longer than any short bound on a loaded machine (DEV-100).
+		handshake time.Duration
 	}{
 		// The turn is over; the server ignores its closed input and SIGTERM.
-		{name: "linger", mode: "linger", state: v1.RunSucceeded},
+		{name: "linger", mode: "linger", state: v1.RunSucceeded, handshake: shipped},
 		// It closes its output and lingers.
-		{name: "mute", mode: "mute", state: v1.RunSucceeded},
+		{name: "mute", mode: "mute", state: v1.RunSucceeded, handshake: shipped},
 		// It never answers initialize.
-		{name: "silent", mode: "silent", state: v1.RunFailed, class: adapter.ClassHarness},
+		{name: "silent", mode: "silent", state: v1.RunFailed, class: adapter.ClassHarness, handshake: 300 * time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			handshakeTimeout = tc.handshake
 			h := &harness{fixture: fixture("plain"), env: map[string]string{"CODEX_TEST_MODE": tc.mode}}
-			start := time.Now()
-			_, out, _ := drive(t, context.Background(), h.spec(t), nil)
+			// A server that answers is timed from its first event, not from
+			// the spawn: a slow start is the machine's, and it is what the
+			// shipped handshake above is there to absorb. The first, because
+			// any later one may come from the outcome, which is decided after
+			// the reap — usage, an error, text still buffered — and would leave
+			// nothing to time. For the same reason silent, whose only event is
+			// its error, is timed from the start, which its short handshake
+			// bounds whether the child has finished starting or not.
+			from := time.Now()
+			_, out, _ := drive(t, context.Background(), h.spec(t), func(adapter.Turn, v1.Event) bool {
+				if tc.class == "" {
+					from = time.Now()
+				}
+				return true
+			})
 			if out.State != tc.state || (tc.class != "") != (out.Error != nil) || out.Error != nil && out.Error.Class != tc.class {
 				t.Fatalf("outcome = %+v (%+v)", out, out.Error)
 			}
 			if tc.mode == "silent" && !strings.Contains(out.Error.Message, "initialize") {
 				t.Errorf("message = %q, want the request that went unanswered", out.Error.Message)
 			}
-			if d := time.Since(start); d > 5*time.Second {
+			if d := time.Since(from); d > 5*time.Second {
 				t.Errorf("took %s to reap", d)
 			}
 		})

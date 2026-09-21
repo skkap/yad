@@ -87,6 +87,11 @@ LIMIT sqlc.arg(max);
 UPDATE runs SET state = 'offered', runner_id = ?, lease_expires_at = ?, updated_at = ?
 WHERE id = ? AND state = 'queued';
 
+-- name: NoteSessionOffer :exec
+-- Until a claim binds it, a session remembers the runner its run was last
+-- offered to: the one runner whose report of closing it is believed.
+UPDATE sessions SET offered_to = sqlc.arg(runner_id) WHERE id = sqlc.arg(id) AND runner_id IS NULL;
+
 -- name: RunsOfferedTo :many
 SELECT * FROM runs WHERE runner_id = ? AND state = 'offered';
 
@@ -191,11 +196,17 @@ UPDATE runners SET drain_requested_at = NULL WHERE id = ?;
 UPDATE sessions SET close_requested_at = COALESCE(close_requested_at, sqlc.arg(now))
 WHERE id = sqlc.arg(id) AND closed_at IS NULL;
 
--- A runner's report closes a session bound to it, once; a repeat changes
--- nothing, and a report about a session bound elsewhere is not applied.
+-- A runner's report closes a session bound to it, or an unbound one whose
+-- run was last offered to it: its claim may have been withdrawn before any
+-- sync listed it, and the close its owner asked for meanwhile is still owed
+-- (DEV-103). Such a session is bound to the reporter as it closes, since
+-- whatever it left is on that runner's disk. A repeat changes nothing, and a
+-- report from any other runner is not applied.
 -- name: RecordSessionClosed :execrows
-UPDATE sessions SET closed_at = sqlc.arg(closed_at), close_reason = sqlc.arg(reason), close_requested_at = NULL
-WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id) AND closed_at IS NULL;
+UPDATE sessions SET closed_at = sqlc.arg(closed_at), close_reason = sqlc.arg(reason), close_requested_at = NULL,
+  runner_id = sqlc.arg(runner_id)
+WHERE id = sqlc.arg(id) AND closed_at IS NULL
+  AND (runner_id = sqlc.arg(runner_id) OR (runner_id IS NULL AND offered_to = sqlc.arg(runner_id)));
 
 -- The hub closing a session by its own act (decision 0011), with no runner
 -- to report it: one nobody ever claimed, or one whose runner deregistered.
@@ -231,11 +242,7 @@ WHERE runner_id = sqlc.arg(runner_id) AND state IN ('claimed', 'preparing', 'run
 UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = sqlc.arg(now)
 WHERE runner_id = sqlc.arg(runner_id) AND state = 'offered';
 
--- A departed runner's sessions that still need the hub: open ones, and
--- closed ones with a run still waiting in them.
+-- A departed runner's sessions that still need the hub: the open ones. A
+-- closed one holds no waiting run, because every close ends those.
 -- name: SessionsToSettle :many
-SELECT s.id FROM sessions s
-WHERE s.runner_id = sqlc.arg(runner_id)
-  AND (s.closed_at IS NULL OR EXISTS (
-      SELECT 1 FROM runs r WHERE r.session_id = s.id AND r.state IN ('queued', 'offered')))
-ORDER BY s.id;
+SELECT id FROM sessions WHERE runner_id = sqlc.arg(runner_id) AND closed_at IS NULL ORDER BY id;

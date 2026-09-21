@@ -560,7 +560,7 @@ func (q *Queries) GetRunnerByCredential(ctx context.Context, credentialHash stri
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason FROM sessions WHERE id = ?
+SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason, offered_to FROM sessions WHERE id = ?
 `
 
 func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
@@ -574,6 +574,7 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.CloseRequestedAt,
 		&i.ClosedAt,
 		&i.CloseReason,
+		&i.OfferedTo,
 	)
 	return i, err
 }
@@ -684,6 +685,22 @@ func (q *Queries) LoseRunnerRuns(ctx context.Context, arg LoseRunnerRunsParams) 
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const noteSessionOffer = `-- name: NoteSessionOffer :exec
+UPDATE sessions SET offered_to = ?1 WHERE id = ?2 AND runner_id IS NULL
+`
+
+type NoteSessionOfferParams struct {
+	RunnerID sql.NullString
+	ID       string
+}
+
+// Until a claim binds it, a session remembers the runner its run was last
+// offered to: the one runner whose report of closing it is believed.
+func (q *Queries) NoteSessionOffer(ctx context.Context, arg NoteSessionOfferParams) error {
+	_, err := q.db.ExecContext(ctx, noteSessionOffer, arg.RunnerID, arg.ID)
+	return err
 }
 
 const offerCandidates = `-- name: OfferCandidates :many
@@ -809,25 +826,31 @@ func (q *Queries) PutResult(ctx context.Context, arg PutResultParams) (int64, er
 }
 
 const recordSessionClosed = `-- name: RecordSessionClosed :execrows
-UPDATE sessions SET closed_at = ?1, close_reason = ?2, close_requested_at = NULL
-WHERE id = ?3 AND runner_id = ?4 AND closed_at IS NULL
+UPDATE sessions SET closed_at = ?1, close_reason = ?2, close_requested_at = NULL,
+  runner_id = ?3
+WHERE id = ?4 AND closed_at IS NULL
+  AND (runner_id = ?3 OR (runner_id IS NULL AND offered_to = ?3))
 `
 
 type RecordSessionClosedParams struct {
 	ClosedAt sql.NullInt64
 	Reason   sql.NullString
-	ID       string
 	RunnerID sql.NullString
+	ID       string
 }
 
-// A runner's report closes a session bound to it, once; a repeat changes
-// nothing, and a report about a session bound elsewhere is not applied.
+// A runner's report closes a session bound to it, or an unbound one whose
+// run was last offered to it: its claim may have been withdrawn before any
+// sync listed it, and the close its owner asked for meanwhile is still owed
+// (DEV-103). Such a session is bound to the reporter as it closes, since
+// whatever it left is on that runner's disk. A repeat changes nothing, and a
+// report from any other runner is not applied.
 func (q *Queries) RecordSessionClosed(ctx context.Context, arg RecordSessionClosedParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, recordSessionClosed,
 		arg.ClosedAt,
 		arg.Reason,
-		arg.ID,
 		arg.RunnerID,
+		arg.ID,
 	)
 	if err != nil {
 		return 0, err
@@ -1064,15 +1087,11 @@ func (q *Queries) SessionsToClose(ctx context.Context, runnerID sql.NullString) 
 }
 
 const sessionsToSettle = `-- name: SessionsToSettle :many
-SELECT s.id FROM sessions s
-WHERE s.runner_id = ?1
-  AND (s.closed_at IS NULL OR EXISTS (
-      SELECT 1 FROM runs r WHERE r.session_id = s.id AND r.state IN ('queued', 'offered')))
-ORDER BY s.id
+SELECT id FROM sessions WHERE runner_id = ?1 AND closed_at IS NULL ORDER BY id
 `
 
-// A departed runner's sessions that still need the hub: open ones, and
-// closed ones with a run still waiting in them.
+// A departed runner's sessions that still need the hub: the open ones. A
+// closed one holds no waiting run, because every close ends those.
 func (q *Queries) SessionsToSettle(ctx context.Context, runnerID sql.NullString) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, sessionsToSettle, runnerID)
 	if err != nil {

@@ -20,6 +20,8 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/adapter/codex/codextest"
+	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/hostool"
 	"github.com/skkap/yad/internal/hub"
 	hubstore "github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hubapiclient"
@@ -45,10 +47,21 @@ import (
 // cancel and drain, which is what they are testing.
 const testSyncInterval = 50 * time.Millisecond
 
+// probeBudget is how long a harness or host tool probe may take in these
+// tests. A bound on a broken build, not a budget for a busy one.
+const probeBudget = 30 * time.Second
+
 func TestMain(m *testing.M) {
 	// Before the child branches below: a child re-executed as yad is a runner
 	// holding the same floor, and it syncs against this test's hub.
 	hub.SyncFloorForTests, runner.SyncFloorForTests = testSyncInterval, testSyncInterval
+	// Every harness and host tool these tests set up is meant to answer its
+	// probe, and the fake claude and codex are this binary re-executed under
+	// -race: at the shipped five seconds a loaded machine can cut one off, and
+	// a harness reported as not answering is one the runner refuses work for
+	// (DEV-100). A child re-executed as yad probes too, so this comes first.
+	harness.VersionTimeoutForTests = probeBudget
+	hostool.VersionTimeoutForTests, hostool.StatusTimeoutForTests = probeBudget, probeBudget
 	if os.Getenv(childYad) != "" {
 		// The test binary as yad itself, for tests that signal a runner as a
 		// service manager would; the harness it spawns is still the fake.
