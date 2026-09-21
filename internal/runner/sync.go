@@ -905,14 +905,11 @@ func (l *Loop) health(ctx context.Context, res *Reservation) v1.Health {
 // capability document, built from Load in the same sync, called it
 // needs_login.
 //
-// One seam remains and is deliberate: Report re-derives a limit's expiry
-// against the clock at the moment it is called, so a limit that ends between
-// this function's Load and its Reports leaves an account reported free beside
-// a harness whose readiness was computed from the same Load and still says
-// not ready. It lasts until the next sync and errs towards a hub being told
-// the runner can do less than it can, which is the harmless direction. The
-// re-derivation is worth that: it is what stops an Account built anywhere
-// else reporting a state Load would not.
+// Report projects the state Load decided and reads no clock of its own, so
+// each account's state and its harness's readiness come from one Load at one
+// moment, the loop's Clock (DEV-85). A limit that ends mid-sync is reported
+// limited until the next sync, which errs towards a hub being told the runner
+// can do less than it can: the harmless direction.
 func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 	doc := l.Capabilities()
 	// Rebuilt every sync and read by the claim below, so what the hub was

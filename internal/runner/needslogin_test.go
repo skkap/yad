@@ -272,7 +272,7 @@ func TestHealthReportsAHomeThatIsGoneAsNeedsLogin(t *testing.T) {
 		t.Error("a harness whose only account has no home is reported ready")
 	}
 	// And health agrees with what a run would actually do.
-	accounts, err := account.Load(ctx, e.store.Queries, e.paths.Data, l.Config)
+	accounts, err := account.Load(ctx, e.store.Queries, e.paths.Data, l.Config, e.clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

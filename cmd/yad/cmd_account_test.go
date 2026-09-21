@@ -213,7 +213,7 @@ func TestAccountRemoveDeletesTheHomeAndKeepsTheTranscripts(t *testing.T) {
 	if len(cfg.Harness["claude"].Accounts) != 1 || cfg.Harness["claude"].Accounts[0] != "personal" {
 		t.Errorf("accounts = %v", cfg.Harness["claude"].Accounts)
 	}
-	accounts, err := account.Read(ctx, p, cfg)
+	accounts, err := account.Read(ctx, p, cfg, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestRecordedStateIsWhatTheDocumentReports(t *testing.T) {
 	if err := recordState(ctx, p, "claude", "work", v1.AccountNeedsLogin); err != nil {
 		t.Fatal(err)
 	}
-	accounts, err := account.Read(ctx, p, cfg)
+	accounts, err := account.Read(ctx, p, cfg, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

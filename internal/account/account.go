@@ -30,7 +30,14 @@ type Account struct {
 	Harness string
 	Label   string
 	// Home is what the harness is given as CLAUDE_CONFIG_DIR or CODEX_HOME.
-	Home         string
+	Home string
+	// State is the account's state at the moment Load was given, decided
+	// there once. Nothing downstream re-reads a clock to revise it: a second
+	// clock would be a second opinion, and a caller on a fake one (a test,
+	// or anything replaying a moment) would be silently overruled by the
+	// wall - a limit dated from the fake clock read as long past, the account
+	// reported free, and the test that set it up green while proving the
+	// opposite (DEV-85).
 	State        v1.AccountState
 	LimitedUntil *time.Time
 	// Windows is every usage window this harness has told the runner about
@@ -42,7 +49,9 @@ type Account struct {
 }
 
 // stateOf is the one rule for reading a stored account row, in one place so
-// that Load, Report and anything reading either cannot disagree.
+// that nothing reading a row can disagree with Load about it. It never reads
+// the clock itself: now is always the caller's, so the whole of one decision
+// is made against one moment.
 //
 // LimitedUntil is the authority and the state is derived from it: a usage
 // limit is a fact about time, and expecting a writer to come along and flip
@@ -155,7 +164,11 @@ func (a Account) Report() v1.AccountReport {
 	// stop a runner claiming for a reason nothing ever established, which is
 	// the same mistake as letting a login check that could not answer park an
 	// account. Ambiguity never parks an account; only an answer does.
-	state := stateOf(a.State, a.LimitedUntil, time.Now())
+	//
+	// The state is Load's, not re-derived here: Load decided it against the
+	// moment its caller named, and reading the wall clock again here is what
+	// once let a limit dated from a test's clock report free (DEV-85).
+	state := a.State
 	if state == "" {
 		state = v1.AccountFree
 	}
@@ -409,7 +422,11 @@ func checkNames(harness, label string) error {
 // a directory that does not exist cannot hold a login — so a label
 // added to config.toml by hand is not usable until `yad account add` has made
 // its home and run the login in it.
-func Load(ctx context.Context, q *db.Queries, data string, cfg config.Config) ([]Account, error) {
+//
+// now is the moment a limit is judged against, and it is the caller's rather
+// than read here so a runner on an injected clock sees accounts on that
+// clock too: the runner's loop passes its Clock, everything else the wall.
+func Load(ctx context.Context, q *db.Queries, data string, cfg config.Config, now time.Time) ([]Account, error) {
 	var rows []db.Account
 	var wrows []db.AccountWindow
 	if q != nil {
@@ -438,7 +455,6 @@ func Load(ctx context.Context, q *db.Queries, data string, cfg config.Config) ([
 		}
 		windows[k] = append(windows[k], aw)
 	}
-	now := time.Now()
 	var out []Account
 	for _, id := range cfg.HarnessIDs() {
 		for _, label := range cfg.Harness[id].Accounts {
@@ -672,14 +688,16 @@ func SetWindows(ctx context.Context, q *db.Queries, harness, label string, windo
 // A profile with no state database yet has no states, so every account the
 // owner configured is read by the same rule as any other: free when its home
 // is on disk, needs_login when it is not.
-func Read(ctx context.Context, paths config.Paths, cfg config.Config) ([]Account, error) {
+//
+// now is passed to Load, which says why it is the caller's.
+func Read(ctx context.Context, paths config.Paths, cfg config.Config, now time.Time) ([]Account, error) {
 	st, err := store.OpenProfile(ctx, paths)
 	if errors.Is(err, store.ErrNoState) {
-		return Load(ctx, nil, paths.Data, cfg)
+		return Load(ctx, nil, paths.Data, cfg, now)
 	}
 	if err != nil {
 		return nil, err
 	}
 	defer st.Close()
-	return Load(ctx, st.Queries, paths.Data, cfg)
+	return Load(ctx, st.Queries, paths.Data, cfg, now)
 }
