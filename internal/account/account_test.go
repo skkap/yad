@@ -220,7 +220,7 @@ func TestLoadReadsTheOwnersOrderAndTheStoresStates(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := Load(ctx, st.Queries, data, cfg)
+	got, err := Load(ctx, st.Queries, data, cfg, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestLoadReadsTheOwnersOrderAndTheStoresStates(t *testing.T) {
 // not a failure: its runs use the harness's own login.
 func TestNoAccountsIsNotAnError(t *testing.T) {
 	cfg := config.Default()
-	got, err := Load(context.Background(), nil, t.TempDir(), cfg)
+	got, err := Load(context.Background(), nil, t.TempDir(), cfg, time.Now())
 	if err != nil {
 		t.Fatalf("a runner with no accounts and no state database failed: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestAnAccountWhoseHomeIsGoneNeedsLogin(t *testing.T) {
 	if err := SetState(ctx, st.Queries, "claude", "work", v1.AccountFree, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	got, err := Load(ctx, st.Queries, data, cfg)
+	got, err := Load(ctx, st.Queries, data, cfg, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestAnAccountWhoseHomeIsGoneNeedsLogin(t *testing.T) {
 	if _, err := Ensure(data, "claude", "work"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err = Load(ctx, st.Queries, data, cfg); err != nil {
+	if got, err = Load(ctx, st.Queries, data, cfg, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0].State != v1.AccountFree {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -143,10 +142,16 @@ func Serve(ctx context.Context, o Options) error {
 // sweepGrants deletes the grant files an earlier run left behind. They are
 // 0600 files holding the secrets a hub sent, and the cleanup that removes them
 // when a run ends is a deferred call in the run's goroutine: a SIGKILL, a power
-// cut or an OOM kill skips it, and so does a RemoveAll that failed — a
-// read-only mount, an I/O error — while the runner went on running. A crash is
-// the usual reason for something to be here; it is not the only one, and the
-// sweep does not need to know which.
+// cut or an OOM kill skips it. A crash is the usual reason for something to be
+// here; it is not the only one, and the sweep does not need to know which.
+//
+// What it recovers is a cleanup that never ran, or one whose reason has since
+// cleared. It does not get further than that cleanup did: both go through
+// destroyGrants, so a missing write bit never reaches here — the run's own
+// cleanup got past it — and a read-only mount or an immutable file that
+// defeated that cleanup defeats this too, and says so again at every start
+// until the owner acts. What the cleanup could empty but not remove, it
+// emptied; the sweep finds only litter there.
 //
 // Everything under <data>/grants belongs to a run that is already over. A run's
 // grants live only in the process that claimed them — the store keeps the run
@@ -167,19 +172,7 @@ func sweepGrants(data string, log *slog.Logger) {
 		}
 		return nil
 	})
-	if err := os.RemoveAll(dir); err != nil {
-		// A PathError names the file it could not unlink, which is a grant's
-		// name — the one thing the line below is careful not to say. The
-		// directory and the reason are what the owner acts on.
-		reason := error(err)
-		var pe *fs.PathError
-		if errors.As(err, &pe) {
-			reason = pe.Err
-		}
-		log.Error("grant files left by an earlier run were not removed — delete them by hand", "dir", dir, "err", reason)
-		return
-	}
-	if left > 0 {
+	if destroyGrants(dir, log) && left > 0 {
 		log.Warn("deleted grant files an earlier run left behind: its own cleanup did not remove them, so the secrets a hub sent were on disk until now", "files", left)
 	}
 }

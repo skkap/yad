@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -102,4 +103,77 @@ func TestAdminTokenRevokeMissCommandCarriesTheDatabase(t *testing.T) {
 	}
 	shellwordtest.CheckEnv(t, onlyCommand(t, errs, "yad --profile side hub"), dirsEnv(t),
 		"yad", "--profile", "side", "hub", "admin-token", "list", "--db", db)
+}
+
+// The hub's advice to a runner it refused is two commands with placeholders,
+// one for each machine, because the hub knows neither the runner's profile
+// nor the URL and connection name it is reached by. Filled in, they
+// re-register the runner; pasted as they stand, the connect is refused before
+// it can register anything in the runner's place.
+func TestReRegistrationAdviceWorksOnceFilledIn(t *testing.T) {
+	hubSide, runnerSide := newProfile(t), newProfile(t)
+	onHub := func(args ...string) string {
+		t.Helper()
+		code, out, errs := hubSide.yad("", args...)
+		if code != 0 {
+			t.Fatalf("yad %q on the hub: exit %d: %s", args, code, errs)
+		}
+		return strings.TrimSpace(out)
+	}
+	first := onHub("hub", "token", "create")
+	hubPaths, err := config.Resolve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := hubPaths.HubDB()
+	s, err := hubstore.Open(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	srv := httptest.NewServer(hub.New(hub.Options{Store: s, Command: hubAnswerCommand(hubPaths, db)}))
+	defer srv.Close()
+	url := srv.URL + hub.BasePath
+	if code, _, errs := runnerSide.yad(first+"\n", "connect", url, "--token", "-", "--name", "home"); code != 0 {
+		t.Fatalf("connect: exit %d: %s", code, errs)
+	}
+
+	// A lost credential, and the owner tries a token for a new runner.
+	code, _, errs := runnerSide.yad(onHub("hub", "token", "create")+"\n", "connect", url, "--token", "-", "--name", "home")
+	if code == 0 {
+		t.Fatal("a new-runner token re-registered a known runner")
+	}
+	words := func(line string) []string {
+		t.Helper()
+		calls := shellwordtest.Run(t, line, "yad")
+		if len(calls) != 1 {
+			t.Fatalf("sh ran %s as %q", line, calls)
+		}
+		return calls[0][1:]
+	}
+	tokenCmd := words(onlyCommand(t, errs, "yad --profile default hub token create"))
+	connectCmd := words(onlyCommand(t, errs, "yad --profile '<runner profile>' connect"))
+
+	if code, _, errs := runnerSide.yad("", connectCmd...); code == 0 || !strings.Contains(errs, "profile") {
+		t.Errorf("the connect, pasted unfilled: exit %d: %s", code, errs)
+	}
+
+	fill := func(argv []string, values map[string]string) []string {
+		out := slices.Clone(argv)
+		for i, w := range out {
+			if v, ok := values[w]; ok {
+				out[i] = v
+			}
+		}
+		return out
+	}
+	// The hub's data sits under YAD_DATA_DIR, which the advice cannot carry
+	// to the runner, so its database is a placeholder too.
+	tok := onHub(fill(tokenCmd, map[string]string{"<the database yad hub serve was given>": db})...)
+	connectCmd = fill(connectCmd, map[string]string{
+		"<runner profile>": config.DefaultProfile, "<hub url>": url, "<connection name>": "home", "<new token>": tok,
+	})
+	if code, _, errs := runnerSide.yad("", connectCmd...); code != 0 {
+		t.Errorf("the advice, filled in: exit %d: %s", code, errs)
+	}
 }

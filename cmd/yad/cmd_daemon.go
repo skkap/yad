@@ -142,7 +142,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	// document built before it exists must still name the owner's accounts.
 	// A read that fails is not a reason not to start — the labels are still
 	// reported, free, which is what a runner with no limits would say.
-	accounts, err := account.Read(runCtx, g.paths, cfg)
+	accounts, err := account.Read(runCtx, g.paths, cfg, time.Now())
 	if err != nil {
 		log.Warn("could not read account states; reporting the owner's accounts as free", "err", err)
 	}
@@ -226,7 +226,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			}
 			return err
 		case t := <-tick.C:
-			accounts, err := account.Read(runCtx, g.paths, cfg)
+			accounts, err := account.Read(runCtx, g.paths, cfg, time.Now())
 			if err != nil {
 				log.Warn("could not read account states", "err", err)
 			}

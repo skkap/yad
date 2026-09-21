@@ -97,7 +97,7 @@ func (p *LoginProbe) Run(ctx context.Context) {
 // the ones that say yes. It returns how many it freed.
 func (p *LoginProbe) Sweep(ctx context.Context) int {
 	p.init()
-	accounts, err := account.Load(ctx, p.Store.Queries, p.Data, p.Config)
+	accounts, err := account.Load(ctx, p.Store.Queries, p.Data, p.Config, p.Clock.Now())
 	if err != nil {
 		p.Log.Warn("could not read account states; needs-login accounts are asked again at the next sweep", "err", err)
 		return 0
