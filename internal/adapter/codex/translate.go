@@ -498,6 +498,7 @@ type ended struct {
 	exitErr     error  // the app-server's exit status
 	stderr      string // its last words
 	asked       string // the thread id the run resumed, if it resumed one
+	check       string // the login check for the owner, in the run's account home
 }
 
 // outcome decides how the run ended. Only the turn's own completion decides
@@ -543,7 +544,7 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		o.State = v1.RunCancelled
 		return o
 	case t.done == nil:
-		return fail(adapter.ClassHarnessExited, "codex app-server exited before the turn completed"+exitDetail(e)+" — check that it runs and is logged in: `codex login status`")
+		return fail(adapter.ClassHarnessExited, "codex app-server exited before the turn completed"+exitDetail(e)+" — check that it runs and is logged in: "+e.loginCheck())
 	}
 	switch t.done.Status {
 	case "completed":
@@ -642,6 +643,15 @@ func resetOf(w *window) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(*w.ResetsAt, 0).UTC()
+}
+
+// loginCheck is the check the turn was started with, or a bare one for an
+// ended built without a turn.
+func (e ended) loginCheck() string {
+	if e.check == "" {
+		return adapter.Spec{}.HarnessCheck("codex", "login", "status")
+	}
+	return e.check
 }
 
 func exitDetail(e ended) string {

@@ -416,6 +416,8 @@ type ended struct {
 	// final: the result in hand was the run's last — every frame we sent had
 	// been taken, and nothing was queued behind it.
 	final bool
+	// check is the login check for the owner, in the run's account home.
+	check string
 }
 
 // outcome decides how the turn ended. Only a result decides success: exit 0
@@ -504,7 +506,16 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 }
 
 func exitedMessage(e ended) string {
-	return "claude exited without reporting a result" + exitDetail(e) + " — check that it runs and is logged in: `claude -p hello`"
+	return "claude exited without reporting a result" + exitDetail(e) + " — check that it runs and is logged in: " + e.loginCheck()
+}
+
+// loginCheck is the check the turn was started with, or a bare one for an
+// ended built without a turn.
+func (e ended) loginCheck() string {
+	if e.check == "" {
+		return adapter.Spec{}.HarnessCheck("claude", "-p", "hello")
+	}
+	return e.check
 }
 
 func exitDetail(e ended) string {

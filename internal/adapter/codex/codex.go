@@ -92,7 +92,7 @@ var threadID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 // error.
 func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, error) {
 	if spec.Binary == "" {
-		return nil, errors.New("no codex binary resolved — run `yad doctor` to see where codex was looked for")
+		return nil, fmt.Errorf("no codex binary resolved — run `%s` to see where codex was looked for", spec.YadCommand("doctor"))
 	}
 	if spec.NativeSessionID != "" && !threadID.MatchString(spec.NativeSessionID) {
 		return nil, fmt.Errorf("codex thread id %q is not a UUID — the session store is damaged; close the session and start a new one", spec.NativeSessionID)
@@ -307,6 +307,7 @@ loop:
 		exitErr:     exitErr,
 		stderr:      t.p.Stderr(),
 		asked:       t.asked,
+		check:       t.spec.HarnessCheck("codex", "login", "status"),
 	}
 	t.mu.Unlock()
 	t.outcome = t.tr.outcome(e)
@@ -336,7 +337,7 @@ func (t *turn) timedOut() {
 		t.stop()
 		return
 	}
-	t.tr.fail(adapter.ClassHarness, fmt.Sprintf("codex app-server did not answer %s within %s — check that `codex app-server` starts and is logged in: `codex login status`", t.late, handshakeTimeout))
+	t.tr.fail(adapter.ClassHarness, fmt.Sprintf("codex app-server did not answer %s within %s — check that it starts and is logged in: %s", t.late, handshakeTimeout, t.spec.HarnessCheck("codex", "login", "status")))
 	t.stop()
 }
 

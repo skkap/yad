@@ -7,9 +7,34 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/account"
+	"github.com/skkap/yad/internal/adapter"
+	"github.com/skkap/yad/internal/adapter/fake"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
+
+// The adapter is handed what a login check needs to name the account's home
+// without printing it: the variable, the label, and yad commands on this
+// runner's profile.
+func TestTheRunsSpecCarriesWhatALoginCheckNeeds(t *testing.T) {
+	e := newEnv(t)
+	plantCredential(t, e.paths.Data, "work")
+	var seen adapter.Spec
+	ad := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+		seen = s
+		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
+	}}
+	l := e.loop(t, 1)
+	e.enqueue(t, testRun("a", "s1"))
+	x, _ := e.accountExecutor(t, accountConfig("work"), ad)
+	x.Profile = "side"
+	claimAndRun(t, l, x)
+
+	if seen.HomeVar != "CLAUDE_CONFIG_DIR" || seen.Account != "work" {
+		t.Errorf("spec HomeVar %q Account %q, want CLAUDE_CONFIG_DIR and work", seen.HomeVar, seen.Account)
+	}
+	shellwordtest.Check(t, seen.YadCommand("account", "list"), "yad", "--profile", "side", "account", "list")
+}
 
 // A run refused for want of a logged-in account tells the hub's reader what to
 // type at the machine — on the runner's own profile, or it adds an account to
