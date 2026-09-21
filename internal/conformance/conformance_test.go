@@ -9,6 +9,8 @@ import (
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/config"
 )
 
 const fakeToken = "fake-registration-token"
@@ -553,7 +555,7 @@ func TestASecretInWhatACheckWritesIsNotPrinted(t *testing.T) {
 // well have been given one with a password in it.
 func TestAPasswordInTheURLIsNotPrinted(t *testing.T) {
 	t.Parallel()
-	rep := &Report{BaseURL: redactedURL("https://runner:hunter2@hub.example/v1"), Harness: DefaultHarness}
+	rep := &Report{BaseURL: config.RedactURL("https://runner:hunter2@hub.example/v1"), Harness: DefaultHarness}
 	var out strings.Builder
 	rep.Print(&out)
 	if strings.Contains(out.String(), "hunter2") {

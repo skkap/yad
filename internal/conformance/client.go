@@ -13,6 +13,7 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/buildinfo"
+	"github.com/skkap/yad/internal/config"
 )
 
 // requestTimeout bounds one call. The suite waits on a lease, never on a
@@ -110,7 +111,7 @@ type client struct {
 func newClient(base string, known ...string) *client {
 	c := &client{
 		base:         strings.TrimRight(base, "/"),
-		redactedBase: redactedURL(strings.TrimRight(base, "/")),
+		redactedBase: config.RedactURL(strings.TrimRight(base, "/")),
 		http: &http.Client{
 			Timeout: requestTimeout,
 			// Go keeps the Authorization header across a same-host redirect
@@ -319,7 +320,7 @@ func (c *client) scrub(v any, under string) (any, bool) {
 			// may arrive as https://user:token@host/repo.git, and the host
 			// and path are worth printing while the credentials are not.
 			if text, ok := child.(string); ok && k == "url" {
-				if hidden := redactedURL(text); hidden != text {
+				if hidden := config.RedactURL(text); hidden != text {
 					t[k], found = hidden, true
 					continue
 				}
