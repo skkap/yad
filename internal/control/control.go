@@ -11,9 +11,23 @@ import (
 	"time"
 )
 
+// A stop is the one request that takes two lines, so that the CLI can tell a
+// stop the daemon never acted on from one it did. The CLI sends OpStop; the
+// daemon answers with Confirm set and does nothing yet; the CLI sends
+// OpConfirm, and only that stops the daemon, which answers once more first.
+// Until the CLI has heard the first answer nothing has been acted on, so a
+// SIGTERM is a safe fallback: it is the runner's first stop. Once the CLI has
+// written the confirm the stop is delivered, and only --force may signal
+// (decision 0027) — a SIGTERM then would be the runner's second stop, which
+// cancels every run it holds (decision 0029).
+const (
+	OpStop    = "stop"
+	OpConfirm = "confirm"
+)
+
 // Request is what the CLI asks.
 type Request struct {
-	Op string `json:"op"` // "status", "stop" or "close_session"
+	Op string `json:"op"` // "status", OpStop, OpConfirm or "close_session"
 	// Connection and Session name the session to close.
 	Connection string `json:"connection,omitempty"`
 	Session    string `json:"session,omitempty"`
@@ -26,6 +40,10 @@ type Response struct {
 	PID    int           `json:"pid"`
 	Status *Status       `json:"status,omitempty"`
 	Closed *SessionClose `json:"closed,omitempty"`
+	// Confirm is the daemon holding a stop until the CLI confirms it. A stop
+	// answered without it came from a daemon older than the exchange, which
+	// acted on the request alone.
+	Confirm bool `json:"confirm,omitempty"`
 }
 
 // SessionClose is what `yad sessions close` did.

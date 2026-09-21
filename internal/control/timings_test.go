@@ -26,8 +26,7 @@ func TestTheShippedAskTimeoutIsFiveSeconds(t *testing.T) {
 }
 
 // A shipped yad that gave up on the socket sooner would call a daemon merely
-// busy with a sync wedged, and answer it with a SIGTERM the runner counts as a
-// second stop ask — cancelling every run it holds (DEV-65). The seam that makes
+// busy with a sync wedged, and signal where it should have asked. The seam that makes
 // the stop tests fast must not travel into the binary, and the check is the
 // source: any shipped file that assigns it, this package's own included.
 func TestOnlyTestsReachTheAskTimeout(t *testing.T) {

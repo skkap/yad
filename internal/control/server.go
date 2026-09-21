@@ -150,9 +150,12 @@ func (d *Daemon) answer(ctx context.Context, conn *net.UnixConn, h Handler) {
 	defer cancel()
 	var req Request
 	res := Response{PID: os.Getpid()}
-	if err := json.NewDecoder(conn).Decode(&req); err != nil {
+	// One decoder for the connection: a stop's confirm may already sit in
+	// its buffer behind the request.
+	dec, enc := json.NewDecoder(conn), json.NewEncoder(conn)
+	if err := dec.Decode(&req); err != nil {
 		res.Error = "a malformed request — the control socket speaks only to this yad binary"
-		json.NewEncoder(conn).Encode(res)
+		enc.Encode(res)
 		return
 	}
 	switch req.Op {
@@ -161,14 +164,8 @@ func (d *Daemon) answer(ctx context.Context, conn *net.UnixConn, h Handler) {
 		st.PID = res.PID
 		st.Stopping = d.stopping.Load()
 		res.Status = &st
-	case "stop":
-		first := d.stopping.CompareAndSwap(false, true)
-		// The answer goes before the stop starts, so the CLI hears it even
-		// when the stop is quick.
-		json.NewEncoder(conn).Encode(res)
-		if first {
-			h.Stop()
-		}
+	case OpStop:
+		d.stop(dec, enc, res, h)
 		return
 	case "close_session":
 		if h.CloseSession == nil {
@@ -184,7 +181,34 @@ func (d *Daemon) answer(ctx context.Context, conn *net.UnixConn, h Handler) {
 	default:
 		res.Error = fmt.Sprintf("unknown request %q — the CLI and the daemon are different yad versions; `yad daemon restart` after an upgrade", strings.TrimSpace(req.Op))
 	}
-	json.NewEncoder(conn).Encode(res)
+	enc.Encode(res)
+}
+
+// stop is the daemon's half of the stop exchange (OpStop). It acts only on a
+// confirm, which the CLI writes only once it has heard the acknowledgement —
+// and from then on the CLI never signals for a stop that goes unanswered. A
+// stop the CLI gave up on before the acknowledgement reached it (a daemon slow
+// to accept, a reply late in transit) is therefore never acted on here, and the
+// SIGTERM the CLI sends instead is the first stop the runner hears rather than
+// the second, which would cancel its runs (decision 0029).
+func (d *Daemon) stop(dec *json.Decoder, enc *json.Encoder, res Response, h Handler) {
+	res.Confirm = true
+	if err := enc.Encode(res); err != nil {
+		return
+	}
+	var confirm Request
+	if err := dec.Decode(&confirm); err != nil || confirm.Op != OpConfirm {
+		return
+	}
+	first := d.stopping.CompareAndSwap(false, true)
+	// Answered before it is acted on (decision 0027), so the CLI hears it
+	// even when the stop is quick. Whether this answer lands no longer
+	// decides anything: the CLI committed to the stop when it confirmed.
+	res.Confirm = false
+	enc.Encode(res)
+	if first {
+		h.Stop()
+	}
 }
 
 // Close removes the socket and releases the lock, in that order: the next
