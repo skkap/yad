@@ -97,7 +97,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 	p, err := supervise.Start(ctx, supervise.Spec{Path: spec.Binary, Args: args, Dir: spec.Workdir, Env: runEnv(spec.Env), Stdin: true})
 	if err != nil {
 		removeFile(contextFile)
-		return nil, fmt.Errorf("%w — check the claude binary at %s runs", err, spec.Binary)
+		return nil, &adapter.LocalError{Msg: "claude would not start on this runner", Err: err}
 	}
 
 	t := &turn{
@@ -201,16 +201,16 @@ func writeContext(ctx string) (string, error) {
 	}
 	f, err := os.CreateTemp("", "yad-claude-context-*.md")
 	if err != nil {
-		return "", fmt.Errorf("write the run's context for claude: %w — check that the temp directory is writable", err)
+		return "", &adapter.LocalError{Msg: "the run's context could not be written for claude — the runner's temp directory is not writable", Err: err}
 	}
 	if _, err := f.WriteString(ctx); err != nil {
 		f.Close()
 		os.Remove(f.Name())
-		return "", fmt.Errorf("write the run's context for claude: %w — check free disk space", err)
+		return "", &adapter.LocalError{Msg: "the run's context could not be written for claude — the runner's disk may be full", Err: err}
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(f.Name())
-		return "", err
+		return "", &adapter.LocalError{Msg: "the run's context could not be written for claude — the runner's disk may be full", Err: err}
 	}
 	return f.Name(), nil
 }

@@ -876,6 +876,9 @@ func TestStartRefuses(t *testing.T) {
 		{"a permission mode that is a flag", func(s *adapter.Spec) {
 			s.Settings = map[string]string{"permission_mode": "--dangerously-skip-permissions"}
 		}, "config.toml"},
+		// The exec error names the binary under the owner's home; the run's
+		// error goes to a hub, so the path travels only as the cause (DEV-67).
+		{"a binary that will not exec", func(s *adapter.Spec) { s.Binary = "/Users/someone/bin/claude" }, "would not start"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -884,6 +887,9 @@ func TestStartRefuses(t *testing.T) {
 			_, err := Adapter{}.Start(context.Background(), s)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("err %v, want %q", err, c.want)
+			}
+			if err != nil && strings.Contains(err.Error(), "/Users/someone") {
+				t.Errorf("err %v names the binary's path", err)
 			}
 		})
 	}

@@ -198,8 +198,9 @@ const schemaTimeout = 10 * time.Second
 // error's text is where a child's stderr, the exec path under the owner's home
 // and the temp directory's absolute path end up (DEV-67; DEV-60 found the same
 // in Error). Every value is one of those below. What codex printed and what
-// the OS said stay on the machine, and the warning sends the owner to run the
-// command there, where all of it is on their screen.
+// the OS said are not kept: the warning names where the owner looks instead —
+// the command, run by hand, which prints all of it, or for the temp directory,
+// which codex never saw, the variable that names it.
 type failure string
 
 var (
@@ -306,7 +307,13 @@ func schemaWarning(ctx context.Context, bin string) (warning string, final bool,
 		return "", false, ctx.Err()
 	}
 	if f != "" {
-		return "yad could not check this codex's app-server protocol: " + string(f) + " — runs may still work; run `codex app-server generate-json-schema --out DIR` on this machine to see why", false, nil
+		action := "run `codex app-server generate-json-schema --out DIR` on this machine to see why"
+		if f == failTempDir {
+			// Codex never ran, so running it by hand shows nothing: the
+			// directory is the runner's, named by its environment.
+			action = "check that TMPDIR in the runner's environment, or /tmp without it, is a writable directory"
+		}
+		return "yad could not check this codex's app-server protocol: " + string(f) + " — runs may still work; " + action, false, nil
 	}
 	sum, err := SchemaHash(b)
 	if err != nil {

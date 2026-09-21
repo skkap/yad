@@ -102,7 +102,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		Dir: spec.Workdir, Env: spec.Env, Stdin: true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w — check the codex binary at %s runs", err, spec.Binary)
+		return nil, &adapter.LocalError{Msg: "codex would not start on this runner", Err: err}
 	}
 	t := &turn{
 		ctx:       ctx,

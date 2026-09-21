@@ -294,8 +294,7 @@ func TestExecutorFailuresAreResults(t *testing.T) {
 	}
 }
 
-// startErr is an adapter whose harness will not start, failing as a real
-// exec does: with the binary's absolute path in the error.
+// startErr is an adapter whose Start fails with err.
 type startErr struct{ err error }
 
 func (a startErr) Harness() string { return "claude" }
@@ -303,55 +302,88 @@ func (a startErr) Start(context.Context, adapter.Spec) (adapter.Turn, error) {
 	return nil, a.err
 }
 
-// A failure that is the runner's own — a harness that will not start, a
-// directory under its data that cannot be made — reaches the hub as what
-// failed, never as the error behind it: that names paths under the owner's
-// home and, for a start, the exec error (DEV-67). The owner reads the rest in
-// the log.
+// A failure that is the runner's own — a harness that will not exec, a
+// directory under its data or an account home that cannot be made — reaches
+// the hub as what failed, never as the error behind it: that names paths under
+// the owner's home and, for a start, the exec error (DEV-67). The cause goes
+// to the log the message sends the owner to. A start error whose next action
+// is the hub's travels as it is, or the hub could not tell its own input was
+// the problem.
 func TestRunnerFailuresNameNoPathOnTheMachine(t *testing.T) {
-	const home = "/Users/someone/bin/claude"
+	const bin = "/Users/someone/bin/claude"
+	execErr := errors.New("start " + bin + ": fork/exec " + bin + ": permission denied")
+	const hubsFault = `model "-x" is not a model name — ask the hub to send an alias such as sonnet`
 	for _, tc := range []struct {
 		name string
 		// block makes a file of what the executor needs to be a directory
 		// under Data, so making it fails with Data's path in the error.
-		block  string
-		x      func(e *env) *Exec
-		grants []v1.Grant
-		class  string
+		block    string
+		accounts bool
+		ad       adapter.Adapter
+		grants   []v1.Grant
+		class    string
+		// want is the whole message when the error is the hub's to act on;
+		// empty for a runner failure, which must name no path and send the
+		// owner to the log.
+		want string
 	}{
-		{name: "the harness will not start", class: ClassStart, x: func(e *env) *Exec {
-			return e.executor(startErr{errors.New("start " + home + ": fork/exec " + home + ": permission denied — check the claude binary at " + home + " runs")})
-		}},
-		{name: "the workdir cannot be made", class: ClassPrepare, block: "workdirs",
-			x: func(e *env) *Exec { return e.executor(fakeHarness(fake.Script{})) }},
+		{name: "the harness will not exec", class: ClassStart,
+			ad: startErr{&adapter.LocalError{Msg: "claude would not start on this runner", Err: execErr}}},
+		{name: "a start error the hub acts on", class: ClassStart, want: hubsFault,
+			ad: startErr{errors.New(hubsFault)}},
+		{name: "the workdir cannot be made", class: ClassPrepare, block: "workdirs"},
 		{name: "a grant cannot be delivered", class: ClassPrepare, block: "grants",
-			x:      func(e *env) *Exec { return e.executor(fakeHarness(fake.Script{})) },
 			grants: []v1.Grant{{Name: "DATABASE_URL", Value: "file-secret", As: v1.GrantFile}}},
+		{name: "the account's home cannot be made", class: ClassPrepare, accounts: true,
+			block: filepath.Join("transcripts", "claude")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
+			cfg := config.Default()
+			if tc.accounts {
+				cfg = accountConfig("work")
+				plantCredential(t, e.paths.Data, "work")
+			}
 			if tc.block != "" {
-				if err := os.WriteFile(filepath.Join(e.paths.Data, tc.block), nil, 0o600); err != nil {
+				path := filepath.Join(e.paths.Data, tc.block)
+				if err := os.RemoveAll(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, nil, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
+			ad := tc.ad
+			if ad == nil {
+				ad = fakeHarness(fake.Script{})
+			}
+			x, logged := e.accountExecutor(t, cfg, ad)
 			l := e.loop(t, 1)
 			run := testRun("a", "s1")
 			run.Grants = tc.grants
 			e.enqueue(t, run)
-			claimAndRun(t, l, tc.x(e))
+			claimAndRun(t, l, x)
 			res, ok := outboxResult(t, e, "a")
 			if !ok || res.Error == nil || res.Error.Class != tc.class {
 				t.Fatalf("result = %+v (error %+v), %v", res, res.Error, ok)
 			}
 			msg := res.Error.Message
-			for _, leak := range []string{home, "/Users/", e.paths.Data, "fork/exec", "permission denied", "not a directory", "file-secret"} {
+			if tc.want != "" {
+				if msg != tc.want {
+					t.Errorf("message = %q, want the adapter's own %q", msg, tc.want)
+				}
+				return
+			}
+			for _, leak := range []string{bin, "/Users/", e.paths.Data, "fork/exec", "permission denied", "not a directory", "file-secret"} {
 				if strings.Contains(msg, leak) {
 					t.Errorf("message carries %q: %q", leak, msg)
 				}
 			}
-			if !strings.Contains(msg, "yad logs") {
+			if !strings.Contains(msg, "`yad daemon logs`") {
 				t.Errorf("message = %q, want it to send the owner to the log", msg)
+			}
+			if !strings.Contains(logged.String(), "permission denied") && !strings.Contains(logged.String(), "not a directory") {
+				t.Errorf("the cause is not in the log the message points at:\n%s", logged)
 			}
 		})
 	}

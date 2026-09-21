@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -716,6 +717,17 @@ func TestContextCancelled(t *testing.T) {
 func TestStartRefusals(t *testing.T) {
 	if _, err := (Adapter{}).Start(context.Background(), adapter.Spec{}); err == nil || !strings.Contains(err.Error(), "yad doctor") {
 		t.Errorf("no binary: %v", err)
+	}
+	// The exec error names the binary under the owner's home; the run's error
+	// goes to a hub, so the path travels only as the cause (DEV-67).
+	const bin = "/Users/someone/bin/codex"
+	_, err := (Adapter{}).Start(context.Background(), adapter.Spec{Binary: bin, Workdir: t.TempDir()})
+	le, ok := errors.AsType[*adapter.LocalError](err)
+	if !ok || strings.Contains(err.Error(), bin) || !strings.Contains(err.Error(), "would not start") {
+		t.Errorf("a binary that will not exec: %v", err)
+	}
+	if ok && !strings.Contains(le.Err.Error(), bin) {
+		t.Errorf("the cause lost what the owner needs: %v", le.Err)
 	}
 }
 

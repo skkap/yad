@@ -367,7 +367,7 @@ func (e *Exec) Control(_ context.Context, connection string, c v1.Control) {
 // absolute paths under the owner's home and, for a start, the exec error
 // (DEV-67, as DEV-60 found for the capability document). The hub is told what
 // failed; the owner reads why in the log line written beside it.
-const seeLogs = " — its owner can see why with `yad logs` on the machine"
+const seeLogs = " — its owner can see why with `yad daemon logs` on the machine"
 
 // execute runs one claim to a terminal state in the outbox — or, when the
 // runner itself is stopping, leaves it held for the next start to settle.
@@ -596,8 +596,16 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		turn, err := ad.Start(runCtx, spec)
 		if err != nil {
 			cancel()
-			turnLog.Warn("the harness would not start", "err", err)
-			fail(ClassStart, run.Harness+" would not start on this runner"+seeLogs)
+			// Only a LocalError hides its cause. The adapters' other start
+			// errors are sentences whose next action may be the hub's — a
+			// model name it sent that is not one, a session to close — and a
+			// hub told only to ask the owner would keep sending the same run.
+			if le, ok := errors.AsType[*adapter.LocalError](err); ok {
+				turnLog.Warn("the harness would not start", "err", le.Err)
+				fail(ClassStart, le.Msg+seeLogs)
+				return
+			}
+			fail(ClassStart, err.Error())
 			return
 		}
 		// Pinned before the first event: an adapter that chooses the id (Claude)

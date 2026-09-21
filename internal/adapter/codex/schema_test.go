@@ -225,6 +225,9 @@ func TestSchemaWarningQuotesNothingItWasTold(t *testing.T) {
 		// noTemp points TMPDIR at a directory that is not there.
 		noTemp bool
 		want   string
+		// action is where the warning must send the owner; empty is the
+		// command run by hand.
+		action string
 	}{
 		{name: "it will not start", want: "it would not start"},
 		{name: "it fails, saying what it should not", want: "it exited with an error",
@@ -233,7 +236,7 @@ func TestSchemaWarningQuotesNothingItWasTold(t *testing.T) {
 			script: "mkdir \"$4/" + schemaFile + "\""},
 		{name: "what it wrote is not a schema", want: "is not one yad can read",
 			script: "echo '" + secret + "' > \"$4/" + schemaFile + "\""},
-		{name: "the temp directory cannot be made", noTemp: true, want: "the temp directory",
+		{name: "the temp directory cannot be made", noTemp: true, want: "the temp directory", action: "TMPDIR in the runner's environment",
 			script: "exit 0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -262,8 +265,12 @@ func TestSchemaWarningQuotesNothingItWasTold(t *testing.T) {
 			if err != nil || !strings.Contains(got, tc.want) {
 				t.Fatalf("warning = %q, %v; want %q", got, err, tc.want)
 			}
-			if !strings.Contains(got, "on this machine") {
-				t.Errorf("warning = %q, want it to send the owner to the machine", got)
+			action := tc.action
+			if action == "" {
+				action = "generate-json-schema --out DIR` on this machine"
+			}
+			if !strings.Contains(got, action) {
+				t.Errorf("warning = %q, want the next action %q", got, action)
 			}
 			leaks := []string{secret, "hunter2", "dyld", "fatal:", home, "/Users/", "fork/exec",
 				"permission denied", "exit status", "is a directory", "no such file", "invalid character"}
