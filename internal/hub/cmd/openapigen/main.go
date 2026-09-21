@@ -16,14 +16,13 @@ func main() {
 	if len(os.Args) > 2 {
 		protocolOut, serviceOut = os.Args[1], os.Args[2]
 	}
-	h := hub.New(hub.Options{})
 	for _, doc := range []struct {
 		out string
 		gen func() ([]byte, error)
 		src string
 	}{
-		{protocolOut, h.OpenAPI, "protocol/v1"},
-		{serviceOut, h.ServiceOpenAPI, "protocol/hubapi"},
+		{protocolOut, hub.OpenAPIYAML, "protocol/v1"},
+		{serviceOut, hub.ServiceOpenAPIYAML, "protocol/hubapi"},
 	} {
 		b, err := doc.gen()
 		if err != nil {

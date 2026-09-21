@@ -584,6 +584,19 @@ components:
       type: object
     Source:
       additionalProperties: true
+      oneOf:
+        - properties:
+            git:
+              $ref: "#/components/schemas/GitSource"
+          required:
+            - git
+          type: object
+        - properties:
+            path:
+              type: string
+          required:
+            - path
+          type: object
       properties:
         git:
           $ref: "#/components/schemas/GitSource"

@@ -24,7 +24,7 @@ import (
 // Service API documents are what yashiki generates its client from; a drift
 // between them and the Go types is a failed build, as for the protocol's.
 func TestServiceOpenAPIIsCurrent(t *testing.T) {
-	gen, err := New(Options{}).ServiceOpenAPI()
+	gen, err := ServiceOpenAPIYAML()
 	if err != nil {
 		t.Fatal(err)
 	}

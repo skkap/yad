@@ -231,11 +231,27 @@ func (r *recorder) WriteHeader(status int)      { r.status = status }
 // ServeHTTP serves the protocol under BasePath.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
 
-// OpenAPI returns the protocol's generated document as YAML.
-func (h *Hub) OpenAPI() ([]byte, error) { return h.api.OpenAPI().YAML() }
+// OpenAPIYAML is the protocol's generated document, as the committed file
+// holds it.
+//
+// The document is a property of the code, not of a hub instance, so it is not
+// a method. constrainSources writes into the schema registry the document is
+// made of — huma's document *is* its registry — so applying it to a hub that
+// serves requests makes that hub validate against the oneOf and answer 422
+// where Run.Validate should answer 400. Each of these builds a hub of its own
+// for the purpose, unreachable and discarded, so no serving hub is ever
+// touched.
+//
+// A method would be the obvious reach for anyone adding a spec endpoint, and
+// would reintroduce exactly that. There is none to reach for, and
+// TestConstrainSourcesIsReachedOnlyFromTheGenerators fails if one appears.
+func OpenAPIYAML() ([]byte, error) { return constrainSources(New(Options{}).api.OpenAPI()).YAML() }
 
-// ServiceOpenAPI returns the service API's generated document as YAML.
-func (h *Hub) ServiceOpenAPI() ([]byte, error) { return h.service.OpenAPI().YAML() }
+// ServiceOpenAPIYAML is the service API's generated document, on the same
+// terms as OpenAPIYAML above.
+func ServiceOpenAPIYAML() ([]byte, error) {
+	return constrainSources(New(Options{}).service.OpenAPI()).YAML()
+}
 
 // Config is the OpenAPI frame. Its version is the protocol's, never the
 // binary's, so a yad release that changes no wire type changes no byte of the
@@ -249,7 +265,14 @@ func Config() huma.Config {
 	// $schema field in every response is noise a TypeScript hub would copy.
 	c.DocsPath = ""
 	c.SchemasPath = ""
-	c.OpenAPIPath = "/openapi"
+	// Not served, for the reason the other two are not and for one of its own:
+	// the committed protocol/v1/openapi.yaml is the contract. A served
+	// document is marshalled from the live schema registry, which deliberately
+	// does not carry the Source oneOf — constraining it would make this hub
+	// validate against it — so the served bytes would differ from the
+	// committed bytes in exactly the rule a hub author came for. If a hub
+	// should serve its document one day, it serves the committed file.
+	c.OpenAPIPath = ""
 	c.CreateHooks = nil
 	// Within v1 either side may add fields; a strict "additionalProperties:
 	// false" would make every TypeScript hub reject the next minor addition.

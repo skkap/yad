@@ -16,7 +16,7 @@ import (
 // If it and the Go types disagree, one of them is lying to a hub; this test
 // makes the disagreement a failed build instead of a production surprise.
 func TestOpenAPIIsCurrent(t *testing.T) {
-	gen, err := New(Options{}).OpenAPI()
+	gen, err := OpenAPIYAML()
 	if err != nil {
 		t.Fatal(err)
 	}
