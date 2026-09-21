@@ -131,14 +131,17 @@ func privateFiles(p Paths) []privateFile {
 	//
 	// The hub's is unconditional: a run's spec carries its grants in
 	// plaintext until the run ends, when the schema blanks their values
-	// (hub/store/migrations/0001, decision 0041). So what an exposed hub.db
-	// gives up is the grants of every run not yet ended — queued, offered,
-	// held or waiting — and not the history. Its -wal is wider: frames written
-	// while a run was live stay there until SQLite reuses them, so it can
-	// still hold the grants of runs that ended since the last clean close.
+	// (hub/store/migrations/0001, decision 0041). So an exposed hub.db gives
+	// up the grants of every run not yet ended — queued, offered, held or
+	// waiting — and not the whole history, with two widenings. In WAL mode
+	// the blanking reaches hub.db only at a checkpoint, and until SQLite
+	// reuses them the -wal keeps frames written while a run was live, so
+	// between them they hold the grants of runs that ended since the hub last
+	// stopped cleanly. And the hub stores every event its runners upload,
+	// which nothing blanks — the same conditional exposure as state.db's.
 	for _, st := range []struct{ path, holds, rotate string }{
 		{p.StateDB(), "every run's events, which carry what the harness did and anything it printed", "if a run ever printed a credential, its events still hold it — treat that one as exposed too"},
-		{p.HubDB(), "the grants of every run this hub has not seen end, in plaintext", "rotate every secret carried by a grant of a run that has not ended — and, if its -wal was exposed too, of any run that ended since this hub last stopped cleanly"},
+		{p.HubDB(), "the grants of every run this hub has not seen end, in plaintext, and every run's events, which carry anything the harness printed", "rotate every secret carried by a grant of a run that has not ended or that ended since this hub last stopped cleanly — until a checkpoint, the database and its -wal still hold those — and if a run ever printed a credential, its events still hold it too"},
 	} {
 		base := filepath.Base(st.path)
 		files = append(files, privateFile{st.path, "it holds " + st.holds, closeAnd(st.path, st.rotate)})

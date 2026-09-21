@@ -783,33 +783,6 @@ func (q *Queries) OfferRun(ctx context.Context, arg OfferRunParams) error {
 	return err
 }
 
-const openSessionsOfRunner = `-- name: OpenSessionsOfRunner :many
-SELECT id FROM sessions WHERE runner_id = ?1 AND closed_at IS NULL ORDER BY id
-`
-
-func (q *Queries) OpenSessionsOfRunner(ctx context.Context, runnerID sql.NullString) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, openSessionsOfRunner, runnerID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const putResult = `-- name: PutResult :execrows
 INSERT INTO results (run_id, state, body, received_at) VALUES (?, ?, ?, ?)
 ON CONFLICT (run_id) DO NOTHING
@@ -1069,6 +1042,39 @@ SELECT id FROM sessions WHERE runner_id = ? AND close_requested_at IS NOT NULL A
 
 func (q *Queries) SessionsToClose(ctx context.Context, runnerID sql.NullString) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, sessionsToClose, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sessionsToSettle = `-- name: SessionsToSettle :many
+SELECT s.id FROM sessions s
+WHERE s.runner_id = ?1
+  AND (s.closed_at IS NULL OR EXISTS (
+      SELECT 1 FROM runs r WHERE r.session_id = s.id AND r.state IN ('queued', 'offered')))
+ORDER BY s.id
+`
+
+// A departed runner's sessions that still need the hub: open ones, and
+// closed ones with a run still waiting in them.
+func (q *Queries) SessionsToSettle(ctx context.Context, runnerID sql.NullString) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, sessionsToSettle, runnerID)
 	if err != nil {
 		return nil, err
 	}

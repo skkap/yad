@@ -109,7 +109,8 @@ func TestAnEndedRunWithoutGrantsKeepsItsSpec(t *testing.T) {
 // hub.db is what an owner copies, backs up or leaves readable, and a value
 // SQLite freed without overwriting is still there to read. Once the runs have
 // ended and the store has closed — checkpointing its -wal back in — no byte
-// of any value is anywhere on disk.
+// of any value is anywhere on disk. Before that checkpoint hub.db still has
+// the old page; decision 0041 says so rather than this test pretending not.
 //
 // Hundreds of runs with briefs of varying length, because one small run
 // proves nothing: its page is rewritten whole. Rows spread over many pages

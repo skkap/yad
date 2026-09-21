@@ -152,11 +152,15 @@ what it was given and no longer holds the secret
 ([0041](decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md)).
 A waiting run keeps its values, because its resume needs them. The database is
 opened with `secure_delete`, so a blanked value does not linger in the file's
-free space either. That is why `yad doctor` treats an exposed `hub.db` as
-exposed secrets rather than exposed state, and why the remediation is the
-grants of every run still in flight — plus, when the `-wal` was exposed too,
-those of runs that ended since the hub last stopped cleanly, whose old pages
-it can still hold.
+free space either. Two things widen that. In WAL mode the blanking reaches
+`hub.db` itself only at a checkpoint, and `hub.db-wal` keeps the frames written
+while a run was live until SQLite reuses them — so the two files together can
+still hold the grants of runs that ended since the hub last stopped cleanly.
+And the hub keeps every event its runners upload, which nothing blanks: a
+secret a harness printed is in `hub.db` as it is in `state.db`. That is why
+`yad doctor` treats an exposed `hub.db` as exposed secrets rather than exposed
+state, and why the remediation is the grants of every run still in flight or
+ended since the last clean stop, and anything a run printed.
 
 ## Give it a machine of its own
 
@@ -329,8 +333,8 @@ hub issued it — the same file is the default token for submitting to a remote
 hub, so it is not always this machine's — and if it is a hub this machine
 serves, the file has to be deleted between `revoke` and `create`, because
 `revoke` only touches the database and `create` refuses while the file is still
-there. `hub.db` means the grants of every run that has not ended, and its
-`-wal` those of runs that ended since the last clean stop as well. `state.db` is the
+there. `hub.db` means the grants of every run that has not ended or ended
+since the last clean stop, and anything a run printed. `state.db` is the
 conditional one: it keeps no grant, because the runner strips them before
 writing, but an event body is whatever the harness printed and nothing ever
 deletes one — so if a run printed a credential, it is still in there.

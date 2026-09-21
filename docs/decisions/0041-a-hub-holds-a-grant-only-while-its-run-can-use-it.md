@@ -35,12 +35,17 @@ reads the file back after a close and finds none.
 
 ## What it does not do
 
-- **The `-wal` keeps its frames until SQLite reuses them.** Pages written while
-  a run was live stay in `hub.db-wal` until a checkpoint lets the log start
-  over and later writes cover them; a clean close checkpoints and removes the
-  file, and a killed process leaves it (`docs/run-it-safely.md`). An exposed
-  `hub.db-wal` can therefore still give up the grants of runs that ended
-  recently, and `yad doctor` says so.
+- **In WAL mode the blanking reaches `hub.db` at a checkpoint, not at once.**
+  The update is written to `hub.db-wal`; the page in `hub.db` keeps the value
+  until a checkpoint copies the blanked page over it, and the `-wal` keeps the
+  frames written while the run was live until later writes reuse them. A clean
+  close checkpoints and removes the `-wal`; a killed process leaves it
+  (`docs/run-it-safely.md`). So a copy of either file taken while the hub runs
+  can still give up the grants of runs that ended since it last stopped
+  cleanly, and `yad doctor` says so. Checkpointing after every ending would
+  close that, at a write per run; it was not done.
+- **Events are not touched.** A secret a harness printed is in the run's
+  events on the hub as on the runner, and `yad doctor` says that too.
 - **A resubmitted run is compared without values once it has ended.** A retry
   of a finished run starts nothing, so `submitRun` holds it to the grants'
   names and deliveries alone.

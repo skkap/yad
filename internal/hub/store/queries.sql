@@ -231,5 +231,11 @@ WHERE runner_id = sqlc.arg(runner_id) AND state IN ('claimed', 'preparing', 'run
 UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = sqlc.arg(now)
 WHERE runner_id = sqlc.arg(runner_id) AND state = 'offered';
 
--- name: OpenSessionsOfRunner :many
-SELECT id FROM sessions WHERE runner_id = sqlc.arg(runner_id) AND closed_at IS NULL ORDER BY id;
+-- A departed runner's sessions that still need the hub: open ones, and
+-- closed ones with a run still waiting in them.
+-- name: SessionsToSettle :many
+SELECT s.id FROM sessions s
+WHERE s.runner_id = sqlc.arg(runner_id)
+  AND (s.closed_at IS NULL OR EXISTS (
+      SELECT 1 FROM runs r WHERE r.session_id = s.id AND r.state IN ('queued', 'offered')))
+ORDER BY s.id;

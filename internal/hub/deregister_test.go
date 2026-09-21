@@ -3,12 +3,15 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/hub/store/db"
 )
 
 func (f *fixture) deregister(t *testing.T, runner, cred, reason string) (int, v1.ErrorEnvelope) {
@@ -87,6 +90,64 @@ func TestDeregisterClosesTheRunnersSessions(t *testing.T) {
 	f.enqueue(t, run("c1", "s-c1"))
 	if res := f.mustSync(t, "r1", cred, first("r1", 1)); len(res.Runs) != 1 || res.Runs[0].RunID != "c1" {
 		t.Errorf("re-registered r1 is offered %v, want c1", ids(res.Runs))
+	}
+}
+
+// A session the runner closed itself can still hold a queued run: a close
+// leaves them for the runner to refuse when offered. A runner that
+// deregisters will never be offered one again, so they end here too, and the
+// session keeps the reason it closed with.
+func TestDeregisterEndsRunsLeftInASessionAlreadyClosed(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	f.claimedBy(t, "r1", cred, "a1")
+	f.enqueue(t, continues("a2", "s-a1"))
+	if code, env := f.result(t, cred, "a1", v1.Result{State: v1.RunSucceeded}); code != http.StatusOK {
+		t.Fatalf("result: %d %+v", code, env)
+	}
+	closed := req("r1", 0)
+	closed.ClosedSessions = []v1.ClosedSession{{SessionID: "s-a1", Reason: v1.SessionExpired, ClosedAt: f.clock.Now()}}
+	f.mustSync(t, "r1", cred, closed)
+	if s := f.state(t, "a2"); s != "queued" {
+		t.Fatalf("a2 is %s before deregister, want queued", s)
+	}
+
+	if code, env := f.deregister(t, "r1", cred, ""); code != http.StatusOK {
+		t.Fatalf("deregister: %d %+v", code, env)
+	}
+	if s := f.state(t, "a2"); s != "failed" {
+		t.Errorf("a2 is %s after deregister, want failed", s)
+	}
+	sess, err := f.store.GetSession(context.Background(), "s-a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.CloseReason.String != string(v1.SessionExpired) {
+		t.Errorf("session s-a1 closed %q, want the runner's own expired", sess.CloseReason.String)
+	}
+}
+
+// Authenticating and the transaction that acts on it take the store's one
+// connection separately, so a credential can be replaced between them. Once
+// it has been, the transaction refuses — or a deregister would retire the
+// credential a re-registration just issued, and a sync would offer runs to a
+// credential already dead.
+func TestAReplacedCredentialIsRefusedInsideTheTransaction(t *testing.T) {
+	f := newFixture(t)
+	f.register(t, "r1")
+	ctx := context.Background()
+	checked, err := f.store.GetRunner(ctx, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.register(t, "r1") // a new token for r1, and a new credential
+	err = f.store.Tx(ctx, func(q *db.Queries) error {
+		_, err := current(ctx, q, checked)
+		return err
+	})
+	var e *ErrorResponse
+	if !errors.As(err, &e) || e.status != http.StatusUnauthorized {
+		t.Errorf("err = %v, want a 401", err)
 	}
 }
 
