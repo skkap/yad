@@ -25,11 +25,11 @@ type HarnessReport struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Kind  string `json:"kind" enum:"first-class,recognised"`
-	// Present is there being a binary the runner would run for this harness —
+	// Present is there being a binary the runner starts for this harness —
 	// the one a YAD_<ID>_PATH override names, or PATH's when the override
 	// names nothing (DEV-68). It says nothing about whether it works; Error
 	// does.
-	Present bool `json:"present" doc:"There is a binary the runner would run for this harness. Not that it works: a present harness with an error cannot take runs. A harness absent with an error has a path configured for it that names nothing and none on the runner's PATH either."`
+	Present bool `json:"present" doc:"There is a binary the runner starts for this harness's runs. Not that it works: a present harness with an error cannot take runs. A harness absent with an error has a path configured for it that names nothing and none on the runner's PATH either."`
 	// Version is the version number and nothing else of what the harness
 	// printed: the line around it can hold a path or a credential (DEV-67).
 	Version string `json:"version,omitempty" doc:"The version number the harness reported, such as 2.4.1 or 1.0.0-beta.12, and nothing else of what it printed. Absent when it printed no version."`
@@ -122,9 +122,11 @@ type AccountWindow struct {
 // `logged_in` where the tool has a login.
 type HostTool struct {
 	ID string `json:"id" doc:"The tool: git, gh or docker."`
-	// Present means what it means for a harness: there is a binary the
-	// runner would run (DEV-68).
-	Present bool   `json:"present" doc:"There is a binary the runner would run for this tool: the one its configured path names, or the one on PATH when that path names nothing. Present is not usable: see error and logged_in."`
+	// Present is the binary detection found and probed, under the same
+	// override rule as a harness (DEV-68). Unlike a harness's, it is not
+	// necessarily the one a run uses: yad's own git and a harness's children
+	// look host tools up on PATH, whatever YAD_<ID>_PATH says.
+	Present bool   `json:"present" doc:"The runner found a binary for this tool and probed it: the one its configured path names, or the one on PATH when that path names nothing. Present is not usable: see error and logged_in."`
 	Version string `json:"version,omitempty" doc:"The version number the tool reported, such as 2.51.0, and nothing else of what it printed. Absent when it printed no version."`
 	// LoggedIn is nil when the tool has no notion of a login, and nil too when
 	// it has one and the runner could not find out — Error says why.

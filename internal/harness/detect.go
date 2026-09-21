@@ -16,7 +16,7 @@ type Detected struct {
 	Harness
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
-	// Present is there being a binary yad would run for this harness: Path.
+	// Present is there being a binary every run starts for this harness: Path.
 	// Not that it works — Error says whether it does.
 	Present bool `json:"present"`
 	// Error is what is wrong with this harness and what to do about it. It

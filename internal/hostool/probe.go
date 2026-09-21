@@ -15,8 +15,9 @@ type Detected struct {
 	ID      string `json:"id"`
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
-	// Present is there being a binary yad would run for this tool: Path. Not
-	// that it works — Error says whether it does.
+	// Present is there being a binary detection found and probed: Path. Not
+	// that it works — Error says whether it does — and not that a run uses
+	// it: workdir's git and a harness's children look the tool up on PATH.
 	Present bool `json:"present"`
 	// Error is what went wrong with this tool: a path override that names
 	// nothing with no binary on PATH either, a probe that timed out, a binary

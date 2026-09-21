@@ -136,8 +136,9 @@ to offer again — to this runner or another. A hub that treats the offer as the
 claim loses every run a runner never got.
 
 **Offer a run only for a harness the runner can drive.** In the capability
-document, `present` means the runner has a binary it would run for a harness
-or a host tool. It does not mean the binary works. A harness can take runs
+document, `present` means the runner found a binary for a harness or a host
+tool, and for a harness it is the one every run starts. It does not mean the
+binary works. A harness can take runs
 when it is `first-class`, `present` and has no `error`. A host tool is usable
 when it is `present` with no `error`, and `logged_in` too for a tool that has a
 login. `warnings` never make either one unusable. They are for whoever owns the

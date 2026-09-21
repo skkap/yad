@@ -26,8 +26,12 @@ One rule, in one place (`internal/probe`), which both packages call:
 - **A file that is there but is not executable, or will not start**, is
   `present: true` with an error: installed but broken.
 
-So `present` means **there is a binary yad would run**, for harnesses and host
-tools alike. It says nothing about whether the binary works: `error` says that.
+So `present` means **the runner found a binary**, under the same rule for
+harnesses and host tools. For a harness, that binary is the one every run
+starts. For a host tool, it is the binary that was probed. yad's own git
+(`internal/workdir`) and a harness's children still look host tools up on PATH,
+which was already true before this decision and is a separate gap (DEV-107). `present`
+says nothing about whether the binary works: `error` says that.
 
 `HostTool` gained `warnings` to carry the fallback. The field is additive, and
 it follows the same rule as `HarnessReport.warnings`: the runner's words, never
