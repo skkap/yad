@@ -62,6 +62,20 @@ const (
 // proof — reading the source cannot see a value reached some other way.
 var SyncFloorForTests time.Duration
 
+// LeaseForTests replaces the lease a hub names while it is positive, so a test
+// can watch a lease lapse without spending a minute doing it — the conformance
+// suite's lease rule is checked by waiting one out, against a hub over HTTP,
+// with no clock in common (DEV-33).
+//
+// Deliberately a replacement and not a floor like the seam above: the lease is
+// max(four intervals, minLease) and the interval is bounded below by five
+// seconds (ARCHITECTURE.md §2), so no floor can bring a lease under twenty
+// seconds and a floor would buy nothing. Same rules otherwise: nothing outside
+// a test may set it, timings stay the hub's, and no runner can reach it.
+// TestOnlyTestsReachTheLease fails on any shipped file of the module that
+// assigns it, this one included.
+var LeaseForTests time.Duration
+
 // Options configure a hub. Store is required to serve; generating the OpenAPI
 // document needs none.
 type Options struct {
@@ -107,6 +121,9 @@ func New(opts Options) *Hub {
 	}
 	h.interval = min(max(h.interval, floor), MaxSyncInterval)
 	h.lease = max(missedIntervals*h.interval, minLease)
+	if LeaseForTests > 0 {
+		h.lease = LeaseForTests
+	}
 
 	inner := http.NewServeMux()
 	api := humago.New(inner, Config())

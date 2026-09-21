@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"strings"
 )
 
 // Go's flag package stops at the first non-flag argument, so a command that
@@ -45,4 +48,19 @@ func positional(fs *flag.FlagSet, args []string, n int, usage string) ([]string,
 		return nil, fmt.Errorf("unexpected argument %q — %s", pos[n], usage)
 	}
 	return pos, nil
+}
+
+// tokenArg is a --token flag's value, or the line on stdin when it is "-"
+// (decision 0020). Two commands take a registration token this way, and the
+// comment above is about what happens when a third copies the code rather
+// than the function.
+func tokenArg(value string) (string, error) {
+	if value != "-" {
+		return value, nil
+	}
+	line, err := bufio.NewReader(stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read the registration token from stdin: %w", err)
+	}
+	return strings.TrimSpace(line), nil
 }

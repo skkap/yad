@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/skkap/yad/internal/runner"
@@ -26,13 +23,9 @@ func cmdConnect(ctx context.Context, g global, args []string, w io.Writer) error
 		return err
 	}
 	url := pos[0]
-	tok := *token
-	if tok == "-" {
-		line, err := bufio.NewReader(stdin).ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return fmt.Errorf("read the registration token from stdin: %w", err)
-		}
-		tok = strings.TrimSpace(line)
+	tok, err := tokenArg(*token)
+	if err != nil {
+		return err
 	}
 	conn, res, notes, err := runner.Connect(ctx, g.paths, url, tok, *name)
 	// Notes are printed whether or not the registration succeeded: they say
