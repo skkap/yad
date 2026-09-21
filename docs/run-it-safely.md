@@ -126,11 +126,13 @@ wanted any of this could simply ask the harness for it.
 - **Tokens are never logged, printed or transmitted** beyond where they are
   delivered. A registration token typed into `yad connect` is the one
   exception ([0020](decisions/0020-the-registration-token-may-be-typed.md)).
-  A hub URL can carry one too, as `https://user:secret@hub/…`: wherever yad
-  prints, logs or reports a hub URL — `yad connect`, `yad status`, a refused
-  URL, an unreachable hub — the userinfo, query and fragment are taken out
-  first, and a URL that does not parse is not repeated at all
-  (`config.RedactURL`).
+  A hub URL with a user or password in it (`https://user:secret@hub/…`) is
+  refused — by `yad connect`, and by the runner loading a `config.toml` edited
+  to hold one — because it authenticates nothing: the runner sends its
+  credential as a bearer token, never the URL's userinfo. Wherever yad does
+  print a URL it did not choose — a refusal, a hub's redirect, an unreachable
+  hub — the userinfo, query and fragment are taken out first, and a URL that
+  does not parse is not repeated at all (`config.RedactURL`).
 
 ### Where a grant actually lands
 
@@ -332,8 +334,9 @@ will hand out a credential — no group or other bits — rather than a literal
 `0600`, so a credential you tightened to `0400` by hand is not scolded for it.
 `config.toml` **is** on the list, for the reason `config.Save` gives for writing
 it `0600`: it names the hubs this runner connects to and the accounts it holds.
-It carries no secret, so the mode is the whole of its fix — it is not asked to
-be rotated.
+It carries no secret — credentials live in their own files, and a hub URL with a
+password in it is refused rather than written — so the mode is the whole of its
+fix, and it is not asked to be rotated.
 
 Each file says what is at stake and what to do, and those differ — which is
 why the warning is worth reading rather than skimming for the `chmod`. An

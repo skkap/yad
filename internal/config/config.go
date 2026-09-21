@@ -49,7 +49,9 @@ type HarnessConfig struct {
 }
 
 // Connection is one hub this runner is registered with. Its credential lives in
-// a separate 0600 file, never here, so config.toml can be shown and shared.
+// a separate 0600 file, never here, and CheckHubURL refuses a URL carrying a
+// user or password — at connect, at save and at load — so config.toml holds no
+// secret and can be shown and shared.
 type Connection struct {
 	Name string `toml:"name"`
 	URL  string `toml:"url"`
@@ -251,7 +253,12 @@ func Load(p Paths) (Config, error) {
 		}
 		return c, fmt.Errorf("%s: %w", p.ConfigFile(), err)
 	}
-	return c, c.Validate()
+	// Named, because a file that fails here was edited by hand and the owner
+	// needs to know which one to open.
+	if err := c.Validate(); err != nil {
+		return c, fmt.Errorf("%s: %w", p.ConfigFile(), err)
+	}
+	return c, nil
 }
 
 // Save writes config.toml at 0600 — it names hubs and accounts, which is enough

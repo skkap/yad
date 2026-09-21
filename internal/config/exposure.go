@@ -97,10 +97,11 @@ func privateFiles(p Paths) []privateFile {
 		// not enough. It is here because yad writes it 0600 and something
 		// changed that, which is a fact about the directory it sits in.
 		{runnerID, "yad writes this 0600 and something has changed it; the id itself is not a secret, but the credentials beside it are", "chmod 600 " + shellArg(runnerID)},
-		// Not a secret either, and on this list for the reason config.Save
-		// gives for writing it 0600: it names the hubs this runner connects to
-		// and the accounts it holds, which is enough to be worth keeping
-		// private. An owner who wrote it by hand under a normal umask is the
+		// Not a secret either — no credential is written here, and a hub URL
+		// carrying one is refused at load (CheckHubURL) — and on this list for
+		// the reason config.Save gives for writing it 0600: it names the hubs
+		// this runner connects to and the accounts it holds, which is enough to
+		// be worth keeping private. An owner who wrote it by hand under a normal umask is the
 		// common case, so the fix is the mode and nothing more.
 		{p.ConfigFile(), "it names the hubs this runner connects to and the accounts it holds, which is why yad writes it 0600", "chmod 600 " + shellArg(p.ConfigFile())},
 		// The sequence `yad hub admin-token create` itself prints when it

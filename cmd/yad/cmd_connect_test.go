@@ -119,11 +119,12 @@ func TestTokenCreateRefusesABadTTL(t *testing.T) {
 	}
 }
 
-// A hub URL can carry a credential in its userinfo, and `yad connect` quotes
-// the URL back in every outcome it has: the refusal CheckHubURL gives, the
-// line saying it connected, and the refusal of a second name for one hub. None
-// of them may print it — the output of a connect run from a script is kept.
-func TestConnectNeverPrintsACredentialFromTheURL(t *testing.T) {
+// A hub URL with userinfo is refused before anything is spent or written: it
+// can authenticate nothing, since the runner sends its token as a bearer, and
+// accepting it would put the secret in config.toml. The refusal says what to
+// do and names the URL without the secret — the output of a connect run from
+// a script is kept.
+func TestConnectRefusesAHubURLWithUserinfo(t *testing.T) {
 	const password = "hunter2"
 	hubSide, runnerSide := newProfile(t), newProfile(t)
 	code, tok, errs := hubSide.yad("", "hub", "token", "create", "--ttl", "10m")
@@ -137,27 +138,29 @@ func TestConnectNeverPrintsACredentialFromTheURL(t *testing.T) {
 	defer s.Close()
 	srv := httptest.NewServer(hub.New(hub.Options{Store: s}))
 	defer srv.Close()
-	url := strings.Replace(srv.URL, "http://", "http://runner:"+password+"@", 1) + hub.BasePath
 
-	for _, step := range []struct {
-		name string
-		args []string
-		ok   bool
-	}{
-		{"plain http to another host", []string{"connect", "http://runner:" + password + "@hub.example/v1", "--token", "-"}, false},
-		{"connected", []string{"connect", url, "--token", "-", "--name", "home"}, true},
-		{"the same hub under a second name", []string{"connect", url, "--token", "-", "--name", "other"}, false},
+	for _, url := range []string{
+		strings.Replace(srv.URL, "http://", "http://runner:"+password+"@", 1) + hub.BasePath,
+		strings.Replace(srv.URL, "http://", "http://"+password+"@", 1) + hub.BasePath,
+		"http://runner:" + password + "@hub.example/v1",
 	} {
-		code, out, errs := runnerSide.yad(tok, step.args...)
-		if (code == 0) != step.ok {
-			t.Fatalf("%s: exit %d: %s%s", step.name, code, out, errs)
+		code, out, errs := runnerSide.yad(tok, "connect", url, "--token", "-", "--name", "home")
+		if code == 0 {
+			t.Fatalf("connect to %s was accepted", url)
 		}
 		if strings.Contains(out+errs, password) {
-			t.Errorf("%s: the password is printed:\n%s%s", step.name, out, errs)
+			t.Errorf("the password is printed:\n%s%s", out, errs)
 		}
-		// Redacted, not dropped: the owner still learns which hub it was.
-		if !strings.Contains(out+errs, "redacted@") {
-			t.Errorf("%s: the output no longer says which hub it was about:\n%s%s", step.name, out, errs)
+		if !strings.Contains(errs, "redacted@") || !strings.Contains(errs, "drop the user:password@ part") {
+			t.Errorf("the refusal does not name the URL and the way out:\n%s", errs)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(runnerSide.config, "config.toml")); err == nil {
+		t.Error("a refused connect wrote config.toml")
+	}
+	// The token was never spent, so the same token connects the same hub
+	// once the userinfo is gone.
+	if code, _, errs := runnerSide.yad(tok, "connect", srv.URL+hub.BasePath, "--token", "-", "--name", "home"); code != 0 {
+		t.Errorf("connect without the userinfo: exit %d: %s", code, errs)
 	}
 }
