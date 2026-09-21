@@ -219,8 +219,17 @@ func (l *Loop) init() {
 // Run syncs until ctx ends. It returns nil on cancellation and an error only
 // when syncing cannot succeed without the owner: the credential was refused,
 // or the hub requires a newer yad.
+//
+// Whatever the way out, it leaves no claim pending (WithdrawPending).
 func (l *Loop) Run(ctx context.Context) error {
 	l.init()
+	// Deferred rather than called at each return, because the returns are
+	// where the leak came from: a fatal sync returned between a claim and
+	// the sync that would have listed it, and nothing else ever gave that
+	// unit back. The drain happens to withdraw pending claims on its own
+	// and exit now takes the process with it; neither reason covers the
+	// next way out someone writes.
+	defer l.WithdrawPending(context.WithoutCancel(ctx))
 	if err := l.Recover(ctx); err != nil {
 		return err
 	}
@@ -660,6 +669,26 @@ func (l *Loop) withdraw(ctx context.Context, runID string) {
 	}
 	// A close may have been waiting on the claim.
 	l.Sessions.Wake()
+}
+
+// WithdrawPending gives back every claim this loop recorded and never handed
+// to the executor. A claim holds a unit of the pool, and one of its harness's
+// cap, until its release is called, and only a withdrawal or the executor
+// taking the run calls it — a loop that stops does neither. With one loop the
+// process was on its way out anyway; with several, the others keep running
+// and would need that unit for the life of the daemon.
+//
+// Run defers it, so it runs after the last sync in that same goroutine and
+// nothing else is touching pending. It must not be called while Run is
+// running. ctx must outlive the loop's own: the store writes are what remove
+// the claim, and on a cancelled context they would all fail.
+func (l *Loop) WithdrawPending(ctx context.Context) {
+	l.init()
+	for id := range l.pending {
+		l.Log.Warn("claimed and not started when this connection stopped; withdrawn, for the hub to offer again or lose",
+			"connection", l.Connection, "run", id)
+		l.withdraw(ctx, id)
+	}
 }
 
 // Recover settles runs a previous process held (decision 0030). No
