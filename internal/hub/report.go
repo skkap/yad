@@ -207,6 +207,31 @@ func notHolder(id string) error {
 		"stop the run and stop reporting it; nothing this runner sends for it is applied")
 }
 
+// unknownCredential is the refusal for a credential this hub does not hold.
+func unknownCredential() error {
+	return Fail(http.StatusUnauthorized, v1.CodeUnauthorized,
+		"the hub does not know this runner credential — a newer registration replaced it, the runner deregistered, or the hub's database was reset",
+		newTokenAction)
+}
+
+// current reads the runner again inside a transaction, and refuses the
+// request if its credential was replaced or retired since authenticate
+// checked it. The check and the transaction take the store's one connection
+// separately, so a deregister or a re-registration can commit between them;
+// without this a sync that authenticated first would go on to offer runs to
+// a credential already dead, and a deregister would retire the credential a
+// re-registration had just issued.
+func current(ctx context.Context, q *db.Queries, checked db.Runner) (db.Runner, error) {
+	r, err := q.GetRunner(ctx, checked.ID)
+	if err != nil {
+		return db.Runner{}, err
+	}
+	if r.CredentialHash != checked.CredentialHash {
+		return db.Runner{}, unknownCredential()
+	}
+	return r, nil
+}
+
 // caller is the runner the request's credential belongs to. Unlike sync, the
 // run calls name no runner in the path: the credential alone says who it is.
 func (h *Hub) caller(ctx context.Context) (db.Runner, error) {
@@ -216,9 +241,7 @@ func (h *Hub) caller(ctx context.Context) (db.Runner, error) {
 	}
 	r, err := h.store.GetRunnerByCredential(ctx, hashSecret(cred))
 	if errors.Is(err, sql.ErrNoRows) {
-		return db.Runner{}, Fail(http.StatusUnauthorized, v1.CodeUnauthorized,
-			"the hub does not know this runner credential — a newer registration replaced it, or the hub's database was reset",
-			newTokenAction)
+		return db.Runner{}, unknownCredential()
 	}
 	return r, err
 }

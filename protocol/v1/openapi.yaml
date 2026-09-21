@@ -759,7 +759,7 @@ paths:
       summary: Exchange a registration token for a runner credential
   /runners/{runner}/deregister:
     post:
-      description: Runs the runner still holds become lost on the hub's side.
+      description: "Runs the runner still holds become lost on the hub's side; runs offered to it and never claimed go back in the queue. Every session bound to that runner closes, and the runs still queued in them fail: a session is resumable only on the runner that holds it, so a run left in one would be offerable to no runner at all. The binding is never cleared instead — the session's state is on that machine. The credential stops working at once. The runner's id and its history stay, so registering again with a token issued for that runner brings it back, with new sessions."
       operationId: deregister
       parameters:
         - description: The runner id.
@@ -788,6 +788,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
         "422":
           content:
             application/json:

@@ -94,27 +94,6 @@ func (q *Queries) BurnRegistrationToken(ctx context.Context, arg BurnRegistratio
 	return result.RowsAffected()
 }
 
-const cancelUnstartedRun = `-- name: CancelUnstartedRun :execrows
-UPDATE runs SET state = 'cancelled', reason = ?, lease_expires_at = NULL, updated_at = ?
-WHERE id = ? AND state IN ('queued', 'offered')
-`
-
-type CancelUnstartedRunParams struct {
-	Reason    sql.NullString
-	UpdatedAt int64
-	ID        string
-}
-
-// A run no runner has started ends on the hub alone. An offered run keeps its
-// runner: that runner lists it once more, hears cancel, and withdraws it.
-func (q *Queries) CancelUnstartedRun(ctx context.Context, arg CancelUnstartedRunParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, cancelUnstartedRun, arg.Reason, arg.UpdatedAt, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const clearDrain = `-- name: ClearDrain :exec
 UPDATE runners SET drain_requested_at = NULL WHERE id = ?
 `
@@ -124,18 +103,22 @@ func (q *Queries) ClearDrain(ctx context.Context, id string) error {
 	return err
 }
 
-const closeUnboundSession = `-- name: CloseUnboundSession :execrows
-UPDATE sessions SET closed_at = ?1, close_reason = 'closed', close_requested_at = NULL
-WHERE id = ?2 AND runner_id IS NULL AND closed_at IS NULL
+const closeSessionHere = `-- name: CloseSessionHere :execrows
+UPDATE sessions SET closed_at = ?1, close_reason = ?2, close_requested_at = NULL
+WHERE id = ?3 AND closed_at IS NULL
 `
 
-type CloseUnboundSessionParams struct {
-	Now sql.NullInt64
-	ID  string
+type CloseSessionHereParams struct {
+	Now    sql.NullInt64
+	Reason sql.NullString
+	ID     string
 }
 
-func (q *Queries) CloseUnboundSession(ctx context.Context, arg CloseUnboundSessionParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, closeUnboundSession, arg.Now, arg.ID)
+// The hub closing a session by its own act (decision 0011), with no runner
+// to report it: one nobody ever claimed, or one whose runner deregistered.
+// The caller has decided no runner's close is owed; a repeat changes nothing.
+func (q *Queries) CloseSessionHere(ctx context.Context, arg CloseSessionHereParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, closeSessionHere, arg.Now, arg.Reason, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -270,6 +253,34 @@ type DeleteSteersThroughParams struct {
 func (q *Queries) DeleteSteersThrough(ctx context.Context, arg DeleteSteersThroughParams) error {
 	_, err := q.db.ExecContext(ctx, deleteSteersThrough, arg.RunID, arg.ID)
 	return err
+}
+
+const endUnstartedRun = `-- name: EndUnstartedRun :execrows
+UPDATE runs SET state = ?1, reason = ?2, lease_expires_at = NULL, updated_at = ?3
+WHERE id = ?4 AND state IN ('queued', 'offered')
+`
+
+type EndUnstartedRunParams struct {
+	State  string
+	Reason sql.NullString
+	Now    int64
+	ID     string
+}
+
+// A run no runner has started ends on the hub alone: cancelled when someone
+// asked, failed when what it needed has gone. An offered run keeps its
+// runner: that runner lists it once more, hears cancel, and withdraws it.
+func (q *Queries) EndUnstartedRun(ctx context.Context, arg EndUnstartedRunParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, endUnstartedRun,
+		arg.State,
+		arg.Reason,
+		arg.Now,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const eventSeqsFrom = `-- name: EventSeqsFrom :many
@@ -653,6 +664,28 @@ func (q *Queries) LoseLapsedRuns(ctx context.Context, now int64) (int64, error) 
 	return result.RowsAffected()
 }
 
+const loseRunnerRuns = `-- name: LoseRunnerRuns :execrows
+UPDATE runs SET state = 'lost', reason = ?1, lease_expires_at = NULL, resumes_at = NULL,
+  updated_at = ?2
+WHERE runner_id = ?3 AND state IN ('claimed', 'preparing', 'running', 'waiting')
+`
+
+type LoseRunnerRunsParams struct {
+	Reason   sql.NullString
+	Now      int64
+	RunnerID sql.NullString
+}
+
+// Runs a departed runner held are lost: it is not coming back to report
+// them, and lost is what a hub tells a submitter then (decision 0023).
+func (q *Queries) LoseRunnerRuns(ctx context.Context, arg LoseRunnerRunsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, loseRunnerRuns, arg.Reason, arg.Now, arg.RunnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const offerCandidates = `-- name: OfferCandidates :many
 SELECT r.id, r.session_id, r.harness, r.model, r.spec, r.state, r.runner_id, r.lease_expires_at, r.resumes_at, r.reason, r.created_at, r.updated_at, r.events_through FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
@@ -898,6 +931,26 @@ func (q *Queries) RequeueRun(ctx context.Context, arg RequeueRunParams) error {
 	return err
 }
 
+const requeueRunnerOffers = `-- name: RequeueRunnerOffers :execrows
+UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = ?1
+WHERE runner_id = ?2 AND state = 'offered'
+`
+
+type RequeueRunnerOffersParams struct {
+	Now      int64
+	RunnerID sql.NullString
+}
+
+// An offer it never claimed was never held, so it goes back in the queue
+// rather than being lost.
+func (q *Queries) RequeueRunnerOffers(ctx context.Context, arg RequeueRunnerOffersParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, requeueRunnerOffers, arg.Now, arg.RunnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const requeueWithdrawnOffers = `-- name: RequeueWithdrawnOffers :execrows
 UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = ?1
 WHERE state = 'offered' AND lease_expires_at <= ?1
@@ -909,6 +962,25 @@ func (q *Queries) RequeueWithdrawnOffers(ctx context.Context, now int64) (int64,
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const retireRunnerCredential = `-- name: RetireRunnerCredential :exec
+UPDATE runners SET credential_hash = ?1, drain_requested_at = NULL
+WHERE id = ?2
+`
+
+type RetireRunnerCredentialParams struct {
+	CredentialHash string
+	ID             string
+}
+
+// Deregistration. A runner that deregisters keeps its row: sessions and runs
+// reference it, and re-registering under a token issued for that id is how it
+// comes back. What goes is its credential, replaced by the hash of a secret
+// nobody was given, so nothing can authenticate as it again.
+func (q *Queries) RetireRunnerCredential(ctx context.Context, arg RetireRunnerCredentialParams) error {
+	_, err := q.db.ExecContext(ctx, retireRunnerCredential, arg.CredentialHash, arg.ID)
+	return err
 }
 
 const revokeAdminToken = `-- name: RevokeAdminToken :execrows
@@ -970,6 +1042,39 @@ SELECT id FROM sessions WHERE runner_id = ? AND close_requested_at IS NOT NULL A
 
 func (q *Queries) SessionsToClose(ctx context.Context, runnerID sql.NullString) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, sessionsToClose, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sessionsToSettle = `-- name: SessionsToSettle :many
+SELECT s.id FROM sessions s
+WHERE s.runner_id = ?1
+  AND (s.closed_at IS NULL OR EXISTS (
+      SELECT 1 FROM runs r WHERE r.session_id = s.id AND r.state IN ('queued', 'offered')))
+ORDER BY s.id
+`
+
+// A departed runner's sessions that still need the hub: open ones, and
+// closed ones with a run still waiting in them.
+func (q *Queries) SessionsToSettle(ctx context.Context, runnerID sql.NullString) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, sessionsToSettle, runnerID)
 	if err != nil {
 		return nil, err
 	}

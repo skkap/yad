@@ -44,7 +44,7 @@ func TestCancelBeforeAnyRunnerStartsIt(t *testing.T) {
 			if code, e := f.api(t, "POST", "/runs/a/cancel", tok, nil, &view); code != 200 {
 				t.Fatalf("cancel: %d %s", code, e.Message)
 			}
-			if view.State != hubapi.RunState(v1.RunCancelled) || view.Reason != unstartedReason || view.CancelRequestedAt != nil {
+			if view.State != hubapi.RunState(v1.RunCancelled) || view.Reason != cancelledBeforeStart.reason || view.CancelRequestedAt != nil {
 				t.Fatalf("view %+v", view)
 			}
 			// The runner lists the offer it took, as it would have claimed it,

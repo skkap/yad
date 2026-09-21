@@ -19,9 +19,22 @@ import (
 	"github.com/skkap/yad/internal/hub/store/db"
 )
 
-// closedUnstartedReason is what a run that never started says when its
-// session was closed before any runner held it.
-const closedUnstartedReason = "its session was closed before a runner started it"
+// unstartedEnd is what becomes of a run still waiting in a session the hub
+// closes: the state it ends in, and the reason its submitter reads.
+type unstartedEnd struct {
+	state  v1.RunState
+	reason string
+}
+
+var (
+	// A close someone asked for: the runs waiting in the session were
+	// abandoned with it, which is a cancel.
+	closedBeforeStart = unstartedEnd{v1.RunCancelled, "its session was closed before a runner started it"}
+	// The session's runner deregistered, and the session's transcript and
+	// workdir went with it: the run cannot happen as submitted, and the
+	// submitter's work is not lost — it needs a new session to go to.
+	runnerDeregistered = unstartedEnd{v1.RunFailed, "its session's runner was deregistered; submit the work to a new session"}
+)
 
 type (
 	sessionInput struct {
@@ -70,7 +83,9 @@ func (h *Hub) registerSessions(api huma.API) {
 			switch {
 			case sess.ClosedAt.Valid:
 			case !sess.RunnerID.Valid:
-				if err := closeUnbound(ctx, q, sess.ID, now); err != nil {
+				// No runner has claimed a run of it, so nothing is on any
+				// runner's disk and no runner's report is owed.
+				if err := closeHere(ctx, q, sess.ID, v1.SessionClosed, closedBeforeStart, now); err != nil {
 					return err
 				}
 			default:
@@ -102,11 +117,20 @@ func (h *Hub) registerSessions(api huma.API) {
 	})
 }
 
-// closeUnbound closes a session no runner has claimed a run of: nothing is
-// on any runner's disk, so the hub alone decides, and the runs waiting in it
-// are cancelled rather than left to start a session that is closed.
-func closeUnbound(ctx context.Context, q *db.Queries, id string, now time.Time) error {
-	if _, err := q.CloseUnboundSession(ctx, db.CloseUnboundSessionParams{Now: sql.NullInt64{Int64: store.Ms(now), Valid: true}, ID: id}); err != nil {
+// closeHere closes a session by the hub's own act (decision 0011), when no
+// runner will report the close: one no runner ever claimed a run of, or one
+// whose runner has gone. A session already closed keeps the reason it closed
+// with. The runs still waiting in it end with it rather than
+// being left queued in a session no runner will take another run in — a
+// queued run holds no lease, so nothing else would ever end it.
+//
+// The binding is never cleared instead. A session is resumable only on the
+// runner that holds it (DOMAIN.md), so offering one to another runner would be
+// offering a resume that cannot work.
+func closeHere(ctx context.Context, q *db.Queries, id string, reason v1.SessionCloseReason, end unstartedEnd, now time.Time) error {
+	if _, err := q.CloseSessionHere(ctx, db.CloseSessionHereParams{
+		Now: sql.NullInt64{Int64: store.Ms(now), Valid: true}, Reason: sql.NullString{String: string(reason), Valid: true}, ID: id,
+	}); err != nil {
 		return err
 	}
 	runs, err := q.UnstartedRunsInSession(ctx, id)
@@ -114,15 +138,20 @@ func closeUnbound(ctx context.Context, q *db.Queries, id string, now time.Time) 
 		return err
 	}
 	for _, r := range runs {
-		// An offered run keeps its runner, which hears cancel at its next
-		// sync and withdraws it.
-		if _, err := q.CancelUnstartedRun(ctx, db.CancelUnstartedRunParams{
-			Reason: sql.NullString{String: closedUnstartedReason, Valid: true}, UpdatedAt: store.Ms(now), ID: r,
-		}); err != nil {
+		if err := endUnstarted(ctx, q, r, end, now); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// endUnstarted ends a run no runner has started, on the hub alone. An offered
+// run keeps its runner, which hears cancel at its next sync and withdraws it.
+func endUnstarted(ctx context.Context, q *db.Queries, runID string, end unstartedEnd, now time.Time) error {
+	_, err := q.EndUnstartedRun(ctx, db.EndUnstartedRunParams{
+		State: string(end.state), Reason: sql.NullString{String: end.reason, Valid: true}, Now: store.Ms(now), ID: runID,
+	})
+	return err
 }
 
 func sessionView(ctx context.Context, q *db.Queries, id string) (hubapi.Session, error) {

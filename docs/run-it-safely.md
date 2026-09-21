@@ -144,14 +144,23 @@ can read your whole home whatever `roots` says. Narrowing `roots` narrows what
 a hub can ask to have checked out, and that is all it is for.
 
 If a machine also runs `yad hub`, note that the hub's own store holds every run
-it has been given **with its grants, in plaintext**
-(`internal/hub/store/migrations/0001_init.sql`). Not only the ones waiting: a
-run's spec is written once and no query clears it, and nothing deletes a
-finished run (`internal/hub/store/queries.sql`), so a grant handed to this hub
-a month ago is still in the file. That is the hub's job rather than the
-runner's, and it is why `yad doctor` treats an exposed `hub.db` as exposed
-secrets rather than exposed state — and why the remediation is every secret
-any run has carried, not the current queue.
+it has been given, and **the grants of each one that has not ended, in
+plaintext** (`internal/hub/store/migrations/0001_init.sql`). A run's spec
+carries its grants until the run reaches a terminal state; then the schema
+blanks every value and keeps each grant's name, so a finished run still says
+what it was given and no longer holds the secret
+([0041](decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md)).
+A waiting run keeps its values, because its resume needs them. The database is
+opened with `secure_delete`, so a blanked value does not linger in the file's
+free space either. Two things widen that. In WAL mode the blanking reaches
+`hub.db` itself only at a checkpoint, and `hub.db-wal` keeps the frames written
+while a run was live until SQLite reuses them — so the two files together can
+still hold the grants of runs that ended since the hub last stopped cleanly.
+And the hub keeps every event its runners upload, which nothing blanks: a
+secret a harness printed is in `hub.db` as it is in `state.db`. That is why
+`yad doctor` treats an exposed `hub.db` as exposed secrets rather than exposed
+state, and why the remediation is the grants of every run still in flight or
+ended since the last clean stop, and anything a run printed.
 
 ## Give it a machine of its own
 
@@ -296,9 +305,11 @@ harnesses it already reported:
    each database's `-wal` and `-shm`. SQLite creates those with the database's
    own mode, so a database that drifted to `0644` hands the same bits to them;
    the `-wal` holds the pages the database has not taken yet, so an exposed
-   `hub.db-wal` gives up the same grants `hub.db` does. A clean shutdown
-   removes them. **A killed runner does not**, so they can be sitting there
-   when no runner is running at all.
+   `hub.db-wal` gives up the grants `hub.db` does — and, until SQLite reuses
+   its frames, the grants of runs that have ended since, from the pages
+   written while they were live. A clean shutdown removes them. **A killed
+   runner does not**, so they can be sitting there when no runner is running
+   at all.
 
 The rule for a file is the one `config.ReadSecret` already enforces before it
 will hand out a credential — no group or other bits — rather than a literal
@@ -322,7 +333,8 @@ hub issued it — the same file is the default token for submitting to a remote
 hub, so it is not always this machine's — and if it is a hub this machine
 serves, the file has to be deleted between `revoke` and `create`, because
 `revoke` only touches the database and `create` refuses while the file is still
-there. `hub.db` means every grant any run ever carried. `state.db` is the
+there. `hub.db` means the grants of every run that has not ended or ended
+since the last clean stop, and anything a run printed. `state.db` is the
 conditional one: it keeps no grant, because the runner strips them before
 writing, but an event body is whatever the harness printed and nothing ever
 deletes one — so if a run printed a credential, it is still in there.

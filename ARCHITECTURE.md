@@ -108,7 +108,7 @@ below is relative to it, so a hub can mount the protocol anywhere.
 | `POST /runners/{runner}/sync` | the periodic call: state and health in; runs, control messages and the next interval out |
 | `POST /runs/{run}/events` | a batch of events, idempotent by `(run, seq)`; answers `acked_through` |
 | `POST /runs/{run}/result` | the terminal state, idempotent; retried from the outbox until acknowledged |
-| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost |
+| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost, requeues its offers, and closes its sessions, ending the runs queued in them |
 
 Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
@@ -756,6 +756,11 @@ queries in `internal/hub/store/*.sql`. Tables: `registration_tokens`,
 `runners` and `admin_tokens` (secrets only as SHA-256 hashes), `sessions` (the runner each is bound
 to), `runs`, `events` (unique `(run_id, seq)`) and `results` (one per run). A
 run's hub-side state adds two before the protocol's: `queued` and `offered`.
+A run's spec holds its grants' values only until the run reaches a terminal
+state: the `runs_forget_grants` trigger blanks them then and keeps their names
+([0041](docs/decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md)),
+and both databases are opened with `secure_delete`, so freed bytes are zeroed
+rather than left in the file.
 
 ## §5 The local surface
 

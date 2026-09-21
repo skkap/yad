@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -179,26 +180,43 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 // then the session id is not compared — but the stored run must have started
 // its session too: a retry asking for a new session is not the run that
 // continued an old one.
+//
+// A run that has ended no longer holds its grant values (decision 0041), so
+// against one of those the retry's values are not compared — only each
+// grant's name and delivery, which the stored run kept. A retry of a finished
+// run starts nothing, so what its values were cannot matter any more.
 func (h *Hub) sameRun(ctx context.Context, run v1.Run, anySession bool) (bool, error) {
 	stored, err := h.store.GetRun(ctx, run.RunID)
 	if err != nil {
 		return false, err
 	}
+	var was v1.Run
+	if err := json.Unmarshal([]byte(stored.Spec), &was); err != nil {
+		return false, fmt.Errorf("stored run %s: %w", stored.ID, err)
+	}
 	if anySession {
-		var was v1.Run
-		if err := json.Unmarshal([]byte(stored.Spec), &was); err != nil {
-			return false, fmt.Errorf("stored run %s: %w", stored.ID, err)
-		}
 		if !was.Session.New {
 			return false, nil
 		}
 		run.Session = was.Session
 	}
-	b, err := json.Marshal(run)
+	if v1.RunState(stored.State).IsTerminal() {
+		run.Grants = slices.Clone(run.Grants)
+		for i := range run.Grants {
+			run.Grants[i].Value = ""
+		}
+	}
+	// Both sides through the same encoder: the stored spec was rewritten by
+	// SQLite when its grants were blanked, and its bytes are SQLite's then.
+	a, err := json.Marshal(run)
 	if err != nil {
 		return false, err
 	}
-	return bytes.Equal(b, []byte(stored.Spec)), nil
+	b, err := json.Marshal(was)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(a, b), nil
 }
 
 func (h *Hub) runEvents(ctx context.Context, in *eventsPageInput) (*eventsPageOutput, error) {
