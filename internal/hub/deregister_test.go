@@ -93,37 +93,50 @@ func TestDeregisterClosesTheRunnersSessions(t *testing.T) {
 	}
 }
 
-// A session the runner closed itself can still hold a queued run: a close
-// leaves them for the runner to refuse when offered. A runner that
-// deregisters will never be offered one again, so they end here too, and the
-// session keeps the reason it closed with.
-func TestDeregisterEndsRunsLeftInASessionAlreadyClosed(t *testing.T) {
-	f := newFixture(t)
-	cred := f.register(t, "r1")
-	f.claimedBy(t, "r1", cred, "a1")
-	f.enqueue(t, continues("a2", "s-a1"))
-	if code, env := f.result(t, cred, "a1", v1.Result{State: v1.RunSucceeded}); code != http.StatusOK {
-		t.Fatalf("result: %d %+v", code, env)
-	}
-	closed := req("r1", 0)
-	closed.ClosedSessions = []v1.ClosedSession{{SessionID: "s-a1", Reason: v1.SessionExpired, ClosedAt: f.clock.Now()}}
-	f.mustSync(t, "r1", cred, closed)
-	if s := f.state(t, "a2"); s != "queued" {
-		t.Fatalf("a2 is %s before deregister, want queued", s)
-	}
+// A session its runner reports closed takes no run, so the runs queued in it
+// end with the report rather than being offered to be refused — cancelled
+// when the hub asked for the close, failed with what to do instead when the
+// runner closed it on its own. A runner that then deregisters finds nothing
+// left in it to settle, and the session keeps the reason it closed with.
+func TestARunnersCloseEndsTheRunsQueuedInIt(t *testing.T) {
+	for _, tc := range []struct {
+		reason v1.SessionCloseReason
+		want   string
+	}{
+		{v1.SessionExpired, "failed"},
+		{v1.SessionClosed, "cancelled"},
+	} {
+		t.Run(string(tc.reason), func(t *testing.T) {
+			f := newFixture(t)
+			cred := f.register(t, "r1")
+			f.claimedBy(t, "r1", cred, "a1")
+			f.enqueue(t, continues("a2", "s-a1"))
+			if code, env := f.result(t, cred, "a1", v1.Result{State: v1.RunSucceeded}); code != http.StatusOK {
+				t.Fatalf("result: %d %+v", code, env)
+			}
+			closed := req("r1", 1)
+			closed.ClosedSessions = []v1.ClosedSession{{SessionID: "s-a1", Reason: tc.reason, ClosedAt: f.clock.Now()}}
+			if res := f.mustSync(t, "r1", cred, closed); len(res.Runs) != 0 {
+				t.Errorf("offered %v in the answer to the close", ids(res.Runs))
+			}
+			if s := f.state(t, "a2"); s != tc.want {
+				t.Errorf("a2 is %s after the close, want %s", s, tc.want)
+			}
 
-	if code, env := f.deregister(t, "r1", cred, ""); code != http.StatusOK {
-		t.Fatalf("deregister: %d %+v", code, env)
-	}
-	if s := f.state(t, "a2"); s != "failed" {
-		t.Errorf("a2 is %s after deregister, want failed", s)
-	}
-	sess, err := f.store.GetSession(context.Background(), "s-a1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sess.CloseReason.String != string(v1.SessionExpired) {
-		t.Errorf("session s-a1 closed %q, want the runner's own expired", sess.CloseReason.String)
+			if code, env := f.deregister(t, "r1", cred, ""); code != http.StatusOK {
+				t.Fatalf("deregister: %d %+v", code, env)
+			}
+			if s := f.state(t, "a2"); s != tc.want {
+				t.Errorf("a2 is %s after deregister, want %s still", s, tc.want)
+			}
+			sess, err := f.store.GetSession(context.Background(), "s-a1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sess.CloseReason.String != string(tc.reason) {
+				t.Errorf("session s-a1 closed %q, want the runner's own %q", sess.CloseReason.String, tc.reason)
+			}
+		})
 	}
 }
 

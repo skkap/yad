@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -277,20 +278,18 @@ func (h *tappedHub) reported(id string) (v1.SessionCloseReason, bool) {
 // only claimed (DEV-99). The close waits on the claim, and the claim is then
 // withdrawn: by the hub's cancel, by draining, by the loop stopping, or by the
 // next process finding it unstarted. However it goes, the owner's close
-// stands: the session closes rather than vanishing, the next sync reports it,
-// and the run offered again in it is refused as session_closed rather than
-// opening the session afresh as if nothing had been asked.
+// stands: the session closes rather than vanishing, and the next sync reports
+// it. yad hub believes that report from the runner the run was offered to,
+// though no claim ever bound the session there (DEV-103): it closes the
+// session, bound to this runner, and fails the run with what to do instead,
+// rather than dropping the report and offering the run again for good.
 func TestAClosePendingOnAWithdrawnClaimStands(t *testing.T) {
 	cases := []struct {
 		name string
 		// withdraw ends the claim and returns the loop that syncs next.
 		withdraw func(t *testing.T, e *env, l *Loop) *Loop
-		// hubState is where the run ends on the hub: refused when offered
-		// again, and still queued for a runner that is draining and is
-		// offered nothing.
-		hubState string
 	}{
-		{name: "the hub cancels it", hubState: "failed", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
+		{name: "the hub cancels it", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
 			// The runner was away past the offer's lease, and the hub put
 			// the run back in its queue.
 			if _, err := e.hubStore.DB.Exec(`UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL WHERE id = 'a'`); err != nil {
@@ -302,17 +301,17 @@ func TestAClosePendingOnAWithdrawnClaimStands(t *testing.T) {
 			}
 			return l
 		}},
-		{name: "draining", hubState: "queued", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
+		{name: "draining", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
 			l.Drain = NewDrain()
 			l.Drain.Begin("test")
 			mustSync(t, l)
 			return l
 		}},
-		{name: "the loop stops", hubState: "failed", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
+		{name: "the loop stops", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
 			l.WithdrawPending(context.Background())
 			return e.nextLoop(l)
 		}},
-		{name: "a restart", hubState: "failed", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
+		{name: "a restart", withdraw: func(t *testing.T, e *env, l *Loop) *Loop {
 			l2 := e.nextLoop(l)
 			if err := l2.Recover(context.Background()); err != nil {
 				t.Fatal(err)
@@ -361,12 +360,23 @@ func TestAClosePendingOnAWithdrawnClaimStands(t *testing.T) {
 			if s := session(t, e, "s1"); s.State != "closed" {
 				t.Errorf("s1 is %s again after the run was offered back", s.State)
 			}
-			if st := e.hubState(t, "a"); st != tc.hubState {
-				t.Errorf("hub state of a is %s, want %s", st, tc.hubState)
-			} else if st == "failed" {
-				if r := hubResult(t, e, "a"); r.Error == nil || r.Error.Class != ClassSessionClosed {
-					t.Errorf("a ended %+v, want failed with %s", r.Error, ClassSessionClosed)
-				}
+			hs, err := e.hubStore.GetSession(ctx, "s1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hs.ClosedAt.Valid || hs.CloseReason.String != string(v1.SessionClosedByOwner) || hs.RunnerID.String != next.RunnerID {
+				t.Errorf("hub session s1: closed %v, reason %q, runner %q; want closed by the owner on %s",
+					hs.ClosedAt.Valid, hs.CloseReason.String, hs.RunnerID.String, next.RunnerID)
+			}
+			hr, err := e.hubStore.GetRun(ctx, "a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hr.State != "failed" || !strings.Contains(hr.Reason.String, "submit the work to a new session") {
+				t.Errorf("hub run a is %s (%q), want failed saying to submit it to a new session", hr.State, hr.Reason.String)
+			}
+			if res := mustSync(t, next); len(res.Runs) != 0 {
+				t.Errorf("offered %v after the close was reported", res.Runs)
 			}
 		})
 	}
