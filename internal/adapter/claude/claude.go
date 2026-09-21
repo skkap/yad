@@ -215,9 +215,14 @@ func writeContext(ctx string) (string, error) {
 	return f.Name(), nil
 }
 
+// remove is swapped by a test that makes the context file's removal slow, so
+// that a turn reporting itself over before the file is gone fails every time
+// rather than once in a hundred loaded runs.
+var remove = os.Remove
+
 func removeFile(path string) {
 	if path != "" {
-		os.Remove(path)
+		remove(path)
 	}
 }
 
@@ -396,7 +401,6 @@ func (t *turn) write(stdin io.WriteCloser) {
 }
 
 func (t *turn) read(raw io.Writer, contextFile string) {
-	defer removeFile(contextFile)
 	tr := newTranslator(t.session, t.q.Push)
 	// One channel for lines and skipped lines alike, so a skipped line is
 	// reported where it was in the stream.
@@ -449,6 +453,10 @@ loop:
 	t.closeInput()
 	close(t.eof)
 	exitErr := t.p.Wait()
+	// Gone before the turn is over, not deferred past it: a runner that exits
+	// once its last turn is waited for would otherwise leave the brief's
+	// context behind in the shared temp directory (DEV-92).
+	removeFile(contextFile)
 
 	t.mu.Lock()
 	e := ended{
