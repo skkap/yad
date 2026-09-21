@@ -220,7 +220,7 @@ func TestHealthReportsNeedsLoginWithItsLabel(t *testing.T) {
 	}
 	l := healthLoop(t, e, "personal", "work")
 
-	h := l.health(ctx, l.Pool.Reserve(l.Connection))
+	h := l.health(ctx, offerable{l.Pool.Reserve(l.Connection)})
 	if len(h.Harnesses) != 1 || h.Harnesses[0].ID != "claude" {
 		t.Fatalf("health harnesses = %+v", h.Harnesses)
 	}
@@ -261,7 +261,7 @@ func TestHealthReportsAHomeThatIsGoneAsNeedsLogin(t *testing.T) {
 	// and no row in the store.
 	l := healthLoop(t, e, "work")
 
-	h := l.health(ctx, l.Pool.Reserve(l.Connection))
+	h := l.health(ctx, offerable{l.Pool.Reserve(l.Connection)})
 	if len(h.Harnesses) != 1 || len(h.Harnesses[0].Accounts) != 1 {
 		t.Fatalf("health harnesses = %+v", h.Harnesses)
 	}
@@ -294,7 +294,7 @@ func TestAHarnessWhoseAccountsAllNeedLoginIsNotReady(t *testing.T) {
 	}
 	l := healthLoop(t, e, "work")
 
-	h := l.health(ctx, l.Pool.Reserve(l.Connection))
+	h := l.health(ctx, offerable{l.Pool.Reserve(l.Connection)})
 	if len(h.Harnesses) != 1 || h.Harnesses[0].Ready {
 		t.Fatalf("harness health = %+v, want not ready", h.Harnesses)
 	}
@@ -305,7 +305,7 @@ func TestAHarnessWhoseAccountsAllNeedLoginIsNotReady(t *testing.T) {
 func TestAHarnessWithNoAccountsIsReady(t *testing.T) {
 	e := newEnv(t)
 	l := healthLoop(t, e)
-	h := l.health(context.Background(), l.Pool.Reserve(l.Connection))
+	h := l.health(context.Background(), offerable{l.Pool.Reserve(l.Connection)})
 	if len(h.Harnesses) != 1 || !h.Harnesses[0].Ready {
 		t.Fatalf("harness health = %+v, want ready", h.Harnesses)
 	}
@@ -324,7 +324,7 @@ func TestHealthLeavesOutAHarnessTheRunnerCannotDrive(t *testing.T) {
 	doc.Harnesses[0].Error = "`claude --version` printed nothing this runner could parse"
 	l.Capabilities = func() v1.Capabilities { return doc }
 
-	h := l.health(context.Background(), l.Pool.Reserve(l.Connection))
+	h := l.health(context.Background(), offerable{l.Pool.Reserve(l.Connection)})
 	if len(h.Harnesses) != 0 {
 		t.Errorf("health reports %+v for a harness the runner would refuse a run for", h.Harnesses)
 	}
