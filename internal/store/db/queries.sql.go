@@ -49,6 +49,33 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) error 
 	return err
 }
 
+const closeRequestedEmptySession = `-- name: CloseRequestedEmptySession :execrows
+UPDATE sessions SET state = CASE WHEN close_reason IN ('expired', 'disk_pressure') THEN 'expired' ELSE 'closed' END,
+  closed_at = ?1, close_requested_at = NULL
+WHERE sessions.connection = ?2 AND sessions.id = ?3 AND sessions.state = 'open'
+  AND sessions.close_requested_at IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id
+    AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
+`
+
+type CloseRequestedEmptySessionParams struct {
+	Now        sql.NullInt64
+	Connection string
+	ID         string
+}
+
+// A close that waited on a claim which was then withdrawn: nothing is held in
+// the session any more, so it closes in the withdrawal's own transaction, with
+// the reason first asked for, and the next sync reports it. The state follows
+// the reason as the collector's close does.
+func (q *Queries) CloseRequestedEmptySession(ctx context.Context, arg CloseRequestedEmptySessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, closeRequestedEmptySession, arg.Now, arg.Connection, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const closeSession = `-- name: CloseSession :execrows
 UPDATE sessions SET state = ?1, close_reason = COALESCE(close_reason, ?2), closed_at = ?3,
   close_requested_at = NULL
@@ -198,6 +225,7 @@ func (q *Queries) DeleteAccountWindows(ctx context.Context, arg DeleteAccountWin
 
 const deleteEmptySession = `-- name: DeleteEmptySession :exec
 DELETE FROM sessions WHERE sessions.connection = ?1 AND sessions.id = ?2
+  AND sessions.state = 'open' AND sessions.close_requested_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id)
 `
 
@@ -206,6 +234,11 @@ type DeleteEmptySessionParams struct {
 	ID         string
 }
 
+// A session a withdrawn claim opened goes with it, so the hub can offer the
+// run again. Not one with a close asked for: that close was answered
+// "closing" and must still happen and be reported (decision 0035), so
+// CloseRequestedEmptySession closes it instead. Deleting it would lose the
+// close and let the re-offer open the session afresh.
 func (q *Queries) DeleteEmptySession(ctx context.Context, arg DeleteEmptySessionParams) error {
 	_, err := q.db.ExecContext(ctx, deleteEmptySession, arg.Connection, arg.ID)
 	return err

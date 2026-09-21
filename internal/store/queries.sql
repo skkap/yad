@@ -259,9 +259,27 @@ DELETE FROM runs WHERE runs.connection = sqlc.arg(connection) AND runs.id = sqlc
   AND NOT EXISTS (SELECT 1 FROM events e WHERE e.connection = runs.connection AND e.run_id = runs.id)
   AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.connection = runs.connection AND o.run_id = runs.id);
 
+-- A session a withdrawn claim opened goes with it, so the hub can offer the
+-- run again. Not one with a close asked for: that close was answered
+-- "closing" and must still happen and be reported (decision 0035), so
+-- CloseRequestedEmptySession closes it instead. Deleting it would lose the
+-- close and let the re-offer open the session afresh.
 -- name: DeleteEmptySession :exec
 DELETE FROM sessions WHERE sessions.connection = sqlc.arg(connection) AND sessions.id = sqlc.arg(id)
+  AND sessions.state = 'open' AND sessions.close_requested_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id);
+
+-- A close that waited on a claim which was then withdrawn: nothing is held in
+-- the session any more, so it closes in the withdrawal's own transaction, with
+-- the reason first asked for, and the next sync reports it. The state follows
+-- the reason as the collector's close does.
+-- name: CloseRequestedEmptySession :execrows
+UPDATE sessions SET state = CASE WHEN close_reason IN ('expired', 'disk_pressure') THEN 'expired' ELSE 'closed' END,
+  closed_at = sqlc.arg(now), close_requested_at = NULL
+WHERE sessions.connection = sqlc.arg(connection) AND sessions.id = sqlc.arg(id) AND sessions.state = 'open'
+  AND sessions.close_requested_at IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = sessions.connection AND r.session_id = sessions.id
+    AND r.state IN ('claimed', 'preparing', 'running', 'waiting'));
 
 -- The last event a run spooled, acknowledged or not: a result's last_seq.
 -- name: LastEventSeq :one
