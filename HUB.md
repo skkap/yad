@@ -191,18 +191,31 @@ you reach for. Declining silently by omitting a run from the next sync is the
 runner's other way out and is normal; the refusal is what tells you *why*, and
 tells you not to try again.
 
-**Two cases the protocol does not yet specify.** You will meet both, and
-nothing here or in the spec tells you what to do, so decide deliberately
-rather than by accident:
+**Deregister settles everything the runner held, sessions included.** A
+runner that calls `deregister` is not coming back under that credential, so:
+the runs it holds become `lost`; the runs offered to it and not yet claimed go
+back in the queue; and **every session bound to it closes, with the runs still
+queued in those sessions ending** — `yad hub` fails them with a reason that
+says to submit the work to a new session. **Do not unbind the sessions
+instead.** A session is resumable only on the runner that holds it, because its
+transcript is on that runner's disk; offering it to another runner offers a
+resume that cannot work. And do not leave them open and bound: a queued run
+holds no lease, so nothing would ever end it, and it waits for good on a
+runner that has gone. Then retire the credential — `yad hub` keeps the
+runner's row, so a token issued for that runner id brings it back.
 
-- **An offer to a runner that never syncs again.** Re-offering is defined by
-  the runner's *next* sync leaving the run out. If there is no next sync — the
-  runner crashed, or was switched off — nothing says when you may take the
-  offer back.
-- **A session whose bound runner disappears.** A session's first claim binds
-  it to that runner, and later runs in it go to that runner alone. If the
-  runner never returns, nothing says when the binding lapses — and until it
-  does, every later run in that session waits for a runner that is not coming.
+**One case the protocol does not yet specify: a runner that stops syncing
+without deregistering.** You will meet it, and nothing here or in the spec
+tells you what to do, so decide deliberately rather than by accident. Its held
+runs are covered — their leases lapse and they are lost — but two things are
+not:
+
+- **An offer to it.** Re-offering is defined by the runner's *next* sync
+  leaving the run out. If there is no next sync — the runner crashed, or was
+  switched off — nothing says when you may take the offer back.
+- **Its sessions.** Later runs in a session bound to it go to it alone, and
+  nothing says when you may decide it has gone and close them as deregister
+  would. Until you do, every later run in such a session waits.
 
 **Keep accepting events after the run has ended.** A batch still in the
 runner's spool when the result landed is not late, it is owed — reject it and
@@ -219,6 +232,18 @@ that still lists the run, until the run ends. A `steer` is sent **once** —
 repeat it and the harness reads the text twice. `drain` repeats until the
 runner's health says `draining`; `close_session` repeats until the session
 appears in `closed_sessions`.
+
+**Hold a grant only while its run can still use it.** A grant is a secret,
+sent to you for one run. `yad hub` keeps it in the run's stored spec until the
+run reaches a terminal state — `succeeded`, `failed`, `cancelled`, `timed_out`
+or `lost` — and then blanks every value and keeps each grant's name and
+delivery, so the record still says what the run was given. A `waiting` run is
+not terminal and keeps its values, because its resume is built from them. It
+does this with a database trigger rather than in each code path that ends a
+run, because the next way a run ends will be written by someone who never
+thought about grants
+([0041](docs/decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md)).
+Nothing checks this from outside, so it is yours to get right.
 
 **Every error is the envelope, and `next_action` is mandatory.**
 
@@ -315,7 +340,7 @@ is something **your hub still has to get right** with nothing to catch you:
 
 | rule | why the suite cannot reach it |
 |---|---|
-| `POST /runners/{runner}/deregister` | `yad hub` answers 501 there while the behaviour is built (DEV-81). Implement it in yours. |
+| `POST /runners/{runner}/deregister` — held runs lost, offers requeued, the runner's sessions closed and their queued runs ended | the suite holds one registration token, and deregistering retires the only runner it has. `yad hub` implements it; implement it in yours |
 | The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, and a `steer` being delivered once | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
 | `start_at`, `min_version`, and the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at` | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated |
 | Sessions staying put — first claim binds the session to that runner, later runs to that runner alone, one at a time | needs two runs in one session, which only your own queueing can arrange |
