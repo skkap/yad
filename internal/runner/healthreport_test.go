@@ -410,8 +410,8 @@ func TestAnAccountInsideTheCapIsNotMoved(t *testing.T) {
 	// nothing past the cap is limited, so the order below holds for reasons
 	// that have nothing to do with the guard - which is how this test once
 	// passed with none of its limits taking (DEV-85).
-	for _, a := range hh.Accounts[1:] {
-		if a.State != v1.AccountLimited {
+	for _, a := range hh.Accounts {
+		if a.Label != labels[0] && a.State != v1.AccountLimited {
 			t.Fatalf("setup did not take: %q reads %q, want limited", a.Label, a.State)
 		}
 	}
