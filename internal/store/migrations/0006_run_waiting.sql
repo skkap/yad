@@ -24,7 +24,8 @@ ALTER TABLE runs ADD COLUMN waited_ms INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE runs ADD COLUMN waiting_since INTEGER;
 
 -- How many times this run moved to another account. Reported as
--- account_switches, and persisted for the same reason waited_ms is.
+-- account_switches, and persisted for the same reason waited_ms is. Written
+-- with the account at each move, so a run lost after a move still counts it.
 ALTER TABLE runs ADD COLUMN account_switches INTEGER NOT NULL DEFAULT 0;
 
 -- Whether the offer carried grants -- never how many, never their names. A
@@ -42,7 +43,9 @@ ALTER TABLE runs ADD COLUMN had_grants INTEGER NOT NULL DEFAULT 0;
 -- many processes it took, and protocol/v1's Result says its usage covers the
 -- whole of it -- so a turn that ran before a park must still be in the total
 -- the hub is finally told, and the hub's wall_clock_ms must not start again
--- at zero on the other side. Every park writes it, even one before the run's
--- first turn, which stores an empty object; null means the row was never
--- parked by a yad that had this column.
+-- at zero on the other side. Written as each turn ends rather than only at a
+-- park, because a restart reports a run it finds lost from this row too
+-- (decision 0030), and a run that moved accounts in process and was lost
+-- before it parked would otherwise report none of what it spent. Null means
+-- no turn of the run has ended.
 ALTER TABLE runs ADD COLUMN spent TEXT;

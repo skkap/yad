@@ -1203,19 +1203,51 @@ func (q *Queries) SetAccountWindow(ctx context.Context, arg SetAccountWindowPara
 }
 
 const setRunAccount = `-- name: SetRunAccount :exec
-UPDATE runs SET account = ?, updated_at = ? WHERE connection = ? AND id = ?
+UPDATE runs SET account = ?, account_switches = ?, updated_at = ? WHERE connection = ? AND id = ?
 `
 
 type SetRunAccountParams struct {
-	Account    sql.NullString
+	Account         sql.NullString
+	AccountSwitches int64
+	UpdatedAt       int64
+	Connection      string
+	ID              string
+}
+
+// The account a turn is about to run on, and how many moves it took to get
+// there. Together because a move is counted when the next account is taken:
+// written apart, a restart between the two would find the run on a new
+// account with the move that put it there uncounted.
+func (q *Queries) SetRunAccount(ctx context.Context, arg SetRunAccountParams) error {
+	_, err := q.db.ExecContext(ctx, setRunAccount,
+		arg.Account,
+		arg.AccountSwitches,
+		arg.UpdatedAt,
+		arg.Connection,
+		arg.ID,
+	)
+	return err
+}
+
+const setRunSpent = `-- name: SetRunSpent :exec
+UPDATE runs SET spent = ?, updated_at = ? WHERE connection = ? AND id = ?
+`
+
+type SetRunSpentParams struct {
+	Spent      sql.NullString
 	UpdatedAt  int64
 	Connection string
 	ID         string
 }
 
-func (q *Queries) SetRunAccount(ctx context.Context, arg SetRunAccountParams) error {
-	_, err := q.db.ExecContext(ctx, setRunAccount,
-		arg.Account,
+// What the run's turns have cost, written as each turn ends. Once per turn
+// and never per event: a turn's usage arrives with its end, so nothing
+// written sooner would hold more. It is what a restart reports for a run it
+// finds lost (decision 0030), and what a later process resumes a parked run
+// from.
+func (q *Queries) SetRunSpent(ctx context.Context, arg SetRunSpentParams) error {
+	_, err := q.db.ExecContext(ctx, setRunSpent,
+		arg.Spent,
 		arg.UpdatedAt,
 		arg.Connection,
 		arg.ID,
@@ -1273,31 +1305,28 @@ func (q *Queries) SetRunState(ctx context.Context, arg SetRunStateParams) error 
 }
 
 const setRunWaiting = `-- name: SetRunWaiting :exec
-UPDATE runs SET state = 'waiting', resumes_at = ?, waiting_since = ?, account_switches = ?,
-  spent = ?, reason = ?, updated_at = ? WHERE connection = ? AND id = ?
+UPDATE runs SET state = 'waiting', resumes_at = ?, waiting_since = ?, reason = ?, updated_at = ?
+WHERE connection = ? AND id = ?
 `
 
 type SetRunWaitingParams struct {
-	ResumesAt       sql.NullInt64
-	WaitingSince    sql.NullInt64
-	AccountSwitches int64
-	Spent           sql.NullString
-	Reason          sql.NullString
-	UpdatedAt       int64
-	Connection      string
-	ID              string
+	ResumesAt    sql.NullInt64
+	WaitingSince sql.NullInt64
+	Reason       sql.NullString
+	UpdatedAt    int64
+	Connection   string
+	ID           string
 }
 
-// Park the run on a usage limit. The state, the moment it comes back, when
-// the wait began and what the run has cost so far, in one statement: a park
-// missing any of them is a run no sync can finish or a metric that
-// silently resets.
+// Park the run on a usage limit. The state, the moment it comes back and when
+// the wait began, in one statement: a park missing any of them is a run no
+// sync can finish. What the run has cost is not here, because it is already
+// on the row: SetRunSpent wrote it when the turn before the park ended, and
+// SetRunAccount wrote the moves.
 func (q *Queries) SetRunWaiting(ctx context.Context, arg SetRunWaitingParams) error {
 	_, err := q.db.ExecContext(ctx, setRunWaiting,
 		arg.ResumesAt,
 		arg.WaitingSince,
-		arg.AccountSwitches,
-		arg.Spent,
 		arg.Reason,
 		arg.UpdatedAt,
 		arg.Connection,
