@@ -242,7 +242,7 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	// claimed and started, grants and all.
 	ok := testRun("ok", "s-ok")
 	ok.Grants = []v1.Grant{
-		{Name: "ANTHROPIC_BASE_URL", Value: "https://hub", As: v1.GrantEnv},
+		{Name: "SENTRY_DSN", Value: "https://hub", As: v1.GrantEnv},
 		{Name: "AWS_SECRET_ACCESS_KEY", Value: "k", As: v1.GrantFile},
 		{Name: "http_proxy", Value: "http://p", As: v1.GrantEnv},
 	}
@@ -281,6 +281,55 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	}
 	if got := e.exec.ids(); !slices.Equal(got, []string{"ok"}) {
 		t.Errorf("started %v", got)
+	}
+}
+
+// A grant that would put a turn on a credential other than its account's is
+// refused at the claim, as a refusal the hub sees, and no harness starts. The
+// owner's ANTHROPIC_API_KEY is scrubbed from every run and a grant is appended
+// after the scrub, so without this a hub's key would run the turn while the
+// run's events named the account (decision 0040). A Codex run is refused
+// ANTHROPIC_API_KEY too: the list is one for every harness.
+func TestRefusesAGrantThatMovesTheRunOffItsAccount(t *testing.T) {
+	e := newEnv(t)
+	var offer []v1.Run
+	want := map[string]string{}
+	for _, tc := range []struct {
+		id, harness, grant string
+	}{
+		{"api-key", "claude", "ANTHROPIC_API_KEY"},
+		{"oauth-token", "claude", "CLAUDE_CODE_OAUTH_TOKEN"},
+		{"claude-home", "claude", "claude_config_dir"},
+		{"codex-home", "codex", "CODEX_HOME"},
+		{"codex-given-claude-key", "codex", "ANTHROPIC_API_KEY"},
+		{"openai-key", "codex", "OPENAI_API_KEY"},
+	} {
+		r := testRun(tc.id, "s-"+tc.id)
+		r.Harness = tc.harness
+		r.Grants = []v1.Grant{{Name: "ZUMINO_TOKEN", Value: "t", As: v1.GrantEnv}, {Name: tc.grant, Value: "hub-chosen", As: v1.GrantEnv}}
+		offer = append(offer, r)
+		want[tc.id] = tc.grant
+	}
+	h := &scriptedHub{offer: offer}
+	doc := drivableDoc("r", 1)
+	doc.Harnesses = append(doc.Harnesses, v1.HarnessReport{ID: "codex", Label: "Codex", Kind: "first-class", Present: true, Version: "0.130.0"})
+	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
+		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
+
+	mustSync(t, l)
+	for id, name := range want {
+		r, ok := h.results[id]
+		if !ok || r.State != v1.RunFailed || r.Error == nil || r.Error.Class != ClassRefused ||
+			!strings.Contains(r.Error.Message, name) || !strings.Contains(r.Error.Message, "0040") ||
+			!strings.Contains(r.Error.Message, "under another name") {
+			t.Errorf("%s: result %+v, want a refusal naming %s, decision 0040 and the way round it", id, r.Error, name)
+		}
+		if r.Error != nil && strings.Contains(r.Error.Message, "hub-chosen") {
+			t.Errorf("%s: the refusal carries the grant's value: %s", id, r.Error.Message)
+		}
+	}
+	if got := e.exec.ids(); len(got) != 0 {
+		t.Errorf("started %v, want nothing", got)
 	}
 }
 

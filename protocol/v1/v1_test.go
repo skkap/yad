@@ -217,9 +217,9 @@ func TestRunValidate(t *testing.T) {
 	}
 }
 
-// Any valid environment variable name is a grant name (decision 0038); the
-// four that remain are refused because they would break the run, and they are
-// refused whatever their case.
+// Any valid environment variable name is a grant name (decision 0038), except
+// four that would break the run and the ones that would move it off its
+// account (0040), each refused whatever its case.
 func TestGrantNames(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -231,8 +231,8 @@ func TestGrantNames(t *testing.T) {
 		// could ask the harness for the same thing (0038).
 		{"ZUMINO_TOKEN", ""}, {"DATABASE_URL", ""}, {"GH_TOKEN", ""}, {"DEPLOY_KEY", ""},
 		{"AWS_SECRET_ACCESS_KEY", ""}, {"GOOGLE_APPLICATION_CREDENTIALS", ""}, {"AZURE_OPENAI_API_KEY", ""},
-		{"ANTHROPIC_BASE_URL", ""}, {"ANTHROPIC_API_KEY", ""}, {"CLAUDE_CONFIG_DIR", ""},
-		{"CODEX_HOME", ""}, {"OPENAI_BASE_URL", ""}, {"GIT_SSH_COMMAND", ""}, {"NODE_OPTIONS", ""},
+		{"ANTHROPIC_MODEL", ""}, {"CLAUDE_CODE_MAX_OUTPUT_TOKENS", ""}, {"CODEX_SANDBOX", ""},
+		{"OPENAI_ORG_ID", ""}, {"GIT_SSH_COMMAND", ""}, {"NODE_OPTIONS", ""},
 		{"NPM_CONFIG__AUTH_TOKEN", ""}, {"BUN_AUTH_TOKEN", ""}, {"YAD_TOKEN", ""},
 		{"IS_SANDBOX", ""}, {"SHELL", ""}, {"TMPDIR", ""}, {"BASH_ENV", ""}, {"ENV", ""},
 		{"HTTPS_PROXY", ""}, {"NODE_EXTRA_CA_CERTS", ""}, {"SHELLOPTS", ""}, {"PS4", ""},
@@ -243,6 +243,10 @@ func TestGrantNames(t *testing.T) {
 		// substring, and the two names are matched whole.
 		{"PATHX", ""}, {"MY_PATH", ""}, {"HOMEBREW_TOKEN", ""}, {"LDAP_PASSWORD", ""},
 		{"LD", ""}, {"DYLDX", ""},
+		// The account names are matched whole too: a project's own key under
+		// another name is exactly what the refusal asks a hub to send.
+		{"MY_ANTHROPIC_API_KEY", ""}, {"ANTHROPIC_API_KEY_TESTS", ""}, {"OPENAI_API_KEY_2", ""},
+		{"CODEX_HOME_DIR", ""}, {"CLAUDE_CONFIG", ""},
 
 		// Not an environment variable name, or not a plain file name. The
 		// pattern is ASCII, so a Cyrillic lookalike of PATH is not a name at
@@ -261,6 +265,19 @@ func TestGrantNames(t *testing.T) {
 		{"HOME", "HOME"}, {"home", "HOME"}, {"hOmE", "HOME"},
 		{"LD_PRELOAD", "LD_"}, {"ld_preload", "LD_"}, {"Ld_Library_Path", "LD_"}, {"LD_", "LD_"},
 		{"DYLD_INSERT_LIBRARIES", "DYLD_"}, {"dyld_insert_libraries", "DYLD_"},
+
+		// The variables that choose whose credential a harness uses, or which
+		// home it logs in from. A hub's grant lands after the owner's copy was
+		// scrubbed and wins, so each would run the turn on a credential the
+		// account layer knows nothing about (0040). The refusal names the
+		// decision and the way round it.
+		{"ANTHROPIC_API_KEY", "0040"}, {"anthropic_api_key", "0040"}, {"ANTHROPIC_AUTH_TOKEN", "0040"},
+		{"CLAUDE_CODE_OAUTH_TOKEN", "0040"}, {"CLAUDE_CONFIG_DIR", "0040"}, {"Claude_Config_Dir", "0040"},
+		{"ANTHROPIC_BASE_URL", "0040"}, {"ANTHROPIC_CUSTOM_HEADERS", "0040"},
+		{"CLAUDE_CODE_USE_BEDROCK", "0040"}, {"CLAUDE_CODE_USE_VERTEX", "0040"}, {"CLAUDE_CODE_USE_FOUNDRY", "0040"},
+		{"CODEX_HOME", "0040"}, {"codex_home", "0040"}, {"OPENAI_API_KEY", "0040"},
+		{"CODEX_API_KEY", "0040"}, {"OPENAI_BASE_URL", "0040"},
+		{"ANTHROPIC_API_KEY", "under another name"}, {"CODEX_HOME", "yad account add"},
 	} {
 		for _, as := range []GrantDelivery{GrantEnv, GrantFile} {
 			err := Grant{Name: tc.name, Value: "v", As: as}.Validate()
