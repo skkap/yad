@@ -128,6 +128,9 @@ const (
 	// A refusal, in the envelope, that tells the runner to try again: it
 	// resends for ever what the hub will never take.
 	flawNonHolderGets500 = "a run the caller does not hold is refused with 500 internal"
+	// The answer is right and the write happened anyway: only what the
+	// holder hears afterwards can show it.
+	flawStoresRefusedResult = "a result from a runner that does not hold the run is refused with 403 and stored"
 )
 
 const fakeSecondToken = "fake-second-registration-token"
@@ -434,6 +437,9 @@ func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string, guar
 	}
 	run := f.runs[runID]
 	if run == nil || !f.holds(r, run) && run.final != v1.RunLost {
+		if run != nil && run.final == "" && f.flaw == flawStoresRefusedResult {
+			run.final, run.state = res.State, res.State
+		}
 		f.notHolder(w, r, runID)
 		return
 	}

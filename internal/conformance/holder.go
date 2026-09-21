@@ -47,9 +47,12 @@ func checkResultHeldByAnother(ctx context.Context, s *session) error {
 	if err != nil {
 		return err
 	}
+	// succeeded, never the failed the holder reports next: a hub that refuses
+	// this in its answer and stores it anyway then holds a state the holder's
+	// own report conflicts with, and result/applied fails on the 409. The
+	// same state would pass there as an idempotent repeat and hide the write.
 	a, err := s.c.do(ctx, call{path: resultPath(s.report), bearer: o.cred, body: v1.Result{
-		State: v1.RunFailed, LastSeq: s.lastSeq,
-		Error: &v1.RunError{Class: "refused", Message: "the yad conformance suite sent this from a runner that does not hold the run, and a hub following the protocol refuses it"},
+		State: v1.RunSucceeded, LastSeq: s.lastSeq,
 	}})
 	if err != nil {
 		return err

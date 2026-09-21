@@ -116,6 +116,9 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawNonHolderGets500, check: "result/not-held", want: Failed},
 		{flaw: flawNonHolderGets500, check: "events/held-by-another", second: true, want: Failed},
 		{flaw: flawNonHolderGets500, check: "result/held-by-another", second: true, want: Failed},
+		// Refused correctly and stored anyway: the holder's own report is
+		// what finds it, so the second runner's state must differ from it.
+		{flaw: flawStoresRefusedResult, check: "result/applied", second: true, want: Failed},
 	} {
 		t.Run(tc.flaw+"/"+tc.check, func(t *testing.T) {
 			t.Parallel()
