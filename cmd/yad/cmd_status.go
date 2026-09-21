@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/control"
 )
 
@@ -31,7 +32,7 @@ func cmdStatus(ctx context.Context, g global, args []string, w io.Writer) error 
 		enc.SetIndent("", "  ")
 		return enc.Encode(s)
 	}
-	printStatus(w, *s, time.Now())
+	printStatus(w, g.paths, *s, time.Now())
 	return nil
 }
 
@@ -42,7 +43,7 @@ func cleanLine(s string) string {
 	return strings.NewReplacer("\n", " ", "\t", " ").Replace(clean(s))
 }
 
-func printStatus(w io.Writer, s control.Status, now time.Time) {
+func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 	ago := func(t time.Time) string { return now.Sub(t).Round(time.Second).String() + " ago" }
 	state := ""
 	if s.Stopping {
@@ -55,7 +56,7 @@ func printStatus(w io.Writer, s control.Status, now time.Time) {
 
 	fmt.Fprintln(w)
 	if len(s.Connections) == 0 {
-		fmt.Fprintln(w, "no connections — `yad connect <url> --token …` adds a hub")
+		fmt.Fprintf(w, "no connections — `%s` adds a hub\n", p.Command("connect", "<hub url>", "--token", "<token>"))
 	} else {
 		fmt.Fprintln(w, "connections")
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -97,7 +98,7 @@ func printStatus(w io.Writer, s control.Status, now time.Time) {
 
 	if len(s.Errors) > 0 {
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, "recent warnings and errors (`yad daemon logs` has everything)")
+		fmt.Fprintf(w, "recent warnings and errors (`%s` has everything)\n", p.Command("daemon", "logs"))
 		for _, e := range s.Errors {
 			line := fmt.Sprintf("  %s %-5s %s", e.Time.Local().Format(time.DateTime), e.Level, cleanLine(e.Message))
 			if e.Attrs != "" {

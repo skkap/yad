@@ -60,7 +60,7 @@ func (g GH) Download(ctx context.Context, tag string, assets []string, dir strin
 	// message could have told them: check what they typed.
 	var ge *ghError
 	if errors.As(err, &ge) && strings.Contains(ge.stderr, "release not found") {
-		return fmt.Errorf("%s has no release %s — `yad upgrade --check` says what the newest one is", g.repo(), tag)
+		return fmt.Errorf("%s has no release %s — `%s` says what the newest one is", g.repo(), tag, Command(g.Repo, "--check"))
 	}
 	return err
 }

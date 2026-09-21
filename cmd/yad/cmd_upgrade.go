@@ -11,7 +11,6 @@ import (
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/control"
-	"github.com/skkap/yad/internal/shellword"
 	"github.com/skkap/yad/internal/upgrade"
 )
 
@@ -36,7 +35,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	// either side of it — but the argument still means something this command
 	// does not do.)
 	if len(pos) > 0 {
-		return fmt.Errorf("unexpected argument %q — a release goes in --tag, as `%s`", pos[0], shellword.Command("yad", "upgrade", "--tag", pos[0]))
+		return fmt.Errorf("unexpected argument %q — a release goes in --tag, as `%s`", pos[0], upgrade.Command(releaseSource().Repo, "--tag", pos[0]))
 	}
 	src := releaseSource()
 
@@ -52,7 +51,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 
 	state := upgrade.Compare(buildinfo.Version, want)
 	if *check {
-		fmt.Fprintln(w, checkLine(state, want, *tag != ""))
+		fmt.Fprintln(w, checkLine(state, want, *tag != "", src.Repo))
 		return nil
 	}
 	// Only Behind is what a bare `yad upgrade` asks for. Replacing a binary
@@ -61,7 +60,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	// rather than do quietly; --force and an explicit --tag are the two ways
 	// of meaning it.
 	if *tag == "" && !*force && state != upgrade.Behind {
-		fmt.Fprintln(w, checkLine(state, want, false))
+		fmt.Fprintln(w, checkLine(state, want, false, src.Repo))
 		return nil
 	}
 
@@ -75,6 +74,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 		GOOS:   runtime.GOOS,
 		GOARCH: runtime.GOARCH,
 		Tag:    want,
+		Repo:   src.Repo,
 	})
 	if err != nil {
 		return err
@@ -90,7 +90,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 	// machine shares the binary just replaced — so silence is not "nothing is
 	// running", only "nothing is running here".
 	pid, running, err := control.Holder(g.paths)
-	fmt.Fprintln(w, restartNote(g.paths.Profile, pid, running, err))
+	fmt.Fprintln(w, restartNote(g.paths, pid, running, err))
 	return nil
 }
 
@@ -100,7 +100,7 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 // moment the binary changes. Nothing records the repository at install time,
 // so the operator sets it the same way both times.
 func releaseSource() upgrade.GH {
-	return upgrade.GH{Repo: os.Getenv("YAD_REPO")}
+	return upgrade.GH{Repo: os.Getenv(upgrade.RepoEnv)}
 }
 
 // restartNote says what the upgrade means for any runner already running.
@@ -114,38 +114,33 @@ func releaseSource() upgrade.GH {
 // start. Offering either would create a supervised runner nobody asked for,
 // under the one profile that provably does not need it, while the runner the
 // sentence warns about stays on the old binary.
-func restartNote(profile string, pid int, running bool, err error) string {
+func restartNote(p config.Paths, pid int, running bool, err error) string {
+	profile := p.Profile
 	switch {
 	case err != nil:
 		// The lock could not be read, so a runner may be there — and if it is,
 		// it is this profile's, which makes the advice the right advice.
-		return fmt.Sprintf("could not tell whether a runner is running under profile %s (%v) — if one is, %s", profile, err, restartAdvice(profile))
+		return fmt.Sprintf("could not tell whether a runner is running under profile %s (%v) — if one is, %s", profile, err, restartAdvice(p))
 	case running:
 		// The other-profiles warning belongs here too: a machine with runners
 		// under two profiles is exactly where an owner restarts the one named
 		// and walks away, leaving the other on the old binary. It went missing
 		// precisely when a local runner was found, which is the case most
 		// likely to have a second one.
-		return fmt.Sprintf("the runner (pid %d) is still on the old binary — %s. A runner under any other profile keeps the old binary too, until it is restarted under that profile", pid, restartAdvice(profile))
+		return fmt.Sprintf("the runner (pid %d) is still on the old binary — %s. A runner under any other profile keeps the old binary too, until it is restarted under that profile", pid, restartAdvice(p))
 	default:
 		return fmt.Sprintf("no runner is running under profile %s. A runner under any other profile keeps the old binary until it is restarted under that profile", profile)
 	}
 }
 
 // restartAdvice is what to type to put a running runner on the new binary.
-// Both commands have to carry the profile the message names, and they take it
-// in different places: `yad service install` has a --profile flag of its own,
-// while `yad daemon restart` has none and reads the global one before the
-// subcommand. Printed bare beside "profile work", either would act on default
+// Both commands have to act on the profile the message names, and on its
+// directories: printed bare beside "profile work", either would act on default
 // — and `service install` would bootstrap a supervised unit for a profile
-// nobody meant to run as a service (0028).
-func restartAdvice(profile string) string {
-	service := []string{"yad", "service", "install"}
-	if profile != config.DefaultProfile {
-		service = append(service, "--profile", profile)
-	}
+// nobody meant to run as a service (0028). Both take the global --profile.
+func restartAdvice(p config.Paths) string {
 	return fmt.Sprintf("restart it to pick this one up: `%s` if this profile runs as a service (0028: install replaces the unit and starts it again), otherwise `%s`",
-		shellword.Command(service...), config.YadCommand(profile, "daemon", "restart"))
+		p.Command("service", "install"), p.Command("daemon", "restart"))
 }
 
 // checkLine is the one sentence that says where this build stands, and what
@@ -153,13 +148,13 @@ func restartAdvice(profile string) string {
 // than resolved: the sentence must not call it the newest release, and every
 // command it offers has to carry the tag, or it names one release and installs
 // another.
-func checkLine(state upgrade.State, tag string, named bool) string {
+func checkLine(state upgrade.State, tag string, named bool, repo string) string {
 	newest := ", the newest release"
-	install := "`yad upgrade --force`"
-	replace := "`yad upgrade`"
+	install := "`" + upgrade.Command(repo, "--force") + "`"
+	replace := "`" + upgrade.Command(repo) + "`"
 	if named {
 		newest = ""
-		install = "`" + shellword.Command("yad", "upgrade", "--tag", tag) + "`"
+		install = "`" + upgrade.Command(repo, "--tag", tag) + "`"
 		replace = install
 	}
 	switch state {

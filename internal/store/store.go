@@ -27,6 +27,7 @@ import (
 	// registers the "sqlite" driver name.
 	_ "modernc.org/sqlite"
 
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/store/db"
 )
 
@@ -96,6 +97,22 @@ func OpenSQLite(ctx context.Context, file string, fsys fs.FS) (*sql.DB, error) {
 // ErrNoState is a profile whose runner has never opened its state database.
 var ErrNoState = errors.New("no state database yet")
 
+// ErrSchemaBehind is a state database the daemon has not migrated to this
+// binary's schema yet. The way out is a restart of that profile's daemon, a
+// command OpenProfile names and OpenReadOnly cannot: it has a file, not a
+// profile.
+var ErrSchemaBehind = errors.New("the daemon has not migrated it yet")
+
+// OpenProfile is OpenReadOnly on a profile's state database, with the restart
+// that brings one behind up to date named for that profile.
+func OpenProfile(ctx context.Context, p config.Paths) (*Store, error) {
+	s, err := OpenReadOnly(ctx, p.StateDB())
+	if errors.Is(err, ErrSchemaBehind) {
+		return nil, fmt.Errorf("%w — `%s` brings it up to date", err, p.Command("daemon", "restart"))
+	}
+	return s, err
+}
+
 // OpenReadOnly opens the runner's state database for a reader beside the
 // daemon — `yad sessions` — without migrating it or creating it: the file is
 // the daemon's, and a CLI newer than the daemon must not change the schema
@@ -125,7 +142,7 @@ func OpenReadOnly(ctx context.Context, file string) (*Store, error) {
 	switch {
 	case current < latest:
 		conn.Close()
-		return nil, fmt.Errorf("state database %s is at schema %d and this yad expects %d — `yad daemon restart` brings it up to date", file, current, latest)
+		return nil, fmt.Errorf("state database %s is at schema %d and this yad expects %d: %w", file, current, latest, ErrSchemaBehind)
 	case current > latest:
 		conn.Close()
 		return nil, fmt.Errorf("state database %s is at schema %d, newer than this yad knows (%d) — run the newer yad", file, current, latest)

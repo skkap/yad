@@ -354,8 +354,8 @@ func TestAccountRemoveNamesTheDaemonRestart(t *testing.T) {
 // without a terminal — so both commands print the same constant and this pins
 // that they do. Deleting or rewording either one fails here.
 func TestBothAccountCommandsShareTheRestartNotice(t *testing.T) {
-	if !strings.Contains(daemonRestartNotice, "yad daemon restart") {
-		t.Fatalf("the shared notice stopped naming the command: %q", daemonRestartNotice)
+	if n := daemonRestartNotice(config.Paths{Profile: "side"}); !strings.Contains(n, "yad --profile side daemon restart") {
+		t.Fatalf("the shared notice stopped naming the command for its profile: %q", n)
 	}
 	src, err := os.ReadFile("cmd_account.go")
 	if err != nil {
@@ -364,7 +364,7 @@ func TestBothAccountCommandsShareTheRestartNotice(t *testing.T) {
 	// Two prints: the success branch of add, and the end of remove. Counting
 	// the print rather than the identifier, so the doc comment above the
 	// constant does not make this pass on its own.
-	if n := strings.Count(string(src), "fmt.Fprintln(w, daemonRestartNotice)"); n != 2 {
+	if n := strings.Count(string(src), "fmt.Fprintln(w, daemonRestartNotice(g.paths))"); n != 2 {
 		t.Errorf("the notice is printed %d times, want 2 (add's success branch and remove) — one command stopped printing it", n)
 	}
 }

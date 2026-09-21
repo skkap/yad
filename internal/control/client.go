@@ -56,12 +56,13 @@ func Holder(p config.Paths) (pid int, running bool, err error) {
 
 // UnresponsiveError is a daemon that holds the lock and does not answer.
 type UnresponsiveError struct {
-	PID int
-	Err error
+	PID   int
+	Err   error
+	paths config.Paths
 }
 
 func (e *UnresponsiveError) Error() string {
-	return fmt.Sprintf("the daemon (pid %d) is running but does not answer on its control socket (%v) — `yad daemon stop` signals it instead", e.PID, e.Err)
+	return fmt.Sprintf("the daemon (pid %d) is running but does not answer on its control socket (%v) — `%s` signals it instead", e.PID, e.Err, e.paths.Command("daemon", "stop"))
 }
 
 func (e *UnresponsiveError) Unwrap() error { return e.Err }
@@ -113,9 +114,9 @@ func unanswered(p config.Paths, err error) error {
 	case herr != nil:
 		return errors.Join(err, herr)
 	case !running:
-		return ErrNotRunning
+		return fmt.Errorf("%w — `%s` starts one", ErrNotRunning, p.Command("daemon", "start"))
 	}
-	return &UnresponsiveError{PID: pid, Err: err}
+	return &UnresponsiveError{PID: pid, Err: err, paths: p}
 }
 
 // UnansweredStopError is a stop the daemon acknowledged and the CLI then
@@ -124,12 +125,13 @@ func unanswered(p config.Paths, err error) error {
 // nothing, and in neither case may the CLI escalate on its own — a SIGTERM
 // after a delivered stop is the runner's second, which cancels its runs.
 type UnansweredStopError struct {
-	PID int
-	Err error
+	PID   int
+	Err   error
+	paths config.Paths
 }
 
 func (e *UnansweredStopError) Error() string {
-	return fmt.Sprintf("the daemon (pid %d) took the stop request but its answer did not arrive (%v) — `yad status` says whether it is stopping", e.PID, e.Err)
+	return fmt.Sprintf("the daemon (pid %d) took the stop request but its answer did not arrive (%v) — `%s` says whether it is stopping", e.PID, e.Err, e.paths.Command("status"))
 }
 
 func (e *UnansweredStopError) Unwrap() error { return e.Err }
@@ -151,7 +153,7 @@ func Stop(ctx context.Context, p config.Paths) (int, error) {
 	case err == nil:
 		return res.PID, nil
 	case delivered:
-		return res.PID, &UnansweredStopError{PID: res.PID, Err: err}
+		return res.PID, &UnansweredStopError{PID: res.PID, Err: err, paths: p}
 	}
 	return 0, unanswered(p, err)
 }

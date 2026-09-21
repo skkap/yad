@@ -27,7 +27,7 @@ func startBackground(ctx context.Context, g global, s startFlags, w io.Writer) e
 	if pid, running, err := control.Holder(g.paths); err != nil {
 		return err
 	} else if running {
-		return &control.RunningError{PID: pid, Socket: g.paths.Socket()}
+		return &control.RunningError{PID: pid, Socket: g.paths.Socket(), Paths: g.paths}
 	}
 	// What the daemon would refuse on its first line is refused here, where
 	// the owner is looking.
@@ -74,7 +74,7 @@ func startBackground(ctx context.Context, g global, s startFlags, w io.Writer) e
 	for {
 		select {
 		case err := <-exited:
-			return fmt.Errorf("the daemon exited as it started (%v)%s — `yad daemon logs` has the rest", err, tailOf(stderrPath))
+			return fmt.Errorf("the daemon exited as it started (%v)%s — `%s` has the rest", err, tailOf(stderrPath), g.paths.Command("daemon", "logs"))
 		case <-deadline:
 			// Stopped and waited for, so the lock it may hold is free
 			// before the owner tries again.
@@ -85,9 +85,9 @@ func startBackground(ctx context.Context, g global, s startFlags, w io.Writer) e
 				cmd.Process.Kill()
 				<-exited
 			}
-			return fmt.Errorf("the daemon (pid %d) did not answer on its control socket within %s, and was stopped%s — `yad daemon logs` says why, or start with a longer --wait", pid, s.wait, tailOf(stderrPath))
+			return fmt.Errorf("the daemon (pid %d) did not answer on its control socket within %s, and was stopped%s — `%s` says why, or start with a longer --wait", pid, s.wait, tailOf(stderrPath), g.paths.Command("daemon", "logs"))
 		case <-ctx.Done():
-			return fmt.Errorf("interrupted while the daemon (pid %d) was starting — `yad daemon status` says whether it came up", pid)
+			return fmt.Errorf("interrupted while the daemon (pid %d) was starting — `%s` says whether it came up", pid, g.paths.Command("daemon", "status"))
 		case <-tick.C:
 			actx, cancel := context.WithTimeout(ctx, time.Second)
 			res, err := control.Ask(actx, g.paths, "status")
@@ -96,7 +96,7 @@ func startBackground(ctx context.Context, g global, s startFlags, w io.Writer) e
 			// setup that can still make it exit.
 			if err == nil && res.PID == pid && res.Status != nil && res.Status.Ready {
 				fmt.Fprintf(w, "started — pid %d, profile %s\n", pid, g.paths.Profile)
-				fmt.Fprintln(w, "`yad status` shows what it is doing, `yad daemon logs -f` follows its log, `yad daemon stop` stops it")
+				fmt.Fprintf(w, "`%s` shows what it is doing, `%s` follows its log, `%s` stops it\n", g.paths.Command("status"), g.paths.Command("daemon", "logs", "-f"), g.paths.Command("daemon", "stop"))
 				return nil
 			}
 		}
@@ -174,7 +174,7 @@ func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
 	case errors.As(err, &wedged):
 		pid = wedged.PID
 		// A Ctrl-C during the ask is not a daemon that failed to answer.
-		if err := interrupted(ctx, pid); err != nil {
+		if err := interrupted(ctx, g.paths, pid); err != nil {
 			return err
 		}
 		if err := sendSignal(pid, syscall.SIGTERM); err != nil {
@@ -190,11 +190,11 @@ func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
 		fmt.Fprintln(w, "stopped")
 		return nil
 	}
-	if err := interrupted(ctx, pid); err != nil {
+	if err := interrupted(ctx, g.paths, pid); err != nil {
 		return err
 	}
 	if !s.force {
-		return fmt.Errorf("pid %d is still stopping after %s — `yad status` shows whether it is stopping and the runs it is waiting on; wait longer with --timeout, or `yad daemon stop --force` signals it", pid, s.timeout)
+		return fmt.Errorf("pid %d is still stopping after %s — `%s` shows whether it is stopping and the runs it is waiting on; wait longer with --timeout, or `%s` signals it", pid, s.timeout, g.paths.Command("status"), g.paths.Command("daemon", "stop", "--force"))
 	}
 	// The runner counts its owner's stop requests (decision 0029), and the
 	// stop above was the first: a SIGTERM is the second, which cancels the
@@ -214,7 +214,7 @@ func stopDaemon(ctx context.Context, g global, s stopFlags, w io.Writer) error {
 			fmt.Fprintln(w, "stopped")
 			return nil
 		}
-		if err := interrupted(ctx, pid); err != nil {
+		if err := interrupted(ctx, g.paths, pid); err != nil {
 			return err
 		}
 	}
@@ -245,11 +245,11 @@ func sendSignal(pid int, sig syscall.Signal) error {
 // because the command did is not one that elapsed: escalating on it would
 // send the next signal at once, and SIGKILL could land before the runner has
 // killed its harnesses' process groups.
-func interrupted(ctx context.Context, pid int) error {
+func interrupted(ctx context.Context, p config.Paths, pid int) error {
 	if ctx.Err() == nil {
 		return nil
 	}
-	return fmt.Errorf("stop interrupted — pid %d is left as it is; `yad daemon status` shows it: %w", pid, ctx.Err())
+	return fmt.Errorf("stop interrupted — pid %d is left as it is; `%s` shows it: %w", pid, p.Command("daemon", "status"), ctx.Err())
 }
 
 func gone(ctx context.Context, p config.Paths, pid int, within time.Duration) bool {

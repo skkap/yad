@@ -70,7 +70,7 @@ func cmdService(ctx context.Context, g global, args []string, w io.Writer) error
 		if err != nil {
 			return err
 		}
-		printServiceStatus(w, paths.Profile, st)
+		printServiceStatus(w, paths, st)
 		return nil
 	default:
 		return fmt.Errorf("unknown service subcommand %q — use install, uninstall or status", sub)
@@ -120,27 +120,28 @@ func serviceInstall(ctx context.Context, m service.Manager, h service.Host, path
 		fmt.Fprintf(w, "note: %s\n", n)
 	}
 	if len(cfg.Connections) == 0 {
-		fmt.Fprintln(w, "note: no hub is connected, so the runner claims nothing — after `yad connect`, run `yad service install` again to restart it")
+		fmt.Fprintf(w, "note: no hub is connected, so the runner claims nothing — after `%s`, run `%s` again to restart it\n", paths.Command("connect", "<hub url>", "--token", "<token>"), paths.Command("service", "install"))
 	}
 	return nil
 }
 
-func printServiceStatus(w io.Writer, profile string, st service.Status) {
+func printServiceStatus(w io.Writer, paths config.Paths, st service.Status) {
+	profile := paths.Profile
 	switch {
 	case !st.Installed && !st.Loaded:
-		fmt.Fprintf(w, "profile %s: no service — `yad service install` sets one up\n", profile)
+		fmt.Fprintf(w, "profile %s: no service — `%s` sets one up\n", profile, paths.Command("service", "install"))
 		return
 	case st.Running:
 		fmt.Fprintf(w, "profile %s: %s running, pid %d\n", profile, st.Name, st.PID)
 	case st.Loaded:
 		fmt.Fprintf(w, "profile %s: %s loaded, not running — %s\n", profile, st.Name, st.Detail)
 	default:
-		fmt.Fprintf(w, "profile %s: %s installed but not loaded — `yad service install` loads it again\n", profile, st.Name)
+		fmt.Fprintf(w, "profile %s: %s installed but not loaded — `%s` loads it again\n", profile, st.Name, paths.Command("service", "install"))
 	}
 	if st.Installed {
 		fmt.Fprintf(w, "  unit     %s\n", st.File)
 	} else {
-		fmt.Fprintf(w, "  unit     missing (%s) — the service manager still holds the job; `yad service uninstall` clears it\n", st.File)
+		fmt.Fprintf(w, "  unit     missing (%s) — the service manager still holds the job; `%s` clears it\n", st.File, paths.Command("service", "uninstall"))
 	}
 }
 

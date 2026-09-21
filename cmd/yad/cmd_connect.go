@@ -37,7 +37,7 @@ func cmdConnect(ctx context.Context, g global, args []string, w io.Writer) error
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "connected to %s as %q — credential saved, syncing every %s once the runner starts (`yad daemon start`, or `yad service install` to start it at login)\n",
-		config.RedactURL(conn.URL), conn.Name, time.Duration(res.SyncIntervalMS)*time.Millisecond)
+	fmt.Fprintf(w, "connected to %s as %q — credential saved, syncing every %s once the runner starts (`%s`, or `%s` to start it at login)\n",
+		config.RedactURL(conn.URL), conn.Name, time.Duration(res.SyncIntervalMS)*time.Millisecond, g.paths.Command("daemon", "start"), g.paths.Command("service", "install"))
 	return nil
 }

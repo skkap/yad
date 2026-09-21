@@ -380,7 +380,7 @@ func TestStatusAndLogsEscapeHubText(t *testing.T) {
 		Errors:      []control.LogRecord{{Time: now, Level: "ERROR", Message: evil, Attrs: "err=" + evil}},
 	}
 	var b bytes.Buffer
-	printStatus(&b, s, now)
+	printStatus(&b, config.Paths{}, s, now)
 	got := b.String()
 	if strings.Contains(got, "\x1b") || strings.Contains(got, "\nFAKE ROW") {
 		t.Errorf("status passed hub text through:\n%q", got)
@@ -408,7 +408,7 @@ func TestStatusNeverCarriesACredentialFromAConnectionURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b bytes.Buffer
-	printStatus(&b, st, time.Now())
+	printStatus(&b, config.Paths{}, st, time.Now())
 	for _, out := range []string{string(doc), b.String()} {
 		if strings.Contains(out, password) {
 			t.Errorf("the password is in the status:\n%s", out)

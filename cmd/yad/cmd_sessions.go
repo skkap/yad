@@ -54,7 +54,7 @@ func cmdSessions(ctx context.Context, g global, args []string, w io.Writer) erro
 		return err
 	}
 	var list []session
-	s, err := store.OpenReadOnly(ctx, g.paths.StateDB())
+	s, err := store.OpenProfile(ctx, g.paths)
 	switch {
 	case errors.Is(err, store.ErrNoState):
 	case err != nil:
@@ -144,7 +144,7 @@ func cmdSessionsClose(ctx context.Context, g global, args []string, w io.Writer)
 		}
 		switch len(found) {
 		case 0:
-			return fmt.Errorf("this runner has no session %q — `yad sessions` lists the ones it holds", id)
+			return fmt.Errorf("this runner has no session %q — `%s` lists the ones it holds", id, g.paths.Command("sessions"))
 		case 1:
 			*conn = found[0]
 		default:
@@ -153,14 +153,14 @@ func cmdSessionsClose(ctx context.Context, g global, args []string, w io.Writer)
 	}
 	res, err := control.Send(ctx, g.paths, control.Request{Op: "close_session", Connection: *conn, Session: id})
 	if errors.Is(err, control.ErrNotRunning) {
-		return fmt.Errorf("the daemon closes sessions, and none is running for this profile — `yad daemon start`, then run this again")
+		return fmt.Errorf("the daemon closes sessions, and none is running for this profile — `%s`, then run this again", g.paths.Command("daemon", "start"))
 	}
 	if err != nil {
 		return err
 	}
 	c := res.Closed
 	if c == nil {
-		return errors.New("the daemon answered without saying what it did — `yad daemon restart` after an upgrade")
+		return fmt.Errorf("the daemon answered without saying what it did — `%s` after an upgrade", g.paths.Command("daemon", "restart"))
 	}
 	switch c.Outcome {
 	case runner.CloseDone:
@@ -170,7 +170,7 @@ func cmdSessionsClose(ctx context.Context, g global, args []string, w io.Writer)
 	case runner.CloseAlready:
 		fmt.Fprintf(w, "session %s was already closed (%s)\n", id, c.Reason)
 	case runner.CloseUnknown:
-		return fmt.Errorf("connection %s has no session %q — `yad sessions` lists the ones this runner holds", *conn, id)
+		return fmt.Errorf("connection %s has no session %q — `%s` lists the ones this runner holds", *conn, id, g.paths.Command("sessions"))
 	default:
 		fmt.Fprintf(w, "session %s: %s\n", id, c.Outcome)
 	}
@@ -179,7 +179,7 @@ func cmdSessionsClose(ctx context.Context, g global, args []string, w io.Writer)
 
 // sessionConnections is every connection holding a session by this id.
 func sessionConnections(ctx context.Context, g global, id string) ([]string, error) {
-	s, err := store.OpenReadOnly(ctx, g.paths.StateDB())
+	s, err := store.OpenProfile(ctx, g.paths)
 	if errors.Is(err, store.ErrNoState) {
 		return nil, nil
 	}
