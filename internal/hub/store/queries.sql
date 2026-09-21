@@ -174,11 +174,12 @@ SELECT * FROM run_controls WHERE run_id = ? ORDER BY id;
 -- name: DeleteSteersThrough :exec
 DELETE FROM run_controls WHERE run_id = ? AND kind = 'steer' AND id <= ?;
 
--- A run no runner has started ends on the hub alone. An offered run keeps its
+-- A run no runner has started ends on the hub alone: cancelled when someone
+-- asked, failed when what it needed has gone. An offered run keeps its
 -- runner: that runner lists it once more, hears cancel, and withdraws it.
--- name: CancelUnstartedRun :execrows
-UPDATE runs SET state = 'cancelled', reason = ?, lease_expires_at = NULL, updated_at = ?
-WHERE id = ? AND state IN ('queued', 'offered');
+-- name: EndUnstartedRun :execrows
+UPDATE runs SET state = sqlc.arg(state), reason = sqlc.arg(reason), lease_expires_at = NULL, updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND state IN ('queued', 'offered');
 
 -- name: RequestDrain :exec
 UPDATE runners SET drain_requested_at = COALESCE(drain_requested_at, sqlc.arg(now)) WHERE id = sqlc.arg(id);
@@ -196,12 +197,39 @@ WHERE id = sqlc.arg(id) AND closed_at IS NULL;
 UPDATE sessions SET closed_at = sqlc.arg(closed_at), close_reason = sqlc.arg(reason), close_requested_at = NULL
 WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id) AND closed_at IS NULL;
 
--- name: CloseUnboundSession :execrows
-UPDATE sessions SET closed_at = sqlc.arg(now), close_reason = 'closed', close_requested_at = NULL
-WHERE id = sqlc.arg(id) AND runner_id IS NULL AND closed_at IS NULL;
+-- The hub closing a session by its own act (decision 0011), with no runner
+-- to report it: one nobody ever claimed, or one whose runner deregistered.
+-- The caller has decided no runner's close is owed; a repeat changes nothing.
+-- name: CloseSessionHere :execrows
+UPDATE sessions SET closed_at = sqlc.arg(now), close_reason = sqlc.arg(reason), close_requested_at = NULL
+WHERE id = sqlc.arg(id) AND closed_at IS NULL;
 
 -- name: SessionsToClose :many
 SELECT id FROM sessions WHERE runner_id = ? AND close_requested_at IS NOT NULL AND closed_at IS NULL ORDER BY id;
 
 -- name: UnstartedRunsInSession :many
 SELECT id FROM runs WHERE session_id = ? AND state IN ('queued', 'offered') ORDER BY created_at, id;
+
+-- Deregistration. A runner that deregisters keeps its row: sessions and runs
+-- reference it, and re-registering under a token issued for that id is how it
+-- comes back. What goes is its credential, replaced by the hash of a secret
+-- nobody was given, so nothing can authenticate as it again.
+-- name: RetireRunnerCredential :exec
+UPDATE runners SET credential_hash = sqlc.arg(credential_hash), drain_requested_at = NULL
+WHERE id = sqlc.arg(id);
+
+-- Runs a departed runner held are lost: it is not coming back to report
+-- them, and lost is what a hub tells a submitter then (decision 0023).
+-- name: LoseRunnerRuns :execrows
+UPDATE runs SET state = 'lost', reason = sqlc.arg(reason), lease_expires_at = NULL, resumes_at = NULL,
+  updated_at = sqlc.arg(now)
+WHERE runner_id = sqlc.arg(runner_id) AND state IN ('claimed', 'preparing', 'running', 'waiting');
+
+-- An offer it never claimed was never held, so it goes back in the queue
+-- rather than being lost.
+-- name: RequeueRunnerOffers :execrows
+UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = sqlc.arg(now)
+WHERE runner_id = sqlc.arg(runner_id) AND state = 'offered';
+
+-- name: OpenSessionsOfRunner :many
+SELECT id FROM sessions WHERE runner_id = sqlc.arg(runner_id) AND closed_at IS NULL ORDER BY id;
