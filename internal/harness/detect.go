@@ -40,8 +40,28 @@ func (d Detected) Ready() bool {
 // versionTimeout caps one `<harness> --version`. A CLI that hangs on its own
 // version flag is broken — it happened to Claude through a bun regression and
 // stalled every registration in Multica — so the probe is bounded and the
-// failure is reported as text. A variable so tests can shorten it.
-var versionTimeout = 5 * time.Second
+// failure is reported as text.
+const versionTimeout = 5 * time.Second
+
+// VersionTimeoutForTests replaces versionTimeout while it is positive. A test
+// needs two budgets the shipped value cannot give it: a short one for a probe
+// that is meant to hang, so the case waits as little as it can, and a long one
+// for a fake that is meant to answer — a script spawned beside a whole
+// race-instrumented suite has taken over five seconds to print its version
+// (DEV-100), and a probe cut off then reports a timeout where the test injected
+// something else. The shipped value stays where it is: it is how long a CLI
+// broken this way holds up every capability probe. Nothing outside
+// a test may set it: TestOnlyTestsReachTheProbeTimeouts, in internal/hostool,
+// fails on any shipped file of the module that assigns it, this one included.
+var VersionTimeoutForTests time.Duration
+
+// versionWait is how long one version probe may take.
+func versionWait() time.Duration {
+	if VersionTimeoutForTests > 0 {
+		return VersionTimeoutForTests
+	}
+	return versionTimeout
+}
 
 // versionOutputCap bounds what a probe may print. A version is one line; a CLI
 // that prints megabytes is broken, and must not grow the runner's memory.
@@ -99,7 +119,7 @@ func detectOne(ctx context.Context, h Harness) Detected {
 	// Through supervise like every other child: the probe runs every sync, and a
 	// wrapper script or node/bun launcher that forks and hangs must take its
 	// whole process group with it, not leave one orphan per tick.
-	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
+	ctx, cancel := context.WithTimeout(ctx, versionWait())
 	defer cancel()
 	out, err := supervise.Run(ctx, supervise.Spec{Path: path, Args: h.VersionArgs}, versionOutputCap)
 	// A start failure never ran, so it is never a timeout: Run reports
@@ -145,7 +165,7 @@ func wontStart(h Harness, fromEnv bool) string {
 // the action because this is the case where it is worth most: a CLI that hangs
 // on its own version flag has stopped telling its owner anything at all.
 func noAnswer(h Harness) string {
-	return fmt.Sprintf("no answer to `%s %s` within %s — run it on this machine to see what it waits on", h.Binary, strings.Join(h.VersionArgs, " "), versionTimeout)
+	return fmt.Sprintf("no answer to `%s %s` within %s — run it on this machine to see what it waits on", h.Binary, strings.Join(h.VersionArgs, " "), versionWait())
 }
 
 func wontAnswer(h Harness) string {

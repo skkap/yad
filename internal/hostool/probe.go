@@ -37,14 +37,49 @@ type Detected struct {
 	LoginHosts []string `json:"login_hosts,omitempty"`
 }
 
-// probeTimeout caps one probe. Every one of them waits on something that can
-// fail to answer rather than fail: a `--version` that hangs (it happened to
-// Claude through a bun regression and stalled every registration in Multica),
-// `gh auth status` validating a token against the host over the network, a
-// `docker version` waiting on a daemon socket nothing is listening on. Five
-// seconds is enough for all three on a working machine, and the probe runs
-// again at the next interval. A variable so tests can shorten it.
-var probeTimeout = 5 * time.Second
+// versionTimeout and statusTimeout cap one probe each: the tool's `--version`,
+// and the second question asked of a tool that has a state — gh's login,
+// docker's daemon. Every one of them waits on something that can fail to
+// answer rather than fail: a `--version` that hangs (it happened to Claude
+// through a bun regression and stalled every registration in Multica), `gh auth
+// status` validating a token against the host over the network, a `docker
+// version` waiting on a daemon socket nothing is listening on. Five seconds is
+// enough for all three on a working machine, and the probe runs again at the
+// next interval.
+//
+// They are two values, equal when shipped, so a test can bound them apart.
+const (
+	versionTimeout = 5 * time.Second
+	statusTimeout  = 5 * time.Second
+)
+
+// VersionTimeoutForTests and StatusTimeoutForTests replace the two timeouts
+// above while they are positive. A test needs budgets the shipped values cannot
+// give it: a short one for the probe it means to hang, so the case waits as
+// little as it can, and a long one for every probe it means to answer — a
+// script spawned beside a whole race-instrumented suite has taken over five
+// seconds to print its version (DEV-100), and a probe cut off then reports a
+// timeout where the test injected something else. A gh that hangs on its login
+// needs both at once: its `--version` must answer, and only its `auth status`
+// may hang. The shipped values stay where they are: they are how long a
+// broken tool holds up every capability probe. Nothing outside a test may set
+// either: TestOnlyTestsReachTheProbeTimeouts fails on any shipped file of the
+// module that assigns one, this one included.
+var VersionTimeoutForTests, StatusTimeoutForTests time.Duration
+
+func versionWait() time.Duration {
+	if VersionTimeoutForTests > 0 {
+		return VersionTimeoutForTests
+	}
+	return versionTimeout
+}
+
+func statusWait() time.Duration {
+	if StatusTimeoutForTests > 0 {
+		return StatusTimeoutForTests
+	}
+	return statusTimeout
+}
 
 // outputCap bounds what one probe may print. A version is one line and
 // `gh auth status --json` is a few hundred bytes; a tool that prints megabytes
@@ -105,13 +140,13 @@ func probeOne(ctx context.Context, t Tool) Detected {
 	}
 	d.Path, d.Present = path, true
 
-	out, err := run(ctx, path, t.VersionArgs, false)
+	out, err := run(ctx, path, t.VersionArgs, false, versionWait())
 	switch {
 	case err != nil:
 		d.Error = wontRun(t.Binary)
 		return d
 	case out.TimedOut:
-		d.Error = noAnswer(t.Binary + " " + strings.Join(t.VersionArgs, " "))
+		d.Error = noAnswer(t.Binary+" "+strings.Join(t.VersionArgs, " "), versionWait())
 		return d
 	case out.Err != nil:
 		// Neither the wrapped error nor the child's stderr is quoted. The
@@ -137,8 +172,8 @@ func probeOne(ctx context.Context, t Tool) Detected {
 // deadline, and whatever it left behind killed with it. Nothing here calls
 // os/exec: a wrapper script that forks and hangs must not leave one orphan per
 // probe interval.
-func run(ctx context.Context, path string, args []string, mergeStderr bool) (supervise.Capture, error) {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+func run(ctx context.Context, path string, args []string, mergeStderr bool, timeout time.Duration) (supervise.Capture, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// NoTTY because these are the tools that prompt: git and gh ask for a
 	// passphrase or a login through /dev/tty whatever their environment says,
@@ -154,6 +189,6 @@ func wontRun(binary string) string {
 	return binary + " is installed but will not run — check on this machine that it is an executable file"
 }
 
-func noAnswer(what string) string {
-	return fmt.Sprintf("no answer to `%s` within %s — the tool is installed but not usable until it answers", what, probeTimeout)
+func noAnswer(what string, waited time.Duration) string {
+	return fmt.Sprintf("no answer to `%s` within %s — the tool is installed but not usable until it answers", what, waited)
 }
