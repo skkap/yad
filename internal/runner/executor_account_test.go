@@ -151,7 +151,7 @@ func TestNoCredentialFromAnAccountHomeEverLeaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := []harness.Detected{{Harness: harness.Catalog()[0], Present: true, Path: "/x/claude", Version: "2.1"}}
-	accounts, err := account.Load(context.Background(), e.store.Queries, e.paths.Data, cfg)
+	accounts, err := account.Load(context.Background(), e.store.Queries, e.paths.Data, cfg, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
