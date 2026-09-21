@@ -15,6 +15,11 @@ no separate install step. Two things are generated and committed — the sqlc
 query code and the protocol's `openapi.yaml` — and the bar includes proving they
 are current.
 
+Keep the `.sql` query files ASCII. sqlc 1.31.1 computes byte offsets over runes,
+so one non-ASCII character anywhere in a query file — an em dash in a comment is
+enough — truncates that query and every one after it. `make generate` then
+fails naming queries nowhere near the cause.
+
 ## Module
 Setup: none — needs `sqlc` 1.31.1 on PATH (`brew install sqlc`)
 Timeout: 6m
