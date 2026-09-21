@@ -561,7 +561,7 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 		// gone (decision 0035), not that the id is taken.
 		switch {
 		case err == nil && sess.State != "open":
-			return sessionGone(fmt.Sprintf("session %s was closed on this runner (%s) and its workdir reclaimed; start a new session", run.Session.ID, sess.CloseReason.String))
+			return sessionGone(fmt.Sprintf("session %s was closed on this runner (%s); start a new session", run.Session.ID, sess.CloseReason.String))
 		case err == nil && sess.CloseRequestedAt.Valid:
 			return sessionGone(fmt.Sprintf("session %s is closing on this runner (%s) once its run ends; start a new session", run.Session.ID, sess.CloseReason.String))
 		case err == nil && run.Session.New:

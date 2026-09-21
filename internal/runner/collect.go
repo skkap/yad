@@ -214,52 +214,73 @@ func (c *Collector) Run(ctx context.Context) {
 // Close closes a session for reason: now, when no run is held in it, and
 // otherwise as soon as the run held ends. The first reason asked for is the
 // one recorded.
+//
+// The look, the close and the request are one transaction. Apart, a claim
+// withdrawn between the close finding a run held and the request being
+// written would take the session with it (DEV-99): the request would land on
+// nothing, and the owner would be told "closing" of a close no sync ever
+// reports.
 func (c *Collector) Close(ctx context.Context, connection, id string, reason v1.SessionCloseReason) (CloseResult, error) {
 	c.init()
-	sess, err := c.Store.GetSession(ctx, db.GetSessionParams{Connection: connection, ID: id})
-	if errors.Is(err, sql.ErrNoRows) {
-		return CloseResult{Outcome: CloseUnknown}, nil
-	}
-	if err != nil {
-		return CloseResult{}, err
-	}
-	if sess.State != "open" {
-		return CloseResult{Outcome: CloseAlready, Reason: v1.SessionCloseReason(sess.CloseReason.String), ClosedAt: msTime(sess.ClosedAt.Int64)}, nil
-	}
-	closed, err := c.closeNow(ctx, sess, reason, false)
-	if err != nil {
-		return CloseResult{}, err
-	}
-	if closed {
-		c.Wake()
-		// A reason asked for earlier, while a run was held, is the one kept.
-		if sess.CloseReason.Valid {
-			reason = v1.SessionCloseReason(sess.CloseReason.String)
+	var out CloseResult
+	var sess db.Session
+	now := c.Clock.Now()
+	err := c.Store.Tx(ctx, func(q *db.Queries) error {
+		var err error
+		sess, err = q.GetSession(ctx, db.GetSessionParams{Connection: connection, ID: id})
+		if errors.Is(err, sql.ErrNoRows) {
+			out = CloseResult{Outcome: CloseUnknown}
+			return nil
 		}
-		return CloseResult{Outcome: CloseDone, Reason: reason, ClosedAt: c.Clock.Now().UTC()}, nil
-	}
-	now := c.Clock.Now().UnixMilli()
-	if err := c.Store.RequestSessionClose(ctx, db.RequestSessionCloseParams{
-		Now:    sql.NullInt64{Int64: now, Valid: true},
-		Reason: sql.NullString{String: string(reason), Valid: true}, Connection: connection, ID: id,
-	}); err != nil {
-		return CloseResult{}, err
-	}
-	live, err := c.Store.HeldRunInSession(ctx, db.HeldRunInSessionParams{Connection: connection, ID: id})
+		if err != nil {
+			return err
+		}
+		if sess.State != "open" {
+			out = CloseResult{Outcome: CloseAlready, Reason: v1.SessionCloseReason(sess.CloseReason.String), ClosedAt: msTime(sess.ClosedAt.Int64)}
+			return nil
+		}
+		n, err := q.CloseSession(ctx, closeParams(connection, id, reason, now))
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			// A reason asked for earlier, while a run was held, is the one kept.
+			kept := reason
+			if sess.CloseReason.Valid {
+				kept = v1.SessionCloseReason(sess.CloseReason.String)
+			}
+			out = CloseResult{Outcome: CloseDone, Reason: kept, ClosedAt: now.UTC()}
+			return nil
+		}
+		if err := q.RequestSessionClose(ctx, db.RequestSessionCloseParams{
+			Now:    sql.NullInt64{Int64: now.UnixMilli(), Valid: true},
+			Reason: sql.NullString{String: string(reason), Valid: true}, Connection: connection, ID: id,
+		}); err != nil {
+			return err
+		}
+		live, err := q.HeldRunInSession(ctx, db.HeldRunInSessionParams{Connection: connection, ID: id})
+		if err != nil {
+			return err
+		}
+		out = CloseResult{Outcome: CloseWaiting, LiveRun: live}
+		return nil
+	})
 	if err != nil {
 		return CloseResult{}, err
 	}
-	if live == "" {
-		// The run ended between the close and the request: the next sweep
-		// finds the request with nothing held, and closes it.
+	switch out.Outcome {
+	case CloseDone:
+		c.Log.Info("session closed", "connection", connection, "session", id, "reason", out.Reason,
+			"idle", time.Duration(now.UnixMilli()-sess.LastUsedAt)*time.Millisecond)
 		c.Wake()
+	case CloseWaiting:
+		// A hub repeats close_session on every sync until it hears the
+		// close; only the first request is news.
+		if !sess.CloseRequestedAt.Valid {
+			c.Log.Info("session closes when its run ends", "connection", connection, "session", id, "reason", reason, "run", out.LiveRun)
+		}
 	}
-	// A hub repeats close_session on every sync until it hears the close;
-	// only the first request is news.
-	if !sess.CloseRequestedAt.Valid {
-		c.Log.Info("session closes when its run ends", "connection", connection, "session", id, "reason", reason, "run", live)
-	}
-	return CloseResult{Outcome: CloseWaiting, LiveRun: live}, nil
+	return out, nil
 }
 
 // Sweep does every close that is due: those asked for while a run was held,
@@ -381,25 +402,31 @@ func (c *Collector) relieve(ctx context.Context, now time.Time) error {
 // which only a sweep passes — reclaims its workdir. It reports whether it
 // closed it.
 func (c *Collector) closeNow(ctx context.Context, s db.Session, reason v1.SessionCloseReason, reclaim bool) (bool, error) {
-	state := "closed"
-	if reason == v1.SessionExpired || reason == v1.SessionDiskPressure {
-		state = "expired"
-	}
-	now := c.Clock.Now().UnixMilli()
-	n, err := c.Store.CloseSession(ctx, db.CloseSessionParams{
-		State: state, Reason: sql.NullString{String: string(reason), Valid: true},
-		Now: sql.NullInt64{Int64: now, Valid: true}, Connection: s.Connection, ID: s.ID,
-	})
+	p := closeParams(s.Connection, s.ID, reason, c.Clock.Now())
+	n, err := c.Store.CloseSession(ctx, p)
 	if err != nil || n == 0 {
 		return false, err
 	}
 	c.Log.Info("session closed", "connection", s.Connection, "session", s.ID, "reason", reason,
-		"idle", time.Duration(now-s.LastUsedAt)*time.Millisecond)
+		"idle", time.Duration(p.Now.Int64-s.LastUsedAt)*time.Millisecond)
 	if reclaim {
-		s.State = state
+		s.State = p.State
 		c.reclaim(ctx, s)
 	}
 	return true, nil
+}
+
+// closeParams is a close for reason: a hub's or an owner's close leaves the
+// session closed, and the idle TTL's and disk pressure's leave it expired.
+func closeParams(connection, id string, reason v1.SessionCloseReason, now time.Time) db.CloseSessionParams {
+	state := "closed"
+	if reason == v1.SessionExpired || reason == v1.SessionDiskPressure {
+		state = "expired"
+	}
+	return db.CloseSessionParams{
+		State: state, Reason: sql.NullString{String: string(reason), Valid: true},
+		Now: sql.NullInt64{Int64: now.UnixMilli(), Valid: true}, Connection: connection, ID: id,
+	}
 }
 
 // reclaim removes a closed session's workdir and what it held outside it,
