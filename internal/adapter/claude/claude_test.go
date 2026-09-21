@@ -734,7 +734,14 @@ func TestTerminateEndsADeafClaude(t *testing.T) {
 		}
 		tr.Interrupt()
 		go func() {
-			time.Sleep(100 * time.Millisecond) // the interrupt went unanswered
+			// Terminated once the fake has read the interrupt, not a fixed
+			// while after sending it: on a loaded machine the SIGTERM used
+			// to land first, and the log held no interrupt (DEV-92).
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+				if b, _ := os.ReadFile(h.log); strings.Contains(string(b), "control_request") {
+					break
+				}
+			}
 			tr.Terminate()
 		}()
 		return true
