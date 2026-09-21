@@ -916,6 +916,11 @@ line here is a reviewed change.
   `gh` itself, and `scripts/install.sh` around it, are tested against a `gh`
   that is a shell script on `PATH` — which proves the argv, the checksum gate
   and where the binary lands, and proves nothing about a real GitHub release.
+- **A future time is computed, never written.** A test that needs one takes it
+  from the clock — `time.Now().Add(...)` or an injected clock — because a
+  literal future date silently changes the test's meaning the day it passes,
+  and stays green while it does. A literal instant is safe only as a past fact,
+  or as a value nothing compares to now.
 - Table-driven, `t.Setenv`, `t.TempDir`, no assertion library; `-race` always.
 
 ## §8 Security
