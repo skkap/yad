@@ -118,3 +118,46 @@ func TestTokenCreateRefusesABadTTL(t *testing.T) {
 		t.Errorf("exit %d out %q err %q", code, out, errs)
 	}
 }
+
+// A hub URL can carry a credential in its userinfo, and `yad connect` quotes
+// the URL back in every outcome it has: the refusal CheckHubURL gives, the
+// line saying it connected, and the refusal of a second name for one hub. None
+// of them may print it — the output of a connect run from a script is kept.
+func TestConnectNeverPrintsACredentialFromTheURL(t *testing.T) {
+	const password = "hunter2"
+	hubSide, runnerSide := newProfile(t), newProfile(t)
+	code, tok, errs := hubSide.yad("", "hub", "token", "create", "--ttl", "10m")
+	if code != 0 {
+		t.Fatalf("token create: exit %d: %s", code, errs)
+	}
+	s, err := store.Open(context.Background(), filepath.Join(hubSide.data, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	srv := httptest.NewServer(hub.New(hub.Options{Store: s}))
+	defer srv.Close()
+	url := strings.Replace(srv.URL, "http://", "http://runner:"+password+"@", 1) + hub.BasePath
+
+	for _, step := range []struct {
+		name string
+		args []string
+		ok   bool
+	}{
+		{"plain http to another host", []string{"connect", "http://runner:" + password + "@hub.example/v1", "--token", "-"}, false},
+		{"connected", []string{"connect", url, "--token", "-", "--name", "home"}, true},
+		{"the same hub under a second name", []string{"connect", url, "--token", "-", "--name", "other"}, false},
+	} {
+		code, out, errs := runnerSide.yad(tok, step.args...)
+		if (code == 0) != step.ok {
+			t.Fatalf("%s: exit %d: %s%s", step.name, code, out, errs)
+		}
+		if strings.Contains(out+errs, password) {
+			t.Errorf("%s: the password is printed:\n%s%s", step.name, out, errs)
+		}
+		// Redacted, not dropped: the owner still learns which hub it was.
+		if !strings.Contains(out+errs, "redacted@") {
+			t.Errorf("%s: the output no longer says which hub it was about:\n%s%s", step.name, out, errs)
+		}
+	}
+}

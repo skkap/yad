@@ -48,7 +48,7 @@ func New(baseURL, credential string) (*Client, error) {
 			// https hub answering 307 to http:// would get the credential in
 			// cleartext after CheckHubURL passed. No protocol call redirects.
 			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-				return fmt.Errorf("the hub redirected to %s — a hub must not redirect; set the connection URL to the hub's final address", req.URL.Redacted())
+				return fmt.Errorf("the hub redirected to %s — a hub must not redirect; set the connection URL to the hub's final address", config.RedactURL(req.URL.String()))
 			},
 		},
 	}, nil
@@ -128,9 +128,10 @@ func (c *Client) do(ctx context.Context, bearer, path string, in, out any) error
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		// url.Error includes the URL but never headers, so the credential
-		// cannot leak through this path.
-		return err
+		// url.Error carries the URL, never the headers, so the bearer stays
+		// out — but the URL is the connection's own, userinfo and all, with
+		// only its password starred by Go.
+		return RedactTransport(err)
 	}
 	defer resp.Body.Close()
 	// A hub's answer is small; anything past this is a misbehaving server, and
@@ -151,4 +152,16 @@ func (c *Client) do(ctx context.Context, bearer, path string, in, out any) error
 		return fmt.Errorf("hub answered %d with a body that is not the protocol's: %w", resp.StatusCode, err)
 	}
 	return nil
+}
+
+// RedactTransport takes the connection URL's credentials out of a transport
+// error, which quotes the URL it dialled and reaches the owner's terminal, the
+// daemon's log and `yad status`. Exported for internal/hubapiclient, whose
+// transport errors quote the same kind of URL.
+func RedactTransport(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = config.RedactURL(ue.URL)
+	}
+	return err
 }

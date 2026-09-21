@@ -47,13 +47,23 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		return config.Connection{}, none, notes, err
 	}
 	conn := config.Connection{Name: name, URL: hubURL}
+	// Every message below names the hub, and a hub URL can carry a
+	// credential in its userinfo.
+	shown := config.RedactURL(hubURL)
 	existing := -1
 	for i, c := range cfg.Connections {
 		switch {
 		case c.Name == name && c.URL != hubURL:
-			return conn, none, notes, fmt.Errorf("connection %q already points at %s — pick another --name for this hub", name, c.URL)
+			return conn, none, notes, fmt.Errorf("connection %q already points at %s — pick another --name for this hub", name, config.RedactURL(c.URL))
 		case c.Name != name && c.URL == hubURL:
-			return conn, none, notes, fmt.Errorf("this runner is already connected to %s as %q — a runner has one connection per hub; to register it again, run `yad connect %s --name %s --token <new token>`", hubURL, c.Name, hubURL, c.Name)
+			// The command is for pasting, and one carrying "redacted@" in
+			// place of the owner's credential would register against the
+			// wrong account, so it names the URL rather than quoting it.
+			again := shown
+			if shown != hubURL {
+				again = "<the same URL>"
+			}
+			return conn, none, notes, fmt.Errorf("this runner is already connected to %s as %q — a runner has one connection per hub; to register it again, run `yad connect %s --name %s --token <new token>`", shown, c.Name, again, c.Name)
 		case c.Name == name:
 			existing, conn = i, c
 		}
@@ -99,10 +109,10 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 	}
 	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: capability.Build(ctx, id, cfg, accounts)})
 	if err != nil {
-		return conn, none, notes, fmt.Errorf("register with %s: %w", hubURL, err)
+		return conn, none, notes, fmt.Errorf("register with %s: %w", shown, err)
 	}
 	if res.RunnerCredential == "" {
-		return conn, none, notes, fmt.Errorf("%s answered register without a runner credential — it is not a working YAD hub", hubURL)
+		return conn, none, notes, fmt.Errorf("%s answered register without a runner credential — it is not a working YAD hub", shown)
 	}
 	if err := p.SaveCredential(name, res.RunnerCredential); err != nil {
 		return conn, none, notes, fmt.Errorf("the hub registered this runner but the credential could not be saved (%w) — fix the config directory and connect again with a new token", err)

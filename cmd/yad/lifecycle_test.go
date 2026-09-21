@@ -18,8 +18,12 @@ import (
 	"testing"
 	"time"
 
+	v1 "github.com/skkap/yad/protocol/v1"
+
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/control"
+	"github.com/skkap/yad/internal/logfile"
+	"github.com/skkap/yad/internal/runner"
 )
 
 // beYad makes the test binary, re-executed, into yad ("yad") or into a
@@ -387,6 +391,29 @@ func TestStatusAndLogsEscapeHubText(t *testing.T) {
 	(&logPrinter{w: &lb}).Write(append(line, '\n'))
 	if strings.Contains(lb.String(), "\x1b") || strings.Count(lb.String(), "\n") != 1 {
 		t.Errorf("logs passed hub text through:\n%q", lb.String())
+	}
+}
+
+// A connection URL may carry a credential in its userinfo. `yad status` prints
+// every connection's URL, and the control socket hands the same document to
+// anything that asks, so the credential is out before either sees it.
+func TestStatusNeverCarriesACredentialFromAConnectionURL(t *testing.T) {
+	const password = "hunter2"
+	cfg := config.Config{Connections: []config.Connection{{Name: "home", URL: "https://runner:" + password + "@hub.example/v1"}}}
+	st := statusOf(context.Background(), config.Paths{}, cfg, v1.Capabilities{}, time.Now(), runner.NewMonitor(), logfile.NewRecent(1))
+	doc, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	printStatus(&b, st, time.Now())
+	for _, out := range []string{string(doc), b.String()} {
+		if strings.Contains(out, password) {
+			t.Errorf("the password is in the status:\n%s", out)
+		}
+		if !strings.Contains(out, "redacted@hub.example/v1") {
+			t.Errorf("the status no longer says which hub the connection is:\n%s", out)
+		}
 	}
 }
 

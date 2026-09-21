@@ -50,7 +50,7 @@ func New(hubURL, token string) (*Client, error) {
 			// Refused, not followed: Go would carry the token across a
 			// same-host redirect to plain http.
 			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-				return fmt.Errorf("the hub redirected to %s — use the hub's final address", req.URL.Redacted())
+				return fmt.Errorf("the hub redirected to %s — use the hub's final address", config.RedactURL(req.URL.String()))
 			},
 		},
 	}, nil
@@ -209,8 +209,10 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		// url.Error carries the URL, never the headers: the token stays out.
-		return err
+		// url.Error carries the URL, never the headers, so the bearer stays
+		// out — but the URL is the connection's own, userinfo and all, with
+		// only its password starred by Go.
+		return hubclient.RedactTransport(err)
 	}
 	defer resp.Body.Close()
 	// A page is at most hubapi.MaxPage events of at most a few tens of KiB.

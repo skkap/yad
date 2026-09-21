@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/runner"
 )
 
@@ -37,6 +38,6 @@ func cmdConnect(ctx context.Context, g global, args []string, w io.Writer) error
 		return err
 	}
 	fmt.Fprintf(w, "connected to %s as %q — credential saved, syncing every %s once the runner starts (`yad daemon start`, or `yad service install` to start it at login)\n",
-		conn.URL, conn.Name, time.Duration(res.SyncIntervalMS)*time.Millisecond)
+		config.RedactURL(conn.URL), conn.Name, time.Duration(res.SyncIntervalMS)*time.Millisecond)
 	return nil
 }
