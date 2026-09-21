@@ -3,6 +3,7 @@ package hub
 import (
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,5 +150,85 @@ func TestCloseAnUnboundSession(t *testing.T) {
 	cred := f.register(t, "r1")
 	if res := f.mustSync(t, "r1", cred, first("r1", 1)); len(res.Runs) != 0 || len(closes(res)) != 0 {
 		t.Errorf("a closed unbound session reached a runner: %+v", res)
+	}
+}
+
+// A runner whose claim in a new session was withdrawn before any sync listed
+// it — a cancel, a drain, a stop or a restart — never bound the session, and
+// may still report closing it: its owner's close waited on that claim
+// (DEV-103). That report is believed from the runner the session's run was
+// last offered to, and from no other: the session closes, bound to that
+// runner, and the run in it ends saying what to do instead, where before the
+// report was dropped and the run offered again only to be refused.
+func TestAWithdrawnClaimsCloseIsBelievedFromItsRunnerAlone(t *testing.T) {
+	cases := []struct {
+		name string
+		// arrange runs after r1 was offered a in s1, and returns who then
+		// reports s1 closed.
+		arrange func(t *testing.T, f *fixture, r2 string) string
+		closed  bool
+	}{
+		{name: "withdrawn and reported in one sync", closed: true, arrange: func(*testing.T, *fixture, string) string { return "r1" }},
+		{name: "reported after the offer lapsed", closed: true, arrange: func(_ *testing.T, f *fixture, _ string) string {
+			f.clock.Advance(f.hub.lease + time.Second)
+			return "r1"
+		}},
+		{name: "offered elsewhere since", arrange: func(t *testing.T, f *fixture, r2 string) string {
+			f.clock.Advance(f.hub.lease + time.Second)
+			if res := f.mustSync(t, "r2", r2, req("r2", 1)); !slices.Equal(ids(res.Runs), []string{"a"}) {
+				t.Fatalf("r2 was offered %v, want a", ids(res.Runs))
+			}
+			return "r1"
+		}},
+		{name: "a runner never offered it", arrange: func(*testing.T, *fixture, string) string { return "r2" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			tok := f.admin(t, "cli")
+			creds := map[string]string{"r1": f.register(t, "r1"), "r2": f.register(t, "r2")}
+			f.mustSync(t, "r2", creds["r2"], first("r2", 0))
+			f.enqueue(t, run("a", "s1"))
+			if res := f.mustSync(t, "r1", creds["r1"], first("r1", 1)); !slices.Equal(ids(res.Runs), []string{"a"}) {
+				t.Fatalf("r1 was offered %v, want a", ids(res.Runs))
+			}
+			who := tc.arrange(t, f, creds["r2"])
+			before := f.state(t, "a")
+
+			report := req(who, 1)
+			report.ClosedSessions = []v1.ClosedSession{{SessionID: "s1", Reason: v1.SessionClosedByOwner, ClosedAt: f.clock.Now()}}
+			if res := f.mustSync(t, who, creds[who], report); tc.closed && len(res.Runs) != 0 {
+				t.Errorf("offered %v in the answer to the close", ids(res.Runs))
+			}
+
+			var view hubapi.Session
+			if code, e := f.api(t, "GET", "/sessions/s1", tok, nil, &view); code != http.StatusOK {
+				t.Fatalf("session: %d %+v", code, e)
+			}
+			if !tc.closed {
+				if view.State != hubapi.SessionOpen || view.RunnerID != "" {
+					t.Errorf("%s's report changed the session: %+v", who, view)
+				}
+				if got := f.state(t, "a"); got != before {
+					t.Errorf("a went from %s to %s on %s's report", before, got, who)
+				}
+				return
+			}
+			if view.State != hubapi.SessionClosed || view.CloseReason != string(v1.SessionClosedByOwner) || view.RunnerID != "r1" {
+				t.Errorf("after r1's report: %+v, want closed by its owner and bound to r1", view)
+			}
+			var a hubapi.Run
+			if code, e := f.api(t, "GET", "/runs/a", tok, nil, &a); code != http.StatusOK {
+				t.Fatalf("run: %d %+v", code, e)
+			}
+			if a.State != "failed" || !strings.Contains(a.Reason, "submit the work to a new session") {
+				t.Errorf("a is %s (%q), want failed saying to submit it to a new session", a.State, a.Reason)
+			}
+			for _, r := range []string{"r1", "r2"} {
+				if res := f.mustSync(t, r, creds[r], req(r, 1)); len(res.Runs) != 0 {
+					t.Errorf("%s was offered %v after the close", r, ids(res.Runs))
+				}
+			}
+		})
 	}
 }

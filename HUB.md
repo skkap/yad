@@ -205,6 +205,24 @@ you reach for. Declining silently by omitting a run from the next sync is the
 runner's other way out and is normal; the refusal is what tells you *why*, and
 tells you not to try again.
 
+**A reported close is the same kind of wider door: believe it from the runner
+holding the session, *or* from the runner its run was last offered to while no
+claim had bound it.** A runner records an offered run as claimed, and opens
+the session with it, before any sync has listed that claim. If the claim is
+then withdrawn — you cancelled it, the runner began draining, it stopped or
+restarted — and the runner's owner had asked to close the session meanwhile,
+the session closes on the runner and arrives in `closed_sessions`, about a
+session you never saw bound. A hub that believes closes only from a bound
+runner drops that report, offers the run again, and hears it refused as
+`session_closed`; a run queued behind it gets the same. `yad hub` remembers
+which runner a session's run was last offered to until a claim binds it,
+closes the session on that runner's report and binds it to that runner, and
+ends every run still waiting in it — as it does on any close a runner reports.
+A close from any other runner changes nothing: it has no claim to the session,
+and a session is closed only by the one whose disk it would be on. Answer the
+sync normally either way; the report is repeated until a sync carrying it is
+answered, not until it is believed.
+
 **Deregister settles everything the runner held, sessions included.** A
 runner that calls `deregister` is not coming back under that credential, so:
 the runs it holds become `lost`; the runs offered to it and not yet claimed go
