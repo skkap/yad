@@ -254,33 +254,21 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 		"internal/workdir/workdir.go":    "a marker file in a checkout, which holds no secret",
 	}
 	root := filepath.Join("..", "..")
+	sources, err := moduleSources(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	fset := token.NewFileSet()
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			// testdata holds recorded fixtures, and bin holds what make build
-			// left behind.
-			if n := d.Name(); n == "testdata" || n == "bin" || n == ".git" {
-				return fs.SkipDir
-			}
-			return nil
-		}
+	for _, rel := range sources {
 		// Test helpers write 0600 files for tests to read; none of them is a
 		// profile file on anyone's machine.
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
+		if strings.HasSuffix(rel, "_test.go") {
+			continue
 		}
-		f, perr := parser.ParseFile(fset, path, nil, 0)
-		if perr != nil {
-			return perr
+		f, err := parser.ParseFile(fset, filepath.Join(root, filepath.FromSlash(rel)), nil, 0)
+		if err != nil {
+			t.Fatal(err)
 		}
-		rel, rerr := filepath.Rel(root, path)
-		if rerr != nil {
-			return rerr
-		}
-		rel = filepath.ToSlash(rel)
 		var found bool
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch n := n.(type) {
@@ -302,21 +290,99 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 			return !found
 		})
 		if !found {
-			return nil
+			continue
 		}
 		if _, ok := excused[rel]; !ok && !strings.Contains(rel, "/codextest/") {
 			t.Errorf("%s creates a 0600 file that privateFiles has never heard of — add it to privateFiles, or add it to this test's excused list with the reason it needs no warning of its own", rel)
 		}
 		delete(excused, rel)
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	// A stale excuse is the same rot in the other direction: it would go on
 	// excusing a file that no longer writes anything private.
 	for rel, why := range excused {
 		t.Errorf("%s no longer creates a 0600 file, so its excuse (%s) is stale — delete the line", rel, why)
+	}
+}
+
+// moduleSources is every .go file of this module under root, slash-separated
+// and relative to it: the files `go build ./...` reads, whatever else sits in
+// the directory. Go's own rule decides, so the walk and the compiler agree on
+// what the source is — a directory starting with . or _ is not part of the
+// module, testdata is not, and a directory with a go.mod of its own is another
+// module. An agent's worktree nested under .claude/worktrees is all of those
+// at once, and its copy of cmd/yad would otherwise be reported here as a
+// second, unlisted writer of every private file.
+//
+// Not `git ls-files`: CI has git, but a test that needs a checkout to pass
+// fails in a module cache or an exported tarball, where the source is the
+// same and the answer should be too.
+func moduleSources(root string) ([]string, error) {
+	var out []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path == root {
+				return nil
+			}
+			// bin holds what make build left behind.
+			if n := d.Name(); strings.HasPrefix(n, ".") || strings.HasPrefix(n, "_") || n == "testdata" || n == "bin" {
+				return fs.SkipDir
+			}
+			if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	return out, err
+}
+
+// The walk above is only as good as what it leaves out. Each case is a copy of
+// a real source file somewhere Go would not build it from, beside the one it
+// would: an agent's worktree under .claude/worktrees — the case that failed
+// `make check` on the main checkout while any agent was at work — and a nested
+// module with no dot in its path.
+func TestModuleSourcesIsTheModuleAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files []string
+	}{
+		{"an agent worktree", []string{".claude/worktrees/agent-1/go.mod", ".claude/worktrees/agent-1/cmd/yad/cmd_hub.go"}},
+		{"a worktree without its go.mod", []string{".claude/worktrees/agent-2/cmd/yad/cmd_hub.go"}},
+		{"a nested module", []string{"worktrees/agent-3/go.mod", "worktrees/agent-3/cmd/yad/cmd_hub.go"}},
+		{"an underscore directory", []string{"_old/cmd/yad/cmd_hub.go"}},
+		{"testdata", []string{"internal/x/testdata/cmd_hub.go"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, f := range append([]string{"go.mod", "cmd/yad/cmd_hub.go"}, tc.files...) {
+				path := filepath.Join(root, filepath.FromSlash(f))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := moduleSources(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0] != "cmd/yad/cmd_hub.go" {
+				t.Errorf("moduleSources = %q, want the module's own cmd/yad/cmd_hub.go alone", got)
+			}
+		})
 	}
 }
 
