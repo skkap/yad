@@ -940,7 +940,9 @@ line here is a reviewed change.
 - The runner runs as an ordinary user, never root; the service units say so.
 - Tokens: `0600` files, never logged, never printed, never in argv, never in an
   event. Grants are deleted when their run ends — including by the next start,
-  after a crash that skipped the deletion. An `env` grant is `NAME=value`
+  after a crash that skipped the deletion. A grant file that cannot be unlinked
+  is overwritten and truncated instead, and what survives both is logged by
+  directory, never by name. An `env` grant is `NAME=value`
   in the harness's environment; a `file` grant is a `0600` file whose path is
   in `NAME`, in a directory of the run's own under `<data>/grants` — never in
   the checkout the harness works in, though a run whose `path` source is the
