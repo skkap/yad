@@ -83,7 +83,9 @@ type Turn interface {
 	// has one. The runner stores it as soon as it appears rather than from the
 	// Outcome, so a crash mid-run does not lose the resume pointer.
 	NativeSessionID() string
-	// Wait blocks until the turn is over and the process is gone.
+	// Wait blocks until the turn is over, the process is gone, and every file
+	// the adapter wrote for the turn is removed: a runner may exit the moment
+	// its last Wait returns.
 	Wait() Outcome
 }
 
