@@ -159,6 +159,6 @@ fi
 if [ "$failed" -ne 0 ]; then
 	echo
 	echo "check-breaking: the changes above break a client generated from $tag."
-	echo "check-breaking: a rename or a removal in a released document is a new major version, not an edit — see CLAUDE.md and ARCHITECTURE.md §2 Versioning. If it is genuinely additive and oasdiff is wrong, say so in the pull request rather than here."
+	echo "check-breaking: a rename or a removal in a released document is a new major version, not an edit — see AGENTS.md and ARCHITECTURE.md §2 Versioning. If it is genuinely additive and oasdiff is wrong, say so in the pull request rather than here."
 	exit 1
 fi

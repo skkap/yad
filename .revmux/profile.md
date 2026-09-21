@@ -67,7 +67,7 @@ worst outcome.** Most of what matters is a variation on that.
 
 Report what is **material**, not merely true.
 
-- A deviation from a rule in `CLAUDE.md` (Guardrails), a `_Rules_` line in
+- A deviation from a rule in `AGENTS.md` (Guardrails), a `_Rules_` line in
   `DOMAIN.md`, or a decision record is always worth reporting.
 - A concurrency, signal or process-lifetime bug is material even when the window
   is small. The code is built around supervised children and races with hubs.
@@ -88,7 +88,7 @@ Report what is **material**, not merely true.
 
 ## Where the rules live
 
-- `CLAUDE.md` holds the conventions and the **Guardrails**, and every guardrail
+- `AGENTS.md` holds the conventions and the **Guardrails**, and every guardrail
   is reportable when broken.
 - `DOMAIN.md` owns the vocabulary. *Harness*, not agent; *hub*, not control plane;
   *run*, not task or job; *workdir*, not workspace; *capacity*, not slot (except

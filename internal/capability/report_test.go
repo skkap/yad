@@ -76,7 +76,7 @@ func TestDocumentIsPublicSafe(t *testing.T) {
 
 // The host-tool half of the document is public too: it carries what a hub
 // routes on and nothing about the machine's own arrangements — never a path,
-// and never the account a tool is logged in as (CLAUDE.md).
+// and never the account a tool is logged in as (AGENTS.md).
 func TestHostToolReportIsPublicSafe(t *testing.T) {
 	in, out := true, false
 	reps := HostTools([]hostool.Detected{
