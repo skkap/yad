@@ -191,7 +191,7 @@ func TestDoctorReportsCodexProtocolDrift(t *testing.T) {
 	}
 	t.Setenv("CODEX_TEST_SCHEMA", schema)
 	code, out, errs := yad(t, "doctor")
-	if code != 0 || !regexp.MustCompile(`Codex +ready +codex-cli 0.147.0`).MatchString(out) || strings.Contains(out, "warning:") {
+	if code != 0 || !regexp.MustCompile(`Codex +ready +0\.147\.0`).MatchString(out) || strings.Contains(out, "warning:") {
 		t.Fatalf("pinned codex: exit %d:\n%s%s", code, out, errs)
 	}
 
@@ -209,7 +209,7 @@ func TestDoctorReportsCodexProtocolDrift(t *testing.T) {
 	// Another path, so the check the first doctor remembered is not reused.
 	t.Setenv("YAD_CODEX_PATH", fakeCodexBin(t))
 	code, out, errs = yad(t, "doctor")
-	if code != 0 || !regexp.MustCompile(`Codex +ready`).MatchString(out) || !strings.Contains(out, "warning: Codex — the app-server protocol of codex-cli 0.147.0 differs") {
+	if code != 0 || !regexp.MustCompile(`Codex +ready`).MatchString(out) || !strings.Contains(out, "warning: Codex — this codex's app-server protocol differs") {
 		t.Fatalf("drifted codex: exit %d:\n%s%s", code, out, errs)
 	}
 	code, out, errs = yad(t, "harnesses")

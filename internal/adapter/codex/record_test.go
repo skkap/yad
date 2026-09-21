@@ -186,9 +186,9 @@ func TestRecordSchema(t *testing.T) {
 	}
 	fields := strings.Fields(string(out))
 	version := fields[len(fields)-1]
-	b, err := generateSchema(context.Background(), bin)
-	if err != nil {
-		t.Fatal(err)
+	b, f := generateSchema(context.Background(), bin)
+	if f != "" {
+		t.Fatalf("%s — run `codex app-server generate-json-schema --out DIR` to see why", f)
 	}
 	dir := filepath.Join("testdata", "codex-"+version)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

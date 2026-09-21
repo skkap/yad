@@ -15,6 +15,22 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
+// LocalError is a failure whose cause belongs to this machine, not to the run:
+// a harness binary that will not exec, a temp file that cannot be written.
+// Its cause names paths under the owner's home and carries the exec error, and
+// a run's error goes to a hub, so the two are kept apart (DEV-67). Error is
+// Msg alone, in the runner's words; Err is the cause, for the runner's own
+// log. Every other error an adapter returns is a sentence whose next action
+// may be the hub's — a model name it sent that is not one — and travels as it
+// is.
+type LocalError struct {
+	Msg string
+	Err error
+}
+
+func (e *LocalError) Error() string { return e.Msg }
+func (e *LocalError) Unwrap() error { return e.Err }
+
 // Spec is everything an adapter needs to execute one run. The runner resolves
 // it: the workdir exists, the account's harness home is chosen, grants are
 // already in Env or on disk.

@@ -3,6 +3,8 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +118,83 @@ func TestBuildReportsEveryHostTool(t *testing.T) {
 	for i, tool := range doc.HostTools {
 		if tool.ID != hostool.Catalog()[i].ID || tool.Present {
 			t.Errorf("host tool %d = %+v, want %s absent", i, tool, hostool.Catalog()[i].ID)
+		}
+	}
+}
+
+// The guard on the document as a whole, because that is what every connected
+// hub reads. DEV-60 kept child output out of a harness's Error and DEV-67
+// found the same leak in its Warnings: sweeping by field misses a sibling
+// field, so this sweeps by destination. Every binary the runner probes lives
+// under a home named like an owner's, and every one fails printing a
+// credential and that home; a Codex answers its version and then fails the
+// protocol check the same way. Whatever field a future probe adds, none of it
+// may reach the marshalled document.
+func TestDocumentCarriesNoChildOutputOrHomePath(t *testing.T) {
+	const secret = "https://user:hunter2@proxy.internal/"
+	realHome, _ := os.UserHomeDir()
+	home := filepath.Join(t.TempDir(), "Users", "someone")
+	bin := filepath.Join(home, "bin")
+	tmp := filepath.Join(home, "tmp")
+	for _, d := range []string{bin, tmp} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	noTools(t)
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("PATH", bin)
+	fail := "echo \"dyld: Library not loaded: $HOME/lib/libnode.dylib\" >&2\necho 'fatal: unable to access " + secret + "' >&2\nexit 2\n"
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, h := range harness.Catalog() {
+		write(h.Binary, fail)
+	}
+	for _, tool := range hostool.Catalog() {
+		write(tool.Binary, fail)
+	}
+	// Past its version probe, so the protocol check runs and fails. What it
+	// prints for its version is a home path and a credential around the
+	// number, and only the number may travel.
+	write("codex", "if [ \"$1\" = --version ]; then echo \"codex-cli 0.147.0 (config $HOME/.codex, proxy "+secret+")\"; exit 0; fi\n"+fail)
+	// A version probe that succeeds with a warning line first, as a wrapper
+	// or a node launcher prints: the version is found under it, and nothing
+	// else of it travels.
+	write("gemini", "echo \"Warning: proxy "+secret+" from $HOME/.npmrc\"\necho '0.9.1'\n")
+	write("git", "echo \"git version 2.51.0 $HOME/bin/git "+secret+"\"\n")
+	// A version line with no version in it reports none rather than itself.
+	write("copilot", "echo \"dyld: Library not loaded: $HOME/lib/libnode.dylib\"\n")
+
+	cfg := config.Default()
+	cfg.Name = "r1"
+	doc := Build(context.Background(), "r1", cfg, nil)
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	// Not vacuous: the failures are reported, in the runner's words.
+	if !strings.Contains(s, `"warnings":["yad could not check this codex`) || !strings.Contains(s, `"error":"`) {
+		t.Fatalf("the failures are not in the document: %s", s)
+	}
+	// And the versions are still there, as versions.
+	for _, want := range []string{`"version":"0.147.0"`, `"version":"0.9.1"`, `"version":"2.51.0"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s: %s", want, s)
+		}
+	}
+	leaks := []string{secret, "hunter2", "dyld", "fatal:", home, bin, tmp, "/Users/", "fork/exec",
+		"permission denied", "exit status", "no such file"}
+	if realHome != "" && realHome != "/" {
+		leaks = append(leaks, realHome)
+	}
+	for _, leak := range leaks {
+		if strings.Contains(s, leak) {
+			t.Errorf("the document carries %q: %s", leak, s)
 		}
 	}
 }

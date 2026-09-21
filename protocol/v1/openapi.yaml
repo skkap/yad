@@ -311,8 +311,10 @@ components:
         present:
           type: boolean
         version:
+          description: The version number the harness reported, such as 2.4.1 or 1.0.0-beta.12, and nothing else of what it printed. Absent when it printed no version.
           type: string
         warnings:
+          description: "What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."
           items:
             type: string
           type: array
@@ -400,7 +402,7 @@ components:
           description: "The binary was found on the runner. Present is not usable: see error and logged_in."
           type: boolean
         version:
-          description: The first line the tool prints for its version.
+          description: The version number the tool reported, such as 2.51.0, and nothing else of what it printed. Absent when it printed no version.
           type: string
       required:
         - id

@@ -83,7 +83,10 @@ func (m *Manager) setup(ctx context.Context, req Request, h hookEnv) error {
 	env := append(append([]string{}, noPrompt...), h.vars()...)
 	p, err := supervise.Start(ctx, supervise.Spec{Path: hook, Dir: h.root, Env: env, NoTTY: true, MergeStderr: true})
 	if err != nil {
-		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s could not be started: %v", hookPath, h.repo, err)}
+		// Not the exec error: it names the hook by its absolute path, under the
+		// owner's home. findHook has proved it an executable file inside the
+		// checkout, so what is left is the interpreter its #! line names.
+		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s could not be started — check that its #! line names an interpreter this runner has", hookPath, h.repo)}
 	}
 	out, truncated := readTail(p, v1.MaxToolOutputBytes)
 	werr := p.Wait()
@@ -116,7 +119,7 @@ func (m *Manager) findHook(root string) (string, string) {
 		return "", hookPath + " does not exist"
 	}
 	if err != nil {
-		return "", fmt.Sprintf("%s cannot be read: %v", hookPath, err)
+		return "", hookPath + " cannot be read — check its permissions and where it links"
 	}
 	if r, err := filepath.EvalSymlinks(root); err != nil || !within(r, real) {
 		return "", hookPath + " links outside the repository, so it is not run"
@@ -124,7 +127,7 @@ func (m *Manager) findHook(root string) (string, string) {
 	fi, err := os.Stat(real)
 	switch {
 	case err != nil:
-		return "", fmt.Sprintf("%s cannot be read: %v", hookPath, err)
+		return "", hookPath + " cannot be read — check its permissions and where it links"
 	case !fi.Mode().IsRegular():
 		return "", hookPath + " is not a file"
 	case fi.Mode().Perm()&0o111 == 0:
@@ -133,9 +136,12 @@ func (m *Manager) findHook(root string) (string, string) {
 	return real, ""
 }
 
+// writeMarker's error is not quoted, nor findHook's: both name a path in the
+// worktree, under the owner's home, and the run's error and status events go
+// to a hub (DEV-67).
 func writeMarker(path string) error {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		return &Error{Class: ClassSetupFailed, Msg: "the setup hook's completion could not be recorded: " + err.Error()}
+		return &Error{Class: ClassSetupFailed, Msg: "the worktree's setup could not be marked done in its git directory — check free disk space on the runner"}
 	}
 	return nil
 }

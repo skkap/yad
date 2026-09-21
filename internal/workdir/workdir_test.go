@@ -493,6 +493,23 @@ func TestSetupHookFails(t *testing.T) {
 	}
 }
 
+// A hook that will not start fails the run in the runner's words: the exec
+// error names the hook by its absolute path, under the owner's home, and the
+// run's error goes to a hub (DEV-67).
+func TestSetupHookThatWillNotStart(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", map[string]string{hookPath: "#!/nonexistent/interpreter\n"})
+	_, _, err := f.prepare("s1", gitSource(o.bare, "", ""))
+	if class(err) != ClassSetupFailed || !strings.Contains(err.Error(), "#! line") {
+		t.Fatalf("err = %v", err)
+	}
+	for _, leak := range []string{f.m.Data, f.root, "fork/exec", "no such file", "/nonexistent"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("err carries %q: %v", leak, err)
+		}
+	}
+}
+
 func TestSetupHookTimeoutAndCap(t *testing.T) {
 	f := newFixture(t)
 	f.m.SetupTimeout = 300 * time.Millisecond

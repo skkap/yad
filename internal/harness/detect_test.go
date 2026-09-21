@@ -17,9 +17,14 @@ func TestParseVersion(t *testing.T) {
 		name, raw, want string
 	}{
 		{"bare", "2.4.1\n", "2.4.1"},
-		{"banner", "claude 2.4.1 (Claude Code)\n", "claude 2.4.1 (Claude Code)"},
-		{"update notice below", "codex 0.58.0\n\nA new version is available\n", "codex 0.58.0"},
-		{"leading blank line", "\n  opencode 1.2.3  \n", "opencode 1.2.3"},
+		{"banner", "claude 2.4.1 (Claude Code)\n", "2.4.1"},
+		{"update notice below", "codex 0.58.0\n\nA new version is available\n", "0.58.0"},
+		{"leading blank line", "\n  opencode 1.2.3  \n", "1.2.3"},
+		{"a warning printed first", "Warning: proxy https://user:hunter2@10.0.0.1:8080/ from /Users/someone/.npmrc\n0.9.1\n", "0.9.1"},
+		{"a path and a credential beside it", "codex-cli 0.147.0 (/Users/someone/.codex, https://user:hunter2@proxy/)\n", "0.147.0"},
+		{"a pre-release", "gemini 1.0.0-beta.12\n", "1.0.0-beta.12"},
+		{"no version at all", "dyld: Library not loaded: /Users/someone/lib/libnode.dylib\n", ""},
+		{"a suffix past the bound", "tool 1.2.3-" + strings.Repeat("a", 64) + "\n", "1.2.3-" + strings.Repeat("a", 26)},
 		{"empty", "\n\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,7 +90,7 @@ func TestDetectReadsVersionAndHonoursEnvPath(t *testing.T) {
 		if d.ID != "codex" {
 			continue
 		}
-		if !d.Present || d.Error != "" || d.Version != "codex-cli 0.147.0" || d.Path != bin {
+		if !d.Present || d.Error != "" || d.Version != "0.147.0" || d.Path != bin {
 			t.Errorf("codex = %+v", d)
 		}
 		return
@@ -254,11 +259,11 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 		endsAtCancel bool
 	}{
 		{name: "exits 0, alone", body: "echo 'codex-cli 1.0'\n",
-			wantVersion: "codex-cli 1.0"},
+			wantVersion: "1.0"},
 		{name: "exits 0, in-group child holds stdout", body: inGroup + "echo 'codex-cli 1.0'\n",
-			wantVersion: "codex-cli 1.0"},
+			wantVersion: "1.0"},
 		{name: "exits 0, detached child holds stdout", body: detached + "echo 'codex-cli 1.0'\n",
-			wantVersion: "codex-cli 1.0"},
+			wantVersion: "1.0"},
 		// The status and the stderr these two used to be asserted on are the
 		// leak DEV-60 closed; what the report says now is the command and the
 		// next action, and the check below proves the child's words are gone.

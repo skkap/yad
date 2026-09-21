@@ -356,8 +356,8 @@ a world-readable credential:
 ```
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
-Claude Code         ready       2.1.278 (Claude Code)  /Users/me/.local/bin/claude
-Codex               ready       codex-cli 0.147.0      /Users/me/.local/bin/codex
+Claude Code         ready       2.1.278                /Users/me/.local/bin/claude
+Codex               ready       0.147.0                /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 GitHub Copilot CLI  —
 OpenCode            —
@@ -379,8 +379,8 @@ $ chmod 700 /tmp/yad/data
 $ chmod 600 /tmp/yad/config/credentials/yashiki
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
-Claude Code         ready       2.1.278 (Claude Code)  /Users/me/.local/bin/claude
-Codex               ready       codex-cli 0.147.0      /Users/me/.local/bin/codex
+Claude Code         ready       2.1.278                /Users/me/.local/bin/claude
+Codex               ready       0.147.0                /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 GitHub Copilot CLI  —
 OpenCode            —
