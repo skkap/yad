@@ -624,7 +624,11 @@ for `codex`); the suite never runs a real harness.
 - **The reset is the authority.** An account's `limited_until` decides whether
   it is limited; the stored `state` is derived from it at every read, so a
   limit that has passed needs no writer to come along and clear it
-  (`internal/account.stateOf`).
+  (`internal/account.stateOf`). "Now" is always the caller's: `account.Load`
+  and `account.Read` take the moment they judge against and read no clock of
+  their own, the sync loop passes its injected `Clock`, and a report never
+  re-judges what Load decided — so a test on a fake clock sees limits on that
+  clock rather than on the wall (DEV-85).
 - **On a limit**: mark the account limited until its reset → the free account
   whose window resets soonest ([0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)) → resume the same session with a continuation turn, which is the
   run's own instruction again against the session's native id: the transcript

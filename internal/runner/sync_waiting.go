@@ -66,7 +66,7 @@ func (l *Loop) loadAccounts(ctx context.Context) {
 		return
 	}
 	l.accountsTried = true
-	accounts, err := account.Load(ctx, l.Store.Queries, l.Data, l.Config)
+	accounts, err := account.Load(ctx, l.Store.Queries, l.Data, l.Config, l.Clock.Now())
 	if err != nil {
 		// What is actually lost is the early resume: a run whose account
 		// freed *before* its resume time waits for the next sync. One whose

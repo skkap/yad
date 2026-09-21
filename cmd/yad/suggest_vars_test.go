@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"strings"
@@ -100,5 +101,69 @@ func TestHubWatchCommandCarriesAHubFromTheEnvironment(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("submit: exit %d: %s", code, errs)
 	}
-	shellwordtest.Check(t, onlyCommand(t, errs, "yad hub watch"), "yad", "hub", "watch", "--hub", service, strings.TrimSpace(out))
+	shellwordtest.Check(t, onlyCommand(t, errs, "yad --profile default hub watch"), "yad", "--profile", "default", "hub", "watch", "--hub", service, strings.TrimSpace(out))
+}
+
+// A command printed for the default profile on a machine that carries another
+// is pasted, sometimes, into a shell that exports YAD_PROFILE for that other
+// one. It still acts on the default: the --profile it carries beats the
+// variable, which is only the flag's default. On a machine with one profile
+// there is no other to reach, and the command stays bare.
+func TestDefaultProfileCommandBeatsYAD_PROFILE(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		other bool
+		want  []string
+	}{
+		{"one profile", false, []string{"yad", "daemon", "start"}},
+		{"two profiles", true, []string{"yad", "--profile", "default", "daemon", "start"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Where Resolve puts profiles with no variable set; short, for
+			// the control socket's path.
+			t.Setenv("HOME", shortDir(t))
+			for _, v := range []string{"YAD_CONFIG_DIR", "YAD_DATA_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "YAD_PROFILE"} {
+				t.Setenv(v, "")
+			}
+			noHostTools(t)
+			profiles := []string{config.DefaultProfile}
+			if tc.other {
+				profiles = append(profiles, "work")
+			}
+			for _, name := range profiles {
+				p, err := config.Resolve(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := p.Ensure(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			yadStatus := func(args ...string) string {
+				t.Helper()
+				var out, errb bytes.Buffer
+				if code := run(context.Background(), args, &out, &errb); code != 3 {
+					t.Fatalf("yad %v: exit %d: %s%s", args, code, out.String(), errb.String())
+				}
+				return out.String()
+			}
+			cmd := onlyCommand(t, yadStatus("daemon", "status"), "yad ")
+			shellwordtest.Check(t, cmd, tc.want...)
+			if !tc.other {
+				return
+			}
+
+			// The pasted command's words, run where YAD_PROFILE names the
+			// other runner. daemon start would start one, so the same
+			// global words ask for status instead.
+			t.Setenv("YAD_PROFILE", "work")
+			if !strings.Contains(yadStatus("daemon", "status"), "profile work") {
+				t.Fatal("YAD_PROFILE did not pick the other profile; the test proves nothing")
+			}
+			global := tc.want[1 : len(tc.want)-2]
+			if out := yadStatus(append(global, "daemon", "status")...); !strings.Contains(out, "not running — profile default") {
+				t.Errorf("`%s`, pasted under YAD_PROFILE=work, acted on another profile:\n%s", cmd, out)
+			}
+		})
+	}
 }

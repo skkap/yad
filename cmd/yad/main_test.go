@@ -232,7 +232,7 @@ func TestSessionsOnAFreshProfile(t *testing.T) {
 		{[]string{"sessions", "--json"}, 0, "[]", ""},
 		{[]string{"sessions", "close", "s1"}, 1, "", "no session"},
 		{[]string{"sessions", "close"}, 1, "", "usage"},
-		{[]string{"sessions", "close", "--connection", "home", "s1"}, 1, "", "yad daemon start"},
+		{[]string{"sessions", "close", "--connection", "home", "s1"}, 1, "", "yad --profile default daemon start"},
 		{[]string{"sessions", "s1"}, 1, "", "unexpected"},
 	} {
 		code, out, errs := yad(t, tc.args...)

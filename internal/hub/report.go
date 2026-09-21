@@ -208,10 +208,10 @@ func notHolder(id string) error {
 }
 
 // unknownCredential is the refusal for a credential this hub does not hold.
-func unknownCredential() error {
+func (h *Hub) unknownCredential() error {
 	return Fail(http.StatusUnauthorized, v1.CodeUnauthorized,
 		"the hub does not know this runner credential — a newer registration replaced it, the runner deregistered, or the hub's database was reset",
-		newTokenAction)
+		h.newTokenAction())
 }
 
 // current reads the runner again inside a transaction, and refuses the
@@ -221,13 +221,13 @@ func unknownCredential() error {
 // without this a sync that authenticated first would go on to offer runs to
 // a credential already dead, and a deregister would retire the credential a
 // re-registration had just issued.
-func current(ctx context.Context, q *db.Queries, checked db.Runner) (db.Runner, error) {
+func (h *Hub) current(ctx context.Context, q *db.Queries, checked db.Runner) (db.Runner, error) {
 	r, err := q.GetRunner(ctx, checked.ID)
 	if err != nil {
 		return db.Runner{}, err
 	}
 	if r.CredentialHash != checked.CredentialHash {
-		return db.Runner{}, unknownCredential()
+		return db.Runner{}, h.unknownCredential()
 	}
 	return r, nil
 }
@@ -237,11 +237,11 @@ func current(ctx context.Context, q *db.Queries, checked db.Runner) (db.Runner, 
 func (h *Hub) caller(ctx context.Context) (db.Runner, error) {
 	cred := bearer(ctx)
 	if cred == "" {
-		return db.Runner{}, Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "no runner credential", "run `yad connect` to register this runner")
+		return db.Runner{}, Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "no runner credential", h.newTokenAction())
 	}
 	r, err := h.store.GetRunnerByCredential(ctx, hashSecret(cred))
 	if errors.Is(err, sql.ErrNoRows) {
-		return db.Runner{}, unknownCredential()
+		return db.Runner{}, h.unknownCredential()
 	}
 	return r, err
 }

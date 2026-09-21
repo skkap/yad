@@ -41,7 +41,7 @@ func TestUpgradeArgumentRefusalRunsAsPrinted(t *testing.T) {
 			if code != 1 {
 				t.Fatalf("exit %d: %s", code, errs)
 			}
-			shellwordtest.Check(t, onlyCommand(t, errs, "yad upgrade"), "yad", "upgrade", "--tag", tag)
+			shellwordtest.Check(t, onlyCommand(t, errs, "yad --profile default upgrade"), "yad", "--profile", "default", "upgrade", "--tag", tag)
 		})
 	}
 }
@@ -67,7 +67,7 @@ func TestRestartAdviceRunsAsPrinted(t *testing.T) {
 		{"work", []string{"yad", "--profile", "work", "service", "install"}, []string{"yad", "--profile", "work", "daemon", "restart"}},
 		{config.DefaultProfile, []string{"yad", "service", "install"}, []string{"yad", "daemon", "restart"}},
 	} {
-		line := restartAdvice(config.Paths{Profile: tc.profile})
+		line := restartAdvice(config.Paths{Profile: tc.profile, Config: t.TempDir(), Data: t.TempDir()})
 		shellwordtest.Check(t, onlyCommand(t, line, strings.Join(tc.service[:len(tc.service)-1], " ")), tc.service...)
 		shellwordtest.Check(t, onlyCommand(t, line, strings.Join(tc.daemon[:len(tc.daemon)-1], " ")), tc.daemon...)
 	}
@@ -93,7 +93,7 @@ func TestAccountListLoginCommandRunsAsPrinted(t *testing.T) {
 		global []string
 		want   []string
 	}{
-		{nil, []string{"yad", "account", "add", "claude", "work"}},
+		{nil, []string{"yad", "--profile", "default", "account", "add", "claude", "work"}},
 		{[]string{"--profile", "side"}, []string{"yad", "--profile", "side", "account", "add", "claude", "work"}},
 	} {
 		code, out, errs := yadIn(t, append(tc.global, "account", "list")...)
@@ -127,8 +127,8 @@ func TestHubWatchCommandCarriesTheHub(t *testing.T) {
 		t.Fatalf("submit: exit %d: %s", code, errs)
 	}
 	id := strings.TrimSpace(out)
-	want := append(append([]string{"yad", "hub", "watch"}, flags...), id)
-	shellwordtest.Check(t, onlyCommand(t, errs, "yad hub watch"), want...)
+	want := append(append([]string{"yad", "--profile", "default", "hub", "watch"}, flags...), id)
+	shellwordtest.Check(t, onlyCommand(t, errs, "yad --profile default hub watch"), want...)
 
 	// Held by a runner, so the cancel is queued and the run is still to watch.
 	if _, err := r.s.DB.ExecContext(context.Background(), "UPDATE runs SET state = 'running' WHERE id = ?", id); err != nil {
@@ -138,7 +138,7 @@ func TestHubWatchCommandCarriesTheHub(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("cancel: exit %d: %s", code, errs)
 	}
-	shellwordtest.Check(t, onlyCommand(t, out, "yad hub watch"), want...)
+	shellwordtest.Check(t, onlyCommand(t, out, "yad --profile default hub watch"), want...)
 }
 
 // An admin token already saved is revoked on the hub it came from, so the
@@ -153,7 +153,7 @@ func TestAdminTokenListCommandCarriesTheDatabase(t *testing.T) {
 	if code == 0 {
 		t.Fatal("a second create over a saved token was accepted")
 	}
-	shellwordtest.Check(t, onlyCommand(t, errs, "yad hub admin-token"), "yad", "hub", "admin-token", "list", "--db", db)
+	shellwordtest.Check(t, onlyCommand(t, errs, "yad --profile default hub admin-token"), "yad", "--profile", "default", "hub", "admin-token", "list", "--db", db)
 }
 
 // A name the hub already holds is revoked on that hub, on that profile: the

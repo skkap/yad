@@ -120,7 +120,7 @@ func TestDaemonLifecycle(t *testing.T) {
 	if code != 3 || !strings.Contains(out, "not running") {
 		t.Fatalf("status before start: exit %d, %q", code, out)
 	}
-	if code, _, errs := l.yad("status"); code != 1 || !strings.Contains(errs, "yad daemon start") {
+	if code, _, errs := l.yad("status"); code != 1 || !strings.Contains(errs, "yad --profile default daemon start") {
 		t.Errorf("yad status with no daemon: exit %d, %q", code, errs)
 	}
 
@@ -222,7 +222,7 @@ func TestStopFallsBackToSignals(t *testing.T) {
 		code       int
 	}{
 		{"SIGTERM ends it", false, nil, "sent it SIGTERM", 0},
-		{"ignores SIGTERM, no --force", true, []string{"--timeout", "300ms"}, "yad daemon stop --force", 1},
+		{"ignores SIGTERM, no --force", true, []string{"--timeout", "300ms"}, "yad --profile default daemon stop --force", 1},
 		{"ignores SIGTERM, --force kills it", true, []string{"--timeout", "300ms", "--force"}, "killed pid", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -309,7 +309,7 @@ func TestRestartPreflightsTheCredential(t *testing.T) {
 	}
 
 	code, _, errs := l.yad("daemon", "restart")
-	if code != 1 || !strings.Contains(errs, "restart refused") || !strings.Contains(errs, "yad connect") {
+	if code != 1 || !strings.Contains(errs, "restart refused") || !strings.Contains(errs, "yad --profile default connect") {
 		t.Errorf("restart with no credential: exit %d, %q", code, errs)
 	}
 	if pid := l.pid(); pid != first {
@@ -432,7 +432,7 @@ func TestStartReportsADaemonThatCannotRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, errs := l.yad("daemon", "start")
-	if code != 1 || strings.Contains(out, "started") || !strings.Contains(errs, "exited as it started") || !strings.Contains(errs, "yad connect") {
+	if code != 1 || strings.Contains(out, "started") || !strings.Contains(errs, "exited as it started") || !strings.Contains(errs, "yad --profile default connect") {
 		t.Errorf("start with no usable connection: exit %d\n%s%s", code, out, errs)
 	}
 	if !eventuallyTrue(func() bool { _, running, _ := control.Holder(l.p); return !running }) {

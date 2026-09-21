@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -98,7 +99,7 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 	// daemon that owns it — must not stop a registration. cmd_daemon takes the
 	// same failure the same way, and capability.Build falls back to reporting
 	// the owner's configured labels as free.
-	accounts, err := account.Read(ctx, p, cfg)
+	accounts, err := account.Read(ctx, p, cfg, time.Now())
 	if err != nil {
 		// Not fatal: a state database this binary cannot read — one migration
 		// behind, because the daemon has not restarted — must not stop a

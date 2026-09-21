@@ -59,7 +59,7 @@ func TestANeedsLoginAccountReturnsToServiceOnceTheOwnerLogsIn(t *testing.T) {
 		t.Errorf("the account is %q, want free", got)
 	}
 	// And a run would now take it.
-	accounts, err := account.Load(ctx, e.store.Queries, e.paths.Data, cfg)
+	accounts, err := account.Load(ctx, e.store.Queries, e.paths.Data, cfg, e.clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

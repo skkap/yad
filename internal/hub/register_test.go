@@ -9,6 +9,8 @@ import (
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
 func registerBody(t *testing.T, caps v1.Capabilities) string {
@@ -55,7 +57,7 @@ func TestRegisterBurnsTheToken(t *testing.T) {
 
 	// The same token a second time: dead, with the way forward.
 	_, env := post(t, f.hub, "/v1/runners/register", registerBody(t, doc("r2")), headers(tok))
-	if env.Error.Code != v1.CodeUnauthorized || !strings.Contains(env.Error.Message, "already used") || !strings.Contains(env.Error.NextAction, "yad hub token create") {
+	if env.Error.Code != v1.CodeUnauthorized || !strings.Contains(env.Error.Message, "already used") || !strings.Contains(env.Error.NextAction, "hub token create") {
 		t.Errorf("reused token: %+v", env.Error)
 	}
 }
@@ -100,7 +102,7 @@ func TestOnlyATokenForThatRunnerReRegistersIt(t *testing.T) {
 	f.register(t, "other")
 	newRunner := f.token(t, time.Hour)
 	res, env := post(t, f.hub, "/v1/runners/register", registerBody(t, doc("victim")), headers(newRunner))
-	if res.StatusCode != http.StatusConflict || env.Error.Code != v1.CodeConflict || !strings.Contains(env.Error.NextAction, "--runner") || !strings.Contains(env.Error.NextAction, `"victim"`) {
+	if res.StatusCode != http.StatusConflict || env.Error.Code != v1.CodeConflict || !strings.Contains(env.Error.NextAction, "--runner") || !strings.Contains(env.Error.NextAction, "--runner victim") {
 		t.Fatalf("takeover with a new-runner token: %d %+v", res.StatusCode, env.Error)
 	}
 	if res, _ := f.sync(t, "victim", cred, v1.SyncRequest{RunnerID: "victim"}); res.StatusCode != http.StatusOK {
@@ -154,5 +156,53 @@ func TestTokenTTLIsBounded(t *testing.T) {
 	row, err := f.store.GetRegistrationToken(context.Background(), hashSecret(tok))
 	if err != nil || row.UsedAt.Valid {
 		t.Errorf("stored token = %+v, %v", row, err)
+	}
+}
+
+// A refused runner is told what to run on each machine, as commands it can
+// paste: a token from this hub's database, run at the hub, and a connect run
+// at the runner. The hub knows neither the runner's profile, nor the URL and
+// connection name it reaches this hub by, nor — without Options.Command — its
+// own profile and database, so each is a placeholder that says what it wants.
+// A bare `yad connect` would be refused for want of a URL, and a bare `yad hub
+// token create` issues into the default profile's database, whose token this
+// hub then refuses as one it never issued.
+func TestRegistrationAdviceRunsAsPrinted(t *testing.T) {
+	f := newFixture(t)
+	f.register(t, "victim")
+	connect := []string{"yad", "--profile", "<runner profile>", "connect", "<hub url>", "--name", "<connection name>", "--token", "<new token>"}
+	token := func(args ...string) []string {
+		argv := append([]string{"yad", "--profile", "<hub profile>", "hub", "token", "create"}, args...)
+		return append(argv, "--db", "<the database yad hub serve was given>")
+	}
+	spent := f.token(t, time.Hour)
+	post(t, f.hub, "/v1/runners/register", registerBody(t, doc("r1")), headers(spent))
+	for _, tc := range []struct {
+		name  string
+		send  func() v1.ErrorEnvelope
+		token []string
+	}{
+		{"a spent token", func() v1.ErrorEnvelope {
+			_, env := post(t, f.hub, "/v1/runners/register", registerBody(t, doc("r2")), headers(spent))
+			return env
+		}, token()},
+		{"a new-runner token for a known runner", func() v1.ErrorEnvelope {
+			_, env := post(t, f.hub, "/v1/runners/register", registerBody(t, doc("victim")), headers(f.token(t, time.Hour)))
+			return env
+		}, token("--runner", "victim")},
+		{"a credential the hub does not hold", func() v1.ErrorEnvelope {
+			_, env := f.sync(t, "victim", "yadcred_nope", v1.SyncRequest{RunnerID: "victim"})
+			return env
+		}, token()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next := tc.send().Error.NextAction
+			cmds := shellwordtest.Commands(next, "yad ")
+			if len(cmds) != 2 {
+				t.Fatalf("want a token command and a connect command in %q", next)
+			}
+			shellwordtest.Check(t, cmds[0], tc.token...)
+			shellwordtest.Check(t, cmds[1], connect...)
+		})
 	}
 }

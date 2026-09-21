@@ -331,11 +331,6 @@ func TestAccountsAndWindowsAreCappedAndReadyIsNot(t *testing.T) {
 func TestTheAccountCarryingTheWorkIsNamedEvenPastTheCap(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	// A limit is judged against the wall clock, not the loop's: account.Load
-	// takes no clock and Report calls time.Now(). A reset dated from the fake
-	// clock is already in the past, so the account reads free and the test
-	// proves nothing — which is what the first draft of this file did.
-	realNow := time.Now()
 	var labels []string
 	for i := range maxHealthAccounts + 4 {
 		labels = append(labels, fmt.Sprintf("acct-%02d", i))
@@ -353,7 +348,7 @@ func TestTheAccountCarryingTheWorkIsNamedEvenPastTheCap(t *testing.T) {
 		}
 	}
 	for _, label := range labels[maxHealthAccounts+1:] {
-		if err := account.SetLimit(ctx, e.store.Queries, "claude", label, realNow.Add(time.Hour), realNow); err != nil {
+		if err := account.SetLimit(ctx, e.store.Queries, "claude", label, e.clock.Now().Add(time.Hour), e.clock.Now()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -388,11 +383,6 @@ func TestTheAccountCarryingTheWorkIsNamedEvenPastTheCap(t *testing.T) {
 func TestAnAccountInsideTheCapIsNotMoved(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	// A limit is judged against the wall clock, not the loop's: account.Load
-	// takes no clock and Report calls time.Now(). A reset dated from the fake
-	// clock is already in the past, so the account reads free and the test
-	// proves nothing — which is what the first draft of this file did.
-	realNow := time.Now()
 	var labels []string
 	for i := range maxHealthAccounts + 4 {
 		labels = append(labels, fmt.Sprintf("acct-%02d", i))
@@ -405,7 +395,7 @@ func TestAnAccountInsideTheCapIsNotMoved(t *testing.T) {
 	// Free at the front, so Soonest picks inside the cap; everything else
 	// limited, so there is something past the cap that could have been moved.
 	for _, label := range labels[1:] {
-		if err := account.SetLimit(ctx, e.store.Queries, "claude", label, realNow.Add(time.Hour), realNow); err != nil {
+		if err := account.SetLimit(ctx, e.store.Queries, "claude", label, e.clock.Now().Add(time.Hour), e.clock.Now()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -415,10 +405,66 @@ func TestAnAccountInsideTheCapIsNotMoved(t *testing.T) {
 	if !hh.Ready || len(hh.Accounts) != maxHealthAccounts {
 		t.Fatalf("harness = ready %v with %d accounts", hh.Ready, len(hh.Accounts))
 	}
+	// The setup, checked before anything is concluded from it. With every
+	// account free, Soonest picks the first by the owner's order alone and
+	// nothing past the cap is limited, so the order below holds for reasons
+	// that have nothing to do with the guard - which is how this test once
+	// passed with none of its limits taking (DEV-85).
+	for _, a := range hh.Accounts {
+		if a.Label != labels[0] && a.State != v1.AccountLimited {
+			t.Fatalf("setup did not take: %q reads %q, want limited", a.Label, a.State)
+		}
+	}
 	for i, a := range hh.Accounts {
 		if a.Label != labels[i] {
 			t.Errorf("account %d is %q, want the owner's order unchanged at %q", i, a.Label, labels[i])
 		}
+	}
+}
+
+// A limit is judged on the loop's clock, wherever the wall clock is. Every
+// runner test dates limits from the fake clock, and a limit read against the
+// wall instead reads long past or far off, so the test that set it up passes
+// while proving something else (DEV-85). The clock is put decades away in
+// both directions so that no reading of the wall can agree with it by luck:
+// behind the wall, a live limit would read expired; ahead of it, an expired
+// one would read live.
+func TestALimitIsJudgedOnTheLoopsClockNotTheWall(t *testing.T) {
+	const decades = 30 * 365 * 24 * time.Hour
+	for _, c := range []struct {
+		name      string
+		offset    time.Duration // of the loop's clock from the wall
+		reset     time.Duration // of the limit from the loop's clock
+		wantState v1.AccountState
+	}{
+		{"a live limit on a clock behind the wall", -decades, time.Hour, v1.AccountLimited},
+		{"an expired limit on a clock ahead of the wall", decades, -time.Hour, v1.AccountFree},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			e.clock.now = time.Now().Add(c.offset).UTC().Truncate(time.Second)
+			if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
+				t.Fatal(err)
+			}
+			// Written an hour before the reset, so SetLimit takes the reset as
+			// given rather than replacing one already past with its own guess.
+			reset := e.clock.Now().Add(c.reset)
+			if err := account.SetLimit(ctx, e.store.Queries, "claude", "work", reset, reset.Add(-time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			l := healthLoop(t, e, "work")
+
+			hh := l.health(ctx, l.Pool.Reserve(l.Connection)).Harnesses[0]
+			if len(hh.Accounts) != 1 || hh.Accounts[0].State != c.wantState {
+				t.Fatalf("accounts = %+v, want work %s at %s with the limit ending %s", hh.Accounts, c.wantState, e.clock.Now(), reset)
+			}
+			// Ready is the claim's own predicate, so this is the half that
+			// decides whether the runner takes work.
+			if want := c.wantState == v1.AccountFree; hh.Ready != want {
+				t.Errorf("ready = %v, want %v", hh.Ready, want)
+			}
+		})
 	}
 }
 
@@ -429,11 +475,6 @@ func TestAnAccountInsideTheCapIsNotMoved(t *testing.T) {
 func TestNoReplacementWhenNothingCanRun(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	// A limit is judged against the wall clock, not the loop's: account.Load
-	// takes no clock and Report calls time.Now(). A reset dated from the fake
-	// clock is already in the past, so the account reads free and the test
-	// proves nothing — which is what the first draft of this file did.
-	realNow := time.Now()
 	var labels []string
 	for i := range maxHealthAccounts + 4 {
 		labels = append(labels, fmt.Sprintf("acct-%02d", i))
@@ -442,7 +483,7 @@ func TestNoReplacementWhenNothingCanRun(t *testing.T) {
 		if _, err := account.Ensure(e.paths.Data, "claude", label); err != nil {
 			t.Fatal(err)
 		}
-		if err := account.SetLimit(ctx, e.store.Queries, "claude", label, realNow.Add(time.Hour), realNow); err != nil {
+		if err := account.SetLimit(ctx, e.store.Queries, "claude", label, e.clock.Now().Add(time.Hour), e.clock.Now()); err != nil {
 			t.Fatal(err)
 		}
 	}

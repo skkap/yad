@@ -151,7 +151,7 @@ func TestNoCredentialFromAnAccountHomeEverLeaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := []harness.Detected{{Harness: harness.Catalog()[0], Present: true, Path: "/x/claude", Version: "2.1"}}
-	accounts, err := account.Load(context.Background(), e.store.Queries, e.paths.Data, cfg)
+	accounts, err := account.Load(context.Background(), e.store.Queries, e.paths.Data, cfg, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestNoUsableAccountFailsTheRunAndSaysWhatToDo(t *testing.T) {
 	if res.Error.Class != hubClass(ClassRefused, false) {
 		t.Errorf("error class = %q, want the class for a run the runner will not take", res.Error.Class)
 	}
-	if !strings.Contains(res.Error.Message, "yad account add claude work") {
+	if !strings.Contains(res.Error.Message, "yad --profile default account add claude work") {
 		t.Errorf("the failure does not name the next action: %q", res.Error.Message)
 	}
 }

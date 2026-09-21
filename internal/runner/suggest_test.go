@@ -54,7 +54,7 @@ func TestNoFreeAccountCommandRunsAsPrinted(t *testing.T) {
 		env   map[string]string
 		want  []string
 	}{
-		{config.Paths{Profile: config.DefaultProfile}, map[string]string{"YAD_DATA_DIR": ""}, []string{"yad", "account", "add", "claude", "work"}},
+		{config.Paths{Profile: config.DefaultProfile, Config: t.TempDir(), Data: t.TempDir()}, map[string]string{"YAD_DATA_DIR": ""}, []string{"yad", "account", "add", "claude", "work"}},
 		{config.Paths{Profile: "side"}, map[string]string{"YAD_DATA_DIR": ""}, []string{"yad", "--profile", "side", "account", "add", "claude", "work"}},
 		{relocated, map[string]string{"YAD_DATA_DIR": "<the runner's YAD_DATA_DIR>"}, []string{"yad", "--profile", "side", "account", "add", "claude", "work"}},
 	} {

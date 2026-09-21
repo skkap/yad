@@ -27,7 +27,10 @@ func (e *Exec) pickAccount(ctx context.Context, harness string) (account.Account
 	if !account.Supported(harness) {
 		return account.Account{}, false, nil
 	}
-	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config)
+	// One moment for the whole choice: the states Load derives and the
+	// resets Soonest ranks are then judged against the same instant.
+	now := time.Now()
+	accounts, err := account.Load(ctx, e.Store.Queries, e.Data, e.Config, now)
 	if err != nil {
 		return account.Account{}, false, err
 	}
@@ -35,7 +38,7 @@ func (e *Exec) pickAccount(ctx context.Context, harness string) (account.Account
 	if len(all) == 0 {
 		return account.Account{}, false, nil
 	}
-	if a, ok := account.Soonest(accounts, harness, time.Now()); ok {
+	if a, ok := account.Soonest(accounts, harness, now); ok {
 		return a, true, nil
 	}
 	return account.Account{}, false, &noFreeAccountError{paths: e.Paths, harness: harness, accounts: all}
@@ -149,11 +152,14 @@ func maybeAuth(class string) bool {
 	return class == adapter.ClassHarness || class == adapter.ClassHarnessExited
 }
 
-// setRunAccount records which account ran the run, for `yad status` and for a
-// restart that has to say what it lost.
-func (e *Exec) setRunAccount(ctx context.Context, c Claim, label string) {
+// setRunAccount records which account runs the run's next turn and how many
+// moves it has made, for `yad status` and for a restart that has to say what
+// it lost. The count is written here, at the move, rather than at the end of
+// the turn on the new account: a run lost during that turn has still moved.
+func (e *Exec) setRunAccount(ctx context.Context, c Claim, label string, switches int) {
 	err := e.Store.SetRunAccount(ctx, db.SetRunAccountParams{
-		Account: sql.NullString{String: label, Valid: true}, UpdatedAt: time.Now().UnixMilli(), Connection: c.Connection, ID: c.Run.RunID,
+		Account: sql.NullString{String: label, Valid: true}, AccountSwitches: int64(switches),
+		UpdatedAt: time.Now().UnixMilli(), Connection: c.Connection, ID: c.Run.RunID,
 	})
 	if err != nil {
 		e.Log.Warn("could not record the run's account", "connection", c.Connection, "run", c.Run.RunID, "err", err)
