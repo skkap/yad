@@ -429,14 +429,18 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	// A pending run listed in a sync the hub answered is claimed: it starts,
 	// carrying whatever the answer said about it. The hub bound the run's
 	// session to this runner in that answer, and a restart has to know it did
-	// (Recover).
+	// (Recover). A claim whose acknowledgement could not be written stays
+	// pending rather than starting: the next sync lists it again, the hub
+	// renews it, and the write is tried again then. Started unrecorded, a
+	// restart before it prepared would withdraw a session the hub had bound.
 	for id, p := range l.pending {
 		if listed[id] {
-			delete(l.pending, id)
 			if err := l.Store.AcknowledgeClaim(ctx, db.AcknowledgeClaimParams{Connection: l.Connection, ID: id}); err != nil {
-				l.Log.Error("the hub's acknowledgement of a claim was not recorded; a restart before the run prepares would withdraw it and its session",
+				l.Log.Error("the hub's acknowledgement of a claim was not recorded; the run starts once it is, after the next sync",
 					"connection", l.Connection, "run", id, "err", err)
+				continue
 			}
+			delete(l.pending, id)
 			l.start(ctx, Claim{Connection: l.Connection, Run: p.run, Release: p.release})
 		}
 	}
