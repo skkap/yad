@@ -151,6 +151,11 @@ const (
 	flawTooLargeIsInvalid  = "a body over the size limit is refused 400 invalid"
 	flawRefusalNeedsAClaim = "a result is taken only from the runner that claimed the run"
 	flawReoffersRefused    = "a run refused before its claim is offered again"
+	// The document marked the dashboard health required until DEV-117, and a
+	// hub generated from it refuses a sync that leaves any of it out. The
+	// suite's own syncs send zeros, which v1 omits, so this refuses them all:
+	// the named check is what says why.
+	flawStrictDashboardHealth = "a sync that leaves out load, disk, spool or outbox depth is refused"
 )
 
 // fakeBodyLimit is the most of a body the fake reads. TestMain shrinks it with
@@ -324,6 +329,10 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	}
 	if runner != f.caller(r) && f.flaw != flawAnyCredentialSyncs {
 		f.fail(w, http.StatusForbidden, v1.CodeUnauthorized, "this credential is another runner's", "sync as the runner it was issued to")
+		return
+	}
+	if f.flaw == flawStrictDashboardHealth && (req.Health.Load == 0 || req.Health.DiskFreeBytes == 0 || req.Health.SpoolDepth == 0 || req.Health.OutboxDepth == 0) {
+		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "health is missing a required field", "send every field protocol/v1/openapi.yaml requires")
 		return
 	}
 	if req.RunnerID != runner && f.flaw != flawIgnoresBodyRunner {

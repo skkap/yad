@@ -98,7 +98,8 @@ func runnerView(r db.Runner) (hubapi.Runner, error) {
 			return view, fmt.Errorf("stored health for %s: %w", r.ID, err)
 		}
 		view.Draining = h.Draining
-		view.Health = &h
+		shown := hubapi.HealthOf(h)
+		view.Health = &shown
 	}
 	return view, nil
 }

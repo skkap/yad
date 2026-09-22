@@ -81,6 +81,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawTokenIsReusable, check: "register/token-is-one-time", want: Failed},
 		{flaw: flawSendsEmptyLists, check: "sync/empty-lists-omitted", want: Failed},
 		{flaw: flawKeepsUnknownFields, check: "sync/unknown-fields-ignored", want: Failed},
+		{flaw: flawStrictDashboardHealth, check: "sync/dashboard-health-optional", want: Failed},
 		{flaw: flawOffersOverCapacity, check: "sync/free-capacity", want: Failed},
 		{flaw: flawNoCancel, check: "sync/cancel-for-a-run-not-held", want: Failed},
 		// A hub keeping the offers a sync left out takes a late claim of

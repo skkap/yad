@@ -533,6 +533,13 @@ func TestEverySyncCarriesEveryHealthField(t *testing.T) {
 	// Why a field may be missing from the document, when it may.
 	absent := map[string]string{
 		"draining": "this runner is not draining, and omitempty keeps a false off the wire",
+		// The dashboard fields are optional in v1 (decision 0047), and a zero
+		// is what their absence means.
+		"spool_depth":  "nothing is spooled, and omitempty keeps a 0 off the wire",
+		"outbox_depth": "no result is owed, and omitempty keeps a 0 off the wire",
+	}
+	if h.Load == 0 {
+		absent["load"] = "this machine reads a load of 0, and omitempty keeps a 0 off the wire"
 	}
 	for i := range reflect.TypeFor[v1.Health]().NumField() {
 		name, _, _ := strings.Cut(reflect.TypeFor[v1.Health]().Field(i).Tag.Get("json"), ",")

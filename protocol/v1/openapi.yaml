@@ -384,7 +384,7 @@ components:
       additionalProperties: true
       properties:
         disk_free_bytes:
-          description: Free bytes on the disk under the runner's workdirs.
+          description: "Free bytes on the disk under the runner's workdirs. For dashboards: absent is 0 or unknown, and a hub never refuses a sync for its absence."
           format: int64
           type: integer
         draining:
@@ -399,11 +399,11 @@ components:
             $ref: "#/components/schemas/HarnessHealth"
           type: array
         load:
-          description: "The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. 0 where the runner cannot read one."
+          description: "The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. For dashboards: absent is 0, or a machine the runner cannot read one from, and a hub never refuses a sync for its absence."
           format: double
           type: number
         outbox_depth:
-          description: Results the runner holds that this hub has not acknowledged.
+          description: "Results the runner holds that this hub has not acknowledged. For dashboards: absent is 0 or unknown, and a hub never refuses a sync for its absence."
           format: int64
           type: integer
         recent_errors:
@@ -412,15 +412,11 @@ components:
             type: string
           type: array
         spool_depth:
-          description: Events the runner holds that this hub has not acknowledged.
+          description: "Events the runner holds that this hub has not acknowledged. For dashboards: absent is 0 or unknown, and a hub never refuses a sync for its absence."
           format: int64
           type: integer
       required:
-        - load
         - free_capacity
-        - disk_free_bytes
-        - spool_depth
-        - outbox_depth
       type: object
     HeldRun:
       additionalProperties: true

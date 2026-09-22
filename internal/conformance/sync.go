@@ -66,6 +66,26 @@ func checkUnknownFieldsIgnored(ctx context.Context, s *session) error {
 	return nil
 }
 
+// checkDashboardHealthOptional sends a sync whose health is free capacity
+// alone. Load, disk, spool and outbox depth are for dashboards, and a hub
+// refusing a sync over one renews no lease: every run of a runner build that
+// left it out would be lost.
+func checkDashboardHealthOptional(ctx context.Context, s *session) error {
+	req := s.syncRequest(0)
+	raw, err := s.syncBodyWith(0, map[string]any{"health": map[string]any{"free_capacity": map[string]int{"total": 0}}})
+	if err != nil {
+		return err
+	}
+	_, a, err := s.syncWith(ctx, req, raw)
+	if err != nil {
+		return err
+	}
+	if !a.ok() {
+		return brokenf("a sync whose health carried free_capacity and none of load, disk_free_bytes, spool_depth or outbox_depth was refused; those are for dashboards, and a refused sync renews no lease: %s", a)
+	}
+	return nil
+}
+
 func checkFreeCapacity(ctx context.Context, s *session) error {
 	// Nothing free: a run offered here is one the runner has nowhere to put.
 	res, a, err := s.syncOK(ctx, 0)

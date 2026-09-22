@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/skkap/yad/protocol/hubapi"
-	v1 "github.com/skkap/yad/protocol/v1"
 )
 
 // The whole of DEV-36 end to end: a real daemon syncs with a real hub, and
@@ -35,7 +34,7 @@ func TestE2EHubShowsRunnerHealth(t *testing.T) {
 	//
 	// So each wait names the state it is waiting for, and neither asserts
 	// about a state it did not wait for.
-	r := waitForHealth(t, m, d, "any health at all", func(*v1.Health) bool { return true })
+	r := waitForHealth(t, m, d, "any health at all", func(*hubapi.Health) bool { return true })
 	h := r.Health
 	if h.DiskFreeBytes <= 0 {
 		t.Errorf("disk free %d:\n%s", h.DiskFreeBytes, d.out.String())
@@ -48,7 +47,7 @@ func TestE2EHubShowsRunnerHealth(t *testing.T) {
 	// And now the later state, waited for on its own terms rather than
 	// assumed to have arrived with the first.
 	claiming := waitForHealth(t, m, d, "a sync made once the runner is claiming, which is the first that advertises capacity",
-		func(h *v1.Health) bool { return h.FreeCapacity.Total > 0 })
+		func(h *hubapi.Health) bool { return h.FreeCapacity.Total > 0 })
 	// The wait's own condition, restated. It cannot fire — waitForHealth
 	// returns only when it holds, and reports on its timeout instead — and it
 	// is here so that what this test asserts about capacity is visible where a
@@ -92,7 +91,7 @@ func TestE2EHubShowsRunnerHealth(t *testing.T) {
 // person to the wrong place; the health reports that did arrive say whether
 // the runner never claimed, never synced, or synced with something
 // unexpected in it.
-func waitForHealth(t *testing.T, m *machine, d *daemon, what string, want func(*v1.Health) bool) hubapi.Runner {
+func waitForHealth(t *testing.T, m *machine, d *daemon, what string, want func(*hubapi.Health) bool) hubapi.Runner {
 	t.Helper()
 	// Counted by free capacity rather than logged per poll. The first version
 	// of this kept one line per changed report and printed a hundred and

@@ -167,10 +167,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
 
 ```
 → { runner_id, fingerprint, capabilities?,        // document only when asked
-    health: { load, free_capacity: {total, by_harness}, disk_free_bytes,
+    health: { load?, free_capacity: {total, by_harness}, disk_free_bytes?,
               harnesses: [{id, ready, accounts: [{label, state?, limited_until?,
                             windows?: [{name, used_percent, resets_at?}]}]}],
-              spool_depth, outbox_depth, recent_errors[], draining? },
+              spool_depth?, outbox_depth?, recent_errors[], draining? },
     runs: [{ run_id, state, resumes_at?, reason? }],    // every run held
     closed_sessions: [{ session_id, reason, closed_at }] }  // until answered
 ← { next_sync_ms, lease_ms,

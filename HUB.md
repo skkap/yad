@@ -288,13 +288,22 @@ the runner the path names, and the body's `runner_id` must equal the path's.
 
 The rest of `health` — load, disk, spool and outbox depth, recent errors — is
 for your operators and dashboards. It is the runner's own words, bounded, and
-never carries a credential. The document marks some of it required all the
-same — `load`, `disk_free_bytes`, `spool_depth` and `outbox_depth` — and a yad
-runner always sends them. `yad hub` refuses a sync missing any field the
-document marks required, with `400 invalid`. Be as strict or as lenient as you
-like about the dashboard fields, but know the cost of strictness: a refused
-sync renews nothing, so a runner build that left one out would lose every run
-it holds as the leases lapse.
+never carries a credential. All of it is optional: `load`, `disk_free_bytes`,
+`spool_depth` and `outbox_depth` are left out when they are 0, and a runner may
+leave them out for any other reason. Read an absent one as 0, or as not said.
+
+**A sync may be refused only over what routing reads**
+([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)):
+`runner_id`, `fingerprint`, `health.free_capacity.total`, and each listed run's
+`run_id` and `state` — and, inside a part the runner chose to send, the fields
+the document marks required there: a capability document's, a closed
+session's, a harness's health. Never over a dashboard field, whether it is
+missing or holds a value you did not expect. A refused sync renews nothing, so
+a hub strict about a dashboard field loses every run a runner holds as the
+leases lapse. `yad hub` validates the body against the document, which marks
+exactly these required, and refuses a sync missing one with `400 invalid`.
+Conformance sends a sync whose health is its free capacity alone, and wants it
+taken.
 
 **What you must do, in this order** (the order is `yad hub`'s, and each step
 says why it goes where it does):
@@ -1084,7 +1093,7 @@ cannot parse — an unstamped `dev` build, or a mistyped floor.
 yad conformance <connection url> --token <token> [--second-token <token>] [--harness id] [--lease-wait d]
 ```
 
-Forty-five black-box checks against a URL, written from the protocol rather
+Forty-six black-box checks against a URL, written from the protocol rather
 than from `yad hub`'s internals — nothing in the suite imports the hub, so it
 tests the protocol and not one implementation of it. A failure gives you the
 rule as a sentence and the section of this page that states it.
@@ -1151,7 +1160,7 @@ yad hub token create |
 rm first.token
 ```
 
-It ends `45 passed, 0 failed, 0 skipped`, after about a minute spent waiting
+It ends `46 passed, 0 failed, 0 skipped`, after about a minute spent waiting
 out a lease.
 
 ### What it does not check
@@ -1225,6 +1234,7 @@ checks; the rest is yours to get right.
 - [ ] `start_at` still ahead and `live` sessions only to runners advertising them — [§7](#7-controls-and-features) (C)
 - [ ] `report_capabilities` when the fingerprint moves without a document — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync refused when its body's `runner_id` differs from the path, or its credential is another runner's — [§3](#post-runnersrunnersync) (C)
+- [ ] A sync never refused over a dashboard field — load, disk, spool or outbox depth — only over what routing reads — [§3](#post-runnersrunnersync) (C)
 
 **Leases and loss**
 

@@ -141,6 +141,12 @@ func checks() []check {
 		needs:   credential,
 		run:     checkUnknownFieldsIgnored,
 	}, {
+		id:      "sync/dashboard-health-optional",
+		rule:    "A sync is refused only over what routing reads: one whose health leaves out load, disk_free_bytes, spool_depth and outbox_depth — the dashboard fields — is accepted, since a refused sync renews no lease.",
+		section: hubSync,
+		needs:   credential,
+		run:     checkDashboardHealthOptional,
+	}, {
 		id:      "sync/report-capabilities",
 		rule:    "A sync whose fingerprint differs from the one that came with the document the hub holds, and that carries no document, is answered with a report_capabilities control.",
 		section: hubSync,

@@ -55,17 +55,22 @@ const (
 // Every field of it is computed on every sync, so each one is a read the
 // runner can afford every few seconds, and the lists are capped: a health
 // block that grows with the machine's uptime makes every sync slower for ever.
+//
+// Load, disk, spool and outbox depth are for dashboards, and optional in the
+// document (decision 0047): a sync refused for one of them renews no lease, so
+// a hub strict about a dashboard field would lose every run of a runner build
+// that left it out. free_capacity is the one field here routing needs.
 type Health struct {
 	// Load is the machine's one-minute load average, as uptime(1) prints it —
 	// the whole machine, not this runner's share, and not divided by CPU
 	// count, which the capability document does not carry. 0 from a machine
 	// this runner cannot read one from.
-	Load          float64         `json:"load" doc:"The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. 0 where the runner cannot read one."`
+	Load          float64         `json:"load,omitempty" doc:"The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. For dashboards: absent is 0, or a machine the runner cannot read one from, and a hub never refuses a sync for its absence."`
 	FreeCapacity  Capacity        `json:"free_capacity" doc:"What this sync may be offered, already net of every run the runner holds: total bounds the whole response, and each by_harness figure bounds that harness independently. Offer up to it as sent; do not subtract the runs listed beside it."`
-	DiskFreeBytes int64           `json:"disk_free_bytes" doc:"Free bytes on the disk under the runner's workdirs."`
+	DiskFreeBytes int64           `json:"disk_free_bytes,omitempty" doc:"Free bytes on the disk under the runner's workdirs. For dashboards: absent is 0 or unknown, and a hub never refuses a sync for its absence."`
 	Harnesses     []HarnessHealth `json:"harnesses,omitempty" doc:"Readiness of each harness the runner can drive, with its accounts. A harness with ready false is not claimed for: an offer for it comes back unlisted."`
-	SpoolDepth    int             `json:"spool_depth" doc:"Events the runner holds that this hub has not acknowledged."`
-	OutboxDepth   int             `json:"outbox_depth" doc:"Results the runner holds that this hub has not acknowledged."`
+	SpoolDepth    int             `json:"spool_depth,omitempty" doc:"Events the runner holds that this hub has not acknowledged. For dashboards: absent is 0 or unknown, and a hub never refuses a sync for its absence."`
+	OutboxDepth   int             `json:"outbox_depth,omitempty" doc:"Results the runner holds that this hub has not acknowledged. For dashboards: absent is 0 or unknown, and a hub never refuses a sync for its absence."`
 	// RecentErrors are the runner's own recent warnings and errors, newest
 	// first, each "<RFC3339 time> <LEVEL> <message>" — why this runner is
 	// slow or idle, in the words its owner sees in `yad status`.
