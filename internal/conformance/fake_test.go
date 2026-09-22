@@ -40,17 +40,17 @@ type fake struct {
 	// The second registration token, and the runner it registers: enough
 	// for the holder rules, which need a runner the hub knows that is not
 	// the one holding the run.
-	token2   string
-	spent2   bool
-	cred2    string
-	runner2  string
-	runs     map[string]*fakeRun
-	order    []string
+	token2  string
+	spent2  bool
+	cred2   string
+	runner2 string
+	runs    map[string]*fakeRun
+	order   []string
 	// fingerprint is the one that came with the document the hub holds:
 	// none after register, which carries no fingerprint.
 	fingerprint string
-	interval time.Duration
-	lease    time.Duration
+	interval    time.Duration
+	lease       time.Duration
 }
 
 type fakeRun struct {
@@ -520,7 +520,7 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 	if f.flaw == flawTakesNoBearer && bearer(r) == "" {
 		guarded = false
 	}
-	if guarded &&(f.cred == "" || bearer(r) != f.cred && (f.cred2 == "" || bearer(r) != f.cred2)) {
+	if guarded && (f.cred == "" || bearer(r) != f.cred && (f.cred2 == "" || bearer(r) != f.cred2)) {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "this hub does not know that runner credential", "register again")
 		return false
 	}
