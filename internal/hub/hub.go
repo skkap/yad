@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -49,6 +50,13 @@ const (
 	missedIntervals     = 4
 	minLease            = 60 * time.Second
 )
+
+// DefaultAbandonAfter is how long a runner may go without a sync before the
+// hub gives up its sessions (decision 0046). A day outlasts a laptop closed
+// overnight or a weekend-length network fault on a server only barely, and
+// that is the trade: shorter strands fewer queued runs behind a machine that
+// is gone for good, and closes more warm sessions on one that was only asleep.
+const DefaultAbandonAfter = 24 * time.Hour
 
 // SyncFloorForTests replaces MinSyncInterval in the clamp while it is positive,
 // so a test that is both sides of the protocol can run it in milliseconds
@@ -82,6 +90,12 @@ type Options struct {
 	Store *store.Store
 	// SyncInterval is what runners are told; zero means DefaultSyncInterval.
 	SyncInterval time.Duration
+	// AbandonAfter is how long a runner may go without a sync before its
+	// sessions are closed and the runs queued in them fail; zero means
+	// DefaultAbandonAfter. Validate it with ValidateAbandonAfter: one no
+	// longer than the lease would give up on a runner whose runs are still
+	// leased to it.
+	AbandonAfter time.Duration
 	// MinVersion is the oldest yad an operator will support against this hub.
 	// Empty is no floor, and is the default: a hub only refuses a runner when
 	// its operator has said which version to refuse below. Validate it with
@@ -106,6 +120,11 @@ type Hub struct {
 	now      func() time.Time
 	interval time.Duration
 	lease    time.Duration
+	// abandonAfter is the silence after which a runner's sessions are
+	// given up (decision 0046), and started is when this hub began counting
+	// it.
+	abandonAfter time.Duration
+	started      time.Time
 	// minVersion is the floor runners are refused below, and is sent to every
 	// runner in the register and sync responses so it can say why it stopped.
 	minVersion string
@@ -114,22 +133,15 @@ type Hub struct {
 
 // New builds a hub with every v1 operation registered.
 func New(opts Options) *Hub {
-	h := &Hub{store: opts.Store, now: opts.Now, interval: opts.SyncInterval, minVersion: opts.MinVersion, command: opts.Command}
+	h := &Hub{store: opts.Store, now: opts.Now, minVersion: opts.MinVersion, command: opts.Command, abandonAfter: opts.AbandonAfter}
 	if h.now == nil {
 		h.now = time.Now
 	}
-	if h.interval == 0 {
-		h.interval = DefaultSyncInterval
+	h.interval, h.lease = timings(opts.SyncInterval)
+	if h.abandonAfter == 0 {
+		h.abandonAfter = DefaultAbandonAfter
 	}
-	floor := MinSyncInterval
-	if SyncFloorForTests > 0 {
-		floor = SyncFloorForTests
-	}
-	h.interval = min(max(h.interval, floor), MaxSyncInterval)
-	h.lease = max(missedIntervals*h.interval, minLease)
-	if LeaseForTests > 0 {
-		h.lease = LeaseForTests
-	}
+	h.started = h.now()
 
 	inner := http.NewServeMux()
 	api := humago.New(inner, Config())
@@ -150,6 +162,40 @@ func New(opts Options) *Hub {
 	})
 	h.api, h.service, h.mux = api, svc, outer
 	return h
+}
+
+// timings is the interval a hub names for the one it was configured with, and
+// the lease that goes with it.
+func timings(configured time.Duration) (interval, lease time.Duration) {
+	interval = configured
+	if interval == 0 {
+		interval = DefaultSyncInterval
+	}
+	floor := MinSyncInterval
+	if SyncFloorForTests > 0 {
+		floor = SyncFloorForTests
+	}
+	interval = min(max(interval, floor), MaxSyncInterval)
+	lease = max(missedIntervals*interval, minLease)
+	if LeaseForTests > 0 {
+		lease = LeaseForTests
+	}
+	return interval, lease
+}
+
+// ValidateAbandonAfter refuses a silence no longer than the lease a hub with
+// this sync interval names. Such a runner has not gone: its runs are still
+// leased to it, its next sync may be on the way, and closing its sessions
+// would fail the runs queued behind a runner doing everything right. Zero is
+// refused too: it is Options' "the default", and an operator typing it more
+// likely means "never", which this hub does not offer.
+func ValidateAbandonAfter(abandonAfter, syncInterval time.Duration) error {
+	_, lease := timings(syncInterval)
+	if abandonAfter <= lease {
+		return fmt.Errorf("--abandon-after %s is not longer than this hub's %s lease, and a runner whose runs are still leased to it has not gone — name more than %s (the default is %s)",
+			abandonAfter, lease, lease, DefaultAbandonAfter)
+	}
+	return nil
 }
 
 // protocolRoutes makes every response under the base the protocol's own.
@@ -352,8 +398,12 @@ func (h *Hub) register(api huma.API) {
 		OperationID: "sync", Method: http.MethodPost, Path: "/runners/{runner}/sync",
 		Summary: "Heartbeat, lease renewal, health and the ask for work, in one call",
 		Description: "Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed " +
-			"here was never received and will be offered again. A listed run this runner does not hold — never offered to it, " +
-			"offered to another, or already finished or lost — is answered with a cancel control for that run.",
+			"here was never received and will be offered again. An offer carries the same lease_ms as a claim: one not claimed within it " +
+			"goes back in the queue, for this runner or any other, and a claim listed after that is refused with a cancel, as a lapsed " +
+			"claim is. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — " +
+			"is answered with a cancel control for that run. A runner that does not sync for longer than the hub's abandon-after " +
+			"(yad hub: 24 h, --abandon-after) has every session bound to it closed and the runs queued in them ended, and keeps its " +
+			"credential: its next sync is answered normally, with close_session for each of those sessions until it reports the close.",
 		Security: security, Errors: []int{400, 401, 403, 426},
 	}, h.sync)
 

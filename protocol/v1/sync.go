@@ -106,8 +106,10 @@ type HeldRun struct {
 
 // SyncResponse is what the hub wants done until the next sync.
 type SyncResponse struct {
-	NextSyncMS int       `json:"next_sync_ms"`
-	LeaseMS    int       `json:"lease_ms"`
+	NextSyncMS int `json:"next_sync_ms"`
+	// LeaseMS covers offers as well as claims (decision 0046): a runner that
+	// goes silent holding an offer strands nothing past it.
+	LeaseMS    int       `json:"lease_ms" doc:"How long the hub holds each run named in this answer for this runner without hearing from it: every run offered here, and every run the request listed. A listed run the lease lapses on is lost. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."`
 	Runs       []Run     `json:"runs,omitempty"`
 	Controls   []Control `json:"controls,omitempty"`
 	MinVersion string    `json:"min_version,omitempty"`

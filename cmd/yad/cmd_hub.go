@@ -53,6 +53,7 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 	listen := fs.String("listen", defaultHubListen, "address to serve the protocol and the service API on")
 	dbFile := fs.String("db", g.paths.HubDB(), "the hub's database")
 	minVersion := fs.String("min-version", "", "refuse runners older than this yad version, e.g. 0.4.0 (default: take any version)")
+	abandonAfter := fs.Duration("abandon-after", hub.DefaultAbandonAfter, "close the sessions of a runner that has not synced for this long, and fail the runs queued in them; its credential stays, so it can come back")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -61,12 +62,17 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 	if err := hub.ValidateMinVersion(*minVersion); err != nil {
 		return err
 	}
+	// The interval is the hub's default: serve names no other, so the lease
+	// the silence must outlast is the one New will compute from it.
+	if err := hub.ValidateAbandonAfter(*abandonAfter, hub.DefaultSyncInterval); err != nil {
+		return err
+	}
 	s, err := store.Open(ctx, *dbFile)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-	h := hub.New(hub.Options{Store: s, MinVersion: *minVersion, Command: hubAnswerCommand(g.paths, *dbFile)})
+	h := hub.New(hub.Options{Store: s, MinVersion: *minVersion, AbandonAfter: *abandonAfter, Command: hubAnswerCommand(g.paths, *dbFile)})
 
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
