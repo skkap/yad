@@ -146,6 +146,8 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawNoCancel, check: "lease/lapse", leaseWait: time.Minute, want: Passed},
 		{flaw: flawNoCancel, check: "lease/offer-lapse", leaseWait: time.Minute, third: true, want: Skipped},
 		{flaw: flawIgnoresBodyRunner, check: "sync/runner-id-matches-the-path", want: Failed},
+		{flaw: flawIgnoresDocumentRunner, check: "sync/document-runner-id-matches-the-path", want: Failed},
+		{flaw: flawDocumentRunnerIs500, check: "sync/document-runner-id-matches-the-path", want: Failed},
 		{flaw: flawAnyCredentialSyncs, check: "sync/another-runners-credential", second: true, want: Failed},
 		{flaw: flawNoReportCaps, check: "sync/report-capabilities", want: Failed},
 		{flaw: flawInvalidIs500, check: "errors/invalid-body", want: Failed},

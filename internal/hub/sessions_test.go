@@ -232,3 +232,49 @@ func TestAWithdrawnClaimsCloseIsBelievedFromItsRunnerAlone(t *testing.T) {
 		})
 	}
 }
+
+// A run waiting in a session whose close this hub has asked for is held back
+// until the runner reports the close, and then ends with it (DEV-120). The
+// runner acts on close_session before the offers in the same answer, so an
+// offer beside the control would be refused as session_closed: a failed run
+// where the close meant a cancelled one.
+func TestNoRunIsOfferedIntoAClosingSession(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	f.mustSync(t, "r1", cred, first("r1", 1))
+	f.enqueue(t, run("a", "s1"))
+	f.mustSync(t, "r1", cred, req("r1", 1))
+	f.mustSync(t, "r1", cred, req("r1", 0, claimed("a")...))
+	next := run("b", "s1")
+	next.Session.New = false
+	f.enqueue(t, next)
+	if code, env := f.result(t, cred, "a", v1.Result{State: v1.RunSucceeded}); code != http.StatusOK {
+		t.Fatalf("result: %d %+v", code, env)
+	}
+	// No free capacity, so b is still queued when the close is asked for.
+	f.mustSync(t, "r1", cred, req("r1", 0))
+	if code, e := f.api(t, "POST", "/sessions/s1/close", tok, nil, nil); code != http.StatusOK {
+		t.Fatalf("close: %d %+v", code, e)
+	}
+
+	res := f.mustSync(t, "r1", cred, req("r1", 1))
+	if got := closes(res); !slices.Equal(got, []string{"s1"}) {
+		t.Fatalf("close_session controls = %v", got)
+	}
+	if len(res.Runs) != 0 {
+		t.Errorf("offered %v into a session it asked closed", ids(res.Runs))
+	}
+	if s := f.state(t, "b"); s != "queued" {
+		t.Errorf("b is %s before the close is reported, want queued", s)
+	}
+
+	done := req("r1", 1)
+	done.ClosedSessions = []v1.ClosedSession{{SessionID: "s1", Reason: v1.SessionClosed, ClosedAt: f.clock.Now()}}
+	if res := f.mustSync(t, "r1", cred, done); len(res.Runs) != 0 {
+		t.Errorf("offered %v in the answer to the close", ids(res.Runs))
+	}
+	if s := f.state(t, "b"); s != string(v1.RunCancelled) {
+		t.Errorf("b is %s after the close, want cancelled", s)
+	}
+}

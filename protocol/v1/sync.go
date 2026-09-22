@@ -9,12 +9,12 @@ type SyncRequest struct {
 	Fingerprint string `json:"fingerprint" doc:"An opaque hash of the runner's capability document. Compare it with the one that came with the document you hold; when it differs and capabilities is absent, answer with a report_capabilities control."`
 	// Capabilities is sent only when the hub asked for it with
 	// ControlReportCapabilities, or on the first sync after a fingerprint move.
-	Capabilities *Capabilities `json:"capabilities,omitempty" doc:"The full capability document, sent on the first sync of every runner process, after the fingerprint moves, and after a report_capabilities control. When present it replaces the one you hold."`
+	Capabilities *Capabilities `json:"capabilities,omitempty" doc:"The full capability document, sent on the first sync of every runner process, after the fingerprint moves, and after a report_capabilities control. When present it replaces the one you hold. Its runner_id is the path's; a sync whose document names another runner is refused as invalid."`
 	Health       Health        `json:"health" doc:"The runner's state for routing and alerting, computed fresh for this sync: free capacity, per-harness readiness, disk, load, what it owes this hub, recent errors, and whether it is draining."`
 	// Runs lists every run the runner holds. Listing a run is how it is claimed
 	// and how its lease is renewed; a run the hub offered and this list omits
 	// was never received.
-	Runs []HeldRun `json:"runs,omitempty" doc:"Every run the runner holds. Listing a run offered in the previous response claims it; listing a claimed run renews its lease. An offered run left out was never received, and goes back in the queue at this sync. A listed run the runner does not hold is answered with a cancel control for it."`
+	Runs []HeldRun `json:"runs,omitempty" doc:"Every run the runner holds. Listing a run offered in the previous response claims it; listing a claimed run renews its lease. An offered run left out was never received, and goes back in the queue at this sync. A listed run the runner does not hold is answered with a cancel control for it. Each run is listed at most once; a hub handed two listings of one run may apply either."`
 	// ClosedSessions are sessions this runner has closed and whose workdirs
 	// it reclaims, each listed in every sync until one carrying it is
 	// answered with a 2xx — at least once, so a hub records them by session
@@ -22,7 +22,7 @@ type SyncRequest struct {
 	// session listed here: the runner refuses them. Sent by runners that
 	// advertise the "close_session" feature, which also act on the
 	// close_session control.
-	ClosedSessions []ClosedSession `json:"closed_sessions,omitempty" doc:"Sessions this runner has closed, each repeated in every sync until one carrying it is answered with a 2xx. Record them by session id, take a repeat as the same news, stop offering runs in them, and end the runs still queued in them. Sent only by runners advertising close_session."`
+	ClosedSessions []ClosedSession `json:"closed_sessions,omitempty" doc:"Sessions this runner has closed, each repeated in every sync until one carrying it is answered with a 2xx. Record them by session id, take a repeat as the same news, stop offering runs in them, and end the runs still queued in them. A runner advertising close_session reports every close here; a close from one that does not is believed all the same."`
 }
 
 // ClosedSession is one session a runner has closed, and why.

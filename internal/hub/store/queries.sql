@@ -72,10 +72,14 @@ SELECT * FROM runs WHERE id = ?;
 -- after the (created_at, id) cursor: only harnesses it can take now, only the
 -- oldest queued run of each session, only in a session that is unbound or
 -- bound to it, and never while another run of that session is out, since a
--- session has at most one live run. Filtering here rather than in Go is what
--- keeps runs it must skip from filling the page ahead of runs it could take.
+-- session has at most one live run. Nor in a session whose close is asked
+-- for: the runner acts on close_session before the offers beside it and would
+-- refuse the run, which instead ends with the close once reported (DEV-120).
+-- Filtering here rather than in Go is what keeps runs it must skip from
+-- filling the page ahead of runs it could take.
 SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
+  AND s.close_requested_at IS NULL AND s.closed_at IS NULL
   AND r.harness IN (SELECT value FROM json_each(sqlc.arg(harnesses_json)))
   AND (r.created_at > sqlc.arg(after_created_at) OR (r.created_at = sqlc.arg(after_created_at) AND r.id > sqlc.arg(after_id)))
   AND (s.runner_id IS NULL OR s.runner_id = sqlc.arg(runner_id))

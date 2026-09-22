@@ -289,6 +289,30 @@ func checkRunnerIDMatchesThePath(ctx context.Context, s *session) error {
 	return refused(a)
 }
 
+// checkDocumentRunnerIDMatchesThePath sends this runner's own credential, id
+// and fingerprint to its own path with a capability document naming another
+// runner. The document is stored as the syncing runner's, so a hub taking it
+// describes one runner by what another advertised (DEV-120). No capacity is
+// declared, so a hub that takes it offers nothing on the strength of it.
+func checkDocumentRunnerIDMatchesThePath(ctx context.Context, s *session) error {
+	id, err := newID()
+	if err != nil {
+		return err
+	}
+	req := s.syncRequest(0)
+	doc := s.doc()
+	doc.RunnerID = DefaultHarness + "-" + id
+	req.Capabilities = &doc
+	a, err := s.c.do(ctx, call{path: s.syncPath(), bearer: s.cred, body: req})
+	if err != nil {
+		return err
+	}
+	if a.ok() {
+		return brokenf("a sync to runner %s's path carrying a capability document for runner %s was taken: %s", s.runner, doc.RunnerID, a)
+	}
+	return refusedInvalid(a)
+}
+
 // checkAnotherRunnersCredential syncs as this runner with the second runner's
 // credential. A hub that checks only that a credential is one it issued lets
 // any runner it knows claim, renew and be offered another's runs — and the

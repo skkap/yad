@@ -33,6 +33,13 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			fmt.Sprintf("body runner_id %q does not match the path's %q", req.RunnerID, in.Runner),
 			"send the same runner id in the path and the body")
 	}
+	// The document names its runner too, and is stored as this one's: a
+	// third id to disagree with is refused for the same reason (DEV-120).
+	if req.Capabilities != nil && req.Capabilities.RunnerID != in.Runner {
+		return nil, Fail(http.StatusBadRequest, v1.CodeInvalid,
+			fmt.Sprintf("the capability document's runner_id %q does not match the path's %q", req.Capabilities.RunnerID, in.Runner),
+			"send the capability document of the runner that is syncing")
+	}
 	health, err := json.Marshal(req.Health)
 	if err != nil {
 		return nil, err
