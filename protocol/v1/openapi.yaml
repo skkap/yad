@@ -145,7 +145,7 @@ components:
           format: date-time
           type: string
         reason:
-          description: "closed: the hub asked, with close_session. closed_by_owner: the runner's owner closed it on the machine. expired: nothing ran in it for the owner's idle TTL. disk_pressure: the disk under the workdirs ran low and it was among the longest idle. Each means the same for routing: a new run needs a new session."
+          description: "closed: the hub asked, with close_session. closed_by_owner: the runner's owner closed it on the machine. expired: nothing ran in it for the owner's idle TTL. disk_pressure: the disk under the workdirs ran low and it was among the longest idle. Each means the same for routing: a new run needs a new session. A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."
           enum:
             - closed
             - closed_by_owner
@@ -164,7 +164,7 @@ components:
       additionalProperties: true
       properties:
         kind:
-          description: "cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name."
+          description: "cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."
           enum:
             - cancel
             - interrupt
@@ -230,7 +230,7 @@ components:
           $ref: "#/components/schemas/RunError"
           description: For an error event.
         kind:
-          description: "text: the harness said something (text). thinking: its reasoning (text). tool_call: it called a tool (tool.id, tool.name, tool.input). tool_result: the tool answered (tool.id, tool.output). status: a phase of the run, for people (status, text). usage: tokens one model used (usage). error: something went wrong, whether or not the run carries on (error)."
+          description: "text: the harness said something (text). thinking: its reasoning (text). tool_call: it called a tool (tool.id, tool.name, tool.input). tool_result: the tool answered (tool.id, tool.output). status: a phase of the run, for people (status, text). usage: tokens one model used (usage). error: something went wrong, whether or not the run carries on (error). A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."
           enum:
             - text
             - thinking
@@ -432,7 +432,7 @@ components:
           description: The run.
           type: string
         state:
-          description: Where the run is. A run whose result is written but not yet acknowledged stays listed as running, so its lease outlasts a hub outage.
+          description: "Where the run is. A run whose result is written but not yet acknowledged stays listed as running, so its lease outlasts a hub outage. A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."
           enum:
             - claimed
             - preparing
@@ -531,7 +531,7 @@ components:
       additionalProperties: true
       properties:
         hub_features:
-          description: Features this hub has beyond the v1 baseline. v1 defines none, and a hub that sends none is complete.
+          description: Features this hub has beyond the v1 baseline. v1 defines none, and a hub that sends none is complete. A value v1 adds to one of its enums later is sent only to a hub advertising the feature that adds it.
           items:
             type: string
           type: array
@@ -571,7 +571,7 @@ components:
           $ref: "#/components/schemas/Metrics"
           description: "How the run went: duration, time to first event, tool calls, retries, stalls, waits and account switches."
         state:
-          description: How the run ended. lost here is the runner's own report of a run a previous process held and could not finish.
+          description: "How the run ended. lost here is the runner's own report of a run a previous process held and could not finish. A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."
           enum:
             - succeeded
             - failed

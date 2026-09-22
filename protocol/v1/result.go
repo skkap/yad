@@ -4,7 +4,7 @@ package v1
 // before the first attempt and retried until acknowledged; a hub applies it at
 // most once and answers 409 when it already holds a different terminal state.
 type Result struct {
-	State     RunState  `json:"state" enum:"succeeded,failed,cancelled,timed_out,lost" doc:"How the run ended. lost here is the runner's own report of a run a previous process held and could not finish."`
+	State     RunState  `json:"state" enum:"succeeded,failed,cancelled,timed_out,lost" doc:"How the run ended. lost here is the runner's own report of a run a previous process held and could not finish. A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."`
 	FinalText string    `json:"final_text,omitempty" doc:"The harness's last answer, at most 1 MiB."`
 	Error     *RunError `json:"error,omitempty" doc:"Why the run did not succeed. A failed result with class refused is the runner declining a run, usually one it was offered and never claimed; it may come for a claimed run too, and is applied as any terminal state. A refused run is not offered again."`
 	Usage     RunUsage  `json:"usage" doc:"Tokens the whole run used, by model."`

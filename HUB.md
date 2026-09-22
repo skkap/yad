@@ -143,15 +143,19 @@ override anyway:**
 - **Unknown fields are ignored.** Every object allows additional properties,
   so a field added within v1 never breaks an older hub or runner. Do not
   reject what you do not recognise.
-- **Unknown values are not.** An enum in the document is a closed set in v1 —
-  an event's `kind`, a held run's `state`, a result's `state`, a closed
-  session's `reason` — and `yad hub` refuses a body carrying a value outside
-  one with `400 invalid`, as it refuses any body that fails the document's
-  schema. A runner meeting that refusal on a batch of events drops the batch
-  (§6), so a runner that sent a new kind to an older hub would lose it —
-  which is why whether v1 may ever add a value to one of these is an **open
-  point**, not yet decided. Until it is, no yad runner sends a value outside
-  them. §11 has what does grow within v1.
+- **Unknown values are not.** Every enum in the document is closed for all
+  of v1 ([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md))
+  — an event's `kind`, a held run's `state`, a result's `state`, a closed
+  session's `reason`, a control's `kind`, and the rest the document declares.
+  You may refuse a body carrying a value outside one: `yad hub` does, with
+  `400 invalid`, as it refuses any body that fails the document's schema. No
+  runner sends you one unless you asked for it. A value added to one of these
+  sets arrives only behind a feature — sent to a hub only once it has
+  advertised the feature in `hub_features`, as a new control goes to a runner
+  only once it has advertised one in `protocol_features` (§11). Without that
+  rule a runner sending a new event kind to an older hub would meet `400
+  invalid` and drop the whole batch (§6), events of the kinds you know
+  included.
 
 **Types.** Times are RFC 3339 strings (`format: date-time`); a runner sends
 UTC. Every duration is an integer number of milliseconds and says so in its
@@ -1065,14 +1069,25 @@ v1, a field is never renamed or removed.
 **Within v1, things are added, and both sides tolerate it.** Unknown fields
 are ignored (§2); unknown error codes go by the status (§10); unknown error
 classes and status labels are shown rather than parsed; unknown
-`protocol_features` strings are ignored. A new control kind is sent only to a
-runner that advertises a feature for it, so an older runner never sees one.
+`protocol_features` strings are ignored.
+
+**Enums do not grow unasked.** Every enum in the document — event kind, run
+state, result state, close reason, control kind and the rest — is closed for
+all of v1
+([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)).
+A value added to one arrives only behind a feature the receiving side
+advertised: a new control kind goes only to a runner advertising a feature for
+it in `protocol_features`, and a new event kind, run state, result state or
+close reason goes only to a hub advertising one in `hub_features`. So an older
+side never sees a value it cannot validate, and may refuse one it was sent
+anyway as `invalid`.
 
 **Features, both ways.** The runner advertises `protocol_features` in its
 capability document; the hub may advertise `hub_features` at register. Nothing
 is used that the other side did not advertise (§7). v1 defines no hub
-features. A runner whose fingerprint moved without the document it promised is
-treated as advertising nothing until the document arrives.
+features, so a yad runner sends only the values the document lists. A runner
+whose fingerprint moved without the document it promised is treated as
+advertising nothing until the document arrives.
 
 **`min_version` refuses old runners, if you want to.** Answer `min_version` in
 register and sync responses, and refuse a runner below it with
