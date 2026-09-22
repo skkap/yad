@@ -8,6 +8,13 @@ The short version is in the README. This is the long one, and every claim in it
 is a claim about the code in this repository — where a sentence rests on a
 decision record or a file, it names it, so you can check rather than believe.
 
+One sentence to hold on to throughout: **whoever sets YAD up decides what
+access its harnesses get, and sandboxes YAD and its harnesses themselves if
+they need them confined.** YAD is not a sandbox, and nothing below changes
+that; it tells you where the edges are so you can draw your own. To try a
+runner out without touching the one you already have, run it in a profile of
+its own ([trial.md](trial.md)).
+
 ## What a runner does on the machine you give it
 
 A run arrives from a hub. The runner prepares a workdir, starts a harness —
