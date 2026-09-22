@@ -73,6 +73,33 @@ func TestLinksFollowDetection(t *testing.T) {
 	}
 }
 
+// A data directory given relative is still one a child in its workdir can
+// reach: the PATH entry is absolute, like the links in it.
+func TestLinksPathIsAbsolute(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "git-2.45")
+	if err := os.WriteFile(override, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	for _, tool := range Catalog() {
+		t.Setenv(tool.EnvPath, "")
+	}
+	t.Setenv("YAD_GIT_PATH", override)
+	data := t.TempDir()
+	path, err := Links(LinksDir(relative(t, data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := strings.TrimPrefix(path, "PATH=")
+	first, _, _ := strings.Cut(entry, ":")
+	if !filepath.IsAbs(first) {
+		t.Fatalf("Links = %q: the links' directory is relative to the runner's working directory", path)
+	}
+	if got, err := os.Readlink(filepath.Join(first, "git")); err != nil || got != override {
+		t.Errorf("%s/git links to %q (%v), want %q", first, got, err, override)
+	}
+}
+
 // relative is path from the test's working directory, as an owner who typed
 // YAD_GIT_PATH=../bin/git would have it.
 func relative(t *testing.T, path string) string {

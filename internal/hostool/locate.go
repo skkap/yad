@@ -56,6 +56,13 @@ var linksMu sync.Mutex
 func Links(dir string) (string, error) {
 	linksMu.Lock()
 	defer linksMu.Unlock()
+	// Absolute for the same reason as each link's target: a child runs in its
+	// workdir, where a relative PATH entry — a YAD_DATA_DIR given relative —
+	// names a directory with no links in it.
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
 	linked := false
 	for _, t := range Catalog() {
 		want := ""
