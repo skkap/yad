@@ -441,13 +441,17 @@ func TestConcurrentEnsureOnOneHome(t *testing.T) {
 // This is the invariant remove-then-symlink could not hold: in the gap between
 // the two, a harness one run had already started could create a real directory
 // at projects/ and write its transcripts somewhere no other account can see.
-// Replacing by rename closes it, and this watches for the gap rather than
-// checking the state once everyone has finished.
+// Replacing by rename closes it.
 //
-// A breaker keeps pointing the link at a decoy so the racers have real work —
-// without it every Ensure returns at the already-correct check and the test
-// proves nothing. The breaker replaces atomically itself, so any gap the
-// observer sees belongs to the code under test.
+// Nothing here waits on the scheduler to produce the race. Each round points
+// the link at a decoy before releasing the racers, so at least one of them
+// has to re-link — without that every Ensure returns at the already-correct
+// check and the test proves nothing, which is how its first version passed
+// against the code it was written to catch. The decoy is put in place by an
+// atomic replace, so any gap belongs to the code under test. beforeReplace
+// then looks at the path from inside every re-link, at the instant a
+// remove-first version would have it empty, and a free-running observer
+// watches the rest of the time.
 func TestTheTranscriptLinkIsNeverObservedMissing(t *testing.T) {
 	data := t.TempDir()
 	home, err := Ensure(data, "claude", "work")
@@ -460,26 +464,43 @@ func TestTheTranscriptLinkIsNeverObservedMissing(t *testing.T) {
 	if err := os.MkdirAll(decoy, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// Atomic replace, so the breaker never creates a gap of its own.
-	var swaps atomic.Int64
-	swapTo := func(target string) {
+	pointAtDecoy := func() {
 		tmp, err := os.MkdirTemp(filepath.Dir(link), ".swap-")
 		if err != nil {
-			return
+			t.Fatal(err)
 		}
 		defer os.RemoveAll(tmp)
 		staged := filepath.Join(tmp, "link")
-		if os.Symlink(target, staged) == nil && os.Rename(staged, link) == nil {
-			swaps.Add(1)
+		if err := os.Symlink(decoy, staged); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(staged, link); err != nil {
+			t.Fatal(err)
 		}
 	}
 
+	gaps := make(chan string, 1)
+	sawGap := func(when string, err error) {
+		select {
+		case gaps <- when + ": " + err.Error():
+		default:
+		}
+	}
+	var relinks atomic.Int64
+	beforeReplace = func(path string) {
+		if path != link {
+			return
+		}
+		relinks.Add(1)
+		if _, err := os.Lstat(path); err != nil {
+			sawGap("as a racer was about to re-link it", err)
+		}
+	}
+	t.Cleanup(func() { beforeReplace = nil })
+
 	stop := make(chan struct{})
-	gaps := make(chan string, 4)
-	var bg sync.WaitGroup
-	bg.Add(2)
-	go func() { // the observer
-		defer bg.Done()
+	var observer sync.WaitGroup
+	observer.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -489,62 +510,46 @@ func TestTheTranscriptLinkIsNeverObservedMissing(t *testing.T) {
 			// Lstat, not Stat: the question is whether anything is at the
 			// path at all, not whether it resolves.
 			if _, err := os.Lstat(link); err != nil {
-				select {
-				case gaps <- err.Error():
-				default:
-				}
+				sawGap("between re-links", err)
 				return
 			}
 		}
-	}()
-	go func() { // the breaker
-		defer bg.Done()
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			swapTo(decoy)
-		}
-	}()
+	})
+	stopObserver := sync.OnceFunc(func() { close(stop); observer.Wait() })
+	defer stopObserver()
 
-	var racers sync.WaitGroup
-	for range 4 {
-		racers.Add(1)
-		go func() {
-			defer racers.Done()
-			for range 60 {
+	const rounds, racers = 50, 4
+	for round := range rounds {
+		pointAtDecoy()
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range racers {
+			wg.Go(func() {
+				<-start // let them collide rather than run in turn
 				if _, err := Ensure(data, "claude", "work"); err != nil {
 					t.Errorf("Ensure failed while another was running: %v", err)
-					return
 				}
-			}
-		}()
+			})
+		}
+		close(start)
+		wg.Wait()
+		if at, err := os.Readlink(link); err != nil || at != want {
+			t.Fatalf("after round %d the link is %q (%v), want %s", round, at, err, want)
+		}
 	}
-	racers.Wait()
-	close(stop)
-	bg.Wait()
+	stopObserver()
 
 	select {
 	case g := <-gaps:
-		t.Errorf("the link was missing while a run was re-linking it: %s", g)
+		t.Errorf("the link was missing %s", g)
 	default:
 	}
-	// Without a breaker that actually broke it, every Ensure returned at the
-	// already-correct check and nothing was contended — which is how the
-	// first version of this test passed against the code it was written to
-	// catch.
-	if n := swaps.Load(); n == 0 {
-		t.Error("the breaker never re-pointed the link, so no racer had to re-link and this test proved nothing")
-	}
-	// The breaker may have won the last write; what matters is that a final
-	// Ensure lands it back on the shared directory.
-	if _, err := Ensure(data, "claude", "work"); err != nil {
-		t.Fatal(err)
-	}
-	if at, err := os.Readlink(link); err != nil || at != want {
-		t.Errorf("link is %q (%v), want %s", at, err, want)
+	// Every round began at the decoy and ended at the shared directory, so
+	// some racer re-linked in each. Fewer calls than rounds means they did it
+	// by a path beforeReplace does not stand in — a remove-and-symlink put
+	// back in place of placeLink — and the check above watched nothing.
+	if n := relinks.Load(); n < rounds {
+		t.Errorf("%d of %d rounds re-linked through placeLink; the rest replaced the link some other way, which nothing here watched", n, rounds)
 	}
 }
 
