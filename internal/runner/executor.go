@@ -1188,13 +1188,31 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 // a setup hook that failed run again — and one naming others is refused,
 // since the workdir is already theirs. record says the session has none
 // recorded yet, so this run's are to be.
+//
+// None are recorded yet when the run that opened the session never prepared
+// — a claim the hub acknowledged, reported lost at a restart while it waited
+// for its start_at (decision 0047). The session is the opener's still, and a
+// continuing run naming no sources is prepared from the opener's, as its spec
+// kept them, and records them; built from none, the workdir would be empty
+// and nothing would say so.
 func (e *Exec) sessionSources(ctx context.Context, c Claim) (sources []v1.Source, record bool, err error) {
 	sess, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
 	if err != nil {
 		return nil, false, err
 	}
 	if !sess.Sources.Valid {
-		return c.Run.Sources, true, nil
+		if len(c.Run.Sources) > 0 {
+			return c.Run.Sources, true, nil
+		}
+		spec, err := e.Store.SessionOpenerSpec(ctx, db.SessionOpenerSpecParams{Connection: c.Connection, SessionID: c.Run.Session.ID})
+		if err != nil {
+			return nil, false, err
+		}
+		var opener v1.Run
+		if err := json.Unmarshal([]byte(spec), &opener); err != nil {
+			return nil, false, fmt.Errorf("the run that opened session %s is unreadable (%v) — start a new session", c.Run.Session.ID, err)
+		}
+		return opener.Sources, true, nil
 	}
 	if err := json.Unmarshal([]byte(sess.Sources.String), &sources); err != nil {
 		return nil, false, fmt.Errorf("the session's recorded sources are unreadable (%v) — start a new session", err)

@@ -110,7 +110,7 @@ components:
           $ref: "#/components/schemas/RunError"
           description: For an error event.
         kind:
-          description: "text: the harness said something (text). thinking: its reasoning (text). tool_call: it called a tool (tool.id, tool.name, tool.input). tool_result: the tool answered (tool.id, tool.output). status: a phase of the run, for people (status, text). usage: tokens one model used (usage). error: something went wrong, whether or not the run carries on (error)."
+          description: "text: the harness said something (text). thinking: its reasoning (text). tool_call: it called a tool (tool.id, tool.name, tool.input). tool_result: the tool answered (tool.id, tool.output). status: a phase of the run, for people (status, text). usage: tokens one model used (usage). error: something went wrong, whether or not the run carries on (error). A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."
           enum:
             - text
             - thinking
@@ -319,7 +319,7 @@ components:
           $ref: "#/components/schemas/Metrics"
           description: "How the run went: duration, time to first event, tool calls, retries, stalls, waits and account switches."
         state:
-          description: How the run ended. lost here is the runner's own report of a run a previous process held and could not finish.
+          description: "How the run ended. lost here is the runner's own report of a run a previous process held and could not finish. A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."
           enum:
             - succeeded
             - failed

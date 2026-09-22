@@ -4,6 +4,12 @@ import "time"
 
 // EventKind is the closed set of normalised events. Every adapter translates
 // its harness's stream into these, so a hub never parses a harness format.
+//
+// Closed for all of v1 (decision 0047), as is every enum the document
+// declares: a hub validating against it refuses a value outside the set, and
+// a runner drops a batch refused as invalid, so a new kind sent to an older hub
+// would lose the whole batch. A new value arrives only behind a feature the
+// hub advertises in hub_features.
 type EventKind string
 
 const (
@@ -30,7 +36,7 @@ const MaxToolOutputBytes = 8 << 10
 type Event struct {
 	Seq    int64      `json:"seq" doc:"The event's place in its run: 1 for the first, then 2, 3, and so on with no gaps. (run, seq) identifies an event; a resent one keeps its seq."`
 	At     time.Time  `json:"at" doc:"When it happened on the runner."`
-	Kind   EventKind  `json:"kind" enum:"text,thinking,tool_call,tool_result,status,usage,error" doc:"text: the harness said something (text). thinking: its reasoning (text). tool_call: it called a tool (tool.id, tool.name, tool.input). tool_result: the tool answered (tool.id, tool.output). status: a phase of the run, for people (status, text). usage: tokens one model used (usage). error: something went wrong, whether or not the run carries on (error)."`
+	Kind   EventKind  `json:"kind" enum:"text,thinking,tool_call,tool_result,status,usage,error" doc:"text: the harness said something (text). thinking: its reasoning (text). tool_call: it called a tool (tool.id, tool.name, tool.input). tool_result: the tool answered (tool.id, tool.output). status: a phase of the run, for people (status, text). usage: tokens one model used (usage). error: something went wrong, whether or not the run carries on (error). A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."`
 	Text   string     `json:"text,omitempty" doc:"The words of a text or thinking event, and the detail of some status events. At most 1 MiB. An error event carries its words in error.message instead."`
 	Tool   *ToolEvent `json:"tool,omitempty" doc:"For tool_call and tool_result."`
 	Status string     `json:"status,omitempty" doc:"For a status event, a short label of the phase, such as account, waiting, cancelling or steered. For display: not a closed set, and not to be parsed."`

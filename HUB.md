@@ -143,15 +143,19 @@ override anyway:**
 - **Unknown fields are ignored.** Every object allows additional properties,
   so a field added within v1 never breaks an older hub or runner. Do not
   reject what you do not recognise.
-- **Unknown values are not.** An enum in the document is a closed set in v1 —
-  an event's `kind`, a held run's `state`, a result's `state`, a closed
-  session's `reason` — and `yad hub` refuses a body carrying a value outside
-  one with `400 invalid`, as it refuses any body that fails the document's
-  schema. A runner meeting that refusal on a batch of events drops the batch
-  (§6), so a runner that sent a new kind to an older hub would lose it —
-  which is why whether v1 may ever add a value to one of these is an **open
-  point**, not yet decided. Until it is, no yad runner sends a value outside
-  them. §11 has what does grow within v1.
+- **Unknown values are not.** Every enum in the document is closed for all
+  of v1 ([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md))
+  — an event's `kind`, a held run's `state`, a result's `state`, a closed
+  session's `reason`, a control's `kind`, and the rest the document declares.
+  You may refuse a body carrying a value outside one: `yad hub` does, with
+  `400 invalid`, as it refuses any body that fails the document's schema. No
+  runner sends you one unless you asked for it. A value added to one of these
+  sets arrives only behind a feature — sent to a hub only once it has
+  advertised the feature in `hub_features`, as a new control goes to a runner
+  only once it has advertised one in `protocol_features` (§11). Without that
+  rule a runner sending a new event kind to an older hub would meet `400
+  invalid` and drop the whole batch (§6), events of the kinds you know
+  included.
 
 **Types.** Times are RFC 3339 strings (`format: date-time`); a runner sends
 UTC. Every duration is an integer number of milliseconds and says so in its
@@ -288,13 +292,22 @@ the runner the path names, and the body's `runner_id` must equal the path's.
 
 The rest of `health` — load, disk, spool and outbox depth, recent errors — is
 for your operators and dashboards. It is the runner's own words, bounded, and
-never carries a credential. The document marks some of it required all the
-same — `load`, `disk_free_bytes`, `spool_depth` and `outbox_depth` — and a yad
-runner always sends them. `yad hub` refuses a sync missing any field the
-document marks required, with `400 invalid`. Be as strict or as lenient as you
-like about the dashboard fields, but know the cost of strictness: a refused
-sync renews nothing, so a runner build that left one out would lose every run
-it holds as the leases lapse.
+never carries a credential. All of it is optional: `load`, `disk_free_bytes`,
+`spool_depth` and `outbox_depth` are left out when they are 0, and a runner may
+leave them out for any other reason. Read an absent one as 0, or as not said.
+
+**A sync may be refused only over what routing reads**
+([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)):
+`runner_id`, `fingerprint`, `health.free_capacity.total`, and each listed run's
+`run_id` and `state` — and, inside a part the runner chose to send, the fields
+the document marks required there: a capability document's, a closed
+session's, a harness's health. Never over a dashboard field, whether it is
+missing or holds a value you did not expect. A refused sync renews nothing, so
+a hub strict about a dashboard field loses every run a runner holds as the
+leases lapse. `yad hub` validates the body against the document, which marks
+exactly these required, and refuses a sync missing one with `400 invalid`.
+Conformance sends a sync whose health is its free capacity alone, and wants it
+taken.
 
 **What you must do, in this order** (the order is `yad hub`'s, and each step
 says why it goes where it does):
@@ -418,17 +431,19 @@ states), `final_text`, `error` with a class and message, `usage` by model,
 it durably before the first attempt and retries until you answer 2xx.
 
 **What you must do:** accept it from the runner the run is offered to *or*
-claimed by; apply it at most once; acknowledge the same state again; refuse a
-different one with `409 conflict`. §6 has the rules, including why the door
-is wider than for events, and an open point about how long an offer keeps it
-open.
+claimed by — an offer only while it is open; apply it at most once;
+acknowledge the same state again; refuse a different one with `409 conflict`.
+§6 has the rules, including why the door is wider than for events and how
+long an offer keeps it open.
 
 **Response:** `{"ok": true}`.
 
 **Refusals** (`yad hub`): `400 invalid` for a state that is not terminal;
-`401 unauthorized`; `403 not_holder`; `404 not_found`; `409 conflict` when you
-already hold a different terminal state; `413` for a body of 16 MiB or more,
-as for events. Conformance checks the non-terminal state and the `413`.
+`401 unauthorized`; `403 not_holder` for a run the caller does not hold and
+is not offered now; `404 not_found`; `409 conflict` when you already hold a
+different terminal state; `413` for a body of 16 MiB or more, as for events.
+Conformance checks the non-terminal state, the `413`, and the `403 not_holder`
+for a refusal sent after the offer was taken back.
 
 ### `POST /runners/{runner}/deregister`
 
@@ -789,22 +804,26 @@ tells you not to try again. A refused run is a failed run: record it so, and
 never offer it again. Conformance checks both halves — it refuses a run it was
 only offered, and wants the result taken and the run not offered after.
 
-**"Offered to" means offered to now.** `yad hub` takes a result from the
-runner a run is offered to between the answer that offered it and the sync
-that takes the offer back — the next one that leaves the run out, or the
-lease lapsing — and from the runner holding it after that. A yad runner sends
-its refusal straight after the sync whose answer carried the offer, before it
-syncs again, so the refusal lands while the offer is open. If that attempt
-fails, it tries again after its next sync, which by leaving the run out has
-taken the offer back. If that sync's answer offered the run to it again, the
-retry lands; if not, `yad hub` answers `403 not_holder`, the runner drops the
-refusal, and the next offer of the run to it is refused afresh.
+**"Offered to" means offered to now**
+([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)).
+Take a result from the runner a run is offered to from the answer that
+offered it until the offer closes: the next sync that leaves the run out,
+which takes the offer back (§3), or the offer's lease lapsing (§5) — lapsed
+is lapsed, whether or not you have yet put the run back in your queue. After
+that, refuse it with `403 not_holder`: the run may be another runner's by
+then, and no runner may fail a run another has. An offer made again, to the
+same runner, opens the door again. Conformance checks it: it leaves an offer
+out of a sync declaring no free capacity, then refuses the run, and wants
+`403 not_holder`.
 
-> **Open point — not yet decided.** Whether the door should stay open for a
-> while after an offer is taken back, so that a refusal delayed by a failure
-> is still heard, and what a hub should do with one that arrives after the
-> run was offered to another runner. Until it is decided, `yad hub`'s rule
-> above is the safe one: no runner can fail a run another runner now has.
+A yad runner sends its refusal straight after the sync whose answer carried
+the offer, before it syncs again, so the refusal lands while the offer is
+open. If that attempt fails, it tries again after its next sync, which by
+leaving the run out has taken the offer back. If that sync's answer offered
+the run to it again, the retry lands; if not, the hub answers `403
+not_holder`, the runner drops the refusal, and the next offer of the run to
+it is refused afresh. A refusal can be lost that way, and the run offered
+once more — never failed by a runner that no longer has it.
 
 A `refused` result may also come for a run the runner has claimed — nothing
 about the class ties it to an unclaimed run, and the conformance suite sends
@@ -890,25 +909,34 @@ A session is a durable conversation with one harness in one working directory,
 on one runner. You choose its id; the runner maps it to the harness's own
 session id, so you never need to know what a transcript file is.
 
-**`session.new` is `true` for the run that opens a session and `false` for
-every later run.** A runner refuses `new: true` for a session id it already
-has, and `new: false` for one it does not hold, rather than guess: guessing
-would resume a conversation that does not exist, or silently start over one
-that does. A later run names the same `sources` as the first, or none.
+**`session.new` is `true` while no claim has bound the session, and `false`
+after** ([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)).
+Decide it when you offer the run, not when it is submitted: the run that
+opens a session is the first one a runner claims, and you learn which that is
+only from your own history. A session whose first run was refused, cancelled
+on its claim, withdrawn or left out by the runner was bound by no claim, and
+exists on no runner — so its next run goes out with `new: true`. Once a claim
+has bound the session (§3), every later run in it goes out `false`. A runner
+refuses `new: true` for a session id it already has, and `new: false` for one
+it does not hold, rather than guess: guessing would resume a conversation that
+does not exist, or silently start over one that does.
 
-> **Open point — not yet decided: `session.new` when the first run never
-> bound the session.** "The run that opens a session" is judged on the
-> runner, and a hub cannot always see it. Take a session whose first run was
-> refused, cancelled on its claim, or left out by the runner, so that no
-> claim ever bound it. What a yad runner keeps is defined: a claim you
-> cancelled or it withdrew leaves no session behind (§4), and a refusal
-> creates none — but a claim held by a runner process that died before the
-> claim was answered leaves the session on its disk, and the run is reported
-> `lost` after the restart. `yad hub` sends each run's `new` exactly as its
-> submitter set it, so the second run of a session whose first was refused
-> goes out with `new: false` to a runner that has no such session, and is
-> refused. The protocol has yet to say what a hub should send when it cannot
-> know whether the session was opened.
+A later run names the same `sources` as the first, or none — and a runner
+builds a new session's workdir from the run that opens it. So when a run that
+named none goes out with `new: true`, because the session's first run never
+bound it, send it with the sources that first run named. A continuing run
+needs nothing added: the runner holds the session's sources.
+
+What a runner keeps matches this. A refusal creates no session. A claim you
+cancel before its listing is answered, or one the runner withdraws, takes the
+session it opened with it (§4). A claim held by a runner process that stopped
+before the claim was answered is withdrawn by the next process, session and
+all; one that was answered — so you bound the session — and had not begun to
+prepare is reported `lost`, and its session stays for the next run to
+continue. The one case neither side can see is an answer you sent that the
+runner never read before it stopped: you bound the session, the runner
+withdrew it, and the next run, sent `false`, is refused as a session the
+runner does not hold.
 
 **Sessions stay put.** The first claim in a session binds it to that runner.
 Its later runs are offered to that runner alone — a session is resumable only
@@ -1056,14 +1084,25 @@ v1, a field is never renamed or removed.
 **Within v1, things are added, and both sides tolerate it.** Unknown fields
 are ignored (§2); unknown error codes go by the status (§10); unknown error
 classes and status labels are shown rather than parsed; unknown
-`protocol_features` strings are ignored. A new control kind is sent only to a
-runner that advertises a feature for it, so an older runner never sees one.
+`protocol_features` strings are ignored.
+
+**Enums do not grow unasked.** Every enum in the document — event kind, run
+state, result state, close reason, control kind and the rest — is closed for
+all of v1
+([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)).
+A value added to one arrives only behind a feature the receiving side
+advertised: a new control kind goes only to a runner advertising a feature for
+it in `protocol_features`, and a new event kind, run state, result state or
+close reason goes only to a hub advertising one in `hub_features`. So an older
+side never sees a value it cannot validate, and may refuse one it was sent
+anyway as `invalid`.
 
 **Features, both ways.** The runner advertises `protocol_features` in its
 capability document; the hub may advertise `hub_features` at register. Nothing
 is used that the other side did not advertise (§7). v1 defines no hub
-features. A runner whose fingerprint moved without the document it promised is
-treated as advertising nothing until the document arrives.
+features, so a yad runner sends only the values the document lists. A runner
+whose fingerprint moved without the document it promised is treated as
+advertising nothing until the document arrives.
 
 **`min_version` refuses old runners, if you want to.** Answer `min_version` in
 register and sync responses, and refuse a runner below it with
@@ -1084,7 +1123,7 @@ cannot parse — an unstamped `dev` build, or a mistyped floor.
 yad conformance <connection url> --token <token> [--second-token <token>] [--harness id] [--lease-wait d]
 ```
 
-Forty-five black-box checks against a URL, written from the protocol rather
+Forty-seven black-box checks against a URL, written from the protocol rather
 than from `yad hub`'s internals — nothing in the suite imports the hub, so it
 tests the protocol and not one implementation of it. A failure gives you the
 rule as a sentence and the section of this page that states it.
@@ -1108,9 +1147,11 @@ breaks no rule in §2 and is a perfectly good hub; it simply leaves those checks
 unreachable, and the suite says so rather than failing you. The third is left
 offered and unclaimed until its offer's lease lapses. More than three does no
 harm. The suite reports one run `failed` with class `refused`, leaves one held
-run to lose its lease and the offered one to lapse, and then refuses that third
-one the way a runner declines a run — a `failed` result, class `refused`,
-without ever listing it — so all three end `failed` or `lost`. `--lease-wait`
+run to lose its lease and the offered one to lapse. It takes that third one
+once more, leaves it out of a sync so the offer is taken back, and sends a
+refusal too late, which you must refuse. Then it refuses the third run the way
+a runner declines one — a `failed` result, class `refused`, without ever
+listing it — while it is offered, so all three end `failed` or `lost`. `--lease-wait`
 (default 90 s, `0` skips the lease rules) bounds how long it waits, and must
 outlast the `lease_ms` you name.
 
@@ -1151,7 +1192,7 @@ yad hub token create |
 rm first.token
 ```
 
-It ends `45 passed, 0 failed, 0 skipped`, after about a minute spent waiting
+It ends `47 passed, 0 failed, 0 skipped`, after about a minute spent waiting
 out a lease.
 
 ### What it does not check
@@ -1225,6 +1266,7 @@ checks; the rest is yours to get right.
 - [ ] `start_at` still ahead and `live` sessions only to runners advertising them — [§7](#7-controls-and-features) (C)
 - [ ] `report_capabilities` when the fingerprint moves without a document — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync refused when its body's `runner_id` differs from the path, or its credential is another runner's — [§3](#post-runnersrunnersync) (C)
+- [ ] A sync never refused over a dashboard field — load, disk, spool or outbox depth — only over what routing reads — [§3](#post-runnersrunnersync) (C)
 
 **Leases and loss**
 
@@ -1238,6 +1280,7 @@ checks; the rest is yours to get right.
 - [ ] Events stored once by `(run, seq)`, `seq` from 1; `acked_through` is the contiguous prefix — [§6](#events) (C)
 - [ ] Events only from the claiming runner, before and after the run ends — [§6](#events) (C)
 - [ ] Results from the runner the run was offered to or claimed by, applied once; the same state again acknowledged; a different one `409` — [§6](#results) (C)
+- [ ] A result from the runner a run was offered to taken only while the offer is open; after a sync takes it back or its lease lapses, `403 not_holder` — [§6](#results) (C)
 - [ ] A `refused` result before any claim ends the run, and the run is not offered again — [§6](#results) (C)
 
 **Controls, sessions, grants, versions**

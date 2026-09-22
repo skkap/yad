@@ -1073,6 +1073,21 @@ func (q *Queries) RunsOfferedTo(ctx context.Context, runnerID sql.NullString) ([
 	return items, nil
 }
 
+const sessionCreatorSpec = `-- name: SessionCreatorSpec :one
+SELECT spec FROM runs WHERE session_id = ? AND json_extract(spec, '$.session.new') = 1
+ORDER BY created_at, id LIMIT 1
+`
+
+// The spec of the run whose submission created the session: the one its
+// submitter sent as new. Found by that flag rather than by order, since a
+// continuation submitted in the same millisecond can sort ahead of it.
+func (q *Queries) SessionCreatorSpec(ctx context.Context, sessionID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, sessionCreatorSpec, sessionID)
+	var spec string
+	err := row.Scan(&spec)
+	return spec, err
+}
+
 const sessionsToClose = `-- name: SessionsToClose :many
 SELECT id FROM sessions
 WHERE runner_id = ?1 AND (close_requested_at IS NOT NULL AND closed_at IS NULL OR close_owed = 1)

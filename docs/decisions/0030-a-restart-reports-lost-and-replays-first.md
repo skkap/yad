@@ -1,5 +1,6 @@
 ---
 date: 2026-09-19
+status: amended by 0047 — only a claim the hub never acknowledged is withdrawn, with its session; an acknowledged claim that never began is reported lost and keeps its session
 ---
 
 # A restart reports its orphans lost, and replays what is owed before it claims

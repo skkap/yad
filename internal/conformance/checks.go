@@ -141,6 +141,12 @@ func checks() []check {
 		needs:   credential,
 		run:     checkUnknownFieldsIgnored,
 	}, {
+		id:      "sync/dashboard-health-optional",
+		rule:    "A sync is refused only over what routing reads: one whose health leaves out load, disk_free_bytes, spool_depth and outbox_depth — the dashboard fields — is accepted, since a refused sync renews no lease.",
+		section: hubSync,
+		needs:   credential,
+		run:     checkDashboardHealthOptional,
+	}, {
 		id:      "sync/report-capabilities",
 		rule:    "A sync whose fingerprint differs from the one that came with the document the hub holds, and that carries no document, is answered with a report_capabilities control.",
 		section: hubSync,
@@ -304,6 +310,12 @@ func checks() []check {
 		section: hubLeases,
 		needs:   credential,
 		run:     checkOfferLapse,
+	}, {
+		id:      "result/refusal-after-offer-taken-back",
+		rule:    "A hub takes a result from the runner a run is offered to only while the offer is open: once a sync has left the run out, taking the offer back, a refusal from that runner is refused with 403 not_holder, since the run may by then be another runner's.",
+		section: hubResults,
+		needs:   credential,
+		run:     checkRefusalAfterOfferTakenBack,
 	}, {
 		id:      "result/refusal-before-claim",
 		rule:    "A hub takes a result from the runner a run is offered to as well as from the one that claimed it — a failed result with class refused, for a run never listed, is how a runner declines one — and does not offer a run again once it is refused.",

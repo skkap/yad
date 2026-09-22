@@ -167,10 +167,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
 
 ```
 → { runner_id, fingerprint, capabilities?,        // document only when asked
-    health: { load, free_capacity: {total, by_harness}, disk_free_bytes,
+    health: { load?, free_capacity: {total, by_harness}, disk_free_bytes?,
               harnesses: [{id, ready, accounts: [{label, state?, limited_until?,
                             windows?: [{name, used_percent, resets_at?}]}]}],
-              spool_depth, outbox_depth, recent_errors[], draining? },
+              spool_depth?, outbox_depth?, recent_errors[], draining? },
     runs: [{ run_id, state, resumes_at?, reason? }],    // every run held
     closed_sessions: [{ session_id, reason, closed_at }] }  // until answered
 ← { next_sync_ms, lease_ms,
@@ -389,6 +389,17 @@ whose fingerprint moved without the document it promised is treated as
 advertising neither, until the document it is asked for arrives. `yad hub` advertises no
 `hub_features` of its own — it has nothing beyond the v1 baseline.
 
+Every enum in the document is closed for all of v1
+([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)):
+a hub validating against it refuses a value outside the set, and a runner drops
+a batch refused as invalid, so a value added to one goes only to a side that
+advertised the feature adding it — a new control kind to a runner advertising
+it, a new event kind, run state, result state or close reason to a hub
+advertising it in `hub_features`. A yad runner keeps no `hub_features` today,
+because v1 defines none; the first value gated on one needs the runner to keep
+them per connection first. `protocol/v1`'s `TestTheV1EnumsAreClosed` pins every
+set as v1 shipped it.
+
 A hub may refuse a runner below `min_version` with `version_too_old` and a next
 action. `yad hub serve --min-version 0.4.0` sets that floor: a runner under it
 is refused at register — before its registration token is burned, so the
@@ -556,7 +567,11 @@ for `codex`); the suite never runs a real harness.
 - **Restart** — [0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md).
   Every run a previous process began is reported lost (`runner_restarted`,
   `last_seq` its last spooled event) through the outbox, never run again; a
-  claim it never began is withdrawn, for the hub to offer again. The
+  claim the hub never acknowledged is withdrawn, with the session it opened,
+  for the hub to offer again — the hub had bound no session to it, and sends
+  the session's next run as new
+  ([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)).
+  An acknowledged claim that never began is reported lost like the rest. The
   spool and the outbox are replayed before the first claim. Sessions keep their
   native id and workdir, so the next run resumes them.
 - **Watchdogs**: inactivity on the event stream (owner default 30 min; a run may

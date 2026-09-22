@@ -151,6 +151,14 @@ const (
 	flawTooLargeIsInvalid  = "a body over the size limit is refused 400 invalid"
 	flawRefusalNeedsAClaim = "a result is taken only from the runner that claimed the run"
 	flawReoffersRefused    = "a run refused before its claim is offered again"
+	// The document marked the dashboard health required until DEV-117, and a
+	// hub generated from it refuses a sync that leaves any of it out. The
+	// suite's own syncs send zeros, which v1 omits, so this refuses them all:
+	// the named check is what says why.
+	flawStrictDashboardHealth = "a sync that leaves out load, disk, spool or outbox depth is refused"
+	// The clean-room hub's guess of DEV-110: the last runner a queued run was
+	// offered to may still refuse it.
+	flawRefusalOutlivesTheOffer = "a refusal is taken from the runner a run was last offered to after the offer was taken back"
 )
 
 // fakeBodyLimit is the most of a body the fake reads. TestMain shrinks it with
@@ -326,6 +334,10 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 		f.fail(w, http.StatusForbidden, v1.CodeUnauthorized, "this credential is another runner's", "sync as the runner it was issued to")
 		return
 	}
+	if f.flaw == flawStrictDashboardHealth && (req.Health.Load == 0 || req.Health.DiskFreeBytes == 0 || req.Health.SpoolDepth == 0 || req.Health.OutboxDepth == 0) {
+		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "health is missing a required field", "send every field protocol/v1/openapi.yaml requires")
+		return
+	}
 	if req.RunnerID != runner && f.flaw != flawIgnoresBodyRunner {
 		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the body's runner_id is not the path's", "send the same runner id in both")
 		return
@@ -497,7 +509,8 @@ func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string, guar
 	}
 	run := f.runs[runID]
 	// The runner the open offer went to may refuse the run with a result.
-	offeredHere := run != nil && run.holder == "" && !run.queued && run.offeredTo == f.caller(r) && f.flaw != flawRefusalNeedsAClaim
+	open := run != nil && (!run.queued || f.flaw == flawRefusalOutlivesTheOffer)
+	offeredHere := open && run.holder == "" && run.offeredTo == f.caller(r) && f.flaw != flawRefusalNeedsAClaim
 	if offeredHere && run.final == "" && f.flaw == flawReoffersRefused {
 		run.queued = true
 		f.write(w, http.StatusOK, v1.Ack{OK: true})

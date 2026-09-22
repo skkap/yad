@@ -49,6 +49,13 @@ ON CONFLICT (id) DO NOTHING;
 -- name: GetSession :one
 SELECT * FROM sessions WHERE id = ?;
 
+-- name: SessionCreatorSpec :one
+-- The spec of the run whose submission created the session: the one its
+-- submitter sent as new. Found by that flag rather than by order, since a
+-- continuation submitted in the same millisecond can sort ahead of it.
+SELECT spec FROM runs WHERE session_id = ? AND json_extract(spec, '$.session.new') = 1
+ORDER BY created_at, id LIMIT 1;
+
 -- name: BindSession :exec
 -- The first claim in a session binds it; later ones leave it as it is.
 UPDATE sessions SET runner_id = ? WHERE id = ? AND runner_id IS NULL;

@@ -427,10 +427,24 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 		}
 	}
 	// A pending run listed in a sync the hub answered is claimed: it starts,
-	// carrying whatever the answer said about it.
+	// carrying whatever the answer said about it. The hub bound the run's
+	// session to this runner in that answer, and a restart has to know it did
+	// (Recover).
+	//
+	// A write that fails is logged and the run starts anyway. Holding it
+	// pending to retry the write was tried and is worse: every other reader
+	// of pending takes it for a claim the hub never acknowledged, so a cancel,
+	// a drain or a stop would withdraw a run the hub holds, and a write that
+	// keeps failing would resync the hub with no backoff. Starting it costs
+	// only this: a restart before it prepares withdraws a session the hub
+	// bound, and the next run in it is refused.
 	for id, p := range l.pending {
 		if listed[id] {
 			delete(l.pending, id)
+			if err := l.Store.AcknowledgeClaim(ctx, db.AcknowledgeClaimParams{Connection: l.Connection, ID: id}); err != nil {
+				l.Log.Error("the hub's acknowledgement of a claim was not recorded; a restart before the run prepares would withdraw it and its session",
+					"connection", l.Connection, "run", id, "err", err)
+			}
 			l.start(ctx, Claim{Connection: l.Connection, Run: p.run, Release: p.release})
 		}
 	}
@@ -811,7 +825,7 @@ func (l *Loop) Recover(ctx context.Context) error {
 			l.Log.Info("a previous process parked this run on a usage limit; it keeps waiting", "connection", l.Connection, "run", r.ID)
 			continue
 		}
-		if r.State == string(v1.RunClaimed) {
+		if r.State == string(v1.RunClaimed) && r.Acknowledged == 0 {
 			withdrawn, err := l.withdrawOrphan(ctx, r)
 			if err != nil {
 				return err
@@ -907,13 +921,21 @@ func lastSpooled(ctx context.Context, q *db.Queries, connection, runID string) (
 	return row.Seq, ev.At, nil
 }
 
-// withdrawOrphan drops a run a previous process claimed and never began to
-// prepare: nothing ran, and the claim may never have been listed — the hub
-// may still have it as offered. Left out of the listing, an offer goes back
-// in the hub's queue; a claim the hub had acknowledged lapses into lost on
-// its side, which is the truth of it. Reporting it lost here would end, for
-// good, a run that may only ever have been offered. It reports whether the
-// run is gone; one with events or a result owed is not an unstarted claim.
+// withdrawOrphan drops a claim a previous process recorded and the hub never
+// acknowledged: nothing ran, and the claim may never have been listed — the
+// hub may still have it as offered. Left out of the listing, an offer goes
+// back in the hub's queue. Reporting it lost here would end, for good, a run
+// that may only ever have been offered. It reports whether the run is gone;
+// one with events or a result owed is not an unstarted claim.
+//
+// The session the claim opened goes with it, as it does when a live process
+// withdraws one (decision 0047): the hub binds a session only at the answer
+// acknowledging a claim, and until then sends the next run in it as new. A
+// claim the hub did acknowledge is not withdrawn here but reported lost, and
+// its session kept — the hub bound it, and continues it. What neither side
+// can know is an acknowledgement the hub sent and this runner never read; the
+// session is withdrawn then, and the next run in it, sent as continuing, is
+// refused.
 func (l *Loop) withdrawOrphan(ctx context.Context, r db.Run) (bool, error) {
 	gone := false
 	err := l.Store.Tx(ctx, func(q *db.Queries) error {

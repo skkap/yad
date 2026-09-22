@@ -20,7 +20,7 @@ func TestHubRunnersPrintsEveryPartOfHealth(t *testing.T) {
 	var buf bytes.Buffer
 	printRunners(&buf, []hubapi.Runner{{
 		RunnerID: "r1", Name: "laptop", LastSyncAt: &synced,
-		Health: &v1.Health{
+		Health: &hubapi.Health{
 			Load:          1.75,
 			FreeCapacity:  v1.Capacity{Total: 2, ByHarness: map[string]int{"claude": 1}},
 			DiskFreeBytes: 128 << 30,
@@ -67,7 +67,7 @@ func TestHubRunnersCleansWhatARunnerSent(t *testing.T) {
 	var buf bytes.Buffer
 	printRunners(&buf, []hubapi.Runner{{
 		RunnerID: "r\x1b[2J1", Name: "lap\ntop",
-		Health: &v1.Health{
+		Health: &hubapi.Health{
 			// State is a wire string too. The first version of this test set
 			// it to v1.AccountFree — the one value that cannot expose an
 			// uncleaned print — and so certified the field it was written to
@@ -111,7 +111,7 @@ func TestHubRunnersRendersEveryAccountState(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			printRunners(&buf, []hubapi.Runner{{RunnerID: "r1", Name: "laptop", LastSyncAt: &now, Health: &v1.Health{
+			printRunners(&buf, []hubapi.Runner{{RunnerID: "r1", Name: "laptop", LastSyncAt: &now, Health: &hubapi.Health{
 				Harnesses: []v1.HarnessHealth{{ID: "claude", Accounts: []v1.AccountReport{{Label: "work", State: tc.state}}}},
 			}}}, now)
 			if !strings.Contains(buf.String(), tc.want) {

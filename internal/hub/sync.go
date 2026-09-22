@@ -305,6 +305,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 			if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
 				continue
 			}
+			if err := opening(ctx, q, &run); err != nil {
+				return nil, err
+			}
 			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
 				return nil, err
 			}
@@ -321,6 +324,44 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 		}
 	}
 	return runs, nil
+}
+
+// opening sets session.new on a run about to be offered: true while no claim
+// has bound its session, false after (decision 0047). It is decided here and
+// not at submit because the run that opens a session is the first one a
+// runner claims, and which that is only the hub's history can say: a session
+// whose first run was refused, cancelled on its claim or withdrawn exists on
+// no runner, and its next run has to open it. What the submitter said at
+// submit decided only whether the hub created the session or found it.
+//
+// A run opening the session that names no sources itself — a continuation
+// whose session's first run never bound it — carries the sources of the run
+// whose submission created the session: the runner builds a new session's
+// workdir from the run that opens it, and would build this one empty. A
+// continuing run is sent as submitted; the runner holds its session's
+// sources and prepares a run naming none from them.
+func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
+	sess, err := q.GetSession(ctx, run.Session.ID)
+	if err != nil {
+		return err
+	}
+	run.Session.New = !sess.RunnerID.Valid
+	if !run.Session.New || len(run.Sources) > 0 {
+		return nil
+	}
+	spec, err := q.SessionCreatorSpec(ctx, run.Session.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var creator v1.Run
+	if err := json.Unmarshal([]byte(spec), &creator); err != nil {
+		return fmt.Errorf("stored run in session %s: %w", run.Session.ID, err)
+	}
+	run.Sources = creator.Sources
+	return nil
 }
 
 // Sweep withdraws offers and loses runs whose leases lapsed, and gives up the

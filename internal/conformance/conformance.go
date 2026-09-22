@@ -215,6 +215,10 @@ type session struct {
 	// which the check needing a fresh offer says rather than asking for more
 	// runs to be queued.
 	keepsOffers bool
+	// lateRefusal is a run whose refusal the hub took after taking its offer
+	// back. That ended it, and the check needing a fresh offer says so
+	// rather than asking for more runs to be queued.
+	lateRefusal string
 
 	// other is the runner the second token registered, once a check has
 	// asked for it, and otherErr why it could not be: the token is spent by

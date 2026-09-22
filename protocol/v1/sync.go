@@ -28,7 +28,7 @@ type SyncRequest struct {
 // ClosedSession is one session a runner has closed, and why.
 type ClosedSession struct {
 	SessionID string             `json:"session_id" doc:"The session, by the id the hub gave it."`
-	Reason    SessionCloseReason `json:"reason" enum:"closed,closed_by_owner,expired,disk_pressure" doc:"closed: the hub asked, with close_session. closed_by_owner: the runner's owner closed it on the machine. expired: nothing ran in it for the owner's idle TTL. disk_pressure: the disk under the workdirs ran low and it was among the longest idle. Each means the same for routing: a new run needs a new session."`
+	Reason    SessionCloseReason `json:"reason" enum:"closed,closed_by_owner,expired,disk_pressure" doc:"closed: the hub asked, with close_session. closed_by_owner: the runner's owner closed it on the machine. expired: nothing ran in it for the owner's idle TTL. disk_pressure: the disk under the workdirs ran low and it was among the longest idle. Each means the same for routing: a new run needs a new session. A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."`
 	ClosedAt  time.Time          `json:"closed_at" doc:"When the runner closed it."`
 }
 
@@ -50,22 +50,32 @@ const (
 	SessionDiskPressure SessionCloseReason = "disk_pressure"
 )
 
+// SessionCloseReasons lists the closed set, for the parity test.
+func SessionCloseReasons() []SessionCloseReason {
+	return []SessionCloseReason{SessionClosed, SessionClosedByOwner, SessionExpired, SessionDiskPressure}
+}
+
 // Health is the runner's state as a hub needs it for routing and alerting.
 //
 // Every field of it is computed on every sync, so each one is a read the
 // runner can afford every few seconds, and the lists are capped: a health
 // block that grows with the machine's uptime makes every sync slower for ever.
+//
+// Load, disk, spool and outbox depth are for dashboards, and optional in the
+// document (decision 0047): a sync refused for one of them renews no lease, so
+// a hub strict about a dashboard field would lose every run of a runner build
+// that left it out. free_capacity is the one field here routing needs.
 type Health struct {
 	// Load is the machine's one-minute load average, as uptime(1) prints it —
 	// the whole machine, not this runner's share, and not divided by CPU
 	// count, which the capability document does not carry. 0 from a machine
 	// this runner cannot read one from.
-	Load          float64         `json:"load" doc:"The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. 0 where the runner cannot read one."`
+	Load          float64         `json:"load,omitempty" doc:"The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. For dashboards: absent is 0, or a machine the runner cannot read one from, and a hub never refuses a sync for its absence."`
 	FreeCapacity  Capacity        `json:"free_capacity" doc:"What this sync may be offered, already net of every run the runner holds: total bounds the whole response, and each by_harness figure bounds that harness independently. Offer up to it as sent; do not subtract the runs listed beside it."`
-	DiskFreeBytes int64           `json:"disk_free_bytes" doc:"Free bytes on the disk under the runner's workdirs."`
+	DiskFreeBytes int64           `json:"disk_free_bytes,omitempty" doc:"Free bytes on the disk under the runner's workdirs. For dashboards: absent is 0 or unknown, and a hub never refuses a sync for its absence."`
 	Harnesses     []HarnessHealth `json:"harnesses,omitempty" doc:"Readiness of each harness the runner can drive, with its accounts. A harness with ready false is not claimed for: an offer for it comes back unlisted."`
-	SpoolDepth    int             `json:"spool_depth" doc:"Events the runner holds that this hub has not acknowledged."`
-	OutboxDepth   int             `json:"outbox_depth" doc:"Results the runner holds that this hub has not acknowledged."`
+	SpoolDepth    int             `json:"spool_depth,omitempty" doc:"Events the runner holds that this hub has not acknowledged. For dashboards: absent is 0 or unknown, and a hub never refuses a sync for its absence."`
+	OutboxDepth   int             `json:"outbox_depth,omitempty" doc:"Results the runner holds that this hub has not acknowledged. For dashboards: absent is 0 or unknown, and a hub never refuses a sync for its absence."`
 	// RecentErrors are the runner's own recent warnings and errors, newest
 	// first, each "<RFC3339 time> <LEVEL> <message>" — why this runner is
 	// slow or idle, in the words its owner sees in `yad status`.
@@ -99,7 +109,7 @@ type HarnessHealth struct {
 // HeldRun is one run's non-terminal state. Terminal states travel in a Result.
 type HeldRun struct {
 	RunID     string     `json:"run_id" doc:"The run."`
-	State     RunState   `json:"state" enum:"claimed,preparing,running,waiting" doc:"Where the run is. A run whose result is written but not yet acknowledged stays listed as running, so its lease outlasts a hub outage."`
+	State     RunState   `json:"state" enum:"claimed,preparing,running,waiting" doc:"Where the run is. A run whose result is written but not yet acknowledged stays listed as running, so its lease outlasts a hub outage. A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."`
 	ResumesAt *time.Time `json:"resumes_at,omitempty" doc:"For a waiting run, the earliest moment it continues: the soonest reset among its harness's accounts. It may continue sooner if an account frees."`
 	Reason    string     `json:"reason,omitempty" doc:"Why the run is in this state, in the runner's words, for display. Not a closed set."`
 }
@@ -151,7 +161,7 @@ func ControlKinds() []ControlKind {
 // a runner that does not act on it is indistinguishable, to whoever asked for
 // it, from one that was obeyed.
 type Control struct {
-	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update" doc:"cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name."`
+	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update" doc:"cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."`
 	RunID     string      `json:"run_id,omitempty" doc:"The run, for cancel, interrupt and steer."`
 	SessionID string      `json:"session_id,omitempty" doc:"The session, for close_session."`
 	Text      string      `json:"text,omitempty" doc:"What to tell the harness, for steer."`

@@ -137,7 +137,7 @@ func domainKinds(t *testing.T, path string) map[string][]string {
 // the Go sets — non-terminal states where a run is held, terminal ones where a
 // result is reported.
 func TestEnumTagsMatchSets(t *testing.T) {
-	var held, terminal, events, controls, accounts []string
+	var held, terminal, events, controls, accounts, reasons []string
 	for _, s := range RunStates() {
 		if s.IsTerminal() {
 			terminal = append(terminal, string(s))
@@ -154,6 +154,9 @@ func TestEnumTagsMatchSets(t *testing.T) {
 	for _, s := range AccountStates() {
 		accounts = append(accounts, string(s))
 	}
+	for _, r := range SessionCloseReasons() {
+		reasons = append(reasons, string(r))
+	}
 	for _, tc := range []struct {
 		v     any
 		field string
@@ -164,6 +167,7 @@ func TestEnumTagsMatchSets(t *testing.T) {
 		{Event{}, "Kind", events},
 		{Control{}, "Kind", controls},
 		{AccountReport{}, "State", accounts},
+		{ClosedSession{}, "Reason", reasons},
 		{Grant{}, "As", []string{string(GrantEnv), string(GrantFile)}},
 		{SessionRef{}, "Mode", []string{string(SessionPerRun), string(SessionLive)}},
 	} {

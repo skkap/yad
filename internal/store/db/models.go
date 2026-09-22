@@ -61,6 +61,7 @@ type Run struct {
 	AccountSwitches int64
 	HadGrants       int64
 	Spent           sql.NullString
+	Acknowledged    int64
 }
 
 type Session struct {

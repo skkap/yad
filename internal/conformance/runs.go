@@ -229,6 +229,54 @@ func checkResultIsTerminal(ctx context.Context, s *session) error {
 	return refusedInvalid(a)
 }
 
+// checkRefusalAfterOfferTakenBack is how long the wider door stays open: for
+// as long as the offer does, and no longer. The suite takes a run it is
+// offered, leaves it out of the next sync with no room declared — so the hub
+// takes the offer back and cannot hand it straight back in that answer — and
+// then refuses it. By then the run is back in the queue and may be another
+// runner's, so the refusal must be 403 not_holder, which a runner drops; a
+// hub taking it lets a runner fail a run it no longer has any claim to.
+//
+// The run goes back in the queue, so refusal-before-claim, next, is offered
+// it again.
+func checkRefusalAfterOfferTakenBack(ctx context.Context, s *session) error {
+	if s.keepsOffers {
+		return skipf("this hub keeps an offer a sync leaves out (sync/unlisted-offer-taken-back), so an offer is never taken back and a refusal after it cannot be made")
+	}
+	var offer string
+	for i := 0; i < offerSyncs && offer == ""; i++ {
+		res, _, err := s.syncOK(ctx, 1)
+		if err != nil {
+			return err
+		}
+		for _, r := range res.Runs {
+			if r.RunID != s.report && r.RunID != s.lapse {
+				offer = r.RunID
+				break
+			}
+		}
+	}
+	if offer == "" {
+		return skipf("no third run was offered in %d syncs, and this rule needs one besides the two the other rules used; queue three runs for harness %s and run the suite again", offerSyncs, s.opts.Harness)
+	}
+	res, a, err := s.syncOK(ctx, 0)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(runIDs(res.Runs), offer) {
+		return skipf("run %s was left out of a sync declaring no free capacity, and the hub offered it again in that answer (sync/offers-within-capacity says more), so the offer was never closed: %s", offer, a)
+	}
+	ra, err := s.resultFor(ctx, offer, v1.RunFailed)
+	if err != nil {
+		return err
+	}
+	if ra.ok() {
+		s.lateRefusal = offer
+		return brokenf("run %s was offered to this runner and taken back by a sync that left it out, and the hub then took this runner's refusal of it; an offer takes a result only while it is open, and after that the run may be another runner's: %s", offer, ra)
+	}
+	return refusedWith(ra, http.StatusForbidden, v1.CodeNotHolder)
+}
+
 // checkRefusalBeforeClaim is the wider door: a runner that will not take a run
 // says so with a failed result, class refused, while the run is only offered
 // to it — it never lists the run. The hub must take that result, and must not
@@ -250,6 +298,8 @@ func checkRefusalBeforeClaim(ctx context.Context, s *session) error {
 		}
 	}
 	switch {
+	case offer == "" && s.lateRefusal != "":
+		return skipf("no run was offered in %d syncs: the hub took this runner's refusal of run %s after taking its offer back (result/refusal-after-offer-taken-back), which ended the run this rule needed", offerSyncs, s.lateRefusal)
 	case offer == "" && s.keepsOffers:
 		return skipf("no run was offered in %d syncs: this hub keeps an offer a sync leaves out (sync/unlisted-offer-taken-back), so the run it last offered is still open to this runner and never offered again", offerSyncs)
 	case offer == "":

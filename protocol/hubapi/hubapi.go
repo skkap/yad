@@ -130,7 +130,32 @@ type Runner struct {
 	// As the runner sent it, and as old as LastSyncAt: a runner whose process
 	// has gone still shows the health of its last word. Nothing here is
 	// derived by the hub.
-	Health *v1.Health `json:"health,omitempty" doc:"The runner's own health at its last sync, unchanged by the hub. Absent for a runner that has never synced, and as old as last_sync_at."`
+	Health *Health `json:"health,omitempty" doc:"The runner's own health at its last sync, unchanged by the hub. Absent for a runner that has never synced, and as old as last_sync_at."`
+}
+
+// Health is a runner's v1.Health as this API shows it. Its own type rather
+// than v1's because the two documents promise different things: v1 lets a
+// runner leave out the dashboard fields (decision 0047), while this API has
+// always answered every one of them, and a service generated from it would
+// break on a field it was told is always there. Where the runner left one out
+// it reads 0 here, which is what v1 says the absence means.
+type Health struct {
+	Load          float64            `json:"load" doc:"The machine's one-minute load average, as uptime(1) prints it: the whole machine's, not divided by CPU count. 0 where the runner cannot read one."`
+	FreeCapacity  v1.Capacity        `json:"free_capacity" doc:"What this sync may be offered, already net of every run the runner holds: total bounds the whole response, and each by_harness figure bounds that harness independently. Offer up to it as sent; do not subtract the runs listed beside it."`
+	DiskFreeBytes int64              `json:"disk_free_bytes" doc:"Free bytes on the disk under the runner's workdirs."`
+	Harnesses     []v1.HarnessHealth `json:"harnesses,omitempty" doc:"Readiness of each harness the runner can drive, with its accounts. A harness with ready false is not claimed for: an offer for it comes back unlisted."`
+	SpoolDepth    int                `json:"spool_depth" doc:"Events the runner holds that this hub has not acknowledged."`
+	OutboxDepth   int                `json:"outbox_depth" doc:"Results the runner holds that this hub has not acknowledged."`
+	RecentErrors  []string           `json:"recent_errors,omitempty" doc:"The runner's recent warnings and errors, newest first, each '<RFC3339 time> <LEVEL> <message>'. The runner's own words: never what a harness printed, never a path on the machine, never a credential. Capped in number, age and length."`
+	Draining      bool               `json:"draining,omitempty" doc:"The runner has stopped claiming and exits once the runs it holds have ended. It keeps syncing until then; offer it nothing. The answer to a drain control, which stops repeating once this is true."`
+}
+
+// HealthOf is h as this API shows it.
+func HealthOf(h v1.Health) Health {
+	return Health{
+		Load: h.Load, FreeCapacity: h.FreeCapacity, DiskFreeBytes: h.DiskFreeBytes, Harnesses: h.Harnesses,
+		SpoolDepth: h.SpoolDepth, OutboxDepth: h.OutboxDepth, RecentErrors: h.RecentErrors, Draining: h.Draining,
+	}
 }
 
 // RunnerList is every runner a hub knows, the ones still syncing first.

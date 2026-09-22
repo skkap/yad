@@ -336,3 +336,37 @@ func TestSkippedRunsDoNotStarveTheQueue(t *testing.T) {
 		})
 	}
 }
+
+// A sync is refused only over what routing reads (decision 0047). The
+// dashboard health — load, disk, spool and outbox depth — may be left out, and
+// a runner build that leaves one out still renews its leases and is offered
+// work; a sync missing any routing field is still invalid.
+func TestASyncIsRefusedOnlyOverWhatRoutingReads(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	f.enqueue(t, run("a", "s1"))
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"no dashboard fields", `{"runner_id":"r1","fingerprint":"fp-r1","health":{"free_capacity":{"total":1}}}`, http.StatusOK},
+		{"no runner_id", `{"fingerprint":"fp-r1","health":{"free_capacity":{"total":1}}}`, http.StatusBadRequest},
+		{"no fingerprint", `{"runner_id":"r1","health":{"free_capacity":{"total":1}}}`, http.StatusBadRequest},
+		{"no free_capacity.total", `{"runner_id":"r1","fingerprint":"fp-r1","health":{"free_capacity":{}}}`, http.StatusBadRequest},
+		{"a held run with no run_id", `{"runner_id":"r1","fingerprint":"fp-r1","health":{"free_capacity":{"total":1}},"runs":[{"state":"claimed"}]}`, http.StatusBadRequest},
+		{"a held run with no state", `{"runner_id":"r1","fingerprint":"fp-r1","health":{"free_capacity":{"total":1}},"runs":[{"run_id":"a"}]}`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, env := post(t, f.hub, "/v1/runners/r1/sync", tc.body, headers(cred))
+			if res.StatusCode != tc.status {
+				t.Fatalf("%d %+v, want %d", res.StatusCode, env.Error, tc.status)
+			}
+			if tc.status != http.StatusOK && env.Error.Code != v1.CodeInvalid {
+				t.Errorf("refused with code %q, want %q", env.Error.Code, v1.CodeInvalid)
+			}
+		})
+	}
+	if f.state(t, "a") != "offered" {
+		t.Errorf("run a is %s: the sync that left out every dashboard field was not offered work", f.state(t, "a"))
+	}
+}
