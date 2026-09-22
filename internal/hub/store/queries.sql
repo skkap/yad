@@ -49,10 +49,12 @@ ON CONFLICT (id) DO NOTHING;
 -- name: GetSession :one
 SELECT * FROM sessions WHERE id = ?;
 
--- name: SessionFirstSpec :one
--- The spec of the first run submitted in a session: its sources are the
--- session's, which a run naming none of its own is sent with.
-SELECT spec FROM runs WHERE session_id = ? ORDER BY created_at, id LIMIT 1;
+-- name: SessionCreatorSpec :one
+-- The spec of the run whose submission created the session: the one its
+-- submitter sent as new. Found by that flag rather than by order, since a
+-- continuation submitted in the same millisecond can sort ahead of it.
+SELECT spec FROM runs WHERE session_id = ? AND json_extract(spec, '$.session.new') = 1
+ORDER BY created_at, id LIMIT 1;
 
 -- name: BindSession :exec
 -- The first claim in a session binds it; later ones leave it as it is.

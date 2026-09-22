@@ -12,8 +12,9 @@ import (
 // its session, false after (decision 0047). A session whose first run never
 // bound it — refused, cancelled on its claim, withdrawn — exists on no runner,
 // so the run after it goes out new; once a claim binds the session, every
-// later run goes out continuing it. Either way a run that named no sources
-// carries the session's.
+// later run goes out continuing it. A run opening the session that named no
+// sources carries the ones its session was created with; a continuing one is
+// sent as submitted, since the runner holds its session's sources.
 func TestSessionNewIsDecidedAtOffer(t *testing.T) {
 	src := []v1.Source{{Path: "/work/project"}}
 	for _, tc := range []struct {
@@ -77,20 +78,21 @@ func TestSessionNewIsDecidedAtOffer(t *testing.T) {
 			if got.Session.New != tc.wantNew {
 				t.Errorf("b went out with session.new %v, want %v", got.Session.New, tc.wantNew)
 			}
-			// b named no sources and goes out with the session's, opening it
-			// or continuing it: whichever run of the session first prepares on
-			// the runner builds the workdir from them.
-			if len(got.Sources) != 1 || got.Sources[0].Path != src[0].Path {
-				t.Errorf("b went out with sources %+v, want the session's %+v", got.Sources, src)
+			carries := len(got.Sources) == 1 && got.Sources[0].Path == src[0].Path
+			switch {
+			case tc.wantNew && !carries:
+				t.Errorf("b opens s1 with sources %+v, want the ones s1 was created with, %+v", got.Sources, src)
+			case !tc.wantNew && len(got.Sources) != 0:
+				t.Errorf("b continues s1 with sources %+v, want none, as submitted", got.Sources)
 			}
 		})
 	}
 }
 
-// The session's sources are its first run's, none included. A later run
-// naming others — which the runner refuses — does not change what the runs
-// after it are sent: a sourceless one still goes out with none.
-func TestASessionsSourcesAreItsFirstRuns(t *testing.T) {
+// A continuing run is sent with the sources it was submitted with. A run
+// between naming others — which the runner refuses — changes nothing for the
+// runs after it.
+func TestAContinuingRunIsSentAsSubmitted(t *testing.T) {
 	f := newFixture(t)
 	cred := f.register(t, "r1")
 	stray := run("c", "s1")
@@ -116,7 +118,7 @@ func TestASessionsSourcesAreItsFirstRuns(t *testing.T) {
 		free = req("r1", 1)
 	}
 	if got := offered["b"].Sources; len(got) != 0 {
-		t.Errorf("b went out with sources %+v: its session's first run named none", got)
+		t.Errorf("b went out with sources %+v, and was submitted with none", got)
 	}
 	if got := offered["c"].Sources; len(got) != 1 || got[0].Path != "/elsewhere" {
 		t.Errorf("c went out with sources %+v, want its own", got)

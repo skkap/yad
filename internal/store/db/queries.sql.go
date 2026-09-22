@@ -1064,6 +1064,23 @@ func (q *Queries) RunsWithUnackedEvents(ctx context.Context, connection string) 
 	return items, nil
 }
 
+const sessionOpenerSpec = `-- name: SessionOpenerSpec :one
+SELECT spec FROM runs WHERE connection = ? AND session_id = ? ORDER BY created_at, id LIMIT 1
+`
+
+type SessionOpenerSpecParams struct {
+	Connection string
+	SessionID  string
+}
+
+// The run that opened a session here: the first one recorded in it.
+func (q *Queries) SessionOpenerSpec(ctx context.Context, arg SessionOpenerSpecParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, sessionOpenerSpec, arg.Connection, arg.SessionID)
+	var spec string
+	err := row.Scan(&spec)
+	return spec, err
+}
+
 const sessionSlot = `-- name: SessionSlot :one
 SELECT slot FROM slots WHERE repo = ? AND connection = ? AND session_id = ?
 `

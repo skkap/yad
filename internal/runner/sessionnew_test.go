@@ -135,10 +135,13 @@ func TestAnAcknowledgedClaimKeepsItsSessionAtRestart(t *testing.T) {
 	if len(res.Runs) != 1 || res.Runs[0].RunID != "b" || res.Runs[0].Session.New {
 		t.Fatalf("offered %+v, want b continuing s1", res.Runs)
 	}
-	// a never prepared, so s1 has no workdir yet and b is the run that
-	// builds it: it must carry the session's sources, or it builds it empty.
-	if got := res.Runs[0].Sources; len(got) != 1 || got[0].Path != "/work/project" {
-		t.Errorf("b continues s1 with sources %+v, want a's", got)
+	// a never prepared, so s1 has no sources recorded and b, naming none,
+	// is the run that builds its workdir: from a's, which the session still
+	// is, or it would build it empty.
+	x := &Exec{Store: e.store}
+	sources, record, err := x.sessionSources(ctx, Claim{Connection: "hub", Run: res.Runs[0]})
+	if err != nil || !record || len(sources) != 1 || sources[0].Path != "/work/project" {
+		t.Errorf("b is prepared from %+v (record %v, %v), want a's sources, recorded now", sources, record, err)
 	}
 	mustSync(t, l2)
 	if got := l2.Executor.(*executor).ids(); !slices.Equal(got, []string{"b"}) {

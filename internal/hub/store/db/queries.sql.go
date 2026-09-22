@@ -1073,14 +1073,16 @@ func (q *Queries) RunsOfferedTo(ctx context.Context, runnerID sql.NullString) ([
 	return items, nil
 }
 
-const sessionFirstSpec = `-- name: SessionFirstSpec :one
-SELECT spec FROM runs WHERE session_id = ? ORDER BY created_at, id LIMIT 1
+const sessionCreatorSpec = `-- name: SessionCreatorSpec :one
+SELECT spec FROM runs WHERE session_id = ? AND json_extract(spec, '$.session.new') = 1
+ORDER BY created_at, id LIMIT 1
 `
 
-// The spec of the first run submitted in a session: its sources are the
-// session's, which a run naming none of its own is sent with.
-func (q *Queries) SessionFirstSpec(ctx context.Context, sessionID string) (string, error) {
-	row := q.db.QueryRowContext(ctx, sessionFirstSpec, sessionID)
+// The spec of the run whose submission created the session: the one its
+// submitter sent as new. Found by that flag rather than by order, since a
+// continuation submitted in the same millisecond can sort ahead of it.
+func (q *Queries) SessionCreatorSpec(ctx context.Context, sessionID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, sessionCreatorSpec, sessionID)
 	var spec string
 	err := row.Scan(&spec)
 	return spec, err

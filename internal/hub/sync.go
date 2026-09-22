@@ -334,33 +334,33 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 // no runner, and its next run has to open it. What the submitter said at
 // submit decided only whether the hub created the session or found it.
 //
-// A run that names no sources itself, as a continuing one usually does,
-// carries the session's: the ones its first run named, none included — the
-// rule every later run is held to, so a later run naming others cannot
-// change what the rest are sent. A runner builds a
-// session's workdir from the first run of it that prepares, whichever that
-// is — the one opening the session, or a continuing one after the opener was
-// lost before it prepared (a restart during a start_at wait) — and would
-// build it empty. A continuing run naming its session's own sources is one
-// the runner takes as naming none.
+// A run opening the session that names no sources itself — a continuation
+// whose session's first run never bound it — carries the sources of the run
+// whose submission created the session: the runner builds a new session's
+// workdir from the run that opens it, and would build this one empty. A
+// continuing run is sent as submitted; the runner holds its session's
+// sources and prepares a run naming none from them.
 func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
 	sess, err := q.GetSession(ctx, run.Session.ID)
 	if err != nil {
 		return err
 	}
 	run.Session.New = !sess.RunnerID.Valid
-	if len(run.Sources) > 0 {
+	if !run.Session.New || len(run.Sources) > 0 {
 		return nil
 	}
-	spec, err := q.SessionFirstSpec(ctx, run.Session.ID)
+	spec, err := q.SessionCreatorSpec(ctx, run.Session.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	var first v1.Run
-	if err := json.Unmarshal([]byte(spec), &first); err != nil {
+	var creator v1.Run
+	if err := json.Unmarshal([]byte(spec), &creator); err != nil {
 		return fmt.Errorf("stored run in session %s: %w", run.Session.ID, err)
 	}
-	run.Sources = first.Sources
+	run.Sources = creator.Sources
 	return nil
 }
 

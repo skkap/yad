@@ -337,5 +337,9 @@ SELECT s.connection, s.id, s.harness, s.native_id, s.workdir, s.state, s.created
 FROM sessions s
 ORDER BY s.last_used_at DESC, s.connection, s.id;
 
+-- The run that opened a session here: the first one recorded in it.
+-- name: SessionOpenerSpec :one
+SELECT spec FROM runs WHERE connection = ? AND session_id = ? ORDER BY created_at, id LIMIT 1;
+
 -- name: SetSessionSources :exec
 UPDATE sessions SET sources = ? WHERE connection = ? AND id = ?;
