@@ -71,9 +71,9 @@ type Source struct {
 
 // GitSource is a repository to check out as a worktree on Branch, cut from Base.
 type GitSource struct {
-	URL    string `json:"url" doc:"The repository, over https or ssh, fetched with the machine's own git credentials. Required."`
+	URL    string `json:"url" doc:"The repository: an https or ssh URL, fetched with the machine's own credentials and never with a password in the URL, or an absolute path or file:// URL of a repository on the runner's machine, inside the directories its owner allows. Required."`
 	Base   string `json:"base,omitempty" doc:"The ref a new branch is cut from. Absent: the repository's default branch."`
-	Branch string `json:"branch,omitempty" doc:"The branch the run works on, checked out as a worktree. Absent: one named after the session."`
+	Branch string `json:"branch,omitempty" doc:"The branch the run works on, checked out as a worktree of the repository. Absent: yad/<connection>/<session>, named after the session."`
 }
 
 // GrantDelivery is how a grant reaches the harness. Never argv.
