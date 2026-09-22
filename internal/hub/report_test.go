@@ -250,6 +250,61 @@ func TestRefusalOfAnOffer(t *testing.T) {
 	}
 }
 
+// The runner a run is offered to may refuse it only while the offer is open
+// (decision 0047): until a sync takes the offer back or its lease lapses —
+// whether or not a sweep has requeued it yet. After that the refusal is 403
+// not_holder, which the runner drops, and the run stays queued. An offer made
+// again reopens the door.
+func TestARefusalIsTakenOnlyWhileTheOfferIsOpen(t *testing.T) {
+	refusal := v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: "refused", Message: "cannot drive it"}}
+	for _, tc := range []struct {
+		name string
+		// after runs between the offer and the refusal.
+		after func(t *testing.T, f *fixture, cred string)
+		want  int
+		state string
+	}{
+		{"offer open", func(*testing.T, *fixture, string) {}, http.StatusOK, "failed"},
+		{"taken back by a sync that left it out", func(t *testing.T, f *fixture, cred string) {
+			f.mustSync(t, "r1", cred, req("r1", 0))
+		}, http.StatusForbidden, "queued"},
+		{"taken back, then offered again", func(t *testing.T, f *fixture, cred string) {
+			if res := f.mustSync(t, "r1", cred, req("r1", 1)); len(res.Runs) != 1 {
+				t.Fatalf("not offered again: %v", ids(res.Runs))
+			}
+		}, http.StatusOK, "failed"},
+		{"lease lapsed, not yet swept", func(_ *testing.T, f *fixture, _ string) {
+			f.clock.Advance(f.hub.lease + time.Millisecond)
+		}, http.StatusForbidden, "offered"},
+		{"lease lapsed and swept", func(t *testing.T, f *fixture, _ string) {
+			f.clock.Advance(f.hub.lease + time.Millisecond)
+			if err := f.hub.Sweep(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}, http.StatusForbidden, "queued"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			cred := f.register(t, "r1")
+			f.enqueue(t, run("a", "s1"))
+			if res := f.mustSync(t, "r1", cred, first("r1", 1)); len(res.Runs) != 1 {
+				t.Fatalf("offered %v", ids(res.Runs))
+			}
+			tc.after(t, f, cred)
+			code, env := f.result(t, cred, "a", refusal)
+			if code != tc.want {
+				t.Fatalf("refusal: %d %+v, want %d", code, env.Error, tc.want)
+			}
+			if code != http.StatusOK && env.Error.Code != v1.CodeNotHolder {
+				t.Errorf("refused with code %q, want %q, the one a runner drops a refusal on", env.Error.Code, v1.CodeNotHolder)
+			}
+			if got := f.state(t, "a"); got != tc.state {
+				t.Errorf("run a is %s after the refusal, want %s", got, tc.state)
+			}
+		})
+	}
+}
+
 func TestEventsRefuseBadBatches(t *testing.T) {
 	f := newFixture(t)
 	cred := f.register(t, "r1")

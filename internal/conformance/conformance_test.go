@@ -153,6 +153,10 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawTakesAnyState, check: "result/terminal-state-only", want: Failed},
 		{flaw: flawTooLargeIsInvalid, check: "errors/too-large", want: Failed},
 		{flaw: flawRefusalNeedsAClaim, check: "result/refusal-before-claim", third: true, want: Failed},
+		{flaw: flawRefusalOutlivesTheOffer, check: "result/refusal-after-offer-taken-back", third: true, want: Failed},
+		// The run the late refusal ended is the one the next rule needed, and
+		// it says so rather than asking for a run to be queued.
+		{flaw: flawRefusalOutlivesTheOffer, check: "result/refusal-before-claim", third: true, want: Skipped},
 		{flaw: flawReoffersRefused, check: "result/refusal-before-claim", third: true, want: Failed},
 	} {
 		t.Run(tc.flaw+"/"+tc.check, func(t *testing.T) {

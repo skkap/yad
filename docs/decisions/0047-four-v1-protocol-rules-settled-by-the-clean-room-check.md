@@ -74,3 +74,32 @@ hub would have to loosen its generated validation for these fields, and a
 runner still could not tell an older strict hub from a tolerant one. Declaring
 them closed with no way to grow — the feature route costs nothing until it is
 used, and new controls already take it.
+
+## How long the runner a run was offered to may report its result (DEV-115)
+
+**Decision.** A result from the runner a run is offered to is accepted while
+the offer is open: from the answer that offered it until a sync takes the
+offer back by leaving the run out, or the offer's lease lapses. After that it
+is `403 not_holder`, which a runner drops. An offer made again reopens it.
+HUB.md §6 says so, and conformance checks it
+(`result/refusal-after-offer-taken-back`).
+
+**Why.** This is how a runner refuses a run without claiming it (decision
+0019), and it was the rule `yad hub` already kept; HUB.md named no time bound.
+Once an offer is taken back the run may be offered to another runner, and a
+wider door would let a runner fail a run another now holds. The cost is small
+and bounded: a yad runner posts its refusal straight after the sync that
+carried the offer, so it lands while the offer is open; a refusal whose first
+attempt fails may be dropped, and the run is offered again and refused afresh.
+
+**One fix it took.** `yad hub` requeues a lapsed offer at its next sweep — the
+next sync, or the sweep timer — and until then still took a refusal for it.
+It now reads the offer's lease when a result arrives, so lapsed is lapsed
+whether or not the sweep has run.
+
+**Considered.** The clean-room hub's guess — the last runner a run was offered
+to, while the run sits queued and offered to no one else — keeps the door open
+across a window in which the hub may offer the run to someone else at any
+moment, so whether a late refusal lands would depend on queue order. A grace
+period after the offer is taken back — a second timing every hub would have to
+choose and no runner can learn.

@@ -431,17 +431,19 @@ states), `final_text`, `error` with a class and message, `usage` by model,
 it durably before the first attempt and retries until you answer 2xx.
 
 **What you must do:** accept it from the runner the run is offered to *or*
-claimed by; apply it at most once; acknowledge the same state again; refuse a
-different one with `409 conflict`. §6 has the rules, including why the door
-is wider than for events, and an open point about how long an offer keeps it
-open.
+claimed by — an offer only while it is open; apply it at most once;
+acknowledge the same state again; refuse a different one with `409 conflict`.
+§6 has the rules, including why the door is wider than for events and how
+long an offer keeps it open.
 
 **Response:** `{"ok": true}`.
 
 **Refusals** (`yad hub`): `400 invalid` for a state that is not terminal;
-`401 unauthorized`; `403 not_holder`; `404 not_found`; `409 conflict` when you
-already hold a different terminal state; `413` for a body of 16 MiB or more,
-as for events. Conformance checks the non-terminal state and the `413`.
+`401 unauthorized`; `403 not_holder` for a run the caller does not hold and
+is not offered now; `404 not_found`; `409 conflict` when you already hold a
+different terminal state; `413` for a body of 16 MiB or more, as for events.
+Conformance checks the non-terminal state, the `413`, and the `403 not_holder`
+for a refusal sent after the offer was taken back.
 
 ### `POST /runners/{runner}/deregister`
 
@@ -802,22 +804,26 @@ tells you not to try again. A refused run is a failed run: record it so, and
 never offer it again. Conformance checks both halves — it refuses a run it was
 only offered, and wants the result taken and the run not offered after.
 
-**"Offered to" means offered to now.** `yad hub` takes a result from the
-runner a run is offered to between the answer that offered it and the sync
-that takes the offer back — the next one that leaves the run out, or the
-lease lapsing — and from the runner holding it after that. A yad runner sends
-its refusal straight after the sync whose answer carried the offer, before it
-syncs again, so the refusal lands while the offer is open. If that attempt
-fails, it tries again after its next sync, which by leaving the run out has
-taken the offer back. If that sync's answer offered the run to it again, the
-retry lands; if not, `yad hub` answers `403 not_holder`, the runner drops the
-refusal, and the next offer of the run to it is refused afresh.
+**"Offered to" means offered to now**
+([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)).
+Take a result from the runner a run is offered to from the answer that
+offered it until the offer closes: the next sync that leaves the run out,
+which takes the offer back (§3), or the offer's lease lapsing (§5) — lapsed
+is lapsed, whether or not you have yet put the run back in your queue. After
+that, refuse it with `403 not_holder`: the run may be another runner's by
+then, and no runner may fail a run another has. An offer made again, to the
+same runner, opens the door again. Conformance checks it: it leaves an offer
+out of a sync declaring no free capacity, then refuses the run, and wants
+`403 not_holder`.
 
-> **Open point — not yet decided.** Whether the door should stay open for a
-> while after an offer is taken back, so that a refusal delayed by a failure
-> is still heard, and what a hub should do with one that arrives after the
-> run was offered to another runner. Until it is decided, `yad hub`'s rule
-> above is the safe one: no runner can fail a run another runner now has.
+A yad runner sends its refusal straight after the sync whose answer carried
+the offer, before it syncs again, so the refusal lands while the offer is
+open. If that attempt fails, it tries again after its next sync, which by
+leaving the run out has taken the offer back. If that sync's answer offered
+the run to it again, the retry lands; if not, the hub answers `403
+not_holder`, the runner drops the refusal, and the next offer of the run to
+it is refused afresh. A refusal can be lost that way, and the run offered
+once more — never failed by a runner that no longer has it.
 
 A `refused` result may also come for a run the runner has claimed — nothing
 about the class ties it to an unclaimed run, and the conformance suite sends
@@ -1108,7 +1114,7 @@ cannot parse — an unstamped `dev` build, or a mistyped floor.
 yad conformance <connection url> --token <token> [--second-token <token>] [--harness id] [--lease-wait d]
 ```
 
-Forty-six black-box checks against a URL, written from the protocol rather
+Forty-seven black-box checks against a URL, written from the protocol rather
 than from `yad hub`'s internals — nothing in the suite imports the hub, so it
 tests the protocol and not one implementation of it. A failure gives you the
 rule as a sentence and the section of this page that states it.
@@ -1132,9 +1138,11 @@ breaks no rule in §2 and is a perfectly good hub; it simply leaves those checks
 unreachable, and the suite says so rather than failing you. The third is left
 offered and unclaimed until its offer's lease lapses. More than three does no
 harm. The suite reports one run `failed` with class `refused`, leaves one held
-run to lose its lease and the offered one to lapse, and then refuses that third
-one the way a runner declines a run — a `failed` result, class `refused`,
-without ever listing it — so all three end `failed` or `lost`. `--lease-wait`
+run to lose its lease and the offered one to lapse. It takes that third one
+once more, leaves it out of a sync so the offer is taken back, and sends a
+refusal too late, which you must refuse. Then it refuses the third run the way
+a runner declines one — a `failed` result, class `refused`, without ever
+listing it — while it is offered, so all three end `failed` or `lost`. `--lease-wait`
 (default 90 s, `0` skips the lease rules) bounds how long it waits, and must
 outlast the `lease_ms` you name.
 
@@ -1175,7 +1183,7 @@ yad hub token create |
 rm first.token
 ```
 
-It ends `46 passed, 0 failed, 0 skipped`, after about a minute spent waiting
+It ends `47 passed, 0 failed, 0 skipped`, after about a minute spent waiting
 out a lease.
 
 ### What it does not check
@@ -1263,6 +1271,7 @@ checks; the rest is yours to get right.
 - [ ] Events stored once by `(run, seq)`, `seq` from 1; `acked_through` is the contiguous prefix — [§6](#events) (C)
 - [ ] Events only from the claiming runner, before and after the run ends — [§6](#events) (C)
 - [ ] Results from the runner the run was offered to or claimed by, applied once; the same state again acknowledged; a different one `409` — [§6](#results) (C)
+- [ ] A result from the runner a run was offered to taken only while the offer is open; after a sync takes it back or its lease lapses, `403 not_holder` — [§6](#results) (C)
 - [ ] A `refused` result before any claim ends the run, and the run is not offered again — [§6](#results) (C)
 
 **Controls, sessions, grants, versions**

@@ -55,7 +55,7 @@ func (h *Hub) appendEvents(ctx context.Context, in *eventsInput) (*eventsOutput,
 		if err != nil {
 			return missingRun(in.Run, err)
 		}
-		if !reporting(run, runner.ID, false) {
+		if !reporting(run, runner.ID, false, now) {
 			return notHolder(in.Run)
 		}
 		for _, ev := range in.Body.Events {
@@ -135,7 +135,7 @@ func (h *Hub) submitResult(ctx context.Context, in *resultInput) (*ackOutput, er
 		if err != nil {
 			return missingRun(in.Run, err)
 		}
-		if !reporting(run, runner.ID, true) {
+		if !reporting(run, runner.ID, true, now) {
 			return notHolder(in.Run)
 		}
 		held := v1.RunState(run.State)
@@ -180,7 +180,14 @@ func (h *Hub) submitResult(ctx context.Context, in *resultInput) (*ackOutput, er
 // acknowledged. After the run ends its holder stays its holder, so a late
 // batch or a retried result still lands; a runner the run was never bound to
 // never does.
-func reporting(r db.Run, runnerID string, result bool) bool {
+//
+// An offer takes a result only while it is open (decision 0047): until a sync
+// takes it back, which requeues it and clears its runner, or its lease lapses.
+// The lease is read here as well because the sweep that requeues a lapsed
+// offer runs at the next sync or tick, and a refusal landing in between is
+// already late. After that the run may be another runner's, and no runner may
+// fail a run another has.
+func reporting(r db.Run, runnerID string, result bool, now int64) bool {
 	if !r.RunnerID.Valid || r.RunnerID.String != runnerID {
 		return false
 	}
@@ -188,7 +195,7 @@ func reporting(r db.Run, runnerID string, result bool) bool {
 	case "queued":
 		return false
 	case "offered":
-		return result
+		return result && r.LeaseExpiresAt.Valid && r.LeaseExpiresAt.Int64 > now
 	}
 	return true
 }
