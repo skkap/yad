@@ -249,18 +249,33 @@ holds no lease, so nothing would ever end it, and it waits for good on a
 runner that has gone. Then retire the credential — `yad hub` keeps the
 runner's row, so a token issued for that runner id brings it back.
 
-**One case the protocol does not yet specify: a runner that stops syncing
-without deregistering.** You will meet it, and nothing here or in the spec
-tells you what to do, so decide deliberately rather than by accident. Its held
-runs are covered — their leases lapse and they are lost — but two things are
-not:
+**A runner that stops syncing without deregistering is settled by time, in
+three steps** ([0046](docs/decisions/0046-a-silent-runner-loses-its-offers-with-the-lease-and-its-sessions-after-a-day.md)).
+It crashed, was switched off, or lost its network; it may come back.
 
-- **An offer to it.** Re-offering is defined by the runner's *next* sync
-  leaving the run out. If there is no next sync — the runner crashed, or was
-  switched off — nothing says when you may take the offer back.
-- **Its sessions.** Later runs in a session bound to it go to it alone, and
-  nothing says when you may decide it has gone and close them as deregister
-  would. Until you do, every later run in such a session waits.
+- **Its held runs are lost when their leases lapse**, as above.
+- **An offer to it lapses with the same lease.** The `lease_ms` beside an offer
+  covers the offer: one the runner has not claimed within it goes back in your
+  queue, and you may offer it to any runner. A claim that arrives after that —
+  the runner back, listing the run — is answered with a `cancel`, exactly as
+  for a run whose lease lapsed after it was claimed: by then the run may be
+  another runner's. `yad hub` also leaves that run out of the offers in the
+  answer carrying the cancel, so no runner is told to stop and start the same
+  run at once. Conformance checks the lapse and the cancel.
+- **Its sessions are given up after a long silence — your abandon-after.**
+  Later runs in a session bound to it go to it alone, so a runner that never
+  returns would leave them waiting for good. After a silence longer than your
+  abandon-after, counted from the last sync you answered, close every session
+  bound to it and end the runs queued in them, as deregister does — `yad hub`
+  fails them with a reason naming the runner and saying to submit the work to
+  a new session. **Keep the credential.** A runner that was only switched off
+  syncs again and is answered normally: send it `close_session` for each of
+  those sessions until it lists the session in `closed_sessions`, so it
+  reclaims the workdir, and offer it new work. Pick the length yourself, but
+  make it longer than your lease — shorter gives up a runner whose runs are
+  still leased to it. `yad hub` uses a day (`yad hub serve --abandon-after`),
+  and does not count time it was itself down. Conformance cannot wait out a
+  length it cannot learn, so this one is on the not-checked list below.
 
 **Keep accepting events after the run has ended.** A batch still in the
 runner's spool when the result landed is not late, it is owed — reject it and
@@ -361,7 +376,7 @@ a hub mounted at `https://example.com/yad/v1` is named in full. The spec's
 `servers` entry says `/v1` because that is where `yad hub` mounts it; yours is
 wherever you say it is.
 
-Thirty-six black-box checks against a URL, written from §2 rather than from
+Thirty-seven black-box checks against a URL, written from §2 rather than from
 `yad hub`'s internals — nothing in the suite imports the hub, so it tests the
 protocol and not one implementation of it. A failure gives you the rule as a
 sentence and the part of §2 it is written in, because whoever reads it is
@@ -371,13 +386,14 @@ implementing a hub and does not have this repository open.
 registers a runner advertising a harness no real run asks for, so a suite
 pointed at a live hub is offered nothing anyone was waiting on.
 
-**Queue at least two runs for that harness first, and be able to offer both at
-once.** The lease rules need two runs held simultaneously — one to report on,
+**Queue at least three runs for that harness first, and be able to offer two
+at once.** The lease rules need two runs held simultaneously — one to report on,
 one to leave unrenewed until its lease lapses — so one run is not enough, and
 **two offered one at a time is also not enough**. Offering one run per sync
 breaks no rule in §2 and is a perfectly good hub; it simply leaves those checks
-unreachable, and the suite says so rather than failing you. More than two does
-no harm.
+unreachable, and the suite says so rather than failing you. The third is left
+offered and unclaimed until its offer's lease lapses. More than three does no
+harm.
 
 Without them those checks are **skipped**, and each skip says what to queue to
 make it possible.
@@ -398,7 +414,7 @@ ask. Read the skips before believing the passes.
 
 ### What it does not check
 
-The suite prints this list itself, and it is eight rules — not a footnote. Each
+The suite prints this list itself, and it is nine rules — not a footnote. Each
 is something **your hub still has to get right** with nothing to catch you:
 
 | rule | why the suite cannot reach it |
@@ -407,6 +423,7 @@ is something **your hub still has to get right** with nothing to catch you:
 | The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, and a `steer` being delivered once | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
 | `start_at`, `min_version`, and the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at` | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated |
 | Sessions staying put — first claim binds the session to that runner, later runs to that runner alone, one at a time | needs two runs in one session, which only your own queueing can arrange |
+| A runner silent past your abandon-after — its sessions closed and their queued runs ended, its credential kept, `close_session` sent when it returns | the silence is a day by default and every hub names its own, which v1 gives a runner no way to ask |
 | Capacity shared round the hubs, one pool, a unit at a time | a rule about one runner across several hubs, so no single hub can pass or fail it |
 | The caps on tool output, event text and final text, and halving a batch a proxy refused | those bind the runner, not the hub |
 | Whether `register` refuses a missing or wrong `Yad-Protocol`, and ignores unknown fields | reading the body before the header would burn the operator's token on a header check. Both rules *are* checked on `sync`, `events` and `result` |
