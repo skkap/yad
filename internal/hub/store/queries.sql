@@ -49,10 +49,10 @@ ON CONFLICT (id) DO NOTHING;
 -- name: GetSession :one
 SELECT * FROM sessions WHERE id = ?;
 
--- name: SessionSpecs :many
--- The specs of a session's runs in the order they were submitted, for the
--- sources a run opening the session carries when it names none itself.
-SELECT spec FROM runs WHERE session_id = ? ORDER BY created_at, id;
+-- name: SessionFirstSpec :one
+-- The spec of the first run submitted in a session: its sources are the
+-- session's, which a run naming none of its own is sent with.
+SELECT spec FROM runs WHERE session_id = ? ORDER BY created_at, id LIMIT 1;
 
 -- name: BindSession :exec
 -- The first claim in a session binds it; later ones leave it as it is.

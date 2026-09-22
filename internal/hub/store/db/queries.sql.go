@@ -1073,33 +1073,17 @@ func (q *Queries) RunsOfferedTo(ctx context.Context, runnerID sql.NullString) ([
 	return items, nil
 }
 
-const sessionSpecs = `-- name: SessionSpecs :many
-SELECT spec FROM runs WHERE session_id = ? ORDER BY created_at, id
+const sessionFirstSpec = `-- name: SessionFirstSpec :one
+SELECT spec FROM runs WHERE session_id = ? ORDER BY created_at, id LIMIT 1
 `
 
-// The specs of a session's runs in the order they were submitted, for the
-// sources a run opening the session carries when it names none itself.
-func (q *Queries) SessionSpecs(ctx context.Context, sessionID string) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, sessionSpecs, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var spec string
-		if err := rows.Scan(&spec); err != nil {
-			return nil, err
-		}
-		items = append(items, spec)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+// The spec of the first run submitted in a session: its sources are the
+// session's, which a run naming none of its own is sent with.
+func (q *Queries) SessionFirstSpec(ctx context.Context, sessionID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, sessionFirstSpec, sessionID)
+	var spec string
+	err := row.Scan(&spec)
+	return spec, err
 }
 
 const sessionsToClose = `-- name: SessionsToClose :many

@@ -335,7 +335,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 // submit decided only whether the hub created the session or found it.
 //
 // A run that names no sources itself, as a continuing one usually does,
-// carries the session's: the ones its earlier runs named. A runner builds a
+// carries the session's: the ones its first run named, none included — the
+// rule every later run is held to, so a later run naming others cannot
+// change what the rest are sent. A runner builds a
 // session's workdir from the first run of it that prepares, whichever that
 // is — the one opening the session, or a continuing one after the opener was
 // lost before it prepared (a restart during a start_at wait) — and would
@@ -350,20 +352,15 @@ func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
 	if len(run.Sources) > 0 {
 		return nil
 	}
-	specs, err := q.SessionSpecs(ctx, run.Session.ID)
+	spec, err := q.SessionFirstSpec(ctx, run.Session.ID)
 	if err != nil {
 		return err
 	}
-	for _, spec := range specs {
-		var earlier v1.Run
-		if err := json.Unmarshal([]byte(spec), &earlier); err != nil {
-			return fmt.Errorf("stored run in session %s: %w", run.Session.ID, err)
-		}
-		if len(earlier.Sources) > 0 {
-			run.Sources = earlier.Sources
-			return nil
-		}
+	var first v1.Run
+	if err := json.Unmarshal([]byte(spec), &first); err != nil {
+		return fmt.Errorf("stored run in session %s: %w", run.Session.ID, err)
 	}
+	run.Sources = first.Sources
 	return nil
 }
 

@@ -127,8 +127,10 @@ acknowledged one waiting for its `start_at` included — and deleted its
 session, which the hub then continued.
 
 **Decided without asking.** A run that names no sources — as a continuing
-run usually does — is sent with the sources its session's earlier runs named,
-oldest first, whether it goes out new or continuing. A runner builds a
+run usually does — is sent with the sources its session's first run named,
+whether it goes out new or continuing. The first run's and no other's: a later
+run naming different sources is refused by the runner, and must not change
+what the rest are sent. A runner builds a
 session's workdir from the first run of it that prepares: a run opening a
 session late would otherwise build it empty, and so would a continuing run
 after the opener was reported lost at a restart before it prepared (review
