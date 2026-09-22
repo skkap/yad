@@ -424,11 +424,33 @@ func TestAWaitingRunWithGrantsIsReportedLostAfterARestart(t *testing.T) {
 	}
 }
 
+// stopRun asks the env's hub to cancel or to interrupt a run.
+func stopRun(t *testing.T, e *env, kind v1.ControlKind, id string) {
+	t.Helper()
+	var err error
+	if kind == v1.ControlCancel {
+		_, err = e.api(t).Cancel(context.Background(), id)
+	} else {
+		_, err = e.api(t).Interrupt(context.Background(), id)
+	}
+	if err != nil {
+		t.Fatalf("%s: %v", kind, err)
+	}
+}
+
 // A waiting run has no turn to interrupt and no process to signal, so the
-// cancel ladder has nothing to climb. The hub's cancel still ends it.
+// cancel ladder has nothing to climb. The hub's cancel still ends it, and so
+// does an interrupt, which ends a run whose harness is not up as a cancel
+// does — the executor, which the interrupt used to go to, does not hold a
+// parked run, and dropped it on every sync (DEV-113).
 func TestCancellingAWaitingRunEndsIt(t *testing.T) {
+	for _, kind := range []v1.ControlKind{v1.ControlCancel, v1.ControlInterrupt} {
+		t.Run(string(kind), func(t *testing.T) { cancellingAWaitingRunEndsIt(t, kind) })
+	}
+}
+
+func cancellingAWaitingRunEndsIt(t *testing.T, kind v1.ControlKind) {
 	e := newEnv(t)
-	ctx := context.Background()
 	plantCredential(t, e.paths.Data, "work")
 	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
 
@@ -438,9 +460,7 @@ func TestCancellingAWaitingRunEndsIt(t *testing.T) {
 	claimAndRun(t, l, x)
 	waitingRow(t, e, "a")
 
-	if view, err := e.api(t).Cancel(ctx, "a"); err != nil || view.CancelRequestedAt == nil {
-		t.Fatalf("cancel: %+v %v", view, err)
-	}
+	stopRun(t, e, kind, "a")
 	mustSync(t, l)
 
 	res, ok := outboxResult(t, e, "a")
@@ -1151,7 +1171,15 @@ func TestOnlyTheSyncLoopStartsARun(t *testing.T) {
 // waiting. Acting on the snapshot wrote `claimed` over the cancelled row
 // and started the harness, and the outbox's ON CONFLICT DO NOTHING
 // swallowed the second result, so the hub never even saw the contradiction.
+//
+// An interrupt is the same stop for a run whose harness is not up.
 func TestACancelInThisSyncsAnswerStopsTheResumeInTheSameSync(t *testing.T) {
+	for _, kind := range []v1.ControlKind{v1.ControlCancel, v1.ControlInterrupt} {
+		t.Run(string(kind), func(t *testing.T) { aCancelInThisSyncsAnswerStopsTheResume(t, kind) })
+	}
+}
+
+func aCancelInThisSyncsAnswerStopsTheResume(t *testing.T, kind v1.ControlKind) {
 	e := newEnv(t)
 	ctx := context.Background()
 	plantCredential(t, e.paths.Data, "work")
@@ -1173,9 +1201,7 @@ func TestACancelInThisSyncsAnswerStopsTheResumeInTheSameSync(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if view, err := e.api(t).Cancel(ctx, "a"); err != nil || view.CancelRequestedAt == nil {
-		t.Fatalf("cancel: %+v %v", view, err)
-	}
+	stopRun(t, e, kind, "a")
 	syncAt(t, l, x, reset.Add(resumeSkew+time.Second))
 
 	res, ok := outboxResult(t, e, "a")

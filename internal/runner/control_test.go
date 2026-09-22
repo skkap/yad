@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -189,6 +190,115 @@ func TestStopBeforeTheHarnessStarts(t *testing.T) {
 				t.Errorf("capacity not released: free %d", l.Pool.Free())
 			}
 		})
+	}
+}
+
+// alsoSays is a hub that adds controls to the answer of the sync it is armed
+// for. The window it reproduces is one answer wide — yad hub queues an
+// interrupt only for a run it holds as claimed, and the answer that claims it
+// is the first that can carry one — so a test cannot reach it through the
+// service API alone.
+type alsoSays struct {
+	Hub
+	mu    sync.Mutex
+	extra []v1.Control
+}
+
+func (h *alsoSays) Sync(ctx context.Context, runnerID string, req v1.SyncRequest) (v1.SyncResponse, error) {
+	out, err := h.Hub.Sync(ctx, runnerID, req)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err == nil {
+		out.Controls = append(out.Controls, h.extra...)
+		h.extra = nil
+	}
+	return out, err
+}
+
+func (h *alsoSays) arm(cs ...v1.Control) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.extra = cs
+}
+
+// DEV-113: a control in the very answer that acknowledges a claim reaches
+// the run. The run is not the executor's until that answer has been read, so
+// a control handed to the executor first found nothing and was dropped, and
+// the run started as if the hub had said nothing — a fast one finishing
+// before the hub could repeat itself.
+//
+// A cancel withdraws the claim: the run never starts and no result is owed
+// (HUB.md §7, decision 0019). An interrupt ends it as a cancel ends a run
+// whose harness is not up: cancelled, nothing spawned, with a result, because
+// a hub interrupts only a run it holds as claimed.
+func TestStopInTheAnswerThatAcknowledgesTheClaim(t *testing.T) {
+	for _, kind := range []v1.ControlKind{v1.ControlCancel, v1.ControlInterrupt} {
+		t.Run(string(kind), func(t *testing.T) {
+			e := newEnv(t)
+			l := e.loop(t, 1)
+			h := &alsoSays{Hub: l.Hub}
+			l.Hub = h
+			e.enqueue(t, testRun("a", "s1"))
+			ad := fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}})
+			x := e.executor(ad)
+			l.Executor = x
+			mustSync(t, l) // offered, and claimed here
+			h.arm(v1.Control{Kind: kind, RunID: "a"})
+			mustSync(t, l) // listed; the answer acknowledges it and stops it
+			ended(t, x)
+
+			if len(ad.Starts) != 0 {
+				t.Errorf("the harness was started: %+v", ad.Starts)
+			}
+			if l.Pool.Free() != 1 {
+				t.Errorf("capacity not released: free %d", l.Pool.Free())
+			}
+			res, ok := outboxResult(t, e, "a")
+			if kind == v1.ControlCancel {
+				if ok {
+					t.Errorf("a withdrawn claim owes no result, and one is queued: %+v", res)
+				}
+				if _, err := e.store.GetRun(context.Background(), db.GetRunParams{Connection: "hub", ID: "a"}); err == nil {
+					t.Error("the withdrawn claim is still in the store")
+				}
+				return
+			}
+			if !ok || res.State != v1.RunCancelled || res.Error != nil || res.Metrics.CancelLatencyMS == nil {
+				t.Fatalf("result %+v, %v", res, ok)
+			}
+			l.Hub = h.Hub // the reporter talks to the real client
+			e.reporter(l).Flush(context.Background())
+			if got := e.hubState(t, "a"); got != "cancelled" {
+				t.Errorf("hub state %s", got)
+			}
+		})
+	}
+}
+
+// A steer in the answer that acknowledges the claim waits for the harness,
+// as one sent while the run prepares does, rather than being dropped.
+func TestSteerInTheAnswerThatAcknowledgesTheClaim(t *testing.T) {
+	e := newEnv(t)
+	l := e.loop(t, 1)
+	h := &alsoSays{Hub: l.Hub}
+	l.Hub = h
+	e.enqueue(t, testRun("a", "s1"))
+	ad := fakeHarness(fake.Script{Hang: true})
+	x := e.executor(ad)
+	l.Executor = x
+	mustSync(t, l)
+	h.arm(v1.Control{Kind: v1.ControlSteer, RunID: "a", Text: "use tabs"})
+	mustSync(t, l)
+	eventually(t, "the steer reaches the turn", func() bool {
+		return slices.Contains(statuses(runEvents(t, e, "a")), "steered")
+	})
+	if _, err := e.api(t).Cancel(context.Background(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	mustSync(t, l)
+	ended(t, x)
+	if got := fake.Steered(ad.Turns()[0]); !slices.Equal(got, []string{"use tabs"}) {
+		t.Errorf("steered %q", got)
 	}
 }
 

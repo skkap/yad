@@ -57,6 +57,8 @@ const (
 //     (store.SetRunState). The loop lists whatever the store holds on every
 //     sync; there is no other channel.
 //   - Control delivers the hub's instructions for runs the executor has.
+//     Instructions for a run the same answer starts come with its Claim
+//     instead: Control is only ever called once every start is done.
 //   - Parked, End and Forget are the executor's side of a run waiting on a
 //     usage limit. The run itself is in the store and the loop decides what
 //     becomes of it; these are the parts only the executor has — the claim it
@@ -80,6 +82,13 @@ type Claim struct {
 	Connection string
 	Run        v1.Run
 	Release    func()
+	// Controls are what the answer that starts the run said about it, in
+	// the hub's order. They travel with the claim because the executor has
+	// no run to deliver them to until Start has registered it: handed over
+	// separately, one sent before that moment would find nothing and be
+	// dropped, and the run would start as if the hub had said nothing
+	// (DEV-113).
+	Controls []v1.Control
 }
 
 // Hub is the part of hubclient.Client the loop uses.
@@ -185,6 +194,12 @@ type Loop struct {
 	// since: it is told once more, so it stops asking. Kept in memory: the
 	// hub repeats close_session until it hears, so a lost one comes back.
 	echoes map[string]v1.ClosedSession
+	// answered are the controls this sync's answer sent that name a run,
+	// keyed by it, for the length of the sync. Each run's leave the map by
+	// exactly one way — with a claim that starts, spent on a run that ends
+	// before it starts, or to the executor once every start is done — so a
+	// control is never delivered before the run it names can receive it.
+	answered map[string][]v1.Control
 }
 
 type pendingRun struct {
@@ -385,36 +400,38 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	}
 	l.reported(ctx, closed)
 
+	// Controls that name a run wait for the runs this sync starts: a run
+	// acknowledged by this very answer is not the executor's yet, and an
+	// interrupt delivered ahead of its start would find nothing and be
+	// dropped (DEV-113). Everything else is acted on now.
+	l.answered = byRun(out.Controls)
+	defer func() { l.answered = nil }()
 	for _, c := range out.Controls {
-		switch {
-		case c.Kind == v1.ControlReportCapabilities:
+		switch c.Kind {
+		case v1.ControlReportCapabilities:
 			l.wantDocument = true
-		case c.Kind == v1.ControlDrain:
+		case v1.ControlDrain:
 			// Repeated until a sync says draining; only the first moves it.
 			if l.Drain == nil {
 				l.Log.Warn("the hub asked this runner to drain, and nothing here can", "connection", l.Connection)
 			} else if l.Drain.Begin("the hub " + l.Connection + " asked the runner to drain") {
 				l.Log.Warn("draining at the hub's request: no new runs; exiting once the runs held have ended", "connection", l.Connection)
 			}
-		case c.Kind == v1.ControlCancel && l.isPending(c.RunID):
-			l.withdraw(ctx, c.RunID)
-		case c.Kind == v1.ControlCancel && l.cancelWaiting(ctx, c.RunID):
-			// A parked run has no turn to interrupt and no process to
-			// signal, so the executor has nothing to cancel: the loop ends
-			// it where it stands. A cancel is repeated until the run ends
-			// (decision 0025), and the second one finds it already terminal
-			// and falls through to the executor, which drops it.
-		case c.Kind == v1.ControlCloseSession:
+		case v1.ControlCloseSession:
 			l.closeSession(ctx, c.SessionID)
-		case l.Executor != nil:
-			l.Executor.Control(ctx, l.Connection, c)
 		}
 	}
-	// A pending run listed in a sync the hub answered is claimed: it starts.
+	for id, cs := range l.answered {
+		if l.stopUnstarted(ctx, id, cs) {
+			delete(l.answered, id)
+		}
+	}
+	// A pending run listed in a sync the hub answered is claimed: it starts,
+	// carrying whatever the answer said about it.
 	for id, p := range l.pending {
 		if listed[id] {
 			delete(l.pending, id)
-			l.Executor.Start(ctx, Claim{Connection: l.Connection, Run: p.run, Release: p.release})
+			l.start(ctx, Claim{Connection: l.Connection, Run: p.run, Release: p.release})
 		}
 	}
 	// A runner draining since the hub's answer takes none of what it
@@ -430,6 +447,13 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	// the hub is offering now is work it is waiting on an answer about.
 	if !l.Drain.IsDraining() {
 		l.resumeWaiting(ctx, held, res, reserved)
+	}
+	// Last, once nothing more starts in this sync: what is left is for runs
+	// the executor already has, or for none this runner holds.
+	for _, c := range out.Controls {
+		if _, ok := l.answered[c.RunID]; ok && l.Executor != nil {
+			l.Executor.Control(ctx, l.Connection, c)
+		}
 	}
 	res.Close()
 	l.sendRefusals(ctx)
@@ -447,6 +471,55 @@ func (l *Loop) mayClaim() bool {
 	default:
 		return false
 	}
+}
+
+// byRun is an answer's controls that name a run, keyed by it, each run's in
+// the order the hub sent them.
+func byRun(controls []v1.Control) map[string][]v1.Control {
+	out := map[string][]v1.Control{}
+	for _, c := range controls {
+		if c.RunID != "" {
+			out[c.RunID] = append(out[c.RunID], c)
+		}
+	}
+	return out
+}
+
+// stopUnstarted acts on a cancel or an interrupt for a run held here and not
+// started — claimed and not yet acknowledged, or parked — and reports whether
+// that settled every control the answer sent for it.
+//
+// A cancel of a pending run withdraws the claim: HUB.md §7 and decision 0019
+// promise the run never starts and no result is owed, which is also the only
+// safe answer to the cancel that tells a late runner it lost the race. An
+// interrupt of one does not: a hub sends it only for a run it holds as
+// claimed, so it is owed a result, and the run starts with the interrupt in
+// its claim, which ends it cancelled before its harness is spawned.
+//
+// A parked run has no turn to end and no process to signal, so a cancel and
+// an interrupt alike end it where it stands (decision 0025). A cancel is
+// repeated until the run ends, and the second one finds it already terminal
+// and is left for the executor, which drops it.
+func (l *Loop) stopUnstarted(ctx context.Context, id string, cs []v1.Control) bool {
+	for _, c := range cs {
+		switch {
+		case c.Kind == v1.ControlCancel && l.isPending(id):
+			l.withdraw(ctx, id)
+			return true
+		case (c.Kind == v1.ControlCancel || c.Kind == v1.ControlInterrupt) && l.cancelWaiting(ctx, id):
+			return true
+		}
+	}
+	return false
+}
+
+// start hands a claim to the executor with the controls this sync's answer
+// sent for its run. Every start in a sync goes through here, so none can
+// start without them.
+func (l *Loop) start(ctx context.Context, c Claim) {
+	c.Controls = l.answered[c.Run.RunID]
+	delete(l.answered, c.Run.RunID)
+	l.Executor.Start(ctx, c)
 }
 
 func (l *Loop) isPending(runID string) bool {
