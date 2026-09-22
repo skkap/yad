@@ -380,8 +380,18 @@ func placeLink(from, to string) error {
 	if err := os.Symlink(to, staged); err != nil {
 		return err
 	}
+	if beforeReplace != nil {
+		beforeReplace(from)
+	}
 	return os.Rename(staged, from)
 }
+
+// beforeReplace is nil outside tests. A test sets it to stand at the one
+// instant a remove-first link would leave the path empty — after the old link
+// could have been removed, before the new one lands — and to count that a
+// racer really did re-link, rather than hoping a free-running observer is
+// scheduled inside a gap a few syscalls wide.
+var beforeReplace func(path string)
 
 // Remove deletes an account's harness home, and nothing else.
 //
