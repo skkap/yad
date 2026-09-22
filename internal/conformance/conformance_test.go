@@ -26,11 +26,21 @@ const fakeToken = "fake-registration-token"
 // and lease rules, and one to leave offered and unclaimed for its lease.
 func TestAHubThatFollowsTheProtocolPasses(t *testing.T) {
 	t.Parallel()
-	_, url := newFake(t, "", fakeRunSpec(0), fakeRunSpec(1), fakeRunSpec(2))
+	f, url := newFake(t, "", fakeRunSpec(0), fakeRunSpec(1), fakeRunSpec(2))
 	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken, SecondToken: fakeSecondToken, LeaseWait: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A result names the last event its run had. The suite sends events for
+	// one run alone, and a last_seq a run never reached leaves its stream
+	// incomplete for good on a hub that waits for acked_through to meet it.
+	f.mu.Lock()
+	for id, run := range f.runs {
+		if run.final != "" && run.lastSeq > run.through {
+			t.Errorf("run %s ended with last_seq %d, and the suite sent its events only through %d", id, run.lastSeq, run.through)
+		}
+	}
+	f.mu.Unlock()
 	var out strings.Builder
 	rep.Print(&out)
 	for _, o := range rep.Outcomes {

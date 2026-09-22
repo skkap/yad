@@ -67,6 +67,8 @@ type fakeRun struct {
 	events    map[int64]bool
 	through   int64
 	final     v1.RunState
+	// lastSeq is the last_seq the result that ended the run named.
+	lastSeq int64
 }
 
 // The flaws, each named for the rule it breaks.
@@ -510,7 +512,7 @@ func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string, guar
 	}
 	switch {
 	case run.final == "" || f.flaw == flawTakesAnyResult:
-		run.final, run.state, run.expires = res.State, res.State, time.Time{}
+		run.final, run.state, run.expires, run.lastSeq = res.State, res.State, time.Time{}, res.LastSeq
 	case run.final != res.State:
 		f.fail(w, http.StatusConflict, v1.CodeConflict,
 			fmt.Sprintf("run %s is already %s on this hub", runID, run.final), "the hub's state stands; stop reporting this run")

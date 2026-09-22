@@ -510,7 +510,13 @@ func (s *session) eventsFor(ctx context.Context, runID string, seqs ...int64) (v
 // resultFor reports a terminal state. A failure is the refusal HUB.md asks of a
 // runner that will not take a run, which is exactly what this one is.
 func (s *session) resultFor(ctx context.Context, runID string, state v1.RunState) (*answer, error) {
-	res := v1.Result{State: state, LastSeq: s.lastSeq}
+	// Only the run the event rules are made against has events. Any other
+	// names none: a last_seq it never reached would leave its stream
+	// incomplete for ever on a hub that waits for acked_through to catch up.
+	res := v1.Result{State: state}
+	if runID == s.report {
+		res.LastSeq = s.lastSeq
+	}
 	if state == v1.RunFailed {
 		res.Error = &v1.RunError{
 			Class:   "refused",
