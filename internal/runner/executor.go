@@ -280,6 +280,14 @@ func (e *Exec) Start(ctx context.Context, c Claim) {
 	e.init()
 	key := runKey{c.Connection, c.Run.RunID}
 	a := newActiveRun()
+	// Before the run is visible to Control and before its goroutine exists,
+	// so a stop the claim carries is the first thing the run can see.
+	now := time.Now()
+	for _, ctl := range c.Controls {
+		if ctl.Kind == v1.ControlCancel || ctl.Kind == v1.ControlInterrupt || ctl.Kind == v1.ControlSteer {
+			e.hand(a, c.Connection, ctl, now)
+		}
+	}
 	e.mu.Lock()
 	e.active[key] = a
 	e.mu.Unlock()
@@ -353,21 +361,26 @@ func (e *Exec) Control(_ context.Context, connection string, c v1.Control) {
 			// its way; the hub's answer to it is already settled.
 			return
 		}
-		log := e.Log.With("connection", connection, "run", c.RunID, "kind", c.Kind)
-		now := time.Now()
-		if c.Kind == v1.ControlCancel || c.Kind == v1.ControlInterrupt {
-			if first, ok := a.stop(now, c.Kind == v1.ControlCancel); ok {
-				if first {
-					log.Info("the hub stopped the run")
-				}
-				return
+		e.hand(a, connection, c, time.Now())
+	}
+}
+
+// hand gives one control to a run in hand: a stop is acted on here, and
+// anything else waits for the run's own goroutine.
+func (e *Exec) hand(a *activeRun, connection string, c v1.Control, now time.Time) {
+	log := e.Log.With("connection", connection, "run", c.RunID, "kind", c.Kind)
+	if c.Kind == v1.ControlCancel || c.Kind == v1.ControlInterrupt {
+		if first, ok := a.stop(now, c.Kind == v1.ControlCancel); ok {
+			if first {
+				log.Info("the hub stopped the run")
 			}
+			return
 		}
-		select {
-		case a.controls <- control{Control: c, at: now}:
-		default:
-			log.Warn("too many controls are waiting for this run; this one is dropped")
-		}
+	}
+	select {
+	case a.controls <- control{Control: c, at: now}:
+	default:
+		log.Warn("too many controls are waiting for this run; this one is dropped")
 	}
 }
 
@@ -417,6 +430,11 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		return true
 	}
 
+	// A claim can arrive stopped — an interrupt in the answer that
+	// acknowledged it — and nothing is prepared for a run that will not run.
+	if stoppedEarly() {
+		return
+	}
 	// A start time is a moment the run must not start before; the hub may
 	// hand the run over early so it starts on time. It waits here, claimed
 	// and holding its capacity.
