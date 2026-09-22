@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/skkap/yad/internal/harness"
-	"github.com/skkap/yad/internal/probe"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -130,10 +129,10 @@ func probeOne(ctx context.Context, t Tool) Detected {
 		d.Error = bin.WontStart()
 		return d
 	case out.TimedOut:
-		d.Error = probe.NoAnswer(bin.Command(), versionWait())
+		d.Error = bin.NoAnswer(versionWait(), t.VersionArgs...)
 		return d
 	case out.Err != nil:
-		d.Error = probe.WontAnswer(bin.Command())
+		d.Error = bin.WontAnswer(t.VersionArgs...)
 		return d
 	}
 	// The same banner-to-one-line rule the harnesses need: these three disagree

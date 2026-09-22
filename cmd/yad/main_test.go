@@ -260,7 +260,7 @@ func TestDoctorPrintsTheWholeHarnessError(t *testing.T) {
 	}{
 		{name: "a harness that exits non-zero",
 			body: "#!/bin/sh\necho 'fatal: unable to access https://user:hunter2@proxy.internal/' >&2\nexit 128\n",
-			want: "error: Claude Code — `claude --version` exited with an error — run it on this machine to see why"},
+			want: "error: Claude Code — `\"$YAD_CLAUDE_PATH\" --version` exited with an error — run it on this machine to see why, with YAD_CLAUDE_PATH set in that shell to the path the runner has"},
 		{name: "a harness on PATH that will not start", viaPATH: true,
 			body: "#!/nonexistent/interpreter\n",
 			want: "error: Claude Code — the claude on PATH will not start — run `claude --version` on this machine to see what stops it"},

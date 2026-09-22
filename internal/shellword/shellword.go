@@ -42,6 +42,36 @@ func Command(argv ...string) string {
 	return strings.Join(words, " ")
 }
 
+// Expand is a word the reader's shell replaces with the value of the variable
+// name, whatever that value holds, as exactly one argument: "$NAME".
+//
+// It is for a value that must not be printed but is known to the reader: a
+// binary a YAD_<ID>_PATH override names is under its owner's home, and a
+// message that leaves the machine may not carry that path (DEV-67, DEV-108).
+// Double quotes and not single, because the expansion is the point; inside
+// them the expanded value is not split or globbed. The name is the caller's
+// constant, never a value from outside, so one that is not a variable name
+// is a bug and panics rather than printing a command that means something
+// else.
+func Expand(name string) string {
+	if !isName(name) {
+		panic("shellword.Expand: " + Quote(name) + " is not a variable name")
+	}
+	return `"$` + name + `"`
+}
+
+func isName(s string) bool {
+	for i, r := range s {
+		switch {
+		case r == '_', 'a' <= r && r <= 'z', 'A' <= r && r <= 'Z':
+		case '0' <= r && r <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return s != ""
+}
+
 // special reports a rune that may not appear in a bare word. It is an allow
 // list rather than a list of the characters shells are known to treat
 // specially: a character missed from a deny list is a command that silently

@@ -273,7 +273,7 @@ func TestGHUnconfirmedLoginIsNotAnAnswer(t *testing.T) {
 			if !strings.Contains(d.Error, "could not confirm") {
 				t.Errorf("Error = %q, want it to say the login was not confirmed", d.Error)
 			}
-			if !strings.Contains(d.Error, "gh auth status") {
+			if !strings.Contains(d.Error, "`\"$YAD_GH_PATH\" auth status`") {
 				t.Errorf("Error = %q, want the command that distinguishes the causes", d.Error)
 			}
 			for _, guess := range []string{"could not reach the host", "the token is expired", "the token has been revoked"} {
@@ -385,7 +385,7 @@ func TestGHSilenceIsNotAnAnswer(t *testing.T) {
 	if d.LoggedIn != nil {
 		t.Errorf("LoggedIn = %v, want nothing claimed", *d.LoggedIn)
 	}
-	if !strings.Contains(d.Error, "gh auth status") {
+	if !strings.Contains(d.Error, "`\"$YAD_GH_PATH\" auth status`") {
 		t.Errorf("Error = %q, want it to name the probe that said nothing", d.Error)
 	}
 }
@@ -515,11 +515,11 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 		wantErr     string
 		wantVersion string
 	}{
-		{"git hangs on --version", "git", hangsAtOnce, &VersionTimeoutForTests, "no answer to `git --version`", ""},
-		{"gh hangs on --version", "gh", hangsAtOnce, &VersionTimeoutForTests, "no answer to `gh --version`", ""},
-		{"gh hangs on auth status", "gh", answersVersion("gh version 2.98.0"), &StatusTimeoutForTests, "gh auth status", "2.98.0"},
+		{"git hangs on --version", "git", hangsAtOnce, &VersionTimeoutForTests, "no answer to `\"$YAD_GIT_PATH\" --version`", ""},
+		{"gh hangs on --version", "gh", hangsAtOnce, &VersionTimeoutForTests, "no answer to `\"$YAD_GH_PATH\" --version`", ""},
+		{"gh hangs on auth status", "gh", answersVersion("gh version 2.98.0"), &StatusTimeoutForTests, "`\"$YAD_GH_PATH\" auth status`", "2.98.0"},
 		{"docker hangs on the daemon", "docker", answersVersion("Docker version 29.1.3"), &StatusTimeoutForTests, "did not answer", "29.1.3"},
-		{"gh answers its version slowly, then hangs on auth status", "gh", slowVersion("gh version 2.98.0"), &StatusTimeoutForTests, "gh auth status", "2.98.0"},
+		{"gh answers its version slowly, then hangs on auth status", "gh", slowVersion("gh version 2.98.0"), &StatusTimeoutForTests, "`\"$YAD_GH_PATH\" auth status`", "2.98.0"},
 		{"docker answers its version slowly, then hangs on the daemon", "docker", slowVersion("Docker version 29.1.3"), &StatusTimeoutForTests, "did not answer", "29.1.3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -683,7 +683,7 @@ func TestATimedOutProbeIsNeverReportedAsAnExit(t *testing.T) {
 			shorten(t, &VersionTimeoutForTests, 250*time.Millisecond)
 
 			d := hanging(t, "git", tc.body)
-			if !strings.Contains(d.Error, "no answer to `git --version`") {
+			if !strings.Contains(d.Error, "no answer to `\"$YAD_GIT_PATH\" --version`") {
 				t.Errorf("Error = %q, want the timeout rather than the child's fate", d.Error)
 			}
 		})

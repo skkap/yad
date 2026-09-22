@@ -96,11 +96,49 @@ func namesNothing(path string) bool {
 	return false
 }
 
-// Command is the version probe as its owner would paste it: built from argv,
-// every word quoted, because the messages below set it apart as a command to
-// run (AGENTS.md) whatever a catalog entry's name holds today.
-func (f Found) Command() string {
-	return shellword.Command(append([]string{f.name}, f.versionArgs...)...)
+// Command is the binary that was probed, run with args, as its owner would
+// paste it: built from argv, every word quoted, because the messages below
+// set it apart as a command to run (AGENTS.md) whatever a catalog entry's
+// name holds today.
+//
+// The program is the one detection found. Found on PATH, that is its name,
+// which the owner's shell resolves the same way. Found through the override,
+// the name would run PATH's copy, or nothing — the override exists because
+// PATH lacks it — so the program is the variable instead, "$YAD_CODEX_PATH":
+// the file itself, without printing a path that is under its owner's home
+// and may not leave the machine (DEV-67, DEV-108). Such a command runs only
+// where the variable is set, which Try says beside it.
+func (f Found) Command(args ...string) string {
+	program := shellword.Quote(f.name)
+	if f.FromOverride {
+		program = shellword.Expand(f.envVar)
+	}
+	if len(args) == 0 {
+		return program
+	}
+	return program + " " + shellword.Command(args...)
+}
+
+// VersionCommand is Command for the version probe.
+func (f Found) VersionCommand() string { return f.Command(f.versionArgs...) }
+
+// Try is the advice to run command by hand to see why: "run `command` on this
+// machine" and what it will show. Where command names the override's
+// variable, it says the variable has to be set in the shell it is pasted into
+// — the daemon's environment is not the reader's, and "$YAD_CODEX_PATH" unset
+// is an empty program.
+func (f Found) Try(command, toSee string) string { return f.run("`"+command+"`", toSee) }
+
+// TryIt is Try for a message that has already set the command apart, which
+// it names as "it".
+func (f Found) TryIt(toSee string) string { return f.run("it", toSee) }
+
+func (f Found) run(what, toSee string) string {
+	s := fmt.Sprintf("run %s on this machine to see %s", what, toSee)
+	if f.FromOverride {
+		s += fmt.Sprintf(", with %s set in that shell to the path the runner has", f.envVar)
+	}
+	return s
 }
 
 // WontStart is a binary that was found and could not be started.
@@ -116,21 +154,20 @@ func (f Found) WontStart() string {
 	if f.FromOverride {
 		return fmt.Sprintf("%s does not name a %s this runner can start — point it at an executable %s, or unset it and let PATH decide", f.envVar, f.name, f.name)
 	}
-	return fmt.Sprintf("the %s on PATH will not start — run `%s` on this machine to see what stops it", f.name, f.Command())
+	return fmt.Sprintf("the %s on PATH will not start — %s", f.name, f.Try(f.VersionCommand(), "what stops it"))
 }
 
-// NoAnswer is a probe the binary never came back from; command is built with
-// shellword.Command, as Found.Command builds it. It names the command
-// and the wait and nothing else, and gives the action because this is the case
-// where it is worth most: a CLI that hangs on its own version flag has stopped
-// telling its owner anything at all.
-func NoAnswer(command string, waited time.Duration) string {
-	return fmt.Sprintf("no answer to `%s` within %s — run it on this machine to see what it waits on", command, waited)
+// NoAnswer is a probe of this binary with args that never came back. It names
+// the command and the wait and nothing else, and gives the action because this
+// is the case where it is worth most: a CLI that hangs on its own version flag
+// has stopped telling its owner anything at all.
+func (f Found) NoAnswer(waited time.Duration, args ...string) string {
+	return fmt.Sprintf("no answer to `%s` within %s — %s", f.Command(args...), waited, f.TryIt("what it waits on"))
 }
 
-// WontAnswer is a probe that ran and failed. Neither the exit status nor the
-// child's stderr is quoted; running it by hand tells its owner more than a
-// tail would, and tells a hub nothing it should have.
-func WontAnswer(command string) string {
-	return fmt.Sprintf("`%s` exited with an error — run it on this machine to see why", command)
+// WontAnswer is a probe of this binary with args that ran and failed. Neither
+// the exit status nor the child's stderr is quoted; running it by hand tells
+// its owner more than a tail would, and tells a hub nothing it should have.
+func (f Found) WontAnswer(args ...string) string {
+	return fmt.Sprintf("`%s` exited with an error — %s", f.Command(args...), f.TryIt("why"))
 }

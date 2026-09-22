@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/skkap/yad/internal/probe"
-	"github.com/skkap/yad/internal/shellword"
 )
 
 // ghLoginTTL is how long gh's answer about its login is reused before gh is
@@ -142,7 +141,7 @@ func askGH(ctx context.Context, bin probe.Found) (in bool, hosts []string, failu
 	case err != nil:
 		return false, nil, bin.WontStart()
 	case out.TimedOut:
-		return false, nil, probe.NoAnswer(shellword.Command("gh", "auth", "status"), statusWait())
+		return false, nil, bin.NoAnswer(statusWait(), "auth", "status")
 	}
 	// The exit status is not consulted: with `--json` gh exits 0 whatever it
 	// finds wrong with an account, and non-zero only on a fatal error — which
@@ -154,7 +153,7 @@ func askGH(ctx context.Context, bin probe.Found) (in bool, hosts []string, failu
 			// telling them apart means reading the message beside it. So the
 			// report says what is known and names the one command that
 			// distinguishes them.
-			return false, nil, "gh has a login it could not confirm — the token may be expired or the host unreachable; run `gh auth status` on this machine to see which"
+			return false, nil, "gh has a login it could not confirm — the token may be expired or the host unreachable; " + bin.Try(bin.Command("auth", "status"), "which")
 		}
 		return len(hosts) > 0, hosts, ""
 	}
@@ -168,7 +167,7 @@ func askGH(ctx context.Context, bin probe.Found) (in bool, hosts []string, failu
 	case err != nil:
 		return false, nil, bin.WontStart()
 	case out.TimedOut:
-		return false, nil, probe.NoAnswer(shellword.Command("gh", "auth", "status"), statusWait())
+		return false, nil, bin.NoAnswer(statusWait(), "auth", "status")
 	}
 	if hosts := ghFromProse(string(out.Stdout)); len(hosts) > 0 {
 		return true, hosts, ""
@@ -179,7 +178,7 @@ func askGH(ctx context.Context, bin probe.Found) (in bool, hosts []string, failu
 	// gh said something, but nothing that answers the question. Calling that
 	// "signed out" would route pull-request work away from a machine that may
 	// well do it.
-	return false, nil, "`gh auth status` answered nothing this runner could read — run it on this machine to see why"
+	return false, nil, "`" + bin.Command("auth", "status") + "` answered nothing this runner could read — " + bin.TryIt("why")
 }
 
 // ghFromJSON reads the signed-in hosts out of `gh auth status --json hosts`,
