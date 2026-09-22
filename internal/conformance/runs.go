@@ -200,6 +200,80 @@ func checkResultConflict(ctx context.Context, s *session) error {
 	return refusedWith(a, http.StatusConflict, v1.CodeConflict)
 }
 
+// checkEventsSeqFromOne sends an event numbered 0 for a run this runner holds.
+// seq is one-based, and a hub storing a zero has a stream that no
+// acked_through can describe: the runner's first event would fill a gap that
+// does not exist.
+func checkEventsSeqFromOne(ctx context.Context, s *session) error {
+	_, a, err := s.eventsFor(ctx, s.report, 0)
+	if err != nil {
+		return err
+	}
+	if a.ok() {
+		return brokenf("an event with seq 0 was taken; a run's events are numbered from 1: %s", a)
+	}
+	return refusedInvalid(a)
+}
+
+// checkResultIsTerminal reports a state that is not terminal as a run's
+// result, before the real one: a hub that took it would hold a run as ended
+// that is not, and refuse the terminal state that follows as a conflict.
+func checkResultIsTerminal(ctx context.Context, s *session) error {
+	a, err := s.resultFor(ctx, s.report, v1.RunRunning)
+	if err != nil {
+		return err
+	}
+	if a.ok() {
+		return brokenf("a result with state %q was taken; a result carries one of the five terminal states, and a non-terminal one travels in the sync: %s", v1.RunRunning, a)
+	}
+	return refusedInvalid(a)
+}
+
+// checkRefusalBeforeClaim is the wider door: a runner that will not take a run
+// says so with a failed result, class refused, while the run is only offered
+// to it — it never lists the run. The hub must take that result, and must not
+// offer the run again: the refusal is the runner saying no retry will change
+// its mind. It uses the run the offer-lapse rule left queued, or any other the
+// hub offers now besides the two the suite already ended.
+func checkRefusalBeforeClaim(ctx context.Context, s *session) error {
+	var offer string
+	for i := 0; i < offerSyncs && offer == ""; i++ {
+		res, _, err := s.syncOK(ctx, 1)
+		if err != nil {
+			return err
+		}
+		for _, r := range res.Runs {
+			if r.RunID != s.report && r.RunID != s.lapse {
+				offer = r.RunID
+				break
+			}
+		}
+	}
+	switch {
+	case offer == "" && s.keepsOffers:
+		return skipf("no run was offered in %d syncs: this hub keeps an offer a sync leaves out (sync/unlisted-offer-taken-back), so the run it last offered is still open to this runner and never offered again", offerSyncs)
+	case offer == "":
+		return skipf("no third run was offered in %d syncs, and this rule needs one besides the two the other rules used; queue three runs for harness %s and run the suite again", offerSyncs, s.opts.Harness)
+	}
+	a, err := s.resultFor(ctx, offer, v1.RunFailed)
+	if err != nil {
+		return err
+	}
+	if !a.ok() {
+		return brokenf("run %s was offered to this runner, which reported it failed with class refused without claiming it — how a runner declines a run — and the hub refused the report; it will offer the run again, and hear the same refusal, for as long as it picks this runner: %s", offer, a)
+	}
+	for i := 0; i < offerSyncs; i++ {
+		res, a, err := s.syncOK(ctx, 1)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(runIDs(res.Runs), offer) {
+			return brokenf("run %s was refused before its claim, the hub acknowledged the refusal, and then offered the run again; a refused run is failed, and offering it again only earns the same refusal: %s", offer, a)
+		}
+	}
+	return nil
+}
+
 func checkEventsAfterTheRunEnds(ctx context.Context, s *session) error {
 	return s.wantAck(ctx, s.report, seqLate, seqLate)
 }
@@ -277,8 +351,11 @@ func checkLeaseLapse(ctx context.Context, s *session) error {
 	if !a.ok() {
 		return brokenf("the sync was refused: %s", a)
 	}
-	if !hasCancel(res.Controls, s.lapse) {
-		return brokenf("run %s went %s without a sync listing it, past the %s lease the hub itself named, and the hub still treats it as this runner's: %s",
+	// A hub that cancels nothing it does not hold has already failed for
+	// that, and its missing cancel here says nothing about the lease: the
+	// result below is what shows whether the run was lost.
+	if !hasCancel(res.Controls, s.lapse) && !s.noCancels {
+		return brokenf("run %s went %s without a sync listing it, past the %s lease the hub itself named, and a sync listing it then was answered with no cancel for it; a run whose lease lapsed is lost, and a runner not told to stop goes on with it: %s",
 			s.lapse, wait.Round(time.Second), lease, a)
 	}
 	ra, err := s.resultFor(ctx, s.lapse, v1.RunSucceeded)
@@ -352,8 +429,12 @@ func checkOfferLapse(ctx context.Context, s *session) error {
 	if !a.ok() {
 		return brokenf("the sync was refused: %s", a)
 	}
-	if !hasCancel(res.Controls, offer) {
-		return brokenf("run %s was offered and not claimed for %s, past the %s lease the hub named beside the offer, and the hub then took a claim for it; an offer lapses with its lease, and a claim after that is answered with a cancel, because the run may by then be another runner's: %s",
+	switch {
+	case !hasCancel(res.Controls, offer) && s.noCancels:
+		return skipf("run %s was offered and not claimed for %s, past the %s lease the hub named beside the offer, and a claim listed after that was answered with no cancel; this hub sends no cancel for any run a runner does not hold (sync/cancel-for-a-run-not-held), so whether the offer lapsed cannot be told from here",
+			offer, leaseWait(lease).Round(time.Second), lease)
+	case !hasCancel(res.Controls, offer):
+		return brokenf("run %s was offered and not claimed for %s, past the %s lease the hub named beside the offer, and a claim of it listed then was answered with no cancel, so the hub took it; an offer lapses with its lease, and a claim after that is answered with a cancel, because the run may by then be another runner's: %s",
 			offer, leaseWait(lease).Round(time.Second), lease, a)
 	}
 	for i := 0; i < offerSyncs; i++ {
@@ -429,7 +510,13 @@ func (s *session) eventsFor(ctx context.Context, runID string, seqs ...int64) (v
 // resultFor reports a terminal state. A failure is the refusal HUB.md asks of a
 // runner that will not take a run, which is exactly what this one is.
 func (s *session) resultFor(ctx context.Context, runID string, state v1.RunState) (*answer, error) {
-	res := v1.Result{State: state, LastSeq: s.lastSeq}
+	// Only the run the event rules are made against has events. Any other
+	// names none: a last_seq it never reached would leave its stream
+	// incomplete for ever on a hub that waits for acked_through to catch up.
+	res := v1.Result{State: state}
+	if runID == s.report {
+		res.LastSeq = s.lastSeq
+	}
 	if state == v1.RunFailed {
 		res.Error = &v1.RunError{
 			Class:   "refused",

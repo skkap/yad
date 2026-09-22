@@ -26,11 +26,21 @@ const fakeToken = "fake-registration-token"
 // and lease rules, and one to leave offered and unclaimed for its lease.
 func TestAHubThatFollowsTheProtocolPasses(t *testing.T) {
 	t.Parallel()
-	_, url := newFake(t, "", fakeRunSpec(0), fakeRunSpec(1), fakeRunSpec(2))
+	f, url := newFake(t, "", fakeRunSpec(0), fakeRunSpec(1), fakeRunSpec(2))
 	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken, SecondToken: fakeSecondToken, LeaseWait: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A result names the last event its run had. The suite sends events for
+	// one run alone, and a last_seq a run never reached leaves its stream
+	// incomplete for good on a hub that waits for acked_through to meet it.
+	f.mu.Lock()
+	for id, run := range f.runs {
+		if run.final != "" && run.lastSeq > run.through {
+			t.Errorf("run %s ended with last_seq %d, and the suite sent its events only through %d", id, run.lastSeq, run.through)
+		}
+	}
+	f.mu.Unlock()
 	var out strings.Builder
 	rep.Print(&out)
 	for _, o := range rep.Outcomes {
@@ -73,7 +83,9 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawKeepsUnknownFields, check: "sync/unknown-fields-ignored", want: Failed},
 		{flaw: flawOffersOverCapacity, check: "sync/free-capacity", want: Failed},
 		{flaw: flawNoCancel, check: "sync/cancel-for-a-run-not-held", want: Failed},
-		{flaw: flawForgetsOffers, check: "sync/offer-is-repeated", want: Skipped},
+		// A hub keeping the offers a sync left out takes a late claim of
+		// them, which a hub that took them back answers with a cancel.
+		{flaw: flawForgetsOffers, check: "sync/unlisted-offer-taken-back", want: Failed},
 		{flaw: flawOffersTwice, check: "sync/claim-by-listing", want: Failed},
 		{flaw: flawOffersInvalidRun, check: "run/offer-validates", want: Failed},
 		{flaw: flawAckJumpsTheGap, check: "events/acked-through", want: Failed},
@@ -98,12 +110,11 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawResultUnguarded, check: "protocol-header/missing", want: Failed},
 		{flaw: flawResultUnguarded, check: "result/credential-required", want: Failed},
 		{flaw: flawTakesNoBearer, check: "sync/credential-required", want: Failed},
-		// One answer naming a run twice has not shown that a dropped offer
-		// comes back, so the rule is unproven rather than kept.
-		{flaw: flawOffersTwiceOver, check: "sync/offer-is-repeated", want: Skipped},
+		// One answer naming a run twice, and the offer never taken back.
+		{flaw: flawOffersTwiceOver, check: "sync/unlisted-offer-taken-back", want: Failed},
 		{flaw: flawStrictEventFields, check: "events/unknown-fields-ignored", want: Failed},
 		{flaw: flawCredentialMisnamed, check: "register/exchange", want: Failed},
-		{flaw: flawKeepsOneOffer, check: "sync/offer-is-repeated", want: Skipped},
+		{flaw: flawKeepsOneOffer, check: "sync/unlisted-offer-taken-back", want: Failed},
 		// A hub setting a version floor is exercising a right HUB.md grants it,
 		// so the suite says what happened and checks nothing further.
 		{flaw: flawVersionFloorQuotes, check: "register/exchange", want: Skipped},
@@ -126,6 +137,22 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		// Refused correctly and stored anyway: the holder's own report is
 		// what finds it, so the second runner's state must differ from it.
 		{flaw: flawStoresRefusedResult, check: "result/applied", second: true, want: Failed},
+		// A hub that sends no cancel for a run it does not hold fails for
+		// that once. The rules that read a missing cancel as a run still
+		// held say they cannot tell, or judge by what else they see, rather
+		// than blame the lease for it (DEV-110).
+		{flaw: flawNoCancel, check: "sync/unlisted-offer-taken-back", want: Skipped},
+		{flaw: flawNoCancel, check: "lease/lapse", leaseWait: time.Minute, want: Passed},
+		{flaw: flawNoCancel, check: "lease/offer-lapse", leaseWait: time.Minute, third: true, want: Skipped},
+		{flaw: flawIgnoresBodyRunner, check: "sync/runner-id-matches-the-path", want: Failed},
+		{flaw: flawAnyCredentialSyncs, check: "sync/another-runners-credential", second: true, want: Failed},
+		{flaw: flawNoReportCaps, check: "sync/report-capabilities", want: Failed},
+		{flaw: flawInvalidIs500, check: "errors/invalid-body", want: Failed},
+		{flaw: flawTakesSeqZero, check: "events/seq-from-one", want: Failed},
+		{flaw: flawTakesAnyState, check: "result/terminal-state-only", want: Failed},
+		{flaw: flawTooLargeIsInvalid, check: "errors/too-large", want: Failed},
+		{flaw: flawRefusalNeedsAClaim, check: "result/refusal-before-claim", third: true, want: Failed},
+		{flaw: flawReoffersRefused, check: "result/refusal-before-claim", third: true, want: Failed},
 	} {
 		t.Run(tc.flaw+"/"+tc.check, func(t *testing.T) {
 			t.Parallel()
@@ -693,41 +720,6 @@ func TestASecretEscapedBeyondGuessingIsStillFound(t *testing.T) {
 	}
 }
 
-// The rule is about the runs the hub dropped: every one of them must come
-// back, and anything else it offered besides them is its own business. A hub
-// whose queue grows between syncs — the case a set comparison would call a
-// failure — is keeping the rule, and the same answer decides the verdict and
-// what the skip says, so a skip can never name no run at all.
-func TestTheReofferRuleIsAboutTheRunsThatWereDropped(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name             string
-		dropped, back    []string
-		wantStillMissing []string
-	}{
-		{name: "all back", dropped: []string{"a", "b"}, back: []string{"a", "b"}},
-		{name: "all back and more besides", dropped: []string{"a"}, back: []string{"a", "b"}},
-		{name: "two dropped, three back", dropped: []string{"a", "b"}, back: []string{"a", "b", "c"}},
-		{name: "one lost for ever", dropped: []string{"a", "b"}, back: []string{"a"}, wantStillMissing: []string{"b"}},
-		{name: "none back", dropped: []string{"a", "b"}, back: nil, wantStillMissing: []string{"a", "b"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := stillMissing(tc.dropped, tc.back)
-			if !slices.Equal(got, tc.wantStillMissing) {
-				t.Fatalf("stillMissing(%v, %v) = %v, want %v", tc.dropped, tc.back, got, tc.wantStillMissing)
-			}
-			// What the check does with it: nothing missing is the rule kept,
-			// and anything missing is named in the skip rather than left to a
-			// count that can print an empty id.
-			for _, id := range got {
-				if !slices.Contains(tc.dropped, id) {
-					t.Errorf("the skip would name %q, which the hub never dropped", id)
-				}
-			}
-		})
-	}
-}
-
 // A check writes the hub's own strings into its sentence — an error code, a
 // run id, a control kind — and each is a place a hub could have put a secret.
 // The answer's printing is guarded; this is about everything written around it.
@@ -858,5 +850,34 @@ func TestARefusedURLIsQuotedWithoutItsCredentials(t *testing.T) {
 		t.Errorf("the password is in the refusal: %v", err)
 	case !strings.Contains(err.Error(), "hub.example"):
 		t.Errorf("the refusal no longer says which URL it refused: %v", err)
+	}
+}
+
+// HUB.md §12 says how many checks the suite makes and how many rules it leaves
+// unchecked, and a hub author reads those numbers to know whether the report in
+// front of them is the whole suite. They are counted here from the suite
+// itself, so a check added or a rule moved off the list fails until HUB.md
+// says so.
+func TestHubMDCountsTheSuite(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(filepath.Join("..", "..", "HUB.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := strings.Join(strings.Fields(string(b)), " ")
+	checksIn := map[int]string{44: "Forty-four", 45: "Forty-five", 46: "Forty-six", 47: "Forty-seven", 48: "Forty-eight", 49: "Forty-nine", 50: "Fifty"}
+	rulesIn := map[int]string{14: "fourteen", 15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty"}
+	n, u := len(checks()), len(unchecked)
+	if checksIn[n] == "" || rulesIn[u] == "" {
+		t.Fatalf("%d checks and %d unchecked rules: add the words for them to this test", n, u)
+	}
+	for _, want := range []string{
+		checksIn[n] + " black-box checks",
+		fmt.Sprintf("It ends `%d passed, 0 failed, 0 skipped`", n),
+		"it is " + rulesIn[u] + " rules",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("HUB.md §12 does not say %q: the suite has %d checks and %d rules it does not check", want, n, u)
+		}
 	}
 }

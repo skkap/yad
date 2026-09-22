@@ -66,10 +66,10 @@ type RunError struct {
 
 // EventBatch is one upload from the spool.
 type EventBatch struct {
-	Events []Event `json:"events" doc:"Events of this run in seq order, at most 100 from a yad runner. A batch may repeat events already sent."`
+	Events []Event `json:"events" doc:"Events of this run in seq order. A yad runner sends at most 100 in a batch; yad hub takes up to 1000 and refuses more. A batch may repeat events already sent."`
 }
 
 // EventAck is authoritative: the runner resends everything after AckedThrough.
 type EventAck struct {
-	AckedThrough int64 `json:"acked_through" doc:"The highest seq up to which the hub holds every event of the run with no gap: 0 when it holds none, or none from 1 on. The runner resends everything after it, so never answer a seq you have not stored contiguously."`
+	AckedThrough int64 `json:"acked_through" doc:"The highest seq such that the hub holds every event of the run from 1 up to and including it, with no gap: 0 when it holds none, or none from 1 on. The runner resends everything after it, so never answer a seq you have not stored contiguously."`
 }

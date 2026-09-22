@@ -118,101 +118,107 @@ func checkCancelForRunNotHeld(ctx context.Context, s *session) error {
 		return brokenf("the sync was refused: %s", a)
 	}
 	if !hasCancel(res.Controls, notOurs) {
+		// The rules after this one read a missing cancel as a hub still
+		// holding a run for this runner. On this hub it says only that it
+		// sends none, which is this failure and not theirs.
+		s.noCancels = true
 		return brokenf("run %s was listed as held by a runner it was never offered to, and the answer carries no cancel for it: %s", notOurs, a)
 	}
 	return nil
 }
 
-func checkOfferIsRepeated(ctx context.Context, s *session) error {
-	// Ask for work, listing nothing each time: every run offered is therefore
-	// one the next sync did not list, which is the state the rule is about.
-	var (
-		answers [][]string // the runs each answer offered, in order, without repeats within one
-		seen    []string   // every run offered so far, so a repeat is one from an earlier answer
-		back    []string   // the runs that did come back after a sync that did not list them
-		last    *answer
-	)
-	for i := 0; i < offerSyncs; i++ {
-		res, a, err := s.syncOK(ctx, runsWanted)
+// checkReportCapabilities moves the fingerprint and sends no document, as a
+// runner does whose document changed and whose sync carrying it was lost. The
+// hub's copy no longer describes the runner, and the control is the only way
+// it gets the new one. The next sync carries the document, as a runner asked
+// for it does, so the checks after this one meet a hub that is up to date.
+func checkReportCapabilities(ctx context.Context, s *session) error {
+	fp, err := newID()
+	if err != nil {
+		return err
+	}
+	s.fingerprint = fp
+	res, a, err := s.syncOK(ctx, 0)
+	if err != nil {
+		return err
+	}
+	s.sentDoc = false
+	if !slices.ContainsFunc(res.Controls, func(c v1.Control) bool { return c.Kind == v1.ControlReportCapabilities }) {
+		return brokenf("a sync whose fingerprint differs from the one that came with the document the hub holds, and which carries no document, was answered with no report_capabilities control; the hub goes on routing by a document it knows is out of date, and nothing else will make the runner send the new one: %s", a)
+	}
+	_, _, err = s.syncOK(ctx, 0)
+	return err
+}
+
+// checkUnlistedOfferTakenBack is HUB.md's step 6 as a runner sees it. The
+// hub offers runs; the next sync lists none of them and has no room, so the
+// hub can neither keep them nor offer them back in that answer; and the sync
+// after that lists them as claimed. By then each is back in the queue, not
+// offered to this runner, and a listing of a run the runner does not hold is
+// answered with a cancel. A hub that kept the offers open takes the late
+// claim instead — the one thing a runner can see of offers stranded until
+// their lease lapses.
+//
+// Whether the hub then offers them again is its own business and not judged:
+// it may have other runners, or other runs first. The runs the later checks
+// use are the ones it offers when this runner asks for work next.
+func checkUnlistedOfferTakenBack(ctx context.Context, s *session) error {
+	var offered []string
+	for i := 0; i < offerSyncs && len(offered) == 0; i++ {
+		res, _, err := s.syncOK(ctx, runsWanted)
 		if err != nil {
 			return err
 		}
-		last = a
-		// A hub that names one run twice in one answer has offered it once;
-		// counting the second as a repeat would report the rule kept without
-		// a sync ever having dropped it.
-		ids := sorted(setOf(runIDs(res.Runs)))
-		for _, id := range ids {
-			if slices.Contains(seen, id) {
-				if !slices.Contains(back, id) {
-					back = append(back, id)
-				}
-				continue
-			}
-			seen = append(seen, id)
-		}
-		answers = append(answers, ids)
-		if len(back) == len(seen) && len(ids) >= runsWanted {
-			break
-		}
+		// A hub that names one run twice in one answer has offered it once.
+		offered = sorted(setOf(runIDs(res.Runs)))
 	}
-	// The runs later checks use are the ones the hub offered last. An id from
-	// an earlier answer is one a sync did not list, so by this very rule the
-	// hub has taken it back, and claiming it would be this suite's mistake.
-	s.pick(answers[len(answers)-1])
-
-	// Every run the hub offered except in the last answer: each of those was
-	// offered by one sync and not listed by the next, so the rule is about
-	// all of them. Judging only the first answer's runs would let a hub keep
-	// the rule for the batch it opened with and lose every one after it.
-	var dropped []string
-	for _, ids := range answers[:max(len(answers)-1, 0)] {
-		for _, id := range ids {
-			if !slices.Contains(dropped, id) {
-				dropped = append(dropped, id)
-			}
-		}
-	}
-	first := slices.IndexFunc(answers, func(ids []string) bool { return len(ids) > 0 })
-	switch {
-	case first < 0:
+	if len(offered) == 0 {
 		return skipf("the hub offered no run for harness %s in %d syncs, so the rules that need one could not be checked; queue three runs for that harness and run the suite again",
 			s.opts.Harness, offerSyncs)
-	// Every run the hub dropped, not one of them: seeing A come back says
-	// nothing about B, and a hub that re-offers one run for ever while losing
-	// the other keeps the rule for A alone. Anything else it offered besides
-	// them is its business — the rule is about the runs it dropped, and a hub
-	// with more to give is keeping it, not breaking it.
-	case len(dropped) > 0 && len(stillMissing(dropped, back)) == 0:
-		return nil
 	}
-	// What the hub said after the answer that first offered something: how
-	// many syncs followed it, and which runs it had to offer that were not
-	// the ones it had just dropped.
-	// The verdict above and the sentence below are the same question asked
-	// once: a pass judged one way and a message written another is how a skip
-	// comes to name no run at all.
-	after := answers[first+1:]
-	missing := stillMissing(dropped, back)
-	var others []string
-	for _, ids := range after {
-		for _, id := range ids {
-			if !slices.Contains(dropped, id) {
-				others = append(others, id)
-			}
+	if _, _, err := s.syncOK(ctx, 0); err != nil {
+		return err
+	}
+	for _, id := range offered {
+		s.hold(id, v1.RunClaimed)
+	}
+	res, a, err := s.syncOK(ctx, 0)
+	if err != nil {
+		return err
+	}
+	var kept []string
+	for _, id := range offered {
+		if !hasCancel(res.Controls, id) {
+			kept = append(kept, id)
 		}
 	}
-	switch {
-	case len(after) == 0:
-		return skipf("run %s was offered on the last of this suite's %d syncs, so no sync followed it and whether the hub offers it again could not be seen. Run the suite again against a hub with a run already queued for harness %s.",
-			strings.Join(dropped, ", "), offerSyncs, s.opts.Harness)
-	case len(others) > 0:
-		return skipf("run %s was offered and not listed, and in the %d sync(s) after it the hub had other runs to offer first (%s), so whether it comes back cannot be told in a bounded number of syncs — HUB.md names no deadline, and this is not a verdict on the hub. Queue only the runs this suite should use, and run it again: %s",
-			strings.Join(missing, ", "), len(after), strings.Join(sorted(setOf(others)), ", "), last)
-	default:
-		return skipf("run %s was offered and not listed, and the hub did not offer it again in the %d sync(s) after it though this runner declared room for %d. %s says the hub offers such a run again but names no deadline, so this is not a verdict — read it as a warning instead: a hub that never offers a dropped run again loses every run it drops. %s",
-			strings.Join(missing, ", "), len(after), runsWanted, hubSync, last)
+	if len(kept) > 0 && !s.noCancels {
+		// The hub has just taken these as claimed, so they are this runner's
+		// and the checks after this one use them: a report on a hub that
+		// strands offers is still a report on everything else.
+		for _, id := range offered {
+			if !slices.Contains(kept, id) {
+				s.drop(id)
+			}
+		}
+		s.pick(kept)
+		s.keepsOffers = true
+		return brokenf("offered run %s: the next sync did not list it, and a sync listing it after that was answered with no cancel, so the hub had kept the offer open. An offer a sync leaves out was never received and goes back in the queue at that sync, or it waits out its lease on a runner that does not have it: %s",
+			strings.Join(kept, ", "), a)
 	}
+	for _, id := range offered {
+		s.drop(id)
+	}
+	res, _, err = s.syncOK(ctx, runsWanted)
+	if err != nil {
+		return err
+	}
+	s.pick(runIDs(res.Runs))
+	if len(kept) > 0 {
+		return skipf("run %s was left out of a sync and then listed as claimed, and the hub answered with no cancel for it; it sends no cancel for any run a runner does not hold (sync/cancel-for-a-run-not-held), so whether it had taken the offer back cannot be told from here",
+			strings.Join(kept, ", "))
+	}
+	return nil
 }
 
 func checkClaimByListing(ctx context.Context, s *session) error {
@@ -297,18 +303,6 @@ func checkControlsAreGated(_ context.Context, s *session) error {
 }
 
 func sorted(set map[string]bool) []string { return slices.Sorted(maps.Keys(set)) }
-
-// stillMissing is the runs the hub dropped and has not offered again, in the
-// order it offered them. Empty is the rule kept.
-func stillMissing(dropped, back []string) []string {
-	var missing []string
-	for _, id := range dropped {
-		if !slices.Contains(back, id) {
-			missing = append(missing, id)
-		}
-	}
-	return missing
-}
 
 func setOf(ids []string) map[string]bool {
 	set := map[string]bool{}

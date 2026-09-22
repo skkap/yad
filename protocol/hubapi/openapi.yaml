@@ -189,7 +189,7 @@ components:
             - file
           type: string
         name:
-          description: An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH, HOME, LD_* or DYLD_*, nor a variable that picks a harness's credential or home, such as ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR, CODEX_HOME or OPENAI_API_KEY; matched in any case. No two grants may share a name, and no two file grants may differ only by case.
+          description: "An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH or HOME, nor a name beginning LD_ or DYLD_, nor one that picks a harness's credential or home — the whole list: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_PROFILE, ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_CONFIG_DIR, CLAUDE_CONFIG_DIR, ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS, any name beginning CLAUDE_CODE_USE_, CODEX_HOME, OPENAI_API_KEY, CODEX_API_KEY, CODEX_ACCESS_TOKEN, OPENAI_BASE_URL, CODEX_REFRESH_TOKEN_URL_OVERRIDE and AWS_BEARER_TOKEN_BEDROCK, whatever the run's harness. Every name is matched in any case. No two grants may share a name, and no two file grants may differ only by case."
           type: string
         value:
           description: The secret. Never logged or shown; a hub should keep it only until the run is terminal.
@@ -307,7 +307,7 @@ components:
       properties:
         error:
           $ref: "#/components/schemas/RunError"
-          description: Why the run did not succeed. A failed result with class refused is the runner declining a run it was offered, before claiming it.
+          description: Why the run did not succeed. A failed result with class refused is the runner declining a run, usually one it was offered and never claimed; it may come for a claimed run too, and is applied as any terminal state. A refused run is not offered again.
         final_text:
           description: The harness's last answer, at most 1 MiB.
           type: string

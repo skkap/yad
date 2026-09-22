@@ -77,3 +77,38 @@ func errorCodes(t *testing.T) []string {
 	}
 	return codes
 }
+
+// HUB.md and the document's description of Grant.name are what a hub author
+// validates grant names from, and neither is this file. Each must name every
+// name and prefix grant.go refuses, or a hub checking from them offers a run
+// every runner refuses whole.
+func TestEveryRefusedGrantNameIsDocumented(t *testing.T) {
+	var names []string
+	for n := range deniedGrantNames {
+		names = append(names, n)
+	}
+	for _, p := range deniedGrantPrefixes {
+		names = append(names, p.prefix)
+	}
+	for n := range accountGrantNames {
+		names = append(names, n)
+	}
+	for _, p := range accountGrantPrefixes {
+		names = append(names, p.prefix)
+	}
+	hub, err := os.ReadFile("../../HUB.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	field, _ := reflect.TypeFor[Grant]().FieldByName("Name")
+	for _, doc := range []struct{ where, text, quote string }{
+		{"HUB.md", string(hub), "`"},
+		{"the doc tag on Grant.Name", field.Tag.Get("doc"), ""},
+	} {
+		for _, n := range names {
+			if !strings.Contains(doc.text, doc.quote+n+doc.quote) {
+				t.Errorf("%s does not name %q, which grant.go refuses", doc.where, n)
+			}
+		}
+	}
+}

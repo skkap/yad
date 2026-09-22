@@ -3,9 +3,11 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -39,14 +41,17 @@ type fake struct {
 	// The second registration token, and the runner it registers: enough
 	// for the holder rules, which need a runner the hub knows that is not
 	// the one holding the run.
-	token2   string
-	spent2   bool
-	cred2    string
-	runner2  string
-	runs     map[string]*fakeRun
-	order    []string
-	interval time.Duration
-	lease    time.Duration
+	token2  string
+	spent2  bool
+	cred2   string
+	runner2 string
+	runs    map[string]*fakeRun
+	order   []string
+	// fingerprint is the one that came with the document the hub holds:
+	// none after register, which carries no fingerprint.
+	fingerprint string
+	interval    time.Duration
+	lease       time.Duration
 }
 
 type fakeRun struct {
@@ -62,6 +67,8 @@ type fakeRun struct {
 	events    map[int64]bool
 	through   int64
 	final     v1.RunState
+	// lastSeq is the last_seq the result that ended the run named.
+	lastSeq int64
 }
 
 // The flaws, each named for the rule it breaks.
@@ -73,7 +80,7 @@ const (
 	flawKeepsUnknownFields = "a sync carrying an unknown field is refused"
 	flawOffersOverCapacity = "a run is offered to a sync with no free capacity"
 	flawNoCancel           = "a run the runner does not hold is answered with nothing"
-	flawForgetsOffers      = "an offered run the next sync did not list is dropped"
+	flawForgetsOffers      = "an offered run the next sync did not list stays offered"
 	flawOffersTwice        = "a claimed run is offered again"
 	flawOffersInvalidRun   = "a run with no model is offered"
 	flawAckJumpsTheGap     = "acked_through is the highest seq stored, gap or not"
@@ -134,7 +141,26 @@ const (
 	// The answer is right and the write happened anyway: only what the
 	// holder hears afterwards can show it.
 	flawStoresRefusedResult = "a result from a runner that does not hold the run is refused with 403 and stored"
+	// The flaws the clean-room hub of DEV-110 showed no check could see.
+	flawIgnoresBodyRunner  = "the body's runner_id is not compared with the path"
+	flawAnyCredentialSyncs = "any credential the hub issued syncs as any runner"
+	flawNoReportCaps       = "a fingerprint that moves without a document is not asked about"
+	flawInvalidIs500       = "a body that does not parse is answered 500 internal"
+	flawTakesSeqZero       = "an event numbered 0 is stored"
+	flawTakesAnyState      = "a result's state is not checked to be terminal"
+	flawTooLargeIsInvalid  = "a body over the size limit is refused 400 invalid"
+	flawRefusalNeedsAClaim = "a result is taken only from the runner that claimed the run"
+	flawReoffersRefused    = "a run refused before its claim is offered again"
 )
+
+// fakeBodyLimit is the most of a body the fake reads. TestMain shrinks it with
+// the suite's oversize, so sixty runs of the suite do not each send 34 MiB.
+var fakeBodyLimit int64 = 16 << 20
+
+func TestMain(m *testing.M) {
+	oversize, fakeBodyLimit = 17<<10, 16<<10
+	os.Exit(m.Run())
+}
 
 const fakeSecondToken = "fake-second-registration-token"
 
@@ -296,8 +322,12 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	if !f.authenticated(w, r, &req, true) {
 		return
 	}
-	if runner != f.caller(r) {
+	if runner != f.caller(r) && f.flaw != flawAnyCredentialSyncs {
 		f.fail(w, http.StatusForbidden, v1.CodeUnauthorized, "this credential is another runner's", "sync as the runner it was issued to")
+		return
+	}
+	if req.RunnerID != runner && f.flaw != flawIgnoresBodyRunner {
+		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the body's runner_id is not the path's", "send the same runner id in both")
 		return
 	}
 	now := time.Now()
@@ -307,6 +337,16 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	}
 	if f.flaw == flawShortInterval {
 		res.NextSyncMS = 1000
+	}
+	// Only the first runner's fingerprint is kept: it is the one the suite
+	// moves, and the second runner's first sync carries its document.
+	if runner == f.runner {
+		switch {
+		case req.Capabilities != nil:
+			f.fingerprint = req.Fingerprint
+		case req.Fingerprint != f.fingerprint && f.flaw != flawNoReportCaps:
+			res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlReportCapabilities})
+		}
 	}
 	if f.flaw == flawUngatedControl {
 		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlSteer, RunID: "fake-run-0", Text: "carry on"})
@@ -416,6 +456,12 @@ func (f *fake) events(w http.ResponseWriter, r *http.Request, runID string, guar
 	if !f.authenticated(w, r, &batch, guarded) {
 		return
 	}
+	for _, ev := range batch.Events {
+		if ev.Seq < 1 && f.flaw != flawTakesSeqZero {
+			f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "a run's events are numbered from 1", "number them from 1")
+			return
+		}
+	}
 	run := f.runs[runID]
 	if !f.holds(r, run) && f.flaw != flawTakesAnyEvents {
 		f.notHolder(w, r, runID)
@@ -445,8 +491,19 @@ func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string, guar
 	if !f.authenticated(w, r, &res, guarded) {
 		return
 	}
+	if !res.State.IsTerminal() && f.flaw != flawTakesAnyState {
+		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "a result carries a terminal state", "report the others in the sync")
+		return
+	}
 	run := f.runs[runID]
-	if run == nil || !f.holds(r, run) && run.final != v1.RunLost {
+	// The runner the open offer went to may refuse the run with a result.
+	offeredHere := run != nil && run.holder == "" && !run.queued && run.offeredTo == f.caller(r) && f.flaw != flawRefusalNeedsAClaim
+	if offeredHere && run.final == "" && f.flaw == flawReoffersRefused {
+		run.queued = true
+		f.write(w, http.StatusOK, v1.Ack{OK: true})
+		return
+	}
+	if run == nil || !f.holds(r, run) && !offeredHere && run.final != v1.RunLost {
 		if run != nil && run.final == "" && f.flaw == flawStoresRefusedResult {
 			run.final, run.state = res.State, res.State
 		}
@@ -455,7 +512,7 @@ func (f *fake) result(w http.ResponseWriter, r *http.Request, runID string, guar
 	}
 	switch {
 	case run.final == "" || f.flaw == flawTakesAnyResult:
-		run.final, run.state, run.expires = res.State, res.State, time.Time{}
+		run.final, run.state, run.expires, run.lastSeq = res.State, res.State, time.Time{}, res.LastSeq
 	case run.final != res.State:
 		f.fail(w, http.StatusConflict, v1.CodeConflict,
 			fmt.Sprintf("run %s is already %s on this hub", runID, run.final), "the hub's state stands; stop reporting this run")
@@ -470,14 +527,24 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 	// A hub that checks an Authorization header when there is one and takes
 	// the request when there is not.
 	if f.flaw == flawTakesNoBearer && bearer(r) == "" {
-		return true
+		guarded = false
 	}
 	if guarded && (f.cred == "" || bearer(r) != f.cred && (f.cred2 == "" || bearer(r) != f.cred2)) {
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "this hub does not know that runner credential", "register again")
 		return false
 	}
-	if err := json.NewDecoder(r.Body).Decode(body); err != nil {
-		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the body is not the JSON this call takes", "check it against protocol/v1/openapi.yaml")
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, fakeBodyLimit)).Decode(body); err != nil {
+		var tooLarge *http.MaxBytesError
+		switch {
+		case errors.As(err, &tooLarge) && f.flaw == flawTooLargeIsInvalid:
+			f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the body is too large", "send less")
+		case errors.As(err, &tooLarge):
+			f.fail(w, http.StatusRequestEntityTooLarge, v1.CodeInvalid, "the body is too large", "send less")
+		case f.flaw == flawInvalidIs500:
+			f.fail(w, http.StatusInternalServerError, v1.CodeInternal, "the body could not be read", "retry later")
+		default:
+			f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the body is not the JSON this call takes", "check it against protocol/v1/openapi.yaml")
+		}
 		return false
 	}
 	if f.flaw == flawStrictEventFields {
