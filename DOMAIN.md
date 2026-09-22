@@ -89,8 +89,9 @@ travel in the protocol.
 
 **Present** — the runner found a binary for a harness or a host tool: the file
 its `YAD_<ID>_PATH` override names, or the one on `PATH`. For a harness it is
-the binary every run starts. For a host tool it is the binary that was probed;
-yad's own git and a harness's children still look the tool up on `PATH`. It
+the binary every run starts. For a host tool it is the binary that was probed,
+and the one a run uses: yad's own git, and the harness and setup hook finding
+the tool by name ([0045](docs/decisions/0045-runs-use-the-host-tools-detection-resolved.md)). It
 does not mean the binary works. A present harness with an `error` takes no
 runs.
 _Rules_: One rule for harnesses and host tools. An override **names nothing**
@@ -99,7 +100,7 @@ override is reported: as a warning when `PATH` has the binary, which is still
 usable, and as an error beside `present: false` when it has none. A file that
 is there but will not run is present, with an error.
 _Avoid_: installed — it has meant present, and it has meant working
-_See_: [0044](docs/decisions/0044-an-override-that-names-nothing-lets-path-decide.md), `internal/probe`
+_See_: [0044](docs/decisions/0044-an-override-that-names-nothing-lets-path-decide.md), [0045](docs/decisions/0045-runs-use-the-host-tools-detection-resolved.md), `internal/probe`
 
 **Capacity** — how many runs a runner executes at once. One shared pool, with an
 optional cap per connection and per harness, all set by the owner.

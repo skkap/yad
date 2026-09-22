@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -120,6 +121,10 @@ const (
 	// claude refuses it, and the answer names the instructions before it —
 	// which is how a test sees that a run had its session's context.
 	fakeClaudeTranscripts = "E2E_CLAUDE_TRANSCRIPTS"
+	// fakeClaudeGH, when set, is a file the fake writes what `gh --version`
+	// printed to, found the way a harness's own shell command finds gh: by
+	// name, on the PATH the runner gave it.
+	fakeClaudeGH = "E2E_CLAUDE_GH"
 	// childYad makes the test binary run as yad.
 	childYad = "E2E_YAD_MAIN"
 )
@@ -153,6 +158,13 @@ func fakeClaude() {
 	}
 	if f := os.Getenv(fakeClaudePID); f != "" {
 		os.WriteFile(f, []byte(strconv.Itoa(os.Getpid())), 0o600)
+	}
+	if f := os.Getenv(fakeClaudeGH); f != "" {
+		out, err := exec.Command("gh", "--version").CombinedOutput()
+		if err != nil {
+			out = append(out, []byte("\n"+err.Error())...)
+		}
+		os.WriteFile(f, out, 0o600)
 	}
 	if f := os.Getenv(fakeClaudeArgs); f != "" {
 		wd, _ := os.Getwd()

@@ -123,9 +123,9 @@ type AccountWindow struct {
 type HostTool struct {
 	ID string `json:"id" doc:"The tool: git, gh or docker."`
 	// Present is the binary detection found and probed, under the same
-	// override rule as a harness (DEV-68). Unlike a harness's, it is not
-	// necessarily the one a run uses: yad's own git and a harness's children
-	// look host tools up on PATH, whatever YAD_<ID>_PATH says.
+	// override rule as a harness (DEV-68), and the one a run uses: yad's own
+	// git resolves it the same way, and a harness's children find it ahead of
+	// PATH (0045).
 	Present bool   `json:"present" doc:"The runner found a binary for this tool and probed it: the one its configured path names, or the one on PATH when that path names nothing. Present is not usable: see error and logged_in."`
 	Version string `json:"version,omitempty" doc:"The version number the tool reported, such as 2.51.0, and nothing else of what it printed. Absent when it printed no version."`
 	// LoggedIn is nil when the tool has no notion of a login, and nil too when

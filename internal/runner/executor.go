@@ -22,6 +22,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/hostool"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 	"github.com/skkap/yad/internal/supervise"
@@ -523,6 +524,17 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		log.Warn("the run's grants could not be delivered", "err", err)
 		fail(ClassPrepare, "the run's grants could not be delivered on this runner"+e.seeLogs())
 		return
+	}
+	// After the grants, which may not name PATH: the harness's own git, gh
+	// and docker are the ones its capability document advertised (0045).
+	path, err := hostool.Links(hostool.LinksDir(e.Data))
+	if err != nil {
+		log.Warn("the host-tool links could not be made", "err", err)
+		fail(ClassPrepare, "the links to this runner's git, gh and docker overrides could not be made"+e.seeLogs())
+		return
+	}
+	if path != "" {
+		env = append(env, path)
 	}
 
 	// One turn per account. A usage limit is the one outcome that is not the
