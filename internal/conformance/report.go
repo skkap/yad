@@ -21,17 +21,41 @@ var unchecked = []struct {
 	sections: []section{hubLeases},
 	why:      "deregistering retires the runner every other check here is made as; the second runner --second-token registers could carry it, and does not yet. `yad hub` implements it; a hub you write should too.",
 }, {
-	rule:     "The controls — cancel, interrupt, steer, close_session, drain — their repetition until the runner acts, and the single delivery of a steer.",
+	rule:     "The controls — cancel, interrupt, steer, close_session, drain — their repetition until the runner acts, the single delivery of a steer, and offering nothing to a runner that is draining or has been asked to drain.",
 	sections: []section{hubControls},
 	why:      "nothing in the protocol asks a hub for a control: only a hub's own API can, and that is outside v1. A conformance runner can only wait for one it cannot cause.",
 }, {
-	rule:     "start_at, min_version, and the feature gates on drain, steer, interrupt, close_session and start_at.",
+	rule:     "start_at, min_version, the feature gates on drain, steer, interrupt, close_session and start_at, and holding back every gated control and gated run while a fingerprint has moved and its document has not arrived.",
 	sections: []section{hubControls, hubVersioning},
 	why:      "each needs a run or a control the protocol gives a runner no way to ask for. What is checked is the other half of the same rule: that a hub sends no control it should have gated.",
 }, {
-	rule:     "Sessions stay put: the first claim in a session binds it to that runner, and its later runs are offered to that runner alone, one at a time.",
+	rule:     "Sessions stay put: the first claim in a session binds it to that runner, its later runs are offered to that runner alone, one at a time, and session.new is true for the run that opens a session and false for every later one.",
 	sections: []section{hubSessions},
 	why:      "it needs two runs in one session, which only a hub's own way of queueing runs can arrange.",
+}, {
+	rule:     "A close in closed_sessions is believed from the runner holding the session or the one its run was last offered to, a repeat is the same news, and the runs still queued in a closed session end.",
+	sections: []section{hubSessions},
+	why:      "closed_sessions is sent only by a runner advertising close_session, and this one advertises no feature; and seeing the queued runs end needs a second run queued in the session, which only a hub's own queueing can arrange.",
+}, {
+	rule:     "Offers only for a harness the runner can drive — first-class, present and without an error — and, among those, preferably one whose health says ready.",
+	sections: []section{hubOffers},
+	why:      "the runs this suite is offered are the ones queued for the one harness it advertises; seeing a hub offer a harness it should not needs a run queued for that harness, which only a hub's own queueing can arrange.",
+}, {
+	rule:     "Lapsed leases are found by a timer as well as by a sync, so a hub whose only runner went away still records its runs lost.",
+	sections: []section{hubLeases},
+	why:      "anything this suite sends to see whether a run was lost is itself a request the hub can settle leases on, so a hub that settles them only when asked cannot be told from one that sweeps.",
+}, {
+	rule:     "A runner id the hub already knows re-registers only with a token issued for that runner.",
+	sections: []section{hubRegister},
+	why:      "a token issued for one runner comes from the hub's own API, which is outside v1; and trying the second token on the first runner's id would spend it, on a hub that spends tokens on a refused registration, before the runner it is for.",
+}, {
+	rule:     "A grant's value is kept only until its run reaches a terminal state.",
+	sections: []section{hubGrants},
+	why:      "v1 gives a runner no way to read a run back from a hub, so nothing outside the hub can see what it still holds.",
+}, {
+	rule:     "internal goes only with a 5xx, and never stands in for a refusal of a request the hub will never accept.",
+	sections: []section{hubErrors},
+	why:      "a fault is not something this suite can cause from outside. What is checked is the refusals it can cause: a body that does not validate, a run the caller does not hold, a body too large.",
 }, {
 	rule:     "A runner silent for longer than the hub's abandon-after has its sessions closed and the runs queued in them ended, and keeps its credential: when it syncs again it is answered normally, with close_session for each of those sessions until it reports the close.",
 	sections: []section{hubLeases},
@@ -45,9 +69,9 @@ var unchecked = []struct {
 	sections: []section{hubEvents, hubRunnerAnswers},
 	why:      "they are what a runner must not exceed, not what a hub must enforce.",
 }, {
-	rule:     "Whether register refuses a request whose Yad-Protocol header is missing or names another version, and whether it ignores a field this version does not define.",
+	rule:     "Whether register refuses a request whose Yad-Protocol header is missing or names another version, whether it refuses a body that does not validate as invalid, and whether it ignores a field this version does not define.",
 	sections: []section{hubCalls, hubWire},
-	why:      "register is the one call the registration token authenticates. A hub that reads the body before the header would burn the operator's token on a request sent only to check a header, and the unknown-field rule needs a registration that succeeds — which this suite has one token for, and spends on the registration it goes on to use. Both rules are checked on sync, events and result.",
+	why:      "register is the one call the registration token authenticates. A hub that reads the body before the header would burn the operator's token on a request sent only to check a header, one that spends a token before it validates the body would burn it on a body sent to be refused, and the unknown-field rule needs a registration that succeeds — which this suite has one token for, and spends on the registration it goes on to use. All three are checked on sync, events and result.",
 }, {
 	rule:     "Whether the copy of a resent event that the hub keeps is the first one.",
 	sections: []section{hubEvents},

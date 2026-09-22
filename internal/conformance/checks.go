@@ -25,6 +25,7 @@ var hubSections = map[int]string{
 	6:  "Events and results",
 	7:  "Controls and features",
 	8:  "Sessions",
+	9:  "Grants",
 	10: "Errors and `next_action`",
 	11: "Versioning",
 }
@@ -59,6 +60,7 @@ var (
 	hubSessions      = section{n: 8}
 	hubErrors        = section{n: 10}
 	hubVersioning    = section{n: 11}
+	hubGrants        = section{n: 9}
 )
 
 // checks is the suite, in the order it runs. The order is part of it: a check

@@ -399,7 +399,7 @@ func (h *Hub) register(api huma.API) {
 		OperationID: "sync", Method: http.MethodPost, Path: "/runners/{runner}/sync",
 		Summary: "Heartbeat, lease renewal, health and the ask for work, in one call",
 		Description: "Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed " +
-			"here was never received and will be offered again. An offer carries the same lease_ms as a claim: one not claimed within it " +
+			"here was never received: it goes back in the queue at this sync, and may be offered again in this answer. An offer carries the same lease_ms as a claim: one not claimed within it " +
 			"goes back in the queue, for this runner or any other, and a claim listed after that is refused with a cancel, as a lapsed " +
 			"claim is. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — " +
 			"is answered with a cancel control for that run. A runner that does not sync for longer than the hub's abandon-after " +
@@ -423,7 +423,8 @@ func (h *Hub) register(api huma.API) {
 		Summary: "Report a run's terminal state",
 		Description: "Retried from the runner's outbox until acknowledged, and applied at most once: the same state again is acknowledged. " +
 			"409 means the hub already holds a different terminal state — lost, when the lease lapsed first — which stands; the runner stops reporting. " +
-			"Only the runner the run was offered to or claimed by may report; any other gets 403 not_holder.",
+			"Only the runner the run is offered to — until a sync takes the offer back — or the runner that claimed it may report; any other gets 403 not_holder. " +
+			"A failed result with class refused from the runner a run is offered to is how it declines the run, which then is not offered again.",
 		Security: security, Errors: []int{400, 401, 403, 404, 409, 413, 426},
 		MaxBodyBytes: reportBodyLimit,
 	}, h.submitResult)

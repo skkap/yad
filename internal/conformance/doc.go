@@ -36,8 +36,11 @@
 // given. The rules about claiming, events, results and the lease need a run:
 // queue three for that harness, and the suite claims two, reports one failed
 // with error class refused (HUB.md's answer for a run a runner will not take),
-// leaves the other to lose its lease, and leaves the third offered and
-// unclaimed until its offer lapses. Without them those checks are
+// leaves the other to lose its lease, leaves the third offered and unclaimed
+// until its offer lapses, and then declines that one without claiming it —
+// a failed result, class refused, for a run only offered. It also sends one
+// events batch and one result of 17 MiB each, to see how a hub refuses a body
+// for its size. Without the runs those checks are
 // reported as skipped, with what to queue to make them possible: a skip is
 // never a pass. Given a second registration token, it spends that too, on a
 // second runner that sends events and a result for the run the first one

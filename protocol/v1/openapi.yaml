@@ -265,7 +265,7 @@ components:
       additionalProperties: true
       properties:
         acked_through:
-          description: "The highest seq up to which the hub holds every event of the run with no gap: 0 when it holds none, or none from 1 on. The runner resends everything after it, so never answer a seq you have not stored contiguously."
+          description: "The highest seq such that the hub holds every event of the run from 1 up to and including it, with no gap: 0 when it holds none, or none from 1 on. The runner resends everything after it, so never answer a seq you have not stored contiguously."
           format: int64
           type: integer
       required:
@@ -275,7 +275,7 @@ components:
       additionalProperties: true
       properties:
         events:
-          description: Events of this run in seq order, at most 100 from a yad runner. A batch may repeat events already sent.
+          description: Events of this run in seq order. A yad runner sends at most 100 in a batch; yad hub takes up to 1000 and refuses more. A batch may repeat events already sent.
           items:
             $ref: "#/components/schemas/Event"
           type: array
@@ -307,7 +307,7 @@ components:
             - file
           type: string
         name:
-          description: An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH, HOME, LD_* or DYLD_*, nor a variable that picks a harness's credential or home, such as ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR, CODEX_HOME or OPENAI_API_KEY; matched in any case. No two grants may share a name, and no two file grants may differ only by case.
+          description: "An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH or HOME, nor a name beginning LD_ or DYLD_, nor one that picks a harness's credential or home — the whole list: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_PROFILE, ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_CONFIG_DIR, CLAUDE_CONFIG_DIR, ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS, any name beginning CLAUDE_CODE_USE_, CODEX_HOME, OPENAI_API_KEY, CODEX_API_KEY, CODEX_ACCESS_TOKEN, OPENAI_BASE_URL, CODEX_REFRESH_TOKEN_URL_OVERRIDE and AWS_BEARER_TOKEN_BEDROCK, whatever the run's harness. Every name is matched in any case. No two grants may share a name, and no two file grants may differ only by case."
           type: string
         value:
           description: The secret. Never logged or shown; a hub should keep it only until the run is terminal.
@@ -563,7 +563,7 @@ components:
       properties:
         error:
           $ref: "#/components/schemas/RunError"
-          description: Why the run did not succeed. A failed result with class refused is the runner declining a run it was offered, before claiming it.
+          description: Why the run did not succeed. A failed result with class refused is the runner declining a run, usually one it was offered and never claimed; it may come for a claimed run too, and is applied as any terminal state. A refused run is not offered again.
         final_text:
           description: The harness's last answer, at most 1 MiB.
           type: string
@@ -726,7 +726,7 @@ components:
           description: "The runner's id: the same as the {runner} in the path, or the sync is refused."
           type: string
         runs:
-          description: Every run the runner holds. Listing a run offered in the previous response claims it; listing a claimed run renews its lease. An offered run left out was never received. A listed run the runner does not hold is answered with a cancel control for it.
+          description: Every run the runner holds. Listing a run offered in the previous response claims it; listing a claimed run renews its lease. An offered run left out was never received, and goes back in the queue at this sync. A listed run the runner does not hold is answered with a cancel control for it.
           items:
             $ref: "#/components/schemas/HeldRun"
           type: array
@@ -744,7 +744,7 @@ components:
             $ref: "#/components/schemas/Control"
           type: array
         lease_ms:
-          description: "How long the hub holds each run named in this answer for this runner without hearing from it: every run offered here, and every run the request listed. A listed run the lease lapses on is lost. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."
+          description: "How long the hub holds each run named in this answer for this runner without hearing from it, measured on the hub from when it handled this sync: every run offered here, and every run the request listed. A listed run the lease lapses on is lost. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."
           format: int64
           type: integer
         min_version:
@@ -978,7 +978,7 @@ paths:
       summary: Retire this runner's credential
   /runners/{runner}/sync:
     post:
-      description: "Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed here was never received and will be offered again. An offer carries the same lease_ms as a claim: one not claimed within it goes back in the queue, for this runner or any other, and a claim listed after that is refused with a cancel, as a lapsed claim is. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — is answered with a cancel control for that run. A runner that does not sync for longer than the hub's abandon-after (yad hub: 24 h, --abandon-after) has every session bound to it closed and the runs queued in them ended, and keeps its credential: its next sync is answered normally, with close_session for each of those sessions until it reports the close."
+      description: "Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed here was never received: it goes back in the queue at this sync, and may be offered again in this answer. An offer carries the same lease_ms as a claim: one not claimed within it goes back in the queue, for this runner or any other, and a claim listed after that is refused with a cancel, as a lapsed claim is. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — is answered with a cancel control for that run. A runner that does not sync for longer than the hub's abandon-after (yad hub: 24 h, --abandon-after) has every session bound to it closed and the runs queued in them ended, and keeps its credential: its next sync is answered normally, with close_session for each of those sessions until it reports the close."
       operationId: sync
       parameters:
         - description: The protocol major version.
@@ -1142,7 +1142,7 @@ paths:
       summary: Append a batch of run events
   /runs/{run}/result:
     post:
-      description: "Retried from the runner's outbox until acknowledged, and applied at most once: the same state again is acknowledged. 409 means the hub already holds a different terminal state — lost, when the lease lapsed first — which stands; the runner stops reporting. Only the runner the run was offered to or claimed by may report; any other gets 403 not_holder."
+      description: "Retried from the runner's outbox until acknowledged, and applied at most once: the same state again is acknowledged. 409 means the hub already holds a different terminal state — lost, when the lease lapsed first — which stands; the runner stops reporting. Only the runner the run is offered to — until a sync takes the offer back — or the runner that claimed it may report; any other gets 403 not_holder. A failed result with class refused from the runner a run is offered to is how it declines the run, which then is not offered again."
       operationId: submitResult
       parameters:
         - description: The protocol major version.

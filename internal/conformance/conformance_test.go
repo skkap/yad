@@ -842,3 +842,32 @@ func TestARefusedURLIsQuotedWithoutItsCredentials(t *testing.T) {
 		t.Errorf("the refusal no longer says which URL it refused: %v", err)
 	}
 }
+
+// HUB.md §12 says how many checks the suite makes and how many rules it leaves
+// unchecked, and a hub author reads those numbers to know whether the report in
+// front of them is the whole suite. They are counted here from the suite
+// itself, so a check added or a rule moved off the list fails until HUB.md
+// says so.
+func TestHubMDCountsTheSuite(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(filepath.Join("..", "..", "HUB.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := strings.Join(strings.Fields(string(b)), " ")
+	checksIn := map[int]string{44: "Forty-four", 45: "Forty-five", 46: "Forty-six", 47: "Forty-seven", 48: "Forty-eight", 49: "Forty-nine", 50: "Fifty"}
+	rulesIn := map[int]string{14: "fourteen", 15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty"}
+	n, u := len(checks()), len(unchecked)
+	if checksIn[n] == "" || rulesIn[u] == "" {
+		t.Fatalf("%d checks and %d unchecked rules: add the words for them to this test", n, u)
+	}
+	for _, want := range []string{
+		checksIn[n] + " black-box checks",
+		fmt.Sprintf("It ends `%d passed, 0 failed, 0 skipped`", n),
+		"it is " + rulesIn[u] + " rules",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("HUB.md §12 does not say %q: the suite has %d checks and %d rules it does not check", want, n, u)
+		}
+	}
+}
