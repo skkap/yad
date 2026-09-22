@@ -102,6 +102,19 @@ func checks() []check {
 		needs:   credential,
 		run:     checkCredentialRequired,
 	}, {
+		id:      "sync/runner-id-matches-the-path",
+		rule:    "The body's runner_id equals the runner the path names, or the sync is refused: a hub reading one of the two has two answers to which runner is syncing.",
+		section: hubSync,
+		needs:   credential,
+		run:     checkRunnerIDMatchesThePath,
+	}, {
+		id:      "sync/another-runners-credential",
+		rule:    "The credential on a sync belongs to the runner the path names: another runner's credential is refused, or any runner a hub knows can claim, renew and be offered another's runs.",
+		section: hubSync,
+		needs:   credential,
+		second:  true,
+		run:     checkAnotherRunnersCredential,
+	}, {
 		id:      "protocol-header/missing",
 		rule:    "A request whose Yad-Protocol header is missing is refused with 426 unsupported_protocol, before its body is read — on every call, not only on sync.",
 		section: hubCalls,
@@ -126,6 +139,12 @@ func checks() []check {
 		needs:   credential,
 		run:     checkUnknownFieldsIgnored,
 	}, {
+		id:      "sync/report-capabilities",
+		rule:    "A sync whose fingerprint differs from the one that came with the document the hub holds, and that carries no document, is answered with a report_capabilities control.",
+		section: hubSync,
+		needs:   credential,
+		run:     checkReportCapabilities,
+	}, {
 		id:      "sync/free-capacity",
 		rule:    "A hub never offers a sync more runs than the free capacity that sync declared: not more than the total, and not more than the figure the sync gave for that harness, which is the owner's cap and is never a run to be claimed and then found to be over it.",
 		section: hubOffers,
@@ -138,11 +157,11 @@ func checks() []check {
 		needs:   credential,
 		run:     checkCancelForRunNotHeld,
 	}, {
-		id:      "sync/offer-is-repeated",
-		rule:    "An offered run that the next sync does not list was never received, and the hub offers it again.",
+		id:      "sync/unlisted-offer-taken-back",
+		rule:    "An offered run the next sync does not list was never received, and that sync takes it back into the queue: a claim of it listed after that is answered with a cancel, because the offer is no longer open.",
 		section: hubSync,
 		needs:   credential,
-		run:     checkOfferIsRepeated,
+		run:     checkUnlistedOfferTakenBack,
 	}, {
 		id:      "sync/claim-by-listing",
 		rule:    "A run offered in a sync response is claimed when the runner lists it in its next sync: the hub neither offers it again nor answers it with a cancel.",
@@ -162,11 +181,23 @@ func checks() []check {
 		needs:   heldRun,
 		run:     checkGatedRunsAreNotOffered,
 	}, {
+		id:      "errors/invalid-body",
+		rule:    "A body that does not validate is refused with the code invalid under a 4xx other than 413, on sync, events and result alike: invalid is what a runner drops a report on, where a 5xx is retried for ever and a 413 halves a batch that was never too large.",
+		section: hubErrors,
+		needs:   heldRun,
+		run:     checkInvalidBody,
+	}, {
 		id:      "events/credential-required",
 		rule:    "Every call but register is authenticated by the runner credential, on every call and not only on sync: a batch of events for a run this runner holds is refused when the bearer is one the hub never issued, or absent.",
 		section: hubEventsCall,
 		needs:   heldRun,
 		run:     checkEventsCredentialRequired,
+	}, {
+		id:      "events/seq-from-one",
+		rule:    "Events are numbered from 1: an event with seq 0 is refused as invalid, not stored.",
+		section: hubEvents,
+		needs:   heldRun,
+		run:     checkEventsSeqFromOne,
 	}, {
 		id:      "events/acked-through",
 		rule:    "acked_through is the highest seq up to which the hub holds every event: a batch that leaves a gap does not move it past the gap, and the batch that fills the gap moves it over everything already held.",
@@ -212,6 +243,12 @@ func checks() []check {
 		second:  true,
 		run:     checkResultHeldByAnother,
 	}, {
+		id:      "result/terminal-state-only",
+		rule:    "A result carries one of the five terminal states: one naming a state that is not terminal is refused as invalid, and never applied.",
+		section: hubResultCall,
+		needs:   heldRun,
+		run:     checkResultIsTerminal,
+	}, {
 		id:      "result/applied",
 		rule:    "A hub applies the terminal state the runner holding a run reports.",
 		section: hubResults,
@@ -242,6 +279,12 @@ func checks() []check {
 		needs:   heldRun,
 		run:     checkResultUnknownFields,
 	}, {
+		id:      "errors/too-large",
+		rule:    "A body refused for its size is refused with 413, whatever the code: a runner halves an events batch and retries a result on a 413, and drops what was refused as invalid.",
+		section: hubRunnerAnswers,
+		needs:   heldRun,
+		run:     checkTooLarge,
+	}, {
 		id:      "events/after-the-run-ends",
 		rule:    "The runner a run was claimed by may append to it after it has ended, so a batch still in its spool when the result landed is not lost.",
 		section: hubLeases,
@@ -259,6 +302,12 @@ func checks() []check {
 		section: hubLeases,
 		needs:   credential,
 		run:     checkOfferLapse,
+	}, {
+		id:      "result/refusal-before-claim",
+		rule:    "A hub takes a result from the runner a run is offered to as well as from the one that claimed it — a failed result with class refused, for a run never listed, is how a runner declines one — and does not offer a run again once it is refused.",
+		section: hubResults,
+		needs:   credential,
+		run:     checkRefusalBeforeClaim,
 	}, {
 		id:      "sync/offers-within-capacity",
 		rule:    "A hub never offers a sync more runs than the free capacity that sync declared — in every answer it gives, not only in answer to a sync written to test it.",

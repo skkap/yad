@@ -73,7 +73,9 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawKeepsUnknownFields, check: "sync/unknown-fields-ignored", want: Failed},
 		{flaw: flawOffersOverCapacity, check: "sync/free-capacity", want: Failed},
 		{flaw: flawNoCancel, check: "sync/cancel-for-a-run-not-held", want: Failed},
-		{flaw: flawForgetsOffers, check: "sync/offer-is-repeated", want: Skipped},
+		// A hub keeping the offers a sync left out takes a late claim of
+		// them, which a hub that took them back answers with a cancel.
+		{flaw: flawForgetsOffers, check: "sync/unlisted-offer-taken-back", want: Failed},
 		{flaw: flawOffersTwice, check: "sync/claim-by-listing", want: Failed},
 		{flaw: flawOffersInvalidRun, check: "run/offer-validates", want: Failed},
 		{flaw: flawAckJumpsTheGap, check: "events/acked-through", want: Failed},
@@ -98,12 +100,11 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawResultUnguarded, check: "protocol-header/missing", want: Failed},
 		{flaw: flawResultUnguarded, check: "result/credential-required", want: Failed},
 		{flaw: flawTakesNoBearer, check: "sync/credential-required", want: Failed},
-		// One answer naming a run twice has not shown that a dropped offer
-		// comes back, so the rule is unproven rather than kept.
-		{flaw: flawOffersTwiceOver, check: "sync/offer-is-repeated", want: Skipped},
+		// One answer naming a run twice, and the offer never taken back.
+		{flaw: flawOffersTwiceOver, check: "sync/unlisted-offer-taken-back", want: Failed},
 		{flaw: flawStrictEventFields, check: "events/unknown-fields-ignored", want: Failed},
 		{flaw: flawCredentialMisnamed, check: "register/exchange", want: Failed},
-		{flaw: flawKeepsOneOffer, check: "sync/offer-is-repeated", want: Skipped},
+		{flaw: flawKeepsOneOffer, check: "sync/unlisted-offer-taken-back", want: Failed},
 		// A hub setting a version floor is exercising a right HUB.md grants it,
 		// so the suite says what happened and checks nothing further.
 		{flaw: flawVersionFloorQuotes, check: "register/exchange", want: Skipped},
@@ -126,6 +127,22 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		// Refused correctly and stored anyway: the holder's own report is
 		// what finds it, so the second runner's state must differ from it.
 		{flaw: flawStoresRefusedResult, check: "result/applied", second: true, want: Failed},
+		// A hub that sends no cancel for a run it does not hold fails for
+		// that once. The rules that read a missing cancel as a run still
+		// held say they cannot tell, or judge by what else they see, rather
+		// than blame the lease for it (DEV-110).
+		{flaw: flawNoCancel, check: "sync/unlisted-offer-taken-back", want: Skipped},
+		{flaw: flawNoCancel, check: "lease/lapse", leaseWait: time.Minute, want: Passed},
+		{flaw: flawNoCancel, check: "lease/offer-lapse", leaseWait: time.Minute, third: true, want: Skipped},
+		{flaw: flawIgnoresBodyRunner, check: "sync/runner-id-matches-the-path", want: Failed},
+		{flaw: flawAnyCredentialSyncs, check: "sync/another-runners-credential", second: true, want: Failed},
+		{flaw: flawNoReportCaps, check: "sync/report-capabilities", want: Failed},
+		{flaw: flawInvalidIs500, check: "errors/invalid-body", want: Failed},
+		{flaw: flawTakesSeqZero, check: "events/seq-from-one", want: Failed},
+		{flaw: flawTakesAnyState, check: "result/terminal-state-only", want: Failed},
+		{flaw: flawTooLargeIsInvalid, check: "errors/too-large", want: Failed},
+		{flaw: flawRefusalNeedsAClaim, check: "result/refusal-before-claim", third: true, want: Failed},
+		{flaw: flawReoffersRefused, check: "result/refusal-before-claim", third: true, want: Failed},
 	} {
 		t.Run(tc.flaw+"/"+tc.check, func(t *testing.T) {
 			t.Parallel()
@@ -690,41 +707,6 @@ func TestASecretEscapedBeyondGuessingIsStillFound(t *testing.T) {
 		if strings.Contains(out.String(), form) {
 			t.Errorf("the token is in the report as %q:\n%s", form, out.String())
 		}
-	}
-}
-
-// The rule is about the runs the hub dropped: every one of them must come
-// back, and anything else it offered besides them is its own business. A hub
-// whose queue grows between syncs — the case a set comparison would call a
-// failure — is keeping the rule, and the same answer decides the verdict and
-// what the skip says, so a skip can never name no run at all.
-func TestTheReofferRuleIsAboutTheRunsThatWereDropped(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name             string
-		dropped, back    []string
-		wantStillMissing []string
-	}{
-		{name: "all back", dropped: []string{"a", "b"}, back: []string{"a", "b"}},
-		{name: "all back and more besides", dropped: []string{"a"}, back: []string{"a", "b"}},
-		{name: "two dropped, three back", dropped: []string{"a", "b"}, back: []string{"a", "b", "c"}},
-		{name: "one lost for ever", dropped: []string{"a", "b"}, back: []string{"a"}, wantStillMissing: []string{"b"}},
-		{name: "none back", dropped: []string{"a", "b"}, back: nil, wantStillMissing: []string{"a", "b"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := stillMissing(tc.dropped, tc.back)
-			if !slices.Equal(got, tc.wantStillMissing) {
-				t.Fatalf("stillMissing(%v, %v) = %v, want %v", tc.dropped, tc.back, got, tc.wantStillMissing)
-			}
-			// What the check does with it: nothing missing is the rule kept,
-			// and anything missing is named in the skip rather than left to a
-			// count that can print an empty id.
-			for _, id := range got {
-				if !slices.Contains(tc.dropped, id) {
-					t.Errorf("the skip would name %q, which the hub never dropped", id)
-				}
-			}
-		})
 	}
 }
 

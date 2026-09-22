@@ -66,7 +66,21 @@ func newError(service bool, status int, msg string, errs ...error) *ErrorRespons
 	if service {
 		next = "fix the request to match protocol/hubapi/openapi.yaml"
 	}
+	// huma answers a body that parses and fails the schema with 422. HUB.md
+	// names 400 invalid for every body that does not validate, and the
+	// protocol document declares no 422 (protocolOp), so the protocol says 400.
+	// The service API is this hub's own, and its document declares the 422 it
+	// sends.
+	if status == http.StatusUnprocessableEntity && !service {
+		status = http.StatusBadRequest
+	}
 	switch status {
+	case http.StatusRequestEntityTooLarge:
+		// The status is what a runner acts on (HUB.md §6): it halves an
+		// events batch and tries again, whatever the code says.
+		if !service {
+			next = "send less in one request: a runner halves an events batch and tries again"
+		}
 	case http.StatusUnauthorized:
 		code, next = v1.CodeUnauthorized, "register again with a fresh registration token"
 		if service {

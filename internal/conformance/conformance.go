@@ -205,6 +205,11 @@ type session struct {
 	lapseAt time.Time
 	// leaseAtClaim is the lease the hub named in the answer that claimed it.
 	leaseAtClaim time.Duration
+	// noCancels says the hub answered a listing of a run it never offered
+	// with no cancel. A missing cancel is then no evidence that it still holds
+	// a run for this runner, and the checks that read one as that say so
+	// rather than report a second failure for the first one's cause.
+	noCancels bool
 
 	// other is the runner the second token registered, once a check has
 	// asked for it, and otherErr why it could not be: the token is spent by
@@ -344,7 +349,7 @@ func (s *session) missing(need requirement) string {
 	case need >= credential && s.cred == "":
 		return "the suite never registered with this hub, so nothing needing a runner credential could be checked"
 	case need >= heldRun && s.report == "" && len(s.offered) > 0:
-		return "the hub offered runs and had taken them all back before the suite could claim one — an offer a sync does not list is requeued — so nothing needing a run it holds could be checked"
+		return "the hub offered runs, took them back when a sync left them out, and offered none when this runner asked for work again, so nothing needing a run it holds could be checked"
 	case need >= heldRun && s.report == "":
 		return "no run was offered to this runner, so nothing needing a run it holds could be checked; queue a run for harness " + s.opts.Harness + " and run the suite again"
 	case need >= secondRun && s.lapse == "" && s.offeredAtOnce > 1:

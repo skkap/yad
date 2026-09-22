@@ -30,6 +30,25 @@ func TestOpenAPIIsCurrent(t *testing.T) {
 	}
 }
 
+// The protocol document declares the statuses this hub sends: no 422, which
+// huma declares on its own and this hub answers 400 instead, and 413 and a
+// default beside every operation's errors, since a generated client models
+// only what is declared.
+func TestTheDocumentDeclaresWhatTheHubSends(t *testing.T) {
+	api := New(Options{}).api.OpenAPI()
+	for path, item := range api.Paths {
+		op := item.Post
+		for _, status := range []string{"413", "default"} {
+			if op.Responses[status] == nil {
+				t.Errorf("POST %s declares no %s response", path, status)
+			}
+		}
+		if op.Responses["422"] != nil {
+			t.Errorf("POST %s declares 422, which this hub never sends", path)
+		}
+	}
+}
+
 func post(t *testing.T, h http.Handler, path, body string, headers map[string]string) (*http.Response, v1.ErrorEnvelope) {
 	t.Helper()
 	return call(t, h, http.MethodPost, path, body, headers)
@@ -68,6 +87,13 @@ func TestErrorsHaveTheProtocolShape(t *testing.T) {
 		{"missing protocol header", "POST", "/v1/runners/r/sync", `{}`, nil, 426, v1.CodeUnsupportedProtocol},
 		{"another protocol version", "POST", "/v1/runners/r/sync", `{}`, map[string]string{v1.HeaderProtocol: "2"}, 426, v1.CodeUnsupportedProtocol},
 		{"malformed body", "POST", "/v1/runs/r/events", `{`, proto, 400, v1.CodeInvalid},
+		// JSON that fails the schema: huma's own answer is 422, which the
+		// protocol document does not declare and HUB.md does not name.
+		{"a body the schema refuses", "POST", "/v1/runners/r/sync", `{"runner_id": 5}`, proto, 400, v1.CodeInvalid},
+		{"an event kind v1 does not have", "POST", "/v1/runs/r/events", `{"events": [{"seq": 1, "at": "2026-01-01T00:00:00Z", "kind": "from_v2"}]}`, proto, 400, v1.CodeInvalid},
+		// Over the default limit huma puts on a body it reads, a mebibyte on
+		// every call but events and result.
+		{"a body over the limit", "POST", "/v1/runners/r/sync", `{"padding": "` + strings.Repeat("x", 1<<20) + `"}`, proto, 413, v1.CodeInvalid},
 		{"unknown path under the base", "POST", "/v1/runners/r/nope", `{}`, proto, 404, v1.CodeNotFound},
 		{"an operation only a newer version has", "POST", "/v1/runners/r/future", `{}`, map[string]string{v1.HeaderProtocol: "2"}, 426, v1.CodeUnsupportedProtocol},
 		{"unknown path without the header", "POST", "/v1/runners/r/nope", `{}`, nil, 426, v1.CodeUnsupportedProtocol},

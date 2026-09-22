@@ -386,16 +386,16 @@ type (
 var security = []map[string][]string{{"runner": {}}}
 
 func (h *Hub) register(api huma.API) {
-	huma.Register(api, huma.Operation{
+	protocolOp(api, huma.Operation{
 		OperationID: "register", Method: http.MethodPost, Path: "/runners/register",
 		Summary: "Exchange a registration token for a runner credential",
 		Description: "Called once by `yad connect`, with the one-time registration token as the bearer. The token is dead afterwards. " +
 			"Registering a runner id the hub already knows needs a token issued for that runner, and replaces its credential; " +
 			"the old one stops working. With a token for a new runner it is refused with 409.",
-		Security: security, Errors: []int{400, 401, 409, 426},
+		Security: security, Errors: []int{400, 401, 409, 413, 426},
 	}, h.registerRunner)
 
-	huma.Register(api, huma.Operation{
+	protocolOp(api, huma.Operation{
 		OperationID: "sync", Method: http.MethodPost, Path: "/runners/{runner}/sync",
 		Summary: "Heartbeat, lease renewal, health and the ask for work, in one call",
 		Description: "Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed " +
@@ -405,30 +405,30 @@ func (h *Hub) register(api huma.API) {
 			"is answered with a cancel control for that run. A runner that does not sync for longer than the hub's abandon-after " +
 			"(yad hub: 24 h, --abandon-after) has every session bound to it closed and the runs queued in them ended, and keeps its " +
 			"credential: its next sync is answered normally, with close_session for each of those sessions until it reports the close.",
-		Security: security, Errors: []int{400, 401, 403, 426},
+		Security: security, Errors: []int{400, 401, 403, 413, 426},
 	}, h.sync)
 
-	huma.Register(api, huma.Operation{
+	protocolOp(api, huma.Operation{
 		OperationID: "appendEvents", Method: http.MethodPost, Path: "/runs/{run}/events",
 		Summary: "Append a batch of run events",
 		Description: "Idempotent by (run, seq): a resent event is ignored and the first copy stands. The response's acked_through " +
 			"is the highest seq up to which the hub holds every event, and is authoritative; the runner resends everything after it. " +
 			"Only the runner the run was claimed by may append, before or after it ends; any other gets 403 not_holder.",
-		Security: security, Errors: []int{400, 401, 403, 404, 426},
+		Security: security, Errors: []int{400, 401, 403, 404, 413, 426},
 		MaxBodyBytes: reportBodyLimit,
 	}, h.appendEvents)
 
-	huma.Register(api, huma.Operation{
+	protocolOp(api, huma.Operation{
 		OperationID: "submitResult", Method: http.MethodPost, Path: "/runs/{run}/result",
 		Summary: "Report a run's terminal state",
 		Description: "Retried from the runner's outbox until acknowledged, and applied at most once: the same state again is acknowledged. " +
 			"409 means the hub already holds a different terminal state — lost, when the lease lapsed first — which stands; the runner stops reporting. " +
 			"Only the runner the run was offered to or claimed by may report; any other gets 403 not_holder.",
-		Security: security, Errors: []int{400, 401, 403, 404, 409, 426},
+		Security: security, Errors: []int{400, 401, 403, 404, 409, 413, 426},
 		MaxBodyBytes: reportBodyLimit,
 	}, h.submitResult)
 
-	huma.Register(api, huma.Operation{
+	protocolOp(api, huma.Operation{
 		OperationID: "deregister", Method: http.MethodPost, Path: "/runners/{runner}/deregister",
 		Summary: "Retire this runner's credential",
 		Description: "Runs the runner still holds become lost on the hub's side; runs offered to it and never claimed go back in the queue. " +
@@ -436,8 +436,30 @@ func (h *Hub) register(api huma.API) {
 			"runner that holds it, so a run left in one would be offerable to no runner at all. The binding is never cleared instead — " +
 			"the session's state is on that machine. The credential stops working at once. The runner's id and its history stay, so " +
 			"registering again with a token issued for that runner brings it back, with new sessions.",
-		Security: security, Errors: []int{401, 403, 426},
+		Security: security, Errors: []int{400, 401, 403, 413, 426},
 	}, h.deregister)
+}
+
+// protocolOp registers one protocol operation and makes its declared responses
+// the ones this hub sends. Two corrections to what huma declares on its own:
+//
+// It adds 422 to every operation with a body, for a body that fails the
+// schema. This hub answers that 400 invalid instead (newError), because HUB.md
+// names 400 for every body that does not validate and a hub author copies the
+// document: a 422 declared and never sent is a status someone writes a branch
+// for.
+//
+// And the responses no operation can declare — 404 for a path that is no
+// operation, 405 for a method one does not have — go under default, so a
+// generated client knows every error under the base is the same envelope.
+func protocolOp[I, O any](api huma.API, op huma.Operation, handler func(context.Context, *I) (*O, error)) {
+	huma.Register(api, op, handler)
+	declared := api.OpenAPI().Paths[op.Path].Post
+	delete(declared.Responses, strconv.Itoa(http.StatusUnprocessableEntity))
+	declared.Responses["default"] = &huma.Response{
+		Description: "Any other error, in the same envelope: 404 not_found for a path that is no operation, 405 invalid for a method an operation does not have.",
+		Content:     declared.Responses[strconv.Itoa(http.StatusBadRequest)].Content,
+	}
 }
 
 // bearerFrom returns the request's bearer secret, or "" when it has none.

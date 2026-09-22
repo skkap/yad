@@ -870,12 +870,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Conflict
-        "422":
+        "413":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: Unprocessable Entity
+          description: Request Entity Too Large
         "426":
           content:
             application/json:
@@ -888,6 +888,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Internal Server Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Any other error, in the same envelope: 404 not_found for a path that is no operation, 405 invalid for a method an operation does not have."
       security:
         - runner: []
       summary: Exchange a registration token for a runner credential
@@ -925,6 +931,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Ack"
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
         "401":
           content:
             application/json:
@@ -937,12 +949,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Forbidden
-        "422":
+        "413":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: Unprocessable Entity
+          description: Request Entity Too Large
         "426":
           content:
             application/json:
@@ -955,6 +967,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Internal Server Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Any other error, in the same envelope: 404 not_found for a path that is no operation, 405 invalid for a method an operation does not have."
       security:
         - runner: []
       summary: Retire this runner's credential
@@ -1010,12 +1028,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Forbidden
-        "422":
+        "413":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: Unprocessable Entity
+          description: Request Entity Too Large
         "426":
           content:
             application/json:
@@ -1028,6 +1046,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Internal Server Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Any other error, in the same envelope: 404 not_found for a path that is no operation, 405 invalid for a method an operation does not have."
       security:
         - runner: []
       summary: Heartbeat, lease renewal, health and the ask for work, in one call
@@ -1089,12 +1113,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Not Found
-        "422":
+        "413":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: Unprocessable Entity
+          description: Request Entity Too Large
         "426":
           content:
             application/json:
@@ -1107,6 +1131,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Internal Server Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Any other error, in the same envelope: 404 not_found for a path that is no operation, 405 invalid for a method an operation does not have."
       security:
         - runner: []
       summary: Append a batch of run events
@@ -1174,12 +1204,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Conflict
-        "422":
+        "413":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: Unprocessable Entity
+          description: Request Entity Too Large
         "426":
           content:
             application/json:
@@ -1192,6 +1222,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Internal Server Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Any other error, in the same envelope: 404 not_found for a path that is no operation, 405 invalid for a method an operation does not have."
       security:
         - runner: []
       summary: Report a run's terminal state
