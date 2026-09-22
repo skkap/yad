@@ -215,6 +215,7 @@ components:
       properties:
         error:
           $ref: "#/components/schemas/Error"
+          description: What went wrong. Every error response under the base carries this envelope, and next_action is always set.
       required:
         - error
       type: object
@@ -247,7 +248,7 @@ components:
           description: "For a status event, a short label of the phase, such as account, waiting, cancelling or steered. For display: not a closed set, and not to be parsed."
           type: string
         text:
-          description: The words of a text, thinking, status or error event. At most 1 MiB.
+          description: The words of a text or thinking event, and the detail of some status events. At most 1 MiB. An error event carries its words in error.message instead.
           type: string
         tool:
           $ref: "#/components/schemas/ToolEvent"
@@ -539,7 +540,7 @@ components:
             type: string
           type: array
         lease_ms:
-          description: Milliseconds a run stays the runner's after a sync lists it. Never shorter than sync_interval_ms beside it; four intervals is the usual choice.
+          description: "The lease the hub will name in its sync answers: how long a run offered to this runner, or held by it, is kept for it without a sync. Never shorter than sync_interval_ms."
           format: int64
           type: integer
         min_version:
@@ -572,6 +573,7 @@ components:
           type: integer
         metrics:
           $ref: "#/components/schemas/Metrics"
+          description: "How the run went: duration, time to first event, tool calls, retries, stalls, waits and account switches."
         state:
           description: How the run ended. lost here is the runner's own report of a run a previous process held and could not finish.
           enum:
@@ -583,6 +585,7 @@ components:
           type: string
         usage:
           $ref: "#/components/schemas/RunUsage"
+          description: Tokens the whole run used, by model.
       required:
         - state
         - usage
@@ -718,6 +721,7 @@ components:
           type: string
         health:
           $ref: "#/components/schemas/Health"
+          description: "The runner's state for routing and alerting, computed fresh for this sync: free capacity, per-harness readiness, disk, load, what it owes this hub, recent errors, and whether it is draining."
         runner_id:
           description: "The runner's id: the same as the {runner} in the path, or the sync is refused."
           type: string
@@ -740,7 +744,7 @@ components:
             $ref: "#/components/schemas/Control"
           type: array
         lease_ms:
-          description: Milliseconds each run this sync listed stays the runner's. Never shorter than next_sync_ms beside it.
+          description: "How long the hub holds each run named in this answer for this runner without hearing from it: every run offered here, and every run the request listed. A listed run the lease lapses on is lost. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."
           format: int64
           type: integer
         min_version:
@@ -956,7 +960,7 @@ paths:
       summary: Retire this runner's credential
   /runners/{runner}/sync:
     post:
-      description: Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed here was never received and will be offered again. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — is answered with a cancel control for that run.
+      description: "Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed here was never received and will be offered again. An offer carries the same lease_ms as a claim: one not claimed within it goes back in the queue, for this runner or any other, and a claim listed after that is refused with a cancel, as a lapsed claim is. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — is answered with a cancel control for that run. A runner that does not sync for longer than the hub's abandon-after (yad hub: 24 h, --abandon-after) has every session bound to it closed and the runs queued in them ended, and keeps its credential: its next sync is answered normally, with close_session for each of those sessions until it reports the close."
       operationId: sync
       parameters:
         - description: The protocol major version.

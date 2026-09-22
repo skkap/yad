@@ -21,10 +21,14 @@ you would leave running for a few days to see whether YAD fits your work.
 ## Why a profile of its own
 
 A **profile** is one runner's directories: its identity, its connections and
-credentials, its sessions and workdirs, its logs. Two profiles on one machine
-share nothing, so a trial in a profile called `dogfood` cannot disturb a runner
-you already have, and removing the profile's two directories removes the
-trial. They are:
+credentials, its sessions and workdirs, its logs. YAD keeps two profiles'
+state apart, so setting up a trial in a profile called `dogfood` changes
+nothing of a runner you already have, and removing the profile's two
+directories removes the trial. What a profile does not separate is the
+machine: a run in `dogfood` runs as you, and can read and change anything you
+can, another profile's files included — run it as a separate OS user if that
+matters ([run-it-safely.md](run-it-safely.md), *An OS user per profile*). The
+directories are:
 
 ```
 ~/.config/yad/profiles/dogfood        identity, config.toml, credentials

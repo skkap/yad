@@ -53,11 +53,12 @@ func TestYadHubPassesTheConformanceSuite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Two runs for the suite's own harness: one carries the event and result
-	// rules, the other is left unrenewed so its lease lapses. Without them the
-	// suite skips half of §2 and says so, which would pass this test while
-	// checking nothing — the loop at the end is what makes that impossible.
-	for i := range 2 {
+	// Three runs for the suite's own harness: one carries the event and
+	// result rules, one is left unrenewed so its lease lapses, and one is
+	// left offered and unclaimed so its offer does. Without them the suite
+	// skips half of §2 and says so, which would pass this test while checking
+	// nothing — the loop at the end is what makes that impossible.
+	for i := range 3 {
 		run := v1.Run{
 			RunID:   fmt.Sprintf("conformance-%d", i),
 			Session: v1.SessionRef{ID: fmt.Sprintf("conformance-session-%d", i), New: true},

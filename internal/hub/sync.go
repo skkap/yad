@@ -50,7 +50,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		// Lapsed leases are settled before this sync is judged, so a runner
 		// back from a long absence hears that its runs were lost rather than
 		// renewing them.
-		if err := sweep(ctx, q, now); err != nil {
+		if err := h.sweep(ctx, q, now); err != nil {
 			return err
 		}
 		// Read again inside the transaction: a drain asked for since the
@@ -120,12 +120,18 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlDrain})
 		}
 
+		// The runs this answer cancels. One of them may be queued again — an
+		// offer whose lease lapsed before this late claim arrived — and it is
+		// not offered back in the same answer: a runner handed a cancel and
+		// an offer for one run at once has to guess which the hub meant.
+		cancelled := map[string]bool{}
 		for _, held := range req.Runs {
 			run, err := q.GetRun(ctx, held.RunID)
 			if errors.Is(err, sql.ErrNoRows) || err == nil && !holdable(run, runner.ID) {
 				// Not this runner's to hold: it must stop, and nothing it
 				// reports for the run will be applied.
 				out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlCancel, RunID: held.RunID})
+				cancelled[held.RunID] = true
 				continue
 			}
 			if err != nil {
@@ -171,6 +177,11 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			if err != nil {
 				return err
 			}
+			// A close the hub made while this runner was silent is answered
+			// by the runner's report of it, whatever reason it gives.
+			if err := q.SettleOwedClose(ctx, db.SettleOwedCloseParams{ID: c.SessionID, RunnerID: me}); err != nil {
+				return err
+			}
 			if n == 0 {
 				continue
 			}
@@ -205,7 +216,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		if req.Health.Draining || runner.DrainRequestedAt.Valid {
 			return nil
 		}
-		out.Runs, err = h.offer(ctx, q, runner.ID, doc, described, req.Health.FreeCapacity, lease, now)
+		out.Runs, err = h.offer(ctx, q, runner.ID, doc, described, req.Health.FreeCapacity, cancelled, lease, now)
 		return err
 	})
 	if err != nil {
@@ -220,7 +231,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 // offer picks queued runs for this runner and marks them offered. Never more
 // than the free capacity it declared, in total or for any harness it capped,
 // and never a harness it cannot drive: the runner would have to refuse it.
-func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, free v1.Capacity, lease sql.NullInt64, now time.Time) ([]v1.Run, error) {
+func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, free v1.Capacity, cancelled map[string]bool, lease sql.NullInt64, now time.Time) ([]v1.Run, error) {
 	me := sql.NullString{String: runnerID, Valid: true}
 	left := map[string]int{}
 	for id, n := range free.ByHarness {
@@ -284,7 +295,7 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 			if len(runs) >= free.Total {
 				break
 			}
-			if n, capped := left[c.Harness]; capped && n <= 0 {
+			if n, capped := left[c.Harness]; capped && n <= 0 || cancelled[c.ID] {
 				continue
 			}
 			var run v1.Run
@@ -312,11 +323,12 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 	return runs, nil
 }
 
-// Sweep withdraws offers and loses runs whose leases lapsed. Every sync sweeps
-// first; `yad hub serve` also sweeps on a timer, so a hub whose only runner
-// went away still marks that runner's runs lost.
+// Sweep withdraws offers and loses runs whose leases lapsed, and gives up the
+// sessions of runners silent for longer than the hub's abandon-after. Every
+// sync sweeps first; `yad hub serve` also sweeps on a timer, so a hub whose
+// only runner went away still marks that runner's runs lost.
 func (h *Hub) Sweep(ctx context.Context) error {
-	err := h.store.Tx(ctx, func(q *db.Queries) error { return sweep(ctx, q, h.now()) })
+	err := h.store.Tx(ctx, func(q *db.Queries) error { return h.sweep(ctx, q, h.now()) })
 	h.bell.ring()
 	return err
 }
@@ -324,12 +336,20 @@ func (h *Hub) Sweep(ctx context.Context) error {
 // SweepEvery is how often `yad hub serve` should call Sweep.
 func (h *Hub) SweepEvery() time.Duration { return h.interval }
 
-func sweep(ctx context.Context, q *db.Queries, now time.Time) error {
+// sweep settles what time alone decides. An offer carries a lease exactly as
+// a claim does: one not claimed within it goes back in the queue for any
+// runner, and a claim arriving after that is answered with a cancel, because
+// the run may already be another runner's. Then the runs whose leases lapsed
+// are lost, and last the runners silent past abandon-after are given up —
+// after the leases, so that by then nothing they held is still leased.
+func (h *Hub) sweep(ctx context.Context, q *db.Queries, now time.Time) error {
 	if _, err := q.RequeueWithdrawnOffers(ctx, store.Ms(now)); err != nil {
 		return err
 	}
-	_, err := q.LoseLapsedRuns(ctx, store.Ms(now))
-	return err
+	if _, err := q.LoseLapsedRuns(ctx, store.Ms(now)); err != nil {
+		return err
+	}
+	return h.abandonSilent(ctx, q, now)
 }
 
 // authenticate finds the runner the bearer credential belongs to, and checks

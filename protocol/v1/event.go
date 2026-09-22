@@ -31,7 +31,7 @@ type Event struct {
 	Seq    int64      `json:"seq" doc:"The event's place in its run: 1 for the first, then 2, 3, and so on with no gaps. (run, seq) identifies an event; a resent one keeps its seq."`
 	At     time.Time  `json:"at" doc:"When it happened on the runner."`
 	Kind   EventKind  `json:"kind" enum:"text,thinking,tool_call,tool_result,status,usage,error" doc:"text: the harness said something (text). thinking: its reasoning (text). tool_call: it called a tool (tool.id, tool.name, tool.input). tool_result: the tool answered (tool.id, tool.output). status: a phase of the run, for people (status, text). usage: tokens one model used (usage). error: something went wrong, whether or not the run carries on (error)."`
-	Text   string     `json:"text,omitempty" doc:"The words of a text, thinking, status or error event. At most 1 MiB."`
+	Text   string     `json:"text,omitempty" doc:"The words of a text or thinking event, and the detail of some status events. At most 1 MiB. An error event carries its words in error.message instead."`
 	Tool   *ToolEvent `json:"tool,omitempty" doc:"For tool_call and tool_result."`
 	Status string     `json:"status,omitempty" doc:"For a status event, a short label of the phase, such as account, waiting, cancelling or steered. For display: not a closed set, and not to be parsed."`
 	Usage  *Usage     `json:"usage,omitempty" doc:"For a usage event."`

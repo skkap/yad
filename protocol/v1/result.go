@@ -7,8 +7,8 @@ type Result struct {
 	State     RunState  `json:"state" enum:"succeeded,failed,cancelled,timed_out,lost" doc:"How the run ended. lost here is the runner's own report of a run a previous process held and could not finish."`
 	FinalText string    `json:"final_text,omitempty" doc:"The harness's last answer, at most 1 MiB."`
 	Error     *RunError `json:"error,omitempty" doc:"Why the run did not succeed. A failed result with class refused is the runner declining a run it was offered, before claiming it."`
-	Usage     RunUsage  `json:"usage"`
-	Metrics   Metrics   `json:"metrics"`
+	Usage     RunUsage  `json:"usage" doc:"Tokens the whole run used, by model."`
+	Metrics   Metrics   `json:"metrics" doc:"How the run went: duration, time to first event, tool calls, retries, stalls, waits and account switches."`
 	LastSeq   int64     `json:"last_seq" doc:"The seq of the run's last event, 0 when it had none. The run's event stream is complete once acked_through reaches it."`
 }
 

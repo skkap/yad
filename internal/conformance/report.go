@@ -27,6 +27,10 @@ var unchecked = []struct{ rule, section, why string }{{
 	section: sectionSync,
 	why:     "it needs two runs in one session, which only a hub's own way of queueing runs can arrange.",
 }, {
+	rule:    "A runner silent for longer than the hub's abandon-after has its sessions closed and the runs queued in them ended, and keeps its credential: when it syncs again it is answered normally, with close_session for each of those sessions until it reports the close.",
+	section: sectionSync + " (Lease)",
+	why:     "the silence is a day by default and every hub names its own, which v1 gives a runner no way to ask; no suite can wait out a length it cannot learn, and waiting a day would be no check anyone runs.",
+}, {
 	rule:    "Capacity goes round the hubs: one pool shared between every connection, a unit at a time.",
 	section: sectionSync,
 	why:     "it is a rule about one runner across several hubs, not about one hub, so no hub can pass or fail it.",

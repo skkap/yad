@@ -169,7 +169,7 @@ type RegisterResponse struct {
 	RunnerCredential string   `json:"runner_credential" doc:"The secret the runner sends as its bearer on every later call. Issued here and nowhere else; keep only what recognises it, such as a hash."`
 	HubFeatures      []string `json:"hub_features,omitempty" doc:"Features this hub has beyond the v1 baseline. v1 defines none, and a hub that sends none is complete."`
 	SyncIntervalMS   int      `json:"sync_interval_ms" doc:"Milliseconds until the runner's next sync, 5000 to 60000 inclusive. A runner clamps a value outside that range and adds its own jitter."`
-	LeaseMS          int      `json:"lease_ms" doc:"Milliseconds a run stays the runner's after a sync lists it. Never shorter than sync_interval_ms beside it; four intervals is the usual choice."`
+	LeaseMS          int      `json:"lease_ms" doc:"The lease the hub will name in its sync answers: how long a run offered to this runner, or held by it, is kept for it without a sync. Never shorter than sync_interval_ms."`
 	MinVersion       string   `json:"min_version,omitempty" doc:"The oldest yad this hub takes, such as 0.4.0, compared on the release core alone. Absent is no floor."`
 }
 

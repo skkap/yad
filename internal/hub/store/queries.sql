@@ -208,15 +208,32 @@ UPDATE sessions SET closed_at = sqlc.arg(closed_at), close_reason = sqlc.arg(rea
 WHERE id = sqlc.arg(id) AND closed_at IS NULL
   AND (runner_id = sqlc.arg(runner_id) OR (runner_id IS NULL AND offered_to = sqlc.arg(runner_id)));
 
--- The hub closing a session by its own act (decision 0011), with no runner
--- to report it: one nobody ever claimed, or one whose runner deregistered.
--- The caller has decided no runner's close is owed; a repeat changes nothing.
+-- The hub closing a session by its own act (decision 0011), without waiting
+-- for a runner to report it: one nobody ever claimed, or one whose runner
+-- deregistered or went silent. A silent runner may still come back, and its
+-- caller marks the close owed to it (OweSessionClose, decision 0046). A
+-- repeat changes nothing.
 -- name: CloseSessionHere :execrows
 UPDATE sessions SET closed_at = sqlc.arg(now), close_reason = sqlc.arg(reason), close_requested_at = NULL
 WHERE id = sqlc.arg(id) AND closed_at IS NULL;
 
+-- The sessions close_session goes to this runner for: a close asked for and
+-- not yet reported, and one the hub closed while the runner was silent, whose
+-- workdir the runner still holds (decision 0046).
 -- name: SessionsToClose :many
-SELECT id FROM sessions WHERE runner_id = ? AND close_requested_at IS NOT NULL AND closed_at IS NULL ORDER BY id;
+SELECT id FROM sessions
+WHERE runner_id = sqlc.arg(runner_id) AND (close_requested_at IS NOT NULL AND closed_at IS NULL OR close_owed = 1)
+ORDER BY id;
+
+-- The hub closed it by its own act and the runner has not heard yet: the
+-- close_session goes out until the runner reports the session closed.
+-- name: OweSessionClose :exec
+UPDATE sessions SET close_owed = 1 WHERE id = sqlc.arg(id) AND runner_id IS NOT NULL;
+
+-- The runner holding the session reported it closed, which answers every
+-- close_session it was owed. A report from any other runner answers nothing.
+-- name: SettleOwedClose :exec
+UPDATE sessions SET close_owed = 0 WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id) AND close_owed = 1;
 
 -- name: UnstartedRunsInSession :many
 SELECT id FROM runs WHERE session_id = ? AND state IN ('queued', 'offered') ORDER BY created_at, id;
@@ -246,3 +263,12 @@ WHERE runner_id = sqlc.arg(runner_id) AND state = 'offered';
 -- closed one holds no waiting run, because every close ends those.
 -- name: SessionsToSettle :many
 SELECT id FROM sessions WHERE runner_id = sqlc.arg(runner_id) AND closed_at IS NULL ORDER BY id;
+
+-- Runners silent since before the cutoff that still have an open session
+-- bound to them (decision 0046). Silence counts from the last sync the hub
+-- answered; a runner that never synced has no session bound to it, because
+-- only a sync's listing binds one.
+-- name: SilentRunners :many
+SELECT DISTINCT r.id FROM runners r JOIN sessions s ON s.runner_id = r.id
+WHERE s.closed_at IS NULL AND r.last_sync_at IS NOT NULL AND r.last_sync_at <= sqlc.arg(cutoff)
+ORDER BY r.id;

@@ -10,7 +10,7 @@ type SyncRequest struct {
 	// Capabilities is sent only when the hub asked for it with
 	// ControlReportCapabilities, or on the first sync after a fingerprint move.
 	Capabilities *Capabilities `json:"capabilities,omitempty" doc:"The full capability document, sent on the first sync of every runner process, after the fingerprint moves, and after a report_capabilities control. When present it replaces the one you hold."`
-	Health       Health        `json:"health"`
+	Health       Health        `json:"health" doc:"The runner's state for routing and alerting, computed fresh for this sync: free capacity, per-harness readiness, disk, load, what it owes this hub, recent errors, and whether it is draining."`
 	// Runs lists every run the runner holds. Listing a run is how it is claimed
 	// and how its lease is renewed; a run the hub offered and this list omits
 	// was never received.
@@ -106,8 +106,10 @@ type HeldRun struct {
 
 // SyncResponse is what the hub wants done until the next sync.
 type SyncResponse struct {
-	NextSyncMS int       `json:"next_sync_ms" doc:"Milliseconds until the next sync, 5000 to 60000 inclusive. A runner clamps a value outside that range, adds its own jitter, and syncs sooner when this response offered runs."`
-	LeaseMS    int       `json:"lease_ms" doc:"Milliseconds each run this sync listed stays the runner's. Never shorter than next_sync_ms beside it."`
+	NextSyncMS int `json:"next_sync_ms" doc:"Milliseconds until the next sync, 5000 to 60000 inclusive. A runner clamps a value outside that range, adds its own jitter, and syncs sooner when this response offered runs."`
+	// LeaseMS covers offers as well as claims (decision 0046): a runner that
+	// goes silent holding an offer strands nothing past it.
+	LeaseMS    int       `json:"lease_ms" doc:"How long the hub holds each run named in this answer for this runner without hearing from it: every run offered here, and every run the request listed. A listed run the lease lapses on is lost. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."`
 	Runs       []Run     `json:"runs,omitempty" doc:"New runs offered. Not claimed yet: a run is claimed when the next sync lists it. Never more than the request's free_capacity, in total or for any harness."`
 	Controls   []Control `json:"controls,omitempty" doc:"Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions; a steer is sent once."`
 	MinVersion string    `json:"min_version,omitempty" doc:"The oldest yad this hub takes, as in the register response. Absent is no floor."`

@@ -95,6 +95,7 @@ components:
       properties:
         error:
           $ref: "#/components/schemas/Error"
+          description: What went wrong. Every error response under the base carries this envelope, and next_action is always set.
       required:
         - error
       type: object
@@ -127,7 +128,7 @@ components:
           description: "For a status event, a short label of the phase, such as account, waiting, cancelling or steered. For display: not a closed set, and not to be parsed."
           type: string
         text:
-          description: The words of a text, thinking, status or error event. At most 1 MiB.
+          description: The words of a text or thinking event, and the detail of some status events. At most 1 MiB. An error event carries its words in error.message instead.
           type: string
         tool:
           $ref: "#/components/schemas/ToolEvent"
@@ -316,6 +317,7 @@ components:
           type: integer
         metrics:
           $ref: "#/components/schemas/Metrics"
+          description: "How the run went: duration, time to first event, tool calls, retries, stalls, waits and account switches."
         state:
           description: How the run ended. lost here is the runner's own report of a run a previous process held and could not finish.
           enum:
@@ -327,6 +329,7 @@ components:
           type: string
         usage:
           $ref: "#/components/schemas/RunUsage"
+          description: Tokens the whole run used, by model.
       required:
         - state
         - usage

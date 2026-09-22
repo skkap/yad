@@ -20,13 +20,16 @@ import (
 // every run it held.
 const maxDeregisterReason = 200
 
-// departure is how the hub settles a runner that is not coming back: what
-// each run it held says, why its sessions closed, and what becomes of the
-// runs still waiting in them.
+// departure is how the hub settles a runner it has given up on: what each run
+// it held says, why its sessions closed, and what becomes of the runs still
+// waiting in them. mayReturn is a runner that kept its credential — it only
+// went silent — so its workdirs are still on its disk, and it is sent
+// close_session for each of those sessions if it ever syncs again.
 type departure struct {
 	lost      string
 	sessions  v1.SessionCloseReason
 	unstarted unstartedEnd
+	mayReturn bool
 }
 
 // deregister retires a runner's credential, after settling everything the hub
@@ -90,10 +93,8 @@ func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, 
 //     for ever, since a queued run holds no lease for the sweep to lapse.
 //     A session the runner already closed holds none: its report ended them.
 //
-// Deregistering is today's only caller. A runner that simply stops syncing
-// strands its sessions the same way, and the day the protocol says when a hub
-// may decide such a runner has gone, that decision calls this with its own
-// departure and leaves the credential alone.
+// Two callers: deregister, which then retires the credential, and a runner
+// silent past abandon-after (decision 0046), which keeps it.
 func abandon(ctx context.Context, q *db.Queries, runnerID string, gone departure, now time.Time) error {
 	me := sql.NullString{String: runnerID, Valid: true}
 	if _, err := q.RequeueRunnerOffers(ctx, db.RequeueRunnerOffersParams{Now: store.Ms(now), RunnerID: me}); err != nil {
@@ -110,6 +111,46 @@ func abandon(ctx context.Context, q *db.Queries, runnerID string, gone departure
 	}
 	for _, id := range sessions {
 		if err := closeHere(ctx, q, id, gone.sessions, gone.unstarted, now); err != nil {
+			return err
+		}
+		if gone.mayReturn {
+			if err := q.OweSessionClose(ctx, id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// abandonSilent gives up the sessions of every runner that has not synced for
+// longer than abandon-after (decision 0046). Its offers and held runs went
+// with their leases long before; what is left is the sessions bound to it,
+// whose queued runs would otherwise wait for good, since a queued run holds no
+// lease. The credential stays: a runner that was only switched off syncs
+// again, hears close_session for each session, and takes new work.
+//
+// Silence is counted from the last sync this hub answered, and never from
+// before the hub itself started: a hub that was down for a day has heard from
+// nobody, and closing every session in the fleet on its first sweep back would
+// punish the runners for the hub's own absence.
+func (h *Hub) abandonSilent(ctx context.Context, q *db.Queries, now time.Time) error {
+	cutoff := now.Add(-h.abandonAfter)
+	if h.started.After(cutoff) {
+		return nil
+	}
+	silent, err := q.SilentRunners(ctx, sql.NullInt64{Int64: store.Ms(cutoff), Valid: true})
+	if err != nil {
+		return err
+	}
+	for _, id := range silent {
+		gone := departure{
+			lost:     fmt.Sprintf("runner %s had not synced for more than %s while it held this run", id, h.abandonAfter),
+			sessions: v1.SessionClosed,
+			unstarted: unstartedEnd{v1.RunFailed, fmt.Sprintf(
+				"its session's runner %s had not synced for more than %s, so the hub closed the session; submit the work to a new session", id, h.abandonAfter)},
+			mayReturn: true,
+		}
+		if err := abandon(ctx, q, id, gone, now); err != nil {
 			return err
 		}
 	}

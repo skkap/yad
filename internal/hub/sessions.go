@@ -117,9 +117,10 @@ func (h *Hub) registerSessions(api huma.API) {
 	})
 }
 
-// closeHere closes a session by the hub's own act (decision 0011), when no
-// runner will report the close: one no runner ever claimed a run of, or one
-// whose runner has gone. A session already closed keeps the reason it closed
+// closeHere closes a session by the hub's own act (decision 0011), without
+// waiting for a runner to report the close: one no runner ever claimed a run
+// of, or one whose runner deregistered or went silent (0046). A session
+// already closed keeps the reason it closed
 // with. The runs still waiting in it end with it rather than
 // being left queued in a session no runner will take another run in — a
 // queued run holds no lease, so nothing else would ever end it.

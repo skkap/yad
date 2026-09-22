@@ -251,8 +251,12 @@ _Avoid_: poll and heartbeat as separate things — there is one call
 _See_: [0005](docs/decisions/0005-pull-by-periodic-sync.md)
 
 **Claim** — a runner taking a run offered in a sync. **Lease** — the hub's
-promise that a claimed run is this runner's for now; each sync renews it, and a
-lease that lapses makes the run **lost** from the hub's side.
+promise that an offered or claimed run is this runner's for now; each sync
+renews a claimed run's, and a lease that lapses puts an unclaimed offer back in
+the queue and makes a claimed run **lost** from the hub's side.
+**Abandon-after** — how long a hub lets a runner go without a sync before it
+closes that runner's sessions; the runner keeps its credential.
+_See_: [0046](docs/decisions/0046-a-silent-runner-loses-its-offers-with-the-lease-and-its-sessions-after-a-day.md)
 
 **Event** — one normalised thing that happened in a run, numbered by a per-run
 sequence and streamed to the hub in batches. The same set for every harness; a
