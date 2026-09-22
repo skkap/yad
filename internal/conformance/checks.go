@@ -110,6 +110,12 @@ func checks() []check {
 		needs:   credential,
 		run:     checkRunnerIDMatchesThePath,
 	}, {
+		id:      "sync/document-runner-id-matches-the-path",
+		rule:    "A capability document in a sync names the runner the path names, or the sync is refused: stored, it would describe this runner by a document written for another.",
+		section: hubSync,
+		needs:   credential,
+		run:     checkDocumentRunnerIDMatchesThePath,
+	}, {
 		id:      "sync/another-runners-credential",
 		rule:    "The credential on a sync belongs to the runner the path names: another runner's credential is refused, or any runner a hub knows can claim, renew and be offered another's runs.",
 		section: hubSync,

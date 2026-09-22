@@ -317,7 +317,9 @@ says why it goes where it does):
    your abandon-after lose their sessions — so a runner back from a long
    absence hears what became of its runs rather than renewing them.
 2. **Take the document** if the request carries one: it replaces the one you
-   hold. If it carries none and the fingerprint differs from the one you hold,
+   hold. A document whose `runner_id` is not the path's is refused with the
+   whole sync (Refusals, below) — stored, it would describe this runner by
+   what another advertised. If it carries none and the fingerprint differs from the one you hold,
    answer with a `report_capabilities` control, and until the document
    arrives, send no control gated on a feature and offer no run that needs one
    (§7): what the runner acts on is unknown. Register carries a document and
@@ -345,8 +347,11 @@ says why it goes where it does):
      its cancel — the runner would have to guess which one you meant.
    - then add the controls you have for each held run (§7).
 
-   A yad runner lists each run once; `yad hub` takes a second listing of the
-   same run in one sync as the same news.
+   **A runner lists each run at most once in a sync**, and a yad runner never
+   lists one twice. A hub handed two listings of one run may apply either:
+   `yad hub` applies the last, and applying the first is as conforming.
+   Nothing depends on which, and conformance sends no such sync
+   ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)).
 5. **Take the closes** in `closed_sessions` (§8), and add a `close_session`
    control for each session you are closing on this runner.
 6. **Take back every run you offered this runner that this sync did not
@@ -379,12 +384,14 @@ reporting anything.
 **Response:** `next_sync_ms` and `lease_ms` (required), `runs` (the offers),
 `controls`, `min_version`. Omit `runs` and `controls` when empty.
 
-**Refusals** (`yad hub`): `400 invalid` for a body that does not validate or a
-`runner_id` differing from the path; `401 unauthorized` for no credential or
+**Refusals** (`yad hub`): `400 invalid` for a body that does not validate, or a
+`runner_id` differing from the path's in the body or in the capability
+document it carries
+([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)); `401 unauthorized` for no credential or
 one you do not know; `403 unauthorized` for a credential belonging to another
 runner; `413` for a body of a mebibyte or more; `426 version_too_old` under
-your floor. Conformance checks that the mismatched `runner_id` and another
-runner's credential are refused, and that a body which is not JSON is refused
+your floor. Conformance checks that a mismatched `runner_id` — the body's or
+the document's — and another runner's credential are refused, and that a body which is not JSON is refused
 as `invalid`. A runner stops syncing your
 hub on `unauthorized`, `runner_revoked`, `version_too_old` and
 `unsupported_protocol` until its owner acts; on anything else it backs off —
@@ -734,8 +741,17 @@ It crashed, was switched off, or lost its network; it may come back.
   those sessions until it lists the session in `closed_sessions`, so it
   reclaims the workdir, and offer it new work. Pick the length yourself, but
   make it longer than your lease — shorter gives up a runner whose runs are
-  still leased to it. `yad hub` uses a day (`yad hub serve --abandon-after`),
-  and does not count time it was itself down. Conformance cannot wait out a
+  still leased to it. `yad hub` uses a day (`yad hub serve --abandon-after`).
+
+  **Do not give a runner up for silence you caused** ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)) —
+  an outage of your own is a day in which nobody could sync. That is a
+  *should*, and how is yours: `yad hub` abandons nobody until it has itself
+  been up for a whole abandon-after, which suits one long-lived process and
+  would never fire on a hub redeployed more often than that; a hub that
+  restarts on every deploy may record when it was last up and discount the
+  gaps, or skip this and accept that a long outage closes sessions. What is a
+  *must* is the rest of this bullet: count from the last sync you answered,
+  and make the length longer than your lease. Conformance cannot wait out a
   length it cannot learn, so this one is on the not-checked list below.
 
 **Keep accepting events after the run has ended.** A batch still in the
@@ -832,7 +848,10 @@ one for a run it holds. Apply it as any terminal state.
 **Results are idempotent, and applied at most once.** The same terminal state
 again is acknowledged. A *different* terminal state is `409`, and yours
 stands: a runner reporting `succeeded` for a run you already recorded `lost`
-is told so and stops.
+is told so and stops. That holds for a run you ended before any runner
+claimed it too ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)): a refusal arriving for a run you
+cancelled while it was offered is `409`, and the run stays `cancelled`. A
+`403 not_holder` there is as final to a runner, and is also conforming.
 
 A result from any other runner is refused, `403 not_holder` or `404
 not_found`, and never applied.
@@ -881,9 +900,13 @@ asked for it.
 | `steer` | the `steer` control |
 | `interrupt` | the `interrupt` control |
 | `drain` | the `drain` control |
-| `close_session` | the `close_session` control, and `closed_sessions` in sync |
+| `close_session` | the `close_session` control. A runner advertising it also reports every close in `closed_sessions`; one that does not advertise it may report closes too, and each is believed all the same (§8) |
 | `start_at` | a run carrying `start_at` — offer one only to a runner that advertises it |
 | `live_sessions` | a run whose `session.mode` is `live` — offer one only to a runner that advertises it. The spec lists `live` as an enum value and connects it to no feature, so this pairing exists only here |
+
+**A feature gates what you send, never what you accept** ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)).
+Whatever a runner reports — a close, a state, an event — is taken on its own
+terms whether or not the runner advertises the feature it came with.
 
 Only `cancel` and `report_capabilities` go to every v1 runner. Send a gated
 control to a runner that does not advertise its feature and nothing happens,
@@ -952,9 +975,16 @@ the runner makes is reported in `closed_sessions`, with a `reason` — `closed`,
 `closed_by_owner`, `expired` or `disk_pressure` — in every sync until one
 carrying it is answered with a 2xx. So:
 
-- record closes by session id, and take a repeat as the same news;
+- record closes by session id, and take a repeat as the same news — from a
+  runner that does not advertise `close_session` as well (§7);
 - stop offering runs in a closed session: the runner refuses them with class
   `session_closed`;
+- **offer nothing in a session you have sent `close_session` for** and not yet
+  heard closed ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)). The runner acts on the control before
+  the offers beside it, so an offer made while the close is out is refused as
+  `session_closed` — a failed run where your close meant a cancelled one.
+  Hold the session's queued runs back; they end with it when the close is
+  reported, as below;
 - **end the runs still queued in it**, rather than offer them to be refused.
   `yad hub` cancels them when the close was yours (`closed`), and fails them
   otherwise, with a reason saying to submit the work to a new session;
@@ -1123,7 +1153,7 @@ cannot parse — an unstamped `dev` build, or a mistyped floor.
 yad conformance <connection url> --token <token> [--second-token <token>] [--harness id] [--lease-wait d]
 ```
 
-Forty-seven black-box checks against a URL, written from the protocol rather
+Forty-eight black-box checks against a URL, written from the protocol rather
 than from `yad hub`'s internals — nothing in the suite imports the hub, so it
 tests the protocol and not one implementation of it. A failure gives you the
 rule as a sentence and the section of this page that states it.
@@ -1192,7 +1222,7 @@ yad hub token create |
 rm first.token
 ```
 
-It ends `47 passed, 0 failed, 0 skipped`, after about a minute spent waiting
+It ends `48 passed, 0 failed, 0 skipped`, after about a minute spent waiting
 out a lease.
 
 ### What it does not check
@@ -1206,7 +1236,7 @@ is something **your hub still has to get right** with nothing to catch you:
 | The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
 | `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
 | Sessions staying put — first claim binds the session to that runner, later runs to that runner alone, one at a time — and `session.new` set right | needs two runs in one session, which only your own queueing can arrange |
-| Closes in `closed_sessions` believed from the holder or the last-offered runner, a repeat taken as the same news, and the runs queued in a closed session ended | `closed_sessions` comes only from a runner advertising `close_session`, and the suite advertises no feature; the queued runs need a second run in the session |
+| Closes in `closed_sessions` believed from the holder or the last-offered runner, whatever features it advertises, a repeat taken as the same news, and the runs queued in a closed session ended; nothing offered in a session you have sent `close_session` for until the close is reported | the suite advertises no feature, so no hub asks it to close a session, and the only sessions it has hold its runs, which no runner closes; the queued runs need a second run in the session |
 | Offers only for a harness the runner can drive — first-class, present, no `error` — and preferably one whose health says `ready` | the suite is offered only what you queued for the one harness it advertises; seeing another offered needs a run queued for it |
 | Lapsed leases found by a timer as well as by a sync | anything the suite sends to find out is itself a request you could settle leases on, so a hub that settles them only when asked looks the same |
 | A known runner id re-registers only with a token issued for that runner | such a token comes from your own API, outside v1; trying the second token on the first runner's id could spend it before the runner it is for |
@@ -1265,7 +1295,7 @@ checks; the rest is yours to get right.
 - [ ] Every offered run passes the rules the schema cannot state — [§4](#rules-the-schema-cannot-state) (C)
 - [ ] `start_at` still ahead and `live` sessions only to runners advertising them — [§7](#7-controls-and-features) (C)
 - [ ] `report_capabilities` when the fingerprint moves without a document — [§3](#post-runnersrunnersync) (C)
-- [ ] A sync refused when its body's `runner_id` differs from the path, or its credential is another runner's — [§3](#post-runnersrunnersync) (C)
+- [ ] A sync refused when its body's `runner_id` or its capability document's differs from the path, or its credential is another runner's — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync never refused over a dashboard field — load, disk, spool or outbox depth — only over what routing reads — [§3](#post-runnersrunnersync) (C)
 
 **Leases and loss**
@@ -1279,7 +1309,7 @@ checks; the rest is yours to get right.
 
 - [ ] Events stored once by `(run, seq)`, `seq` from 1; `acked_through` is the contiguous prefix — [§6](#events) (C)
 - [ ] Events only from the claiming runner, before and after the run ends — [§6](#events) (C)
-- [ ] Results from the runner the run was offered to or claimed by, applied once; the same state again acknowledged; a different one `409` — [§6](#results) (C)
+- [ ] Results from the runner the run was offered to or claimed by, applied once; the same state again acknowledged; a different one `409`, a run you ended before any claim included — [§6](#results) (C)
 - [ ] A result from the runner a run was offered to taken only while the offer is open; after a sync takes it back or its lease lapses, `403 not_holder` — [§6](#results) (C)
 - [ ] A `refused` result before any claim ends the run, and the run is not offered again — [§6](#results) (C)
 
@@ -1288,6 +1318,7 @@ checks; the rest is yours to get right.
 - [ ] `cancel` and `interrupt` repeated until the run ends; `steer` sent once; `drain` and `close_session` repeated until answered — [§7](#7-controls-and-features)
 - [ ] No gated control to a runner that does not advertise its feature — [§7](#7-controls-and-features) (C, as far as a runner advertising none)
 - [ ] Sessions bound by their first claim, later runs to that runner only, one at a time; `session.new` set right — [§8](#8-sessions)
-- [ ] Closes in `closed_sessions` believed from the holder or the last-offered runner; queued runs in a closed session ended — [§8](#8-sessions)
+- [ ] Nothing offered in a session you have sent `close_session` for until its close is reported — [§8](#8-sessions)
+- [ ] Closes in `closed_sessions` believed from the holder or the last-offered runner, whatever features it advertises; queued runs in a closed session ended — [§8](#8-sessions)
 - [ ] Grant values kept only until the run is terminal — [§9](#9-grants)
 - [ ] If you set `min_version`: refused at register before spending the token, and at sync — [§11](#11-versioning)

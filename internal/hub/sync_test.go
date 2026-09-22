@@ -370,3 +370,25 @@ func TestASyncIsRefusedOnlyOverWhatRoutingReads(t *testing.T) {
 		t.Errorf("run a is %s: the sync that left out every dashboard field was not offered work", f.state(t, "a"))
 	}
 }
+
+// A capability document naming another runner is refused like a body naming
+// one (DEV-120): stored, it would describe this runner by a document written
+// for another, and which of the two ids the hub believes would be a guess.
+func TestASyncWhoseDocumentNamesAnotherRunnerIsRefused(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	r := first("r1", 1)
+	r.Capabilities.RunnerID = "r2"
+	r.Fingerprint = "fp-moved"
+	resp, env := f.sync(t, "r1", cred, r)
+	if resp.StatusCode != http.StatusBadRequest || env.Error.Code != v1.CodeInvalid || env.Error.NextAction == "" {
+		t.Fatalf("a document naming r2 on r1's sync: %d %+v", resp.StatusCode, env)
+	}
+	got, err := f.store.GetRunner(context.Background(), "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Fingerprint == "fp-moved" || strings.Contains(got.Capabilities, `"r2"`) {
+		t.Errorf("the refused document was stored: %s %s", got.Fingerprint, got.Capabilities)
+	}
+}

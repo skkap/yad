@@ -51,9 +51,11 @@ func controlsOf(res v1.SyncResponse, kind v1.ControlKind) []string {
 }
 
 // The hub's close, end to end in process: yad hub repeats close_session until
-// the runner reports the session closed; the runner closes it, reclaims the
-// workdir, and refuses a continuation the hub had already queued; the hub
-// records the close and refuses the next continuation at submit.
+// the runner reports the session closed; the runner closes it and reclaims
+// the workdir; a continuation the hub had already queued is not offered beside
+// the control, which the runner would act on first and so refuse the run
+// (decision 0048), and ends cancelled with the close; the hub records the
+// close and refuses the next continuation at submit.
 func TestTheHubClosesASession(t *testing.T) {
 	e := newEnv(t)
 	l := e.loop(t, 1)
@@ -81,12 +83,8 @@ func TestTheHubClosesASession(t *testing.T) {
 	if s := session(t, e, "s1"); s.State != "closed" || s.CloseReason.String != "closed" {
 		t.Fatalf("runner session after the control = %+v", s)
 	}
-	if len(res.Runs) != 1 || res.Runs[0].RunID != "b" {
-		t.Fatalf("offered %+v, want b", res.Runs)
-	}
-	l.sendRefusals(ctx)
-	if r := hubResult(t, e, "b"); r.State != v1.RunFailed || r.Error == nil || r.Error.Class != ClassSessionClosed {
-		t.Errorf("the queued continuation ended %+v (%+v), want failed with %s", r, r.Error, ClassSessionClosed)
+	if len(res.Runs) != 0 {
+		t.Fatalf("offered %+v beside the close_session for its session", res.Runs)
 	}
 
 	if err := c.Sweep(ctx); err != nil {
@@ -105,6 +103,9 @@ func TestTheHubClosesASession(t *testing.T) {
 	closedAt, byHub, requested := hubSession(t, e, "s1")
 	if !closedAt.Valid || !byHub || requested {
 		t.Errorf("hub session: closed %v, reason closed %v, still requested %v", closedAt, byHub, requested)
+	}
+	if r, err := e.hubStore.GetRun(ctx, "b"); err != nil || r.State != string(v1.RunCancelled) {
+		t.Errorf("the queued continuation is %q after the close (%v), want cancelled", r.State, err)
 	}
 	if s := session(t, e, "s1"); !s.ReportedAt.Valid {
 		t.Errorf("the runner does not record the report as heard: %+v", s)
@@ -387,4 +388,30 @@ func TestAClosePendingOnAWithdrawnClaimStands(t *testing.T) {
 func (e *env) nextLoop(l *Loop) *Loop {
 	return &Loop{Connection: l.Connection, RunnerID: l.RunnerID, Hub: l.Hub, Store: e.store, Pool: NewPool(v1.Capacity{Total: 1}),
 		Capabilities: l.Capabilities, Executor: e.exec, Clock: e.clock, Rand: l.Rand, Sessions: l.Sessions}
+}
+
+// A hub that offers a run beside the close_session for its session breaks
+// decision 0048, and the runner still does the safe thing: it acts on the
+// close first and refuses the run as session_closed rather than opening the
+// session again.
+func TestAnOfferBesideItsSessionsCloseIsRefused(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	hub := &scriptedHub{}
+	l := e.loop(t, 1)
+	l.Hub = hub
+	e.collector(l)
+	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: "s1", Harness: "claude", CreatedAt: 1, LastUsedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	hub.controls = []v1.Control{{Kind: v1.ControlCloseSession, SessionID: "s1"}}
+	hub.offer = []v1.Run{continued("b", "s1")}
+	mustSync(t, l)
+
+	if r, ok := hub.results["b"]; !ok || r.State != v1.RunFailed || r.Error == nil || r.Error.Class != ClassSessionClosed {
+		t.Errorf("the run offered beside the close ended %+v, want failed with %s", r, ClassSessionClosed)
+	}
+	if s := session(t, e, "s1"); s.State != "closed" {
+		t.Errorf("runner session = %+v, want closed", s)
+	}
 }

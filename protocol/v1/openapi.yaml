@@ -706,9 +706,9 @@ components:
       properties:
         capabilities:
           $ref: "#/components/schemas/Capabilities"
-          description: The full capability document, sent on the first sync of every runner process, after the fingerprint moves, and after a report_capabilities control. When present it replaces the one you hold.
+          description: The full capability document, sent on the first sync of every runner process, after the fingerprint moves, and after a report_capabilities control. When present it replaces the one you hold. Its runner_id is the path's; a sync whose document names another runner is refused as invalid.
         closed_sessions:
-          description: Sessions this runner has closed, each repeated in every sync until one carrying it is answered with a 2xx. Record them by session id, take a repeat as the same news, stop offering runs in them, and end the runs still queued in them. Sent only by runners advertising close_session.
+          description: Sessions this runner has closed, each repeated in every sync until one carrying it is answered with a 2xx. Record them by session id, take a repeat as the same news, stop offering runs in them, and end the runs still queued in them. A runner advertising close_session reports every close here; a close from one that does not is believed all the same.
           items:
             $ref: "#/components/schemas/ClosedSession"
           type: array
@@ -722,7 +722,7 @@ components:
           description: "The runner's id: the same as the {runner} in the path, or the sync is refused."
           type: string
         runs:
-          description: Every run the runner holds. Listing a run offered in the previous response claims it; listing a claimed run renews its lease. An offered run left out was never received, and goes back in the queue at this sync. A listed run the runner does not hold is answered with a cancel control for it.
+          description: Every run the runner holds. Listing a run offered in the previous response claims it; listing a claimed run renews its lease. An offered run left out was never received, and goes back in the queue at this sync. A listed run the runner does not hold is answered with a cancel control for it. Each run is listed at most once; a hub handed two listings of one run may apply either.
           items:
             $ref: "#/components/schemas/HeldRun"
           type: array
