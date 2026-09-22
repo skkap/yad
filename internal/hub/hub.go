@@ -53,9 +53,10 @@ const (
 
 // DefaultAbandonAfter is how long a runner may go without a sync before the
 // hub gives up its sessions (decision 0046). A day outlasts a laptop closed
-// overnight or a weekend-length network fault on a server only barely, and
-// that is the trade: shorter strands fewer queued runs behind a machine that
-// is gone for good, and closes more warm sessions on one that was only asleep.
+// overnight, and not one closed for a weekend, and that is the trade: shorter
+// strands fewer queued runs behind a machine that is gone for good, and longer
+// closes fewer warm sessions on one that was only asleep. An operator whose
+// runners sleep for days says so with --abandon-after.
 const DefaultAbandonAfter = 24 * time.Hour
 
 // SyncFloorForTests replaces MinSyncInterval in the clamp while it is positive,
