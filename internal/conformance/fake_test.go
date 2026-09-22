@@ -145,14 +145,16 @@ const (
 	flawIgnoresBodyRunner = "the body's runner_id is not compared with the path"
 	// DEV-120: a document naming another runner, stored as this one's.
 	flawIgnoresDocumentRunner = "the capability document's runner_id is not compared with the path"
-	flawAnyCredentialSyncs    = "any credential the hub issued syncs as any runner"
-	flawNoReportCaps          = "a fingerprint that moves without a document is not asked about"
-	flawInvalidIs500          = "a body that does not parse is answered 500 internal"
-	flawTakesSeqZero          = "an event numbered 0 is stored"
-	flawTakesAnyState         = "a result's state is not checked to be terminal"
-	flawTooLargeIsInvalid     = "a body over the size limit is refused 400 invalid"
-	flawRefusalNeedsAClaim    = "a result is taken only from the runner that claimed the run"
-	flawReoffersRefused       = "a run refused before its claim is offered again"
+	// Refused, and in a way a runner retries for ever.
+	flawDocumentRunnerIs500 = "a capability document naming another runner is refused with 500 internal"
+	flawAnyCredentialSyncs  = "any credential the hub issued syncs as any runner"
+	flawNoReportCaps        = "a fingerprint that moves without a document is not asked about"
+	flawInvalidIs500        = "a body that does not parse is answered 500 internal"
+	flawTakesSeqZero        = "an event numbered 0 is stored"
+	flawTakesAnyState       = "a result's state is not checked to be terminal"
+	flawTooLargeIsInvalid   = "a body over the size limit is refused 400 invalid"
+	flawRefusalNeedsAClaim  = "a result is taken only from the runner that claimed the run"
+	flawReoffersRefused     = "a run refused before its claim is offered again"
 	// The document marked the dashboard health required until DEV-117, and a
 	// hub generated from it refuses a sync that leaves any of it out. The
 	// suite's own syncs send zeros, which v1 omits, so this refuses them all:
@@ -342,6 +344,10 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	}
 	if req.RunnerID != runner && f.flaw != flawIgnoresBodyRunner {
 		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the body's runner_id is not the path's", "send the same runner id in both")
+		return
+	}
+	if req.Capabilities != nil && req.Capabilities.RunnerID != runner && f.flaw == flawDocumentRunnerIs500 {
+		f.fail(w, http.StatusInternalServerError, v1.CodeInternal, "the capability document's runner_id is not the path's", "send the syncing runner's own document")
 		return
 	}
 	if req.Capabilities != nil && req.Capabilities.RunnerID != runner && f.flaw != flawIgnoresDocumentRunner {

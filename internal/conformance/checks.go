@@ -111,7 +111,7 @@ func checks() []check {
 		run:     checkRunnerIDMatchesThePath,
 	}, {
 		id:      "sync/document-runner-id-matches-the-path",
-		rule:    "A capability document in a sync names the runner the path names, or the sync is refused: stored, it would describe this runner by a document written for another.",
+		rule:    "A capability document in a sync names the runner the path names, or the sync is refused as invalid: stored, it would describe this runner by a document written for another.",
 		section: hubSync,
 		needs:   credential,
 		run:     checkDocumentRunnerIDMatchesThePath,

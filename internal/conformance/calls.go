@@ -310,7 +310,7 @@ func checkDocumentRunnerIDMatchesThePath(ctx context.Context, s *session) error 
 	if a.ok() {
 		return brokenf("a sync to runner %s's path carrying a capability document for runner %s was taken: %s", s.runner, doc.RunnerID, a)
 	}
-	return refused(a)
+	return refusedInvalid(a)
 }
 
 // checkAnotherRunnersCredential syncs as this runner with the second runner's
