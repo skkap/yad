@@ -347,7 +347,11 @@ func refusedInvalid(a *answer) error {
 // oversize is how much padding makes a body too large for a hub that keeps
 // HUB.md's limit: yad hub reads under 16 MiB of an events or result body, and
 // a mebibyte past it is past it without being a load test.
-const oversize = 17 << 20
+//
+// A variable only for this package's own tests, which run the suite against a
+// fake some sixty times over and give that fake a limit a thousandth the size
+// (TestMain). Nothing outside the package can reach it.
+var oversize = 17 << 20
 
 // checkTooLarge sends an events batch and a result that are valid and too
 // large: each carries what the hub already holds — the first event again, the
@@ -384,8 +388,8 @@ func checkTooLarge(ctx context.Context, s *session) error {
 		case a.Status == http.StatusConflict && c.path == resultPath(s.report):
 			return skipf("the hub answered 409 conflict: it holds a terminal state for run %s other than the one this runner reported, which result/conflict says more about. Until that is fixed, how it refuses a body too large cannot be told", s.report)
 		}
-		return brokenf("a %d MiB body, valid but for its size, was refused with %d and not 413; a runner halves an events batch and retries a result on a 413, and drops one refused any other way: %s",
-			oversize>>20, a.Status, a)
+		return brokenf("a body of %d bytes, valid but for its size, was refused with %d and not 413; a runner halves an events batch and retries a result on a 413, and drops one refused any other way: %s",
+			oversize, a.Status, a)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -150,8 +151,14 @@ const (
 	flawReoffersRefused    = "a run refused before its claim is offered again"
 )
 
-// fakeBodyLimit is the most of a body the fake reads: yad hub's own figure.
-const fakeBodyLimit = 16 << 20
+// fakeBodyLimit is the most of a body the fake reads. TestMain shrinks it with
+// the suite's oversize, so sixty runs of the suite do not each send 34 MiB.
+var fakeBodyLimit int64 = 16 << 20
+
+func TestMain(m *testing.M) {
+	oversize, fakeBodyLimit = 17<<10, 16<<10
+	os.Exit(m.Run())
+}
 
 const fakeSecondToken = "fake-second-registration-token"
 
