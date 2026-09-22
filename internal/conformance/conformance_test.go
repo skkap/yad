@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +20,7 @@ import (
 
 const fakeToken = "fake-registration-token"
 
-// A hub that follows §2 passes every check, and skips none: a suite that
+// A hub that follows HUB.md passes every check, and skips none: a suite that
 // silently skipped half of itself would pass this too, which is why the skips
 // are counted as failures here. Three runs: two for the claim, event, result
 // and lease rules, and one to leave offered and unclaimed for its lease.
@@ -101,7 +104,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawStrictEventFields, check: "events/unknown-fields-ignored", want: Failed},
 		{flaw: flawCredentialMisnamed, check: "register/exchange", want: Failed},
 		{flaw: flawKeepsOneOffer, check: "sync/offer-is-repeated", want: Skipped},
-		// A hub setting a version floor is exercising a right §2 grants it,
+		// A hub setting a version floor is exercising a right HUB.md grants it,
 		// so the suite says what happened and checks nothing further.
 		{flaw: flawVersionFloorQuotes, check: "register/exchange", want: Skipped},
 		{flaw: flawSendsUpdate, check: "versioning/controls-are-gated", want: Passed},
@@ -153,8 +156,8 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 			switch {
 			case o.Rule == "":
 				t.Error("the answer names no rule")
-			case !strings.HasPrefix(o.Section, "ARCHITECTURE.md §2"):
-				t.Errorf("the answer points at %q, not a part of ARCHITECTURE.md §2", o.Section)
+			case !strings.HasPrefix(o.Section, "HUB.md §"):
+				t.Errorf("the answer points at %q, not a section of HUB.md", o.Section)
 			case o.Detail == "":
 				t.Error("the answer says the rule was not kept and not what the hub did")
 			}
@@ -201,11 +204,79 @@ func TestEveryCheckNamesItsRuleAndSection(t *testing.T) {
 			t.Errorf("check %q has no id, or a second check has it", c.id)
 		case !strings.HasSuffix(c.rule, "."):
 			t.Errorf("%s: the rule is not a sentence: %q", c.id, c.rule)
-		case !strings.HasPrefix(c.section, "ARCHITECTURE.md §2"):
-			t.Errorf("%s: the section is %q, not a part of ARCHITECTURE.md §2", c.id, c.section)
+		case c.section == section{}:
+			t.Errorf("%s: the rule says nowhere where it is written", c.id)
 		}
 		seen[c.id] = true
 	}
+}
+
+// Every section a failure or the not-checked list cites is a heading HUB.md
+// has, under the number it is cited by, so renaming or renumbering one there
+// fails here instead of leaving a hub's author looking for a section that is
+// gone.
+func TestEveryCitedSectionIsInHubMD(t *testing.T) {
+	t.Parallel()
+	headings := hubHeadings(t)
+	cited := map[section][]string{}
+	for _, c := range checks() {
+		cited[c.section] = append(cited[c.section], c.id)
+	}
+	for _, u := range unchecked {
+		cited[u.section] = append(cited[u.section], "not checked: "+u.rule)
+	}
+	for s, by := range cited {
+		title, ok := hubSections[s.n]
+		switch {
+		case !ok:
+			t.Errorf("%s cites §%d, which hubSections gives no heading", by[0], s.n)
+		case !slices.Contains(headings[s.n].titles, title):
+			t.Errorf("%s cites %q, and HUB.md has no heading %q", by[0], s, fmt.Sprintf("## %d. %s", s.n, title))
+		case s.sub != "" && !slices.Contains(headings[s.n].subs, s.sub):
+			t.Errorf("%s cites %q, and HUB.md §%d has no heading %q", by[0], s, s.n, "### "+s.sub)
+		}
+	}
+}
+
+// hubHeadings reads HUB.md's numbered ## headings, and the ### headings under
+// each, by section number.
+func hubHeadings(t *testing.T) map[int]struct{ titles, subs []string } {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "HUB.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[int]struct{ titles, subs []string }{}
+	n := 0
+	inFence := false
+	for line := range strings.Lines(string(b)) {
+		line = strings.TrimRight(line, "\n")
+		// A fenced block holds code and diagrams, where a # is not a heading.
+		if strings.HasPrefix(line, "```") {
+			inFence = !inFence
+			continue
+		}
+		switch {
+		case inFence:
+		case strings.HasPrefix(line, "## "):
+			n = 0
+			num, title, ok := strings.Cut(strings.TrimPrefix(line, "## "), ". ")
+			if v, err := strconv.Atoi(num); ok && err == nil {
+				n = v
+				h := out[n]
+				h.titles = append(h.titles, title)
+				out[n] = h
+			}
+		case strings.HasPrefix(line, "### ") && n != 0:
+			h := out[n]
+			h.subs = append(h.subs, strings.TrimPrefix(line, "### "))
+			out[n] = h
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("HUB.md has no numbered ## headings to cite, so this test reads it wrong")
+	}
+	return out
 }
 
 // The suite refuses to send a credential where it would go in cleartext, and
@@ -357,7 +428,7 @@ func TestAnInterruptedRunIsNotAPass(t *testing.T) {
 		t.Error("no check is recorded as not made")
 	}
 	// Including the check the signal landed in: a stopped suite must not
-	// name a §2 rule against a hub that did nothing wrong.
+	// name a HUB.md rule against a hub that did nothing wrong.
 	for _, o := range rep.Outcomes {
 		if o.Status == Failed {
 			t.Errorf("%s is reported as broken by a hub that only had the suite stopped on it: %s", o.ID, o.Detail)
@@ -454,7 +525,7 @@ func TestAStalledHubIsNotAnInterruption(t *testing.T) {
 	t.Parallel()
 	s := &session{opts: Options{Harness: DefaultHarness}, c: newClient("http://hub.example/v1"), offered: map[string]v1.Run{}}
 	timedOut := check{
-		id: "probe", rule: "A rule.", section: sectionCalls,
+		id: "probe", rule: "A rule.", section: hubCalls,
 		run: func(context.Context, *session) error {
 			return fmt.Errorf("Post \"http://hub.example/v1/runners/x/sync\": context deadline exceeded (Client.Timeout exceeded): %w", context.DeadlineExceeded)
 		},
@@ -471,7 +542,7 @@ func TestAStalledHubIsNotAnInterruption(t *testing.T) {
 	// answering wrongly must not relabel the hub's failure as this suite's
 	// interruption, which would lose a finding it had already made.
 	broke := check{
-		id: "probe", rule: "A rule.", section: sectionCalls,
+		id: "probe", rule: "A rule.", section: hubCalls,
 		run: func(context.Context, *session) error { return brokenf("the hub answered 500") },
 	}
 	if got := s.make(stopped, broke); got.Status != Failed {

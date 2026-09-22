@@ -9,7 +9,7 @@ import (
 	"github.com/skkap/yad/internal/buildinfo"
 )
 
-// The rules of §2's "Calls": what authenticates a request, what every answer
+// The rules of HUB.md §3, The calls: what authenticates a request, what every answer
 // that is not a success looks like, and what is checked before the body.
 
 func checkUnknownPath(ctx context.Context, s *session) error {
@@ -64,15 +64,15 @@ func checkRegister(ctx context.Context, s *session) error {
 		return err
 	}
 	if !a.ok() {
-		// A hub may set a version floor and refuse below it — §2, Versioning
+		// A hub may set a version floor and refuse below it — HUB.md §11
 		// — and the token is not burned by that refusal. Blaming the hub for
-		// what §2 grants it is the mistake this suite exists not to make.
+		// what HUB.md grants it is the mistake this suite exists not to make.
 		if e, ok := a.envelope(); ok && e.Code == v1.CodeVersionTooOld {
 			// The hub's own words, through the same guard as any body: a hub
 			// that names the token it refused would otherwise put it in the
 			// report by way of a message this suite quotes approvingly.
-			return skipf("this hub refuses yad %s and said so: %s. §2 lets a hub set a version floor, so this is its right and not a fault — run the suite from a build at or above that floor to check the rest",
-				buildinfo.Version, s.c.hide(e.Message))
+			return skipf("this hub refuses yad %s and said so: %s. %s lets a hub set a version floor, so this is its right and not a fault — run the suite from a build at or above that floor to check the rest",
+				buildinfo.Version, s.c.hide(e.Message), hubVersioning)
 		}
 		return brokenf("the hub refused the registration token: %s", a)
 	}

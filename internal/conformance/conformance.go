@@ -23,7 +23,7 @@ import (
 const DefaultHarness = "yad-conformance"
 
 // DefaultLeaseWait is how long the suite will spend waiting for a lease to
-// lapse. The lease is the hub's to choose (§2, Sync) and the wait is real
+// lapse. The lease is the hub's to choose (HUB.md §5) and the wait is real
 // time, so the budget is the caller's; a hub whose lease is longer has that
 // check skipped rather than silently passed.
 const DefaultLeaseWait = 90 * time.Second
@@ -115,7 +115,7 @@ type check struct {
 	// implementing a hub can act on it without reading this repository.
 	rule string
 	// section is where the rule is written down.
-	section string
+	section section
 	// needs is what must already have happened for the check to be possible.
 	needs requirement
 	// second says the check needs Options.SecondToken. It is judged before
@@ -277,7 +277,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			rep.Interrupted = true
 			for _, rest := range all[i+1:] {
 				rep.Outcomes = append(rep.Outcomes, Outcome{
-					ID: rest.id, Rule: rest.rule, Section: rest.section, Status: Skipped,
+					ID: rest.id, Rule: rest.rule, Section: rest.section.String(), Status: Skipped,
 					Detail: "the suite was stopped before this check ran",
 				})
 			}
@@ -297,7 +297,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 // The result is named so the deferred guard below mutates what is returned
 // rather than a copy of it.
 func (s *session) make(ctx context.Context, ch check) (out Outcome) {
-	out = Outcome{ID: ch.id, Rule: ch.rule, Section: ch.section}
+	out = Outcome{ID: ch.id, Rule: ch.rule, Section: ch.section.String()}
 	// One exit, so the guard at the end of this function covers every sentence
 	// the report can carry and not only the ones a check wrote.
 	defer func() { out.Detail = s.c.hide(out.Detail) }()
@@ -318,7 +318,7 @@ func (s *session) make(ctx context.Context, ch check) (out Outcome) {
 		out.Status, out.Detail = Skipped, sk.reason
 	case ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)):
 		// The check the signal landed in is not a rule the hub broke, and a
-		// report naming a §2 rule against a hub that did nothing is worse
+		// report naming a HUB.md rule against a hub that did nothing is worse
 		// than one check fewer.
 		//
 		// Both halves are needed. On the error alone, a hub that does not
@@ -350,7 +350,7 @@ func (s *session) missing(need requirement) string {
 	case need >= secondRun && s.lapse == "" && s.offeredAtOnce > 1:
 		return "the hub had two runs open to this runner earlier and only one by the last sync, so the suite could not claim the two the lease rules need — one to report on, and one to leave unrenewed"
 	case need >= secondRun && s.lapse == "" && len(s.offered) > 1:
-		// Offering one run at a time breaks no rule of §2's, and no way of
+		// Offering one run at a time breaks no rule of HUB.md's, and no way of
 		// queueing runs gets around it: say so rather than repeat advice the
 		// operator has already followed.
 		return "this hub offered its runs one at a time, and the lease rules need two held at once — one to report on and one to leave unrenewed — so they could not be checked against it"
@@ -362,7 +362,7 @@ func (s *session) missing(need requirement) string {
 
 // doc is the capability document the suite advertises: one harness nobody
 // queues runs for, and no protocol feature at all, so a hub that sends a
-// control it must gate on one has broken §2's versioning rule visibly.
+// control it must gate on one has broken HUB.md's feature rule visibly.
 func (s *session) doc() v1.Capabilities {
 	return v1.Capabilities{
 		RunnerID:   s.runner,

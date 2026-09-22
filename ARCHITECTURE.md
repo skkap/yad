@@ -110,9 +110,9 @@ an endpoint-by-endpoint contract, the state machine and a checklist. What
 follows is the protocol's shape as the runner sees it and the reasons behind
 it, each part naming the HUB.md section that states its rules. Where the two
 disagree, HUB.md is the one a hub was built from: fix whichever is wrong, and
-never leave them apart. `yad conformance` files each rule it checks under a
-part of this section (Calls, Sync, Run, Events, Result, Versioning), which is
-why those headings stay.
+never leave them apart. `yad conformance` files each rule it checks under the
+HUB.md section that states it, and a test fails when one of those headings
+moves.
 
 A **connection** is a base URL — `https://zumino.cc/api/yad/v1` — and every path
 below is relative to it, so a hub can mount the protocol anywhere.
