@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/skkap/yad/internal/hostool"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -46,9 +47,18 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 	if dir != "" {
 		argv = append([]string{"-C", dir}, args...)
 	}
-	p, err := supervise.Start(ctx, supervise.Spec{Path: m.Git, Args: argv, Env: gitEnv, NoTTY: true})
+	bin := m.Git
+	if bin == "" {
+		var ok bool
+		if bin, ok = hostool.Locate("git"); !ok {
+			return "", errors.New("git could not be started: this runner has no git — install git on the runner's PATH, or point YAD_GIT_PATH at one")
+		}
+	}
+	p, err := supervise.Start(ctx, supervise.Spec{Path: bin, Args: argv, Env: gitEnv, NoTTY: true})
 	if err != nil {
-		return "", fmt.Errorf("git could not be started: %w — is git installed and on the runner's PATH?", err)
+		// Not the exec error: it names the binary by its path, which may be
+		// under the owner's home, and this reaches the hub in the run's result.
+		return "", errors.New("git could not be started — check that YAD_GIT_PATH, if the runner sets it, or else the runner's PATH names a git that runs")
 	}
 	// Bounded as supervise.Start asks: a descendant that left git's group
 	// could otherwise hold stdout open past git's exit and its timeout.

@@ -126,9 +126,9 @@ func detectOne(ctx context.Context, h Harness) Detected {
 	case err != nil:
 		d.Error = f.WontStart()
 	case out.TimedOut:
-		d.Error = probe.NoAnswer(f.Command(), versionWait())
+		d.Error = f.NoAnswer(versionWait(), h.VersionArgs...)
 	case out.Err != nil:
-		d.Error = probe.WontAnswer(f.Command())
+		d.Error = f.WontAnswer(h.VersionArgs...)
 	default:
 		d.Version = ParseVersion(string(out.Stdout))
 	}

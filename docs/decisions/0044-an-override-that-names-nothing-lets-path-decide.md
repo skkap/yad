@@ -28,9 +28,11 @@ One rule, in one place (`internal/probe`), which both packages call:
 
 So `present` means **the runner found a binary**, under the same rule for
 harnesses and host tools. For a harness, that binary is the one every run
-starts. For a host tool, it is the binary that was probed. yad's own git
-(`internal/workdir`) and a harness's children still look host tools up on PATH,
-which was already true before this decision and is a separate gap (DEV-107). `present`
+starts. For a host tool, it is the binary that was probed. When this was
+decided, yad's own git (`internal/workdir`) and a harness's children still
+looked host tools up on PATH, a separate gap (DEV-107) that
+[0045](0045-runs-use-the-host-tools-detection-resolved.md) closed: a run now
+uses the host tool detection found, through the same lookup. `present`
 says nothing about whether the binary works: `error` says that.
 
 `HostTool` gained `warnings` to carry the fallback. The field is additive, and

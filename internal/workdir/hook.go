@@ -16,6 +16,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/hostool"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -72,6 +73,14 @@ func (m *Manager) setup(ctx context.Context, req Request, h hookEnv) error {
 		return writeMarker(marker)
 	}
 
+	// The hook is a run's child like the harness, and a `docker compose up`
+	// in it should reach the docker the capability document advertised. The
+	// error is not quoted: it names the profile's data directory.
+	path, err := hostool.Links(hostool.LinksDir(m.Data))
+	if err != nil {
+		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s was not started: the runner could not link its git, gh and docker overrides into its data directory — check that the directory is writable and the disk is not full", hookPath, h.repo)}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, m.SetupTimeout)
 	defer cancel()
 	// Unique per worktree: two repositories of one name in a run are two
@@ -81,6 +90,9 @@ func (m *Manager) setup(ctx context.Context, req Request, h hookEnv) error {
 		ID: id, Name: "setup hook", Input: fmt.Sprintf("%s in %s on %s, WT_SLOT=%d", hookPath, h.repo, h.branch, h.slot),
 	}})
 	env := append(append([]string{}, noPrompt...), h.vars()...)
+	if path != "" {
+		env = append(env, path)
+	}
 	p, err := supervise.Start(ctx, supervise.Spec{Path: hook, Dir: h.root, Env: env, NoTTY: true, MergeStderr: true})
 	if err != nil {
 		// Not the exec error: it names the hook by its absolute path, under the

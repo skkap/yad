@@ -117,13 +117,38 @@ func file(t *testing.T, dir string, mode os.FileMode) string {
 // Every command a message sets apart is pasted, so it must run as printed —
 // proved by a real sh, with an argument no catalog entry has yet but nothing
 // stops one having (AGENTS.md).
+//
+// Found through the override, the program is the variable — the binary that
+// was probed, not PATH's — so each message says it has to be set where the
+// command is pasted (DEV-108).
 func TestCommandsRunAsPrinted(t *testing.T) {
-	f := Found{envVar: "YAD_TOOL_PATH", name: "tool", versionArgs: []string{"--version", "a b'c"}}
-	for _, msg := range []string{f.WontStart(), NoAnswer(f.Command(), time.Second), WontAnswer(f.Command())} {
-		cmds := shellwordtest.Commands(msg, "tool ")
-		if len(cmds) != 1 {
-			t.Fatalf("%q sets apart %d commands, want 1", msg, len(cmds))
-		}
-		shellwordtest.Check(t, cmds[0], "tool", "--version", "a b'c")
+	args := []string{"--version", "a b'c"}
+	for _, tc := range []struct {
+		name      string
+		override  bool
+		prefix    string
+		setup     string
+		wantShell bool
+	}{
+		{name: "found on PATH", prefix: "tool "},
+		{name: "found through the override", override: true, prefix: `"$YAD_TOOL_PATH" `, setup: "YAD_TOOL_PATH=tool\n", wantShell: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := Found{envVar: "YAD_TOOL_PATH", name: "tool", versionArgs: args, FromOverride: tc.override}
+			msgs := []string{f.NoAnswer(time.Second, args...), f.WontAnswer(args...), f.Try(f.VersionCommand(), "why")}
+			if !tc.override {
+				msgs = append(msgs, f.WontStart())
+			}
+			for _, msg := range msgs {
+				cmds := shellwordtest.Commands(msg, tc.prefix)
+				if len(cmds) != 1 {
+					t.Fatalf("%q sets apart %d commands starting %s, want 1", msg, len(cmds), tc.prefix)
+				}
+				shellwordtest.Check(t, tc.setup+cmds[0], "tool", "--version", "a b'c")
+				if said := strings.Contains(msg, "YAD_TOOL_PATH set in that shell"); said != tc.wantShell {
+					t.Errorf("%q: says the variable must be set %v, want %v", msg, said, tc.wantShell)
+				}
+			}
+		})
 	}
 }

@@ -66,7 +66,7 @@ internal/config          profiles, config.toml, credentials on disk
 internal/store           SQLite: schema, migrations, sqlc-generated queries
 internal/harness         the catalog, detection, versions
 internal/capability      the capability document and its fingerprint
-internal/hostool         probing host tools (git, gh, docker) and how far each works
+internal/hostool         probing host tools (git, gh, docker) and how far each works; the binary a run uses (0045)
 internal/probe           what both share: which binary an override or PATH names, and the words for what is wrong with it (0044)
 internal/account         accounts per harness, homes, limit state, failover
 internal/service         yad service: launchd agent and systemd user unit, login PATH (0028)
@@ -476,7 +476,11 @@ for `codex`); the suite never runs a real harness.
   after the scrub, which is why a grant may not name `ANTHROPIC_API_KEY` or any
   other variable that chooses the harness's credential (0040). git and setup hooks start
   with `NoTTY` — a session of their own, no controlling terminal — so nothing
-  they run can prompt. `Start` hands back the raw
+  they run can prompt. A host tool a run uses is the one detection resolved
+  ([0045](docs/decisions/0045-runs-use-the-host-tools-detection-resolved.md)):
+  yad's git is `hostool.Locate("git")`, and a harness and a setup hook get
+  `<data>/host-tools/` first on `PATH`, holding a link named `git`, `gh` or
+  `docker` for each tool only its `YAD_<ID>_PATH` finds. `Start` hands back the raw
   stdout pipe; the 32 MiB line cap belongs to the adapters' line reader
   (`adapter.LineReader`), which skips an oversized line and reports it rather
   than ending the run.
@@ -743,6 +747,7 @@ for `codex`); the suite never runs a real harness.
 `$YAD_CONFIG_DIR` and `$YAD_DATA_DIR` override both. The config directory holds
 `config.toml`, `runner-id` and `credentials/<connection>` (each `0600`); the
 data directory holds `state.db`, `workdirs/`, `repos/`, `accounts/`,
+`host-tools/` (0045),
 `transcripts/`, `logs/` (the daemon's JSON log `yad.log`, rotated at 10 MiB into
 `yad.log.1`–`.3`, and `stderr.log` for what a background start printed before
 its log was open), the control socket `yad.sock` and the daemon lock `yad.lock`

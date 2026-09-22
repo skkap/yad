@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -54,7 +53,10 @@ type Manager struct {
 	Data string
 	// Roots are the owner's directories a hub may reach (decision 0033).
 	Roots []string
-	// Git is the git executable; empty finds it on PATH.
+	// Git is the git executable. Empty is the one host-tool detection
+	// resolves — YAD_GIT_PATH's, or PATH's when that names nothing — looked
+	// up again for every command, so the git a run uses is the one its
+	// capability document advertised (0045).
 	Git          string
 	GitTimeout   time.Duration
 	SetupTimeout time.Duration
@@ -68,13 +70,6 @@ type Manager struct {
 func (m *Manager) init() {
 	m.once.Do(func() {
 		m.repos = map[string]chan struct{}{}
-		if m.Git == "" {
-			if p, err := exec.LookPath("git"); err == nil {
-				m.Git = p
-			} else {
-				m.Git = "git"
-			}
-		}
 		if m.GitTimeout <= 0 {
 			m.GitTimeout = config.DefaultGitTimeout
 		}

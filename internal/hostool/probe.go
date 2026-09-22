@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/skkap/yad/internal/harness"
-	"github.com/skkap/yad/internal/probe"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -15,9 +14,9 @@ type Detected struct {
 	ID      string `json:"id"`
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
-	// Present is there being a binary detection found and probed: Path. Not
-	// that it works — Error says whether it does — and not that a run uses
-	// it: workdir's git and a harness's children look the tool up on PATH.
+	// Present is there being a binary detection found and probed: Path, which
+	// is also the one a run uses (Locate, Links). Not that it works — Error
+	// says whether it does.
 	Present bool `json:"present"`
 	// Error is what went wrong with this tool: a path override that names
 	// nothing with no binary on PATH either, a probe that timed out, a binary
@@ -112,7 +111,7 @@ func Detect(ctx context.Context) []Detected {
 func probeOne(ctx context.Context, t Tool) Detected {
 	d := Detected{ID: t.ID}
 
-	bin := probe.Find(t.EnvPath, t.Binary, t.VersionArgs)
+	bin := find(t)
 	d.Error = bin.Error
 	if bin.Warning != "" {
 		d.Warnings = append(d.Warnings, bin.Warning)
@@ -130,10 +129,10 @@ func probeOne(ctx context.Context, t Tool) Detected {
 		d.Error = bin.WontStart()
 		return d
 	case out.TimedOut:
-		d.Error = probe.NoAnswer(bin.Command(), versionWait())
+		d.Error = bin.NoAnswer(versionWait(), t.VersionArgs...)
 		return d
 	case out.Err != nil:
-		d.Error = probe.WontAnswer(bin.Command())
+		d.Error = bin.WontAnswer(t.VersionArgs...)
 		return d
 	}
 	// The same banner-to-one-line rule the harnesses need: these three disagree

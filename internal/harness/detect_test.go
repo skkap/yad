@@ -267,13 +267,13 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 		// leak DEV-60 closed; what the report says now is the command and the
 		// next action, and the check below proves the child's words are gone.
 		{name: "exits 3", body: "echo oops >&2\nexit 3\n",
-			wantErr: "`codex --version` exited with an error"},
+			wantErr: "`\"$YAD_CODEX_PATH\" --version` exited with an error"},
 		{name: "exits 3, detached child holds stdout", body: detached + "exit 3\n",
-			wantErr: "`codex --version` exited with an error"},
+			wantErr: "`\"$YAD_CODEX_PATH\" --version` exited with an error"},
 		{name: "hangs", body: "sleep 60\n",
-			wantErr: "no answer to `codex --version`", waitsItOut: true},
+			wantErr: "no answer to `\"$YAD_CODEX_PATH\" --version`", waitsItOut: true},
 		{name: "hangs, detached child holds stdout", body: detached + "sleep 60\n",
-			wantErr: "no answer to `codex --version`", waitsItOut: true, endsAtCancel: true},
+			wantErr: "no answer to `\"$YAD_CODEX_PATH\" --version`", waitsItOut: true, endsAtCancel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -499,7 +499,7 @@ func TestATimedOutProbeIsNeverReportedAsAnExit(t *testing.T) {
 
 			h, _ := Lookup("codex")
 			d := detectOne(context.Background(), h)
-			if !strings.Contains(d.Error, "no answer to `codex --version`") {
+			if !strings.Contains(d.Error, "no answer to `\"$YAD_CODEX_PATH\" --version`") {
 				t.Errorf("Error = %q, want the timeout rather than the child's fate", d.Error)
 			}
 		})
