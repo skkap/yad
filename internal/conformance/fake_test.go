@@ -84,13 +84,16 @@ const (
 	flawStrictResultFields = "a result carrying an unknown field is refused"
 	// The token in the error code rather than the message: a place a check
 	// writes into its own sentence, not one the answer's printing covers.
-	flawTokenInTheCode     = "the code of a refusal is built from the bearer it was given"
-	flawOffersLiveMode     = "a run is offered in a live session to a runner advertising nothing"
-	flawGrantInTheOpen     = "a run's grant value comes back quoted in a later refusal"
-	flawRegistersAnyone    = "anyone registers, and the credential comes back under a name of the hub's own"
-	flawUngatedControl     = "a steer goes to a runner that never advertised one"
-	flawNoNextAction       = "errors say what went wrong and not what to do"
-	flawRenewsEverything   = "every run's lease is renewed, listed or not"
+	flawTokenInTheCode   = "the code of a refusal is built from the bearer it was given"
+	flawOffersLiveMode   = "a run is offered in a live session to a runner advertising nothing"
+	flawGrantInTheOpen   = "a run's grant value comes back quoted in a later refusal"
+	flawRegistersAnyone  = "anyone registers, and the credential comes back under a name of the hub's own"
+	flawUngatedControl   = "a steer goes to a runner that never advertised one"
+	flawNoNextAction     = "errors say what went wrong and not what to do"
+	flawRenewsEverything = "every run's lease is renewed, listed or not"
+	// The gap DEV-94 closed: an offer held for its runner however long that
+	// runner is gone, and claimed by its listing whenever it comes back.
+	flawOffersNeverLapse   = "an offer waits for its runner's next sync, however late"
 	flawAcceptsAnyToken    = "any bearer is taken as a registration token"
 	flawSameRunnerReuse    = "a spent token registers the runner it was spent on, again"
 	flawIgnoresHarnessCap  = "the per-harness free capacity is not read"
@@ -321,6 +324,9 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 		// The lease lapsed: an offer goes back in the queue, and a run a
 		// runner held is lost.
 		if run.holder == "" {
+			if f.flaw == flawOffersNeverLapse {
+				continue
+			}
 			run.queued = true
 		} else {
 			run.state, run.final, run.holder = v1.RunLost, v1.RunLost, ""
@@ -331,7 +337,11 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	for _, held := range req.Runs {
 		listed[held.RunID] = true
 		run := f.runs[held.RunID]
-		if run == nil || run.holder != "" && run.holder != runner || run.final != "" {
+		// This runner's to list: held by it, or offered to it with the offer
+		// still open. An offer that lapsed is queued again, and a claim of it
+		// now may be of a run another runner has since been offered.
+		mine := run != nil && (run.holder == runner || run.holder == "" && !run.queued && run.offeredTo == runner)
+		if !mine || run.final != "" {
 			if f.flaw != flawNoCancel {
 				res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlCancel, RunID: held.RunID})
 			}

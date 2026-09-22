@@ -404,3 +404,16 @@ func TestControlUsage(t *testing.T) {
 		}
 	}
 }
+
+// A silence no longer than the lease would give up a runner whose runs are
+// still leased to it, so serve refuses it before it listens — naming the
+// floor, since "invalid" alone leaves the operator guessing what would do.
+func TestServeRefusesAnAbandonAfterWithinTheLease(t *testing.T) {
+	p := newProfile(t)
+	for _, d := range []string{"30s", "1m", "0s", "-24h"} {
+		code, _, errs := p.yad("", "hub", "serve", "--listen", "127.0.0.1:0", "--abandon-after", d)
+		if code == 0 || !strings.Contains(errs, "not longer than this hub's 1m0s lease") || !strings.Contains(errs, "name more than 1m0s") {
+			t.Errorf("--abandon-after %s: exit %d %q", d, code, errs)
+		}
+	}
+}

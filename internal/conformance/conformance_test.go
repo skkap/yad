@@ -19,10 +19,11 @@ const fakeToken = "fake-registration-token"
 
 // A hub that follows §2 passes every check, and skips none: a suite that
 // silently skipped half of itself would pass this too, which is why the skips
-// are counted as failures here.
+// are counted as failures here. Three runs: two for the claim, event, result
+// and lease rules, and one to leave offered and unclaimed for its lease.
 func TestAHubThatFollowsTheProtocolPasses(t *testing.T) {
 	t.Parallel()
-	_, url := newFake(t, "", fakeRunSpec(0), fakeRunSpec(1))
+	_, url := newFake(t, "", fakeRunSpec(0), fakeRunSpec(1), fakeRunSpec(2))
 	rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken, SecondToken: fakeSecondToken, LeaseWait: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +54,8 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		// second passes the fake's second registration token, which only
 		// the holder rules spend.
 		second bool
+		// third queues the run lease/offer-lapse leaves unclaimed.
+		third bool
 		// want is on every row on purpose: Passed is Status's zero, so a row
 		// that left it out would assert the hub was fine and pass whatever
 		// the suite did. Skipped is for a rule that cannot be judged in a
@@ -80,6 +83,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawUngatedControl, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawNoNextAction, check: "errors/next-action", want: Failed},
 		{flaw: flawRenewsEverything, check: "lease/lapse", leaseWait: time.Minute, want: Failed},
+		{flaw: flawOffersNeverLapse, check: "lease/offer-lapse", leaseWait: time.Minute, third: true, want: Failed},
 		{flaw: flawAcceptsAnyToken, check: "register/token-required", want: Failed},
 		{flaw: flawSameRunnerReuse, check: "register/token-is-one-time", want: Failed},
 		{flaw: flawIgnoresHarnessCap, check: "sync/free-capacity", want: Failed},
@@ -122,7 +126,11 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 	} {
 		t.Run(tc.flaw+"/"+tc.check, func(t *testing.T) {
 			t.Parallel()
-			_, url := newFake(t, tc.flaw, fakeRunSpec(0), fakeRunSpec(1))
+			queued := []v1.Run{fakeRunSpec(0), fakeRunSpec(1)}
+			if tc.third {
+				queued = append(queued, fakeRunSpec(2))
+			}
+			_, url := newFake(t, tc.flaw, queued...)
 			opts := Options{BaseURL: url, Token: fakeToken, LeaseWait: tc.leaseWait}
 			if tc.second {
 				opts.SecondToken = fakeSecondToken
@@ -149,6 +157,34 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 				t.Errorf("the answer points at %q, not a part of ARCHITECTURE.md §2", o.Section)
 			case o.Detail == "":
 				t.Error("the answer says the rule was not kept and not what the hub did")
+			}
+		})
+	}
+}
+
+// The rule about a lapsed offer needs a run of its own and a lease's worth of
+// waiting, and a hub given neither has it skipped, saying which to supply —
+// never passed.
+func TestTheOfferLapseRuleSaysWhatItNeeds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		queued    []v1.Run
+		leaseWait time.Duration
+		want      string
+	}{
+		{"two runs queued", []v1.Run{fakeRunSpec(0), fakeRunSpec(1)}, time.Minute, "queue three runs"},
+		{"no time budgeted", []v1.Run{fakeRunSpec(0), fakeRunSpec(1), fakeRunSpec(2)}, 0, "--lease-wait"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, url := newFake(t, "", tc.queued...)
+			rep, err := Run(context.Background(), Options{BaseURL: url, Token: fakeToken, LeaseWait: tc.leaseWait})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if o := outcome(t, rep, "lease/offer-lapse"); o.Status != Skipped || !strings.Contains(o.Detail, tc.want) {
+				t.Errorf("%s %q, want a skip naming %q", label(o.Status), o.Detail, tc.want)
 			}
 		})
 	}

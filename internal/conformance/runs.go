@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
+	"strings"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -237,9 +239,8 @@ func checkLeaseLapse(ctx context.Context, s *session) error {
 		return skipf("the hub named no lease in the answer that claimed the run, so there is nothing to wait out")
 	}
 	// The hub's lease is measured on the hub's clock from the sync it last
-	// renewed in; there is no clock in common, so the wait is the whole lease
-	// from the moment that answer arrived here, and a tenth again.
-	wait := lease + max(lease/10, time.Second)
+	// renewed in.
+	wait := leaseWait(lease)
 	switch {
 	case s.opts.LeaseWait <= 0:
 		return skipf("no time was budgeted for waiting a lease out; this hub's lease is %s, so run with --lease-wait %s to check it", lease, wait.Round(time.Second))
@@ -288,6 +289,96 @@ func checkLeaseLapse(ctx context.Context, s *session) error {
 		return brokenf("run %s lost its lease, and the hub then took a succeeded result for it; a lapsed run is lost, and lost stands: %s", s.lapse, ra)
 	}
 	return refusedWith(ra, http.StatusConflict, v1.CodeConflict)
+}
+
+// checkOfferLapse is the rule for a runner that goes silent holding an offer
+// it never claimed: crashed, switched off, cut off. It needs a run of its own
+// — the two the other rules use are finished or lost by now — so it takes a
+// third one, and is skipped without one.
+//
+// Silence is the point, so nothing is sent for the whole lease: a sync that
+// left the offer out would requeue it by claim-by-listing, and prove nothing
+// about the lease. The late claim is what tells the two apart. A hub holding
+// the offer for its runner however long it is gone takes that claim; one
+// whose offers lapse answers it with a cancel, since by then the run may be
+// another runner's.
+func checkOfferLapse(ctx context.Context, s *session) error {
+	if s.opts.LeaseWait <= 0 {
+		return skipf("no time was budgeted for waiting a lease out; this hub's lease is %s, so run with --lease-wait %s to check it", s.lease, leaseWait(s.lease).Round(time.Second))
+	}
+	if wait := leaseWait(s.lease); wait > s.opts.LeaseWait {
+		return skipf("this hub's lease is %s and waiting it out would take %s, more than the %s budgeted; run with --lease-wait %s to check it",
+			s.lease, wait.Round(time.Second), s.opts.LeaseWait, wait.Round(time.Second))
+	}
+	var (
+		offer string
+		lease time.Duration
+	)
+	for i := 0; i < offerSyncs && offer == ""; i++ {
+		res, _, err := s.syncOK(ctx, 1)
+		if err != nil {
+			return err
+		}
+		for _, r := range res.Runs {
+			if r.RunID != s.report && r.RunID != s.lapse {
+				offer, lease = r.RunID, time.Duration(res.LeaseMS)*time.Millisecond
+				break
+			}
+		}
+	}
+	offeredAt := time.Now()
+	switch {
+	case offer == "":
+		return skipf("no third run was offered in %d syncs, and this rule needs one besides the two the other rules used; queue three runs for harness %s and run the suite again", offerSyncs, s.opts.Harness)
+	case lease <= 0:
+		return skipf("the hub named no lease in the answer that offered run %s, so there is nothing to wait out", offer)
+	case leaseWait(lease) > s.opts.LeaseWait:
+		return skipf("the hub offered run %s with a lease of %s, and waiting it out would take more than the %s budgeted; run with --lease-wait %s to check it",
+			offer, lease, s.opts.LeaseWait, leaseWait(lease).Round(time.Second))
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Until(offeredAt.Add(leaseWait(lease)))):
+	}
+
+	// No free capacity: the cancel is the whole answer asked for here.
+	req := s.syncRequest(0)
+	req.Runs = append(req.Runs, v1.HeldRun{RunID: offer, State: v1.RunClaimed})
+	res, a, err := s.syncWith(ctx, req, nil)
+	if err != nil {
+		return err
+	}
+	if !a.ok() {
+		return brokenf("the sync was refused: %s", a)
+	}
+	if !hasCancel(res.Controls, offer) {
+		return brokenf("run %s was offered and not claimed for %s, past the %s lease the hub named beside the offer, and the hub then took a claim for it; an offer lapses with its lease, and a claim after that is answered with a cancel, because the run may by then be another runner's: %s",
+			offer, leaseWait(lease).Round(time.Second), lease, a)
+	}
+	for i := 0; i < offerSyncs; i++ {
+		res, _, err := s.syncOK(ctx, 1)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(runIDs(res.Runs), offer) {
+			return nil
+		}
+		if len(res.Runs) > 0 {
+			return skipf("run %s lapsed and its late claim was cancelled, and the hub then had other runs to offer first (%s), so whether it comes back cannot be told in a bounded number of syncs — this is not a verdict on the hub",
+				offer, strings.Join(runIDs(res.Runs), ", "))
+		}
+	}
+	// §2 names no deadline for the offer after the lapse, as it names none
+	// for claim-by-listing's, so this is a warning and not a verdict.
+	return skipf("run %s lapsed and its late claim was cancelled, and in %d syncs declaring room for it the hub did not offer it again. A lapsed offer goes back in the queue, and a hub that never offers it again has lost the run — read this as a warning, since §2 names no deadline", offer, offerSyncs)
+}
+
+// leaseWait is how long the suite waits a lease out. There is no clock in
+// common with a hub, so the wait is the whole lease from the moment the
+// answer naming it arrived here, and a tenth again.
+func leaseWait(lease time.Duration) time.Duration {
+	return lease + max(lease/10, time.Second)
 }
 
 // wantAck uploads a batch and checks the hub acknowledged up to want.

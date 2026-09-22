@@ -169,7 +169,7 @@ type RegisterResponse struct {
 	RunnerCredential string   `json:"runner_credential"`
 	HubFeatures      []string `json:"hub_features,omitempty"`
 	SyncIntervalMS   int      `json:"sync_interval_ms"`
-	LeaseMS          int      `json:"lease_ms"`
+	LeaseMS          int      `json:"lease_ms" doc:"The lease the hub will name in its sync answers: how long a run offered to this runner, or held by it, is kept for it without a sync. Never shorter than sync_interval_ms."`
 	MinVersion       string   `json:"min_version,omitempty"`
 }
 

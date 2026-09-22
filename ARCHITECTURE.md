@@ -240,6 +240,15 @@ plain-text 404 or 405.
   the hub takes back the runs of a runner doing everything right. The four
   intervals are the default and one interval is the floor — they do not
   compete, and a hub may hold to fewer than four as long as it holds to one.
+  An offer carries the same lease: one not claimed within it goes back in the
+  queue for any runner, and a claim listed after that is answered with
+  `cancel`, as a lapsed claim is —
+  [0046](docs/decisions/0046-a-silent-runner-loses-its-offers-with-the-lease-and-its-sessions-after-a-day.md).
+- **Abandon after.** A runner that has not synced for longer than the hub's
+  abandon-after (default a day, and always longer than the lease) has every
+  session bound to it closed and the runs queued in them ended. Its credential
+  stays: its next sync is answered normally, with `close_session` for each of
+  those sessions until it reports the close.
 - **Timings belong to the hub**: default interval 15 s, bounded 5–60 s; the
   runner adds ±10 % jitter and backs off 1 s → 30 s on errors.
 

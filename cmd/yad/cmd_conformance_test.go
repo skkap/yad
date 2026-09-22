@@ -50,7 +50,7 @@ func TestConformanceChecksAHubAndSaysWhatItCouldNot(t *testing.T) {
 		"PASS register/exchange",
 		"PASS sync/cancel-for-a-run-not-held",
 		"Not checked: no run was offered",
-		"queue one or two runs for that harness",
+		"queue three runs for that harness",
 		"POST /runners/{runner}/deregister",
 	} {
 		if !strings.Contains(flat, want) {

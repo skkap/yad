@@ -114,9 +114,11 @@ type CloseSessionHereParams struct {
 	ID     string
 }
 
-// The hub closing a session by its own act (decision 0011), with no runner
-// to report it: one nobody ever claimed, or one whose runner deregistered.
-// The caller has decided no runner's close is owed; a repeat changes nothing.
+// The hub closing a session by its own act (decision 0011), without waiting
+// for a runner to report it: one nobody ever claimed, or one whose runner
+// deregistered or went silent. A silent runner may still come back, and its
+// caller marks the close owed to it (OweSessionClose, decision 0046). A
+// repeat changes nothing.
 func (q *Queries) CloseSessionHere(ctx context.Context, arg CloseSessionHereParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, closeSessionHere, arg.Now, arg.Reason, arg.ID)
 	if err != nil {
@@ -560,7 +562,7 @@ func (q *Queries) GetRunnerByCredential(ctx context.Context, credentialHash stri
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason, offered_to FROM sessions WHERE id = ?
+SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason, offered_to, close_owed FROM sessions WHERE id = ?
 `
 
 func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
@@ -575,6 +577,7 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.OfferedTo,
+		&i.CloseOwed,
 	)
 	return i, err
 }
@@ -797,6 +800,17 @@ func (q *Queries) OfferRun(ctx context.Context, arg OfferRunParams) error {
 		arg.UpdatedAt,
 		arg.ID,
 	)
+	return err
+}
+
+const oweSessionClose = `-- name: OweSessionClose :exec
+UPDATE sessions SET close_owed = 1 WHERE id = ?1 AND runner_id IS NOT NULL
+`
+
+// The hub closed it by its own act and the runner has not heard yet: the
+// close_session goes out until the runner reports the session closed.
+func (q *Queries) OweSessionClose(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, oweSessionClose, id)
 	return err
 }
 
@@ -1060,9 +1074,14 @@ func (q *Queries) RunsOfferedTo(ctx context.Context, runnerID sql.NullString) ([
 }
 
 const sessionsToClose = `-- name: SessionsToClose :many
-SELECT id FROM sessions WHERE runner_id = ? AND close_requested_at IS NOT NULL AND closed_at IS NULL ORDER BY id
+SELECT id FROM sessions
+WHERE runner_id = ?1 AND (close_requested_at IS NOT NULL AND closed_at IS NULL OR close_owed = 1)
+ORDER BY id
 `
 
+// The sessions close_session goes to this runner for: a close asked for and
+// not yet reported, and one the hub closed while the runner was silent, whose
+// workdir the runner still holds (decision 0046).
 func (q *Queries) SessionsToClose(ctx context.Context, runnerID sql.NullString) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, sessionsToClose, runnerID)
 	if err != nil {
@@ -1142,6 +1161,55 @@ type SetEventsThroughParams struct {
 func (q *Queries) SetEventsThrough(ctx context.Context, arg SetEventsThroughParams) error {
 	_, err := q.db.ExecContext(ctx, setEventsThrough, arg.EventsThrough, arg.ID)
 	return err
+}
+
+const settleOwedClose = `-- name: SettleOwedClose :exec
+UPDATE sessions SET close_owed = 0 WHERE id = ?1 AND runner_id = ?2 AND close_owed = 1
+`
+
+type SettleOwedCloseParams struct {
+	ID       string
+	RunnerID sql.NullString
+}
+
+// The runner holding the session reported it closed, which answers every
+// close_session it was owed. A report from any other runner answers nothing.
+func (q *Queries) SettleOwedClose(ctx context.Context, arg SettleOwedCloseParams) error {
+	_, err := q.db.ExecContext(ctx, settleOwedClose, arg.ID, arg.RunnerID)
+	return err
+}
+
+const silentRunners = `-- name: SilentRunners :many
+SELECT DISTINCT r.id FROM runners r JOIN sessions s ON s.runner_id = r.id
+WHERE s.closed_at IS NULL AND r.last_sync_at IS NOT NULL AND r.last_sync_at <= ?1
+ORDER BY r.id
+`
+
+// Runners silent since before the cutoff that still have an open session
+// bound to them (decision 0046). Silence counts from the last sync the hub
+// answered; a runner that never synced has no session bound to it, because
+// only a sync's listing binds one.
+func (q *Queries) SilentRunners(ctx context.Context, cutoff sql.NullInt64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, silentRunners, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const unstartedRunsInSession = `-- name: UnstartedRunsInSession :many
