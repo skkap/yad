@@ -193,13 +193,15 @@ sync carries a newer one.
   the only secret the runner keeps, and it authenticates every later call.
   Keep only what recognises it — `yad hub` stores a SHA-256 hash.
 
-**Recommended, and what `yad hub` does:** runner ids are not secret, so a
-token that could re-register *any* known runner would hand that runner's
-sessions, and the grants delivered into them, to whoever held a token. `yad
-hub` therefore refuses a known runner id with `409 conflict` unless the token
-was issued for that runner (`yad hub token create --runner <id>`); such a
-token replaces the runner's credential, and the old one stops working at once.
-The runner's sessions stay bound to it.
+- **Re-register a runner id you already know only with a token issued for
+  that runner.** Runner ids are not secret, so a token that could re-register
+  *any* known runner would hand that runner's sessions, and the grants
+  delivered into them, to whoever held a token. `yad hub` refuses a known
+  runner id with `409 conflict` unless the token was issued for that runner
+  (`yad hub token create --runner <id>`); such a token replaces the runner's
+  credential, the old one stops working at once, and the runner's sessions
+  stay bound to it. How you tie a token to a runner is yours; that you do is
+  not.
 
 **Response:**
 

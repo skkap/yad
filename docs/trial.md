@@ -35,9 +35,12 @@ directories are:
 ~/.local/share/yad/profiles/dogfood   state, hub database, workdirs, logs
 ```
 
-(or under `$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` when those are set). The
-hub below keeps its database and admin token in the same profile, so it goes
-with it.
+(or under `$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` when those are set, which
+the removal step at the end allows for). The hub below keeps its database and
+admin token in the same profile, so it goes with it. Leave `YAD_CONFIG_DIR`,
+`YAD_DATA_DIR` and `YAD_PROFILE` unset for the whole trial: the first two put
+every profile in one directory, and the third changes which profile a bare
+command means.
 
 `--profile dogfood` goes *before* the command — `yad --profile dogfood status`
 — except for `yad service`, which takes it as its own flag.
@@ -189,10 +192,10 @@ them — `rmdir` removes only empty directories, so it leaves a `default`
 profile you already had exactly as it was:
 
 ```bash
-rm -rf ~/.config/yad/profiles/dogfood ~/.local/share/yad/profiles/dogfood
-rmdir ~/.config/yad/profiles ~/.local/share/yad/profiles \
-      ~/.config/yad ~/.local/share/yad 2>/dev/null
-ls ~/.config/yad ~/.local/share/yad
+config=${XDG_CONFIG_HOME:-$HOME/.config}/yad data=${XDG_DATA_HOME:-$HOME/.local/share}/yad
+rm -rf "$config/profiles/dogfood" "$data/profiles/dogfood"
+rmdir "$config/profiles" "$data/profiles" "$config" "$data" 2>/dev/null
+ls "$config" "$data"
 ```
 
 The last line shows what is left: your own `default` profile if you had one,
