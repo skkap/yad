@@ -4,17 +4,17 @@ package v1
 // before the first attempt and retried until acknowledged; a hub applies it at
 // most once and answers 409 when it already holds a different terminal state.
 type Result struct {
-	State     RunState  `json:"state" enum:"succeeded,failed,cancelled,timed_out,lost"`
-	FinalText string    `json:"final_text,omitempty"`
-	Error     *RunError `json:"error,omitempty"`
+	State     RunState  `json:"state" enum:"succeeded,failed,cancelled,timed_out,lost" doc:"How the run ended. lost here is the runner's own report of a run a previous process held and could not finish."`
+	FinalText string    `json:"final_text,omitempty" doc:"The harness's last answer, at most 1 MiB."`
+	Error     *RunError `json:"error,omitempty" doc:"Why the run did not succeed. A failed result with class refused is the runner declining a run it was offered, before claiming it."`
 	Usage     RunUsage  `json:"usage"`
 	Metrics   Metrics   `json:"metrics"`
-	LastSeq   int64     `json:"last_seq"`
+	LastSeq   int64     `json:"last_seq" doc:"The seq of the run's last event, 0 when it had none. The run's event stream is complete once acked_through reaches it."`
 }
 
 // RunUsage is usage per model for the whole run.
 type RunUsage struct {
-	ByModel map[string]Usage `json:"by_model,omitempty"`
+	ByModel map[string]Usage `json:"by_model,omitempty" doc:"Tokens for the whole run, every turn and every account, by model."`
 }
 
 // Metrics is how the run went, for the hub's "why is Codex slow on the Linux

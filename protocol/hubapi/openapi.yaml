@@ -6,17 +6,21 @@ components:
       additionalProperties: true
       properties:
         label:
+          description: The owner's name for the account, such as work. Not a secret, and not the identity it is signed in as.
           type: string
         limited_until:
+          description: When a limited account's usage limit resets. Absent for an account that is not limited.
           format: date-time
           type: string
         state:
+          description: "free takes runs. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again at the machine. Absent from runners older than this field: the runner cannot say, which is not a fault."
           enum:
             - free
             - limited
             - needs_login
           type: string
         windows:
+          description: Every usage window the harness last reported for this account, whether or not it is at a limit, so a hub sees an account running low before it runs out. As fresh as the last turn that ran on it. Absent means no run has heard a window yet, never that the account has no limits.
           items:
             $ref: "#/components/schemas/AccountWindow"
           type: array
@@ -45,8 +49,10 @@ components:
       additionalProperties: true
       properties:
         context:
+          description: Background appended to the harness's system prompt, so it survives the harness compacting its conversation.
           type: string
         instruction:
+          description: "The run's one user message: what to do. Required."
           type: string
       required:
         - instruction
@@ -58,8 +64,10 @@ components:
           additionalProperties:
             format: int64
             type: integer
+          description: "Per-harness bounds by harness id, each applying independently of total. A harness missing from the map is bounded by total alone: the map carries only the caps the owner set, and is absent when there are none."
           type: object
         total:
+          description: Runs in all, across every harness.
           format: int64
           type: integer
       required:
@@ -72,8 +80,10 @@ components:
           description: "What went wrong, for a program to act on. v1 names ten codes: not_implemented, unauthorized, runner_revoked, version_too_old, conflict, not_found, invalid, unsupported_protocol, not_holder and internal. They are not a closed set: a client meeting a code it does not know acts on the HTTP status and shows message and next_action to a person."
           type: string
         message:
+          description: What went wrong, for a person.
           type: string
         next_action:
+          description: "What the reader should do about it, for a person: the runner's owner reads it on their machine. Required on every error."
           type: string
       required:
         - code
@@ -92,11 +102,14 @@ components:
       additionalProperties: true
       properties:
         at:
+          description: When it happened on the runner.
           format: date-time
           type: string
         error:
           $ref: "#/components/schemas/RunError"
+          description: For an error event.
         kind:
+          description: "text: the harness said something (text). thinking: its reasoning (text). tool_call: it called a tool (tool.id, tool.name, tool.input). tool_result: the tool answered (tool.id, tool.output). status: a phase of the run, for people (status, text). usage: tokens one model used (usage). error: something went wrong, whether or not the run carries on (error)."
           enum:
             - text
             - thinking
@@ -107,16 +120,21 @@ components:
             - error
           type: string
         seq:
+          description: "The event's place in its run: 1 for the first, then 2, 3, and so on with no gaps. (run, seq) identifies an event; a resent one keeps its seq."
           format: int64
           type: integer
         status:
+          description: "For a status event, a short label of the phase, such as account, waiting, cancelling or steered. For display: not a closed set, and not to be parsed."
           type: string
         text:
+          description: The words of a text, thinking, status or error event. At most 1 MiB.
           type: string
         tool:
           $ref: "#/components/schemas/ToolEvent"
+          description: For tool_call and tool_result.
         usage:
           $ref: "#/components/schemas/Usage"
+          description: For a usage event.
       required:
         - seq
         - at
@@ -126,16 +144,20 @@ components:
       additionalProperties: true
       properties:
         done:
+          description: The run is terminal and every event up to its result's last_seq has been returned. Stop polling.
           type: boolean
         events:
+          description: The events after the cursor, in seq order, at most 500.
           items:
             $ref: "#/components/schemas/Event"
           type: array
         next_after:
+          description: The after to ask with next.
           format: int64
           type: integer
         run:
           $ref: "#/components/schemas/Run"
+          description: The run as it is now.
       required:
         - next_after
         - done
@@ -145,10 +167,13 @@ components:
       additionalProperties: true
       properties:
         base:
+          description: "The ref a new branch is cut from. Absent: the repository's default branch."
           type: string
         branch:
+          description: "The branch the run works on, checked out as a worktree. Absent: one named after the session."
           type: string
         url:
+          description: The repository, over https or ssh, fetched with the machine's own git credentials. Required.
           type: string
       required:
         - url
@@ -157,13 +182,16 @@ components:
       additionalProperties: true
       properties:
         as:
+          description: "env: set as the variable name=value in the harness's environment. file: written to a 0600 file named name outside the workdir, whose path the harness reads from the variable name."
           enum:
             - env
             - file
           type: string
         name:
+          description: An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH, HOME, LD_* or DYLD_*, nor a variable that picks a harness's credential or home, such as ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR, CODEX_HOME or OPENAI_API_KEY; matched in any case. No two grants may share a name, and no two file grants may differ only by case.
           type: string
         value:
+          description: The secret. Never logged or shown; a hub should keep it only until the run is terminal.
           type: string
       required:
         - name
@@ -174,12 +202,15 @@ components:
       additionalProperties: true
       properties:
         accounts:
+          description: Each account's state, limit and usage windows as of this sync.
           items:
             $ref: "#/components/schemas/AccountReport"
           type: array
         id:
+          description: The harness id.
           type: string
         ready:
+          description: "Whether the harness can take a run now: at least one account is free, or it has no accounts and runs on its own login."
           type: boolean
       required:
         - id
@@ -189,13 +220,17 @@ components:
       additionalProperties: true
       properties:
         disk_free_bytes:
+          description: Free bytes on the disk under the runner's workdirs.
           format: int64
           type: integer
         draining:
+          description: The runner has stopped claiming and exits once the runs it holds have ended. It keeps syncing until then; offer it nothing. The answer to a drain control, which stops repeating once this is true.
           type: boolean
         free_capacity:
           $ref: "#/components/schemas/Capacity"
+          description: "What this sync may be offered, already net of every run the runner holds: total bounds the whole response, and each by_harness figure bounds that harness independently. Offer up to it as sent; do not subtract the runs listed beside it."
         harnesses:
+          description: "Readiness of each harness the runner can drive, with its accounts. A harness with ready false is not claimed for: an offer for it comes back unlisted."
           items:
             $ref: "#/components/schemas/HarnessHealth"
           type: array
@@ -204,6 +239,7 @@ components:
           format: double
           type: number
         outbox_depth:
+          description: Results the runner holds that this hub has not acknowledged.
           format: int64
           type: integer
         recent_errors:
@@ -212,6 +248,7 @@ components:
             type: string
           type: array
         spool_depth:
+          description: Events the runner holds that this hub has not acknowledged.
           format: int64
           type: integer
       required:
@@ -269,14 +306,18 @@ components:
       properties:
         error:
           $ref: "#/components/schemas/RunError"
+          description: Why the run did not succeed. A failed result with class refused is the runner declining a run it was offered, before claiming it.
         final_text:
+          description: The harness's last answer, at most 1 MiB.
           type: string
         last_seq:
+          description: The seq of the run's last event, 0 when it had none. The run's event stream is complete once acked_through reaches it.
           format: int64
           type: integer
         metrics:
           $ref: "#/components/schemas/Metrics"
         state:
+          description: How the run ended. lost here is the runner's own report of a run a previous process held and could not finish.
           enum:
             - succeeded
             - failed
@@ -296,29 +337,40 @@ components:
       additionalProperties: true
       properties:
         cancel_requested_at:
+          description: When a cancel was asked for a run a runner holds; present until the run ends.
           format: date-time
           type: string
         created_at:
+          description: When the run was submitted.
           format: date-time
           type: string
         harness:
+          description: The harness it runs on.
           type: string
         model:
+          description: The model it runs.
           type: string
         reason:
+          description: Why the run is waiting, or why it ended the way it did, for a person.
           type: string
         result:
           $ref: "#/components/schemas/Result"
+          description: The runner's terminal report, once the hub has it. A run lost by its runner, or ended on the hub before a runner started it, is terminal with no result.
         resumes_at:
+          description: For a waiting run, when it is expected to continue.
           format: date-time
           type: string
         run_id:
+          description: The run id.
           type: string
         runner_id:
+          description: The runner the run was offered to or is held by. Absent while queued.
           type: string
         session_id:
+          description: The session the run belongs to.
           type: string
         state:
+          description: "queued: waiting for a runner that can take it. offered: sent to a runner that has not listed it back yet. Then the protocol's states; the last five are terminal."
           enum:
             - queued
             - offered
@@ -333,6 +385,7 @@ components:
             - lost
           type: string
         updated_at:
+          description: When its state last changed.
           format: date-time
           type: string
       required:
@@ -348,8 +401,10 @@ components:
       additionalProperties: true
       properties:
         class:
+          description: "What kind of failure, for a program to act on: refused, session_closed, resume_rejected, usage_limit, prompt_too_long, source_refused, setup_failed, inactivity_timeout and others. Not a closed set: a class you do not know is a failure to show, not to parse."
           type: string
         message:
+          description: What happened, for a person. At most 1 MiB.
           type: string
       required:
         - class
@@ -361,25 +416,31 @@ components:
         by_model:
           additionalProperties:
             $ref: "#/components/schemas/Usage"
+          description: Tokens for the whole run, every turn and every account, by model.
           type: object
       type: object
     Runner:
       additionalProperties: true
       properties:
         drain_requested_at:
+          description: When a drain was asked for that no sync has yet answered with draining.
           format: date-time
           type: string
         draining:
+          description: "What the runner said at its last sync: it takes no new runs and exits once its runs have ended."
           type: boolean
         health:
           $ref: "#/components/schemas/Health"
           description: The runner's own health at its last sync, unchanged by the hub. Absent for a runner that has never synced, and as old as last_sync_at.
         last_sync_at:
+          description: When the runner last synced. Absent for one that registered and never synced.
           format: date-time
           type: string
         name:
+          description: The runner's name, for display.
           type: string
         runner_id:
+          description: The runner's id.
           type: string
       required:
         - runner_id
@@ -390,6 +451,7 @@ components:
       additionalProperties: true
       properties:
         runners:
+          description: Every runner the hub knows, most recently synced first.
           items:
             $ref: "#/components/schemas/Runner"
           type: array
@@ -400,23 +462,31 @@ components:
       additionalProperties: true
       properties:
         close_reason:
+          description: "Why it closed: closed (asked for through this API), closed_by_owner (on the runner's machine, or its runner deregistered), expired (idle past the owner's TTL) or disk_pressure."
           type: string
         close_requested_at:
+          description: When a close was asked for, until the runner reports it done.
           format: date-time
           type: string
         closed_at:
+          description: When the session closed.
           format: date-time
           type: string
         created_at:
+          description: When the session's first run was submitted.
           format: date-time
           type: string
         harness:
+          description: The harness every run in the session uses.
           type: string
         runner_id:
+          description: The runner that claimed the session's first run, the only one that can continue it. Absent until then.
           type: string
         session_id:
+          description: The session id.
           type: string
         state:
+          description: "open takes runs. closing: a close was asked for and its runner has not yet done it. closed takes no new run."
           enum:
             - open
             - closing
@@ -432,9 +502,11 @@ components:
       additionalProperties: true
       properties:
         id:
+          description: The session id.
           minLength: 1
           type: string
         new:
+          description: true starts a session with this id, and is refused with 409 if the hub has one. false continues a session the hub has, and is refused with 404 if it has none.
           type: boolean
       required:
         - id
@@ -478,21 +550,26 @@ components:
         brief:
           $ref: "#/components/schemas/Brief"
         grants:
+          description: Secrets for this run alone. Sent to the runner with the run, never returned by this API, and blanked in the hub's store once the run is terminal.
           items:
             $ref: "#/components/schemas/Grant"
           type: array
         harness:
+          description: "The harness to run, by its id in a runner's capability document: claude or codex."
           minLength: 1
           type: string
         inactivity_ms:
+          description: Stop the run after this many milliseconds with no event; it can only lower the runner owner's own timeout. 0 is the owner's.
           format: int64
           minimum: 0
           type: integer
         max_wait_ms:
+          description: The most milliseconds the run may wait for a free account, summed over every wait; 0 is no cap.
           format: int64
           minimum: 0
           type: integer
         model:
+          description: The model, in the harness's own terms, such as haiku or gpt-5.1-codex.
           minLength: 1
           type: string
         run_id:
@@ -500,14 +577,18 @@ components:
           type: string
         session:
           $ref: "#/components/schemas/SessionChoice"
+          description: "The session the run belongs to. Absent: a new session with a generated id."
         sources:
+          description: What a new session's workdir is built from. A run continuing a session names the same sources or none.
           items:
             $ref: "#/components/schemas/Source"
           type: array
         start_at:
+          description: A moment the run must not start before.
           format: date-time
           type: string
         wall_clock_ms:
+          description: The most milliseconds the harness may run, not counting waits; 0 is no cap.
           format: int64
           minimum: 0
           type: integer
@@ -520,14 +601,19 @@ components:
       additionalProperties: true
       properties:
         id:
+          description: The harness's id for the call, which joins a tool_result to its tool_call.
           type: string
         input:
+          description: The call's input, usually JSON, at most 8 KiB.
           type: string
         name:
+          description: The tool, as the harness names it, such as Read or shell.
           type: string
         output:
+          description: The tool's output, at most 8 KiB.
           type: string
         truncated:
+          description: Input or output was cut to fit 8 KiB.
           type: boolean
       required:
         - id
@@ -536,20 +622,26 @@ components:
       additionalProperties: true
       properties:
         cache_read:
+          description: Input tokens read from the prompt cache.
           format: int64
           type: integer
         cache_write:
+          description: Input tokens written to the prompt cache.
           format: int64
           type: integer
         cost_usd:
+          description: The harness's own cost estimate in US dollars, where it gives one (Claude Code does, Codex does not). Never computed by yad, and absent rather than zero when unknown.
           format: double
           type: number
         input:
+          description: Input tokens not read from a cache.
           format: int64
           type: integer
         model:
+          description: The model the tokens were spent on, as the harness reported it.
           type: string
         output:
+          description: Output tokens.
           format: int64
           type: integer
       required:

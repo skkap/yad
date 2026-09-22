@@ -13,25 +13,25 @@ import (
 // There is deliberately no permission, sandbox or tool-policy field: those are
 // the runner owner's configuration, and a hub must not be able to widen them.
 type Run struct {
-	RunID   string     `json:"run_id"`
-	Session SessionRef `json:"session"`
-	Harness string     `json:"harness"`
+	RunID   string     `json:"run_id" doc:"The run's id, chosen by the hub and unique within it. It is the {run} in the events and result paths, and a runner never runs the same id twice."`
+	Session SessionRef `json:"session" doc:"The session the run belongs to."`
+	Harness string     `json:"harness" doc:"The harness to run, by its id in the capability document: claude or codex today. Offer a run only to a runner whose document shows this harness first-class, present and without an error."`
 	// Model is required: a run names its model, and a harness left to its own
 	// default runs something different, and differently priced, from what the
 	// hub asked for.
-	Model   string   `json:"model"`
-	Brief   Brief    `json:"brief"`
-	Sources []Source `json:"sources,omitempty"`
-	Grants  []Grant  `json:"grants,omitempty"`
+	Model   string   `json:"model" doc:"The model the harness runs, in the harness's own terms: an alias such as haiku or a full name such as claude-haiku-4-5 or gpt-5.1-codex. Required; the runner never falls back to a default."`
+	Brief   Brief    `json:"brief" doc:"What the run is told."`
+	Sources []Source `json:"sources,omitempty" doc:"What the session's workdir is built from, used by the run that opens the session; a run continuing it names the same sources or none. Absent: the workdir starts empty. Each source sets exactly one of git, a repository checked out as a worktree, or path, an absolute directory on the runner's machine worked in place, taken only inside the directories its owner allows (their home unless they listed others) and otherwise failed with class source_refused."`
+	Grants  []Grant  `json:"grants,omitempty" doc:"Short-lived secrets for this run alone, delivered to the harness process and deleted when the run ends. Names follow rules the schema cannot state; a run breaking one is refused whole."`
 	// StartAt is a one-shot moment the run must not start before, like an email
 	// API's send_at. There is no recurrence anywhere in the protocol. A hub
 	// offers a run carrying one only to a runner advertising the "start_at"
 	// feature, until the moment has passed: any other runner would start it on
 	// arrival.
-	StartAt      *time.Time `json:"start_at,omitempty"`
-	MaxWaitMS    int64      `json:"max_wait_ms,omitempty"`
-	WallClockMS  int64      `json:"wall_clock_ms,omitempty"`
-	InactivityMS int64      `json:"inactivity_ms,omitempty"`
+	StartAt      *time.Time `json:"start_at,omitempty" doc:"A moment the run must not start before, once. While it is ahead, offer the run only to a runner advertising start_at, which claims it and holds it; once it has passed, any runner may take it."`
+	MaxWaitMS    int64      `json:"max_wait_ms,omitempty" doc:"The most milliseconds the run may spend waiting for a free account, summed over every wait. Past it the run ends timed_out with error class max_wait_exceeded. Absent or 0: no cap."`
+	WallClockMS  int64      `json:"wall_clock_ms,omitempty" doc:"The most milliseconds the harness may run, summed over the run's turns and not counting waits. Past it the run is stopped and ends timed_out with class wall_clock_timeout. Absent or 0: no cap."`
+	InactivityMS int64      `json:"inactivity_ms,omitempty" doc:"Stop the run when the harness emits no event for this many milliseconds; it ends timed_out with class inactivity_timeout. It can only lower the owner's own timeout (30 minutes unless they changed it), never raise it. Absent or 0: the owner's."`
 }
 
 // SessionMode is how the runner holds the harness process for a session.
@@ -46,30 +46,34 @@ const (
 
 // SessionRef names the session a run belongs to.
 type SessionRef struct {
-	ID   string      `json:"id"`
-	New  bool        `json:"new"`
-	Mode SessionMode `json:"mode,omitempty" enum:"per_run,live"`
+	ID   string      `json:"id" doc:"The session's id, chosen by the hub. A session lives on the runner that claimed its first run and is continued only there."`
+	New  bool        `json:"new" doc:"true for the run that opens the session, false for every later run. A runner refuses new true for a session id it already has, and new false for one it does not hold."`
+	Mode SessionMode `json:"mode,omitempty" enum:"per_run,live" doc:"per_run, the default: a fresh harness process for each run, resuming the session's conversation. live is reserved: offer it only to a runner advertising live_sessions, which none does yet."`
 }
 
 // Brief is what the run is told: context goes into the harness's system prompt
 // so it survives compaction; the instruction is the one user turn.
 type Brief struct {
-	Context     string `json:"context,omitempty"`
-	Instruction string `json:"instruction"`
+	Context     string `json:"context,omitempty" doc:"Background appended to the harness's system prompt, so it survives the harness compacting its conversation."`
+	Instruction string `json:"instruction" doc:"The run's one user message: what to do. Required."`
 }
 
 // Source is one input the workdir is built from: a git repository or an
 // existing local path. Exactly one field is set.
 type Source struct {
+	// Neither field has a doc tag, and Run.Sources describes both instead:
+	// the document's oneOf branches copy these two property schemas, and
+	// oasdiff reads a description added inside a branch as the branch
+	// removed and another added — a breaking change for a sentence.
 	Git  *GitSource `json:"git,omitempty"`
 	Path string     `json:"path,omitempty"`
 }
 
 // GitSource is a repository to check out as a worktree on Branch, cut from Base.
 type GitSource struct {
-	URL    string `json:"url"`
-	Base   string `json:"base,omitempty"`
-	Branch string `json:"branch,omitempty"`
+	URL    string `json:"url" doc:"The repository, over https or ssh, fetched with the machine's own git credentials. Required."`
+	Base   string `json:"base,omitempty" doc:"The ref a new branch is cut from. Absent: the repository's default branch."`
+	Branch string `json:"branch,omitempty" doc:"The branch the run works on, checked out as a worktree. Absent: one named after the session."`
 }
 
 // GrantDelivery is how a grant reaches the harness. Never argv.
@@ -82,9 +86,9 @@ const (
 
 // Grant is a short-lived secret scoped to one run.
 type Grant struct {
-	Name  string        `json:"name"`
-	Value string        `json:"value"`
-	As    GrantDelivery `json:"as" enum:"env,file"`
+	Name  string        `json:"name" doc:"An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH, HOME, LD_* or DYLD_*, nor a variable that picks a harness's credential or home, such as ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR, CODEX_HOME or OPENAI_API_KEY; matched in any case. No two grants may share a name, and no two file grants may differ only by case."`
+	Value string        `json:"value" doc:"The secret. Never logged or shown; a hub should keep it only until the run is terminal."`
+	As    GrantDelivery `json:"as" enum:"env,file" doc:"env: set as the variable name=value in the harness's environment. file: written to a 0600 file named name outside the workdir, whose path the harness reads from the variable name."`
 }
 
 // RunState is where a run is. The set is closed and mirrored by DOMAIN.md's

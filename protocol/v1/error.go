@@ -6,8 +6,8 @@ import "fmt"
 // runner on a customer's machine is debugged by someone reading it.
 type Error struct {
 	Code       string `json:"code" doc:"What went wrong, for a program to act on. v1 names ten codes: not_implemented, unauthorized, runner_revoked, version_too_old, conflict, not_found, invalid, unsupported_protocol, not_holder and internal. They are not a closed set: a client meeting a code it does not know acts on the HTTP status and shows message and next_action to a person."`
-	Message    string `json:"message"`
-	NextAction string `json:"next_action"`
+	Message    string `json:"message" doc:"What went wrong, for a person."`
+	NextAction string `json:"next_action" doc:"What the reader should do about it, for a person: the runner's owner reads it on their machine. Required on every error."`
 }
 
 // ErrorEnvelope wraps Error so the body is always {"error": {...}} and a hub
