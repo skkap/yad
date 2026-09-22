@@ -43,21 +43,22 @@ func (s section) String() string {
 }
 
 var (
-	hubWire       = section{n: 2}
-	hubCalls      = section{n: 3}
-	hubRegister   = section{3, "`POST /runners/register`"}
-	hubSync       = section{3, "`POST /runners/{runner}/sync`"}
-	hubEventsCall = section{3, "`POST /runs/{run}/events`"}
-	hubResultCall = section{3, "`POST /runs/{run}/result`"}
-	hubRunRules   = section{4, "Rules the schema cannot state"}
-	hubOffers     = section{4, "Who may be offered what"}
-	hubLeases     = section{n: 5}
-	hubEvents     = section{6, "Events"}
-	hubResults    = section{6, "Results"}
-	hubControls   = section{n: 7}
-	hubSessions   = section{n: 8}
-	hubErrors     = section{n: 10}
-	hubVersioning = section{n: 11}
+	hubWire          = section{n: 2}
+	hubCalls         = section{n: 3}
+	hubRegister      = section{3, "`POST /runners/register`"}
+	hubSync          = section{3, "`POST /runners/{runner}/sync`"}
+	hubEventsCall    = section{3, "`POST /runs/{run}/events`"}
+	hubResultCall    = section{3, "`POST /runs/{run}/result`"}
+	hubRunRules      = section{4, "Rules the schema cannot state"}
+	hubOffers        = section{4, "Who may be offered what"}
+	hubLeases        = section{n: 5}
+	hubEvents        = section{6, "Events"}
+	hubResults       = section{6, "Results"}
+	hubRunnerAnswers = section{6, "How a runner treats your answers to events and results"}
+	hubControls      = section{n: 7}
+	hubSessions      = section{n: 8}
+	hubErrors        = section{n: 10}
+	hubVersioning    = section{n: 11}
 )
 
 // checks is the suite, in the order it runs. The order is part of it: a check

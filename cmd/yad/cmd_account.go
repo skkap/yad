@@ -38,7 +38,7 @@ func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error
 	case "remove":
 		return accountRemove(ctx, g, args[1:], w)
 	case "use":
-		return accountUseRefusal(g.paths, args[1:])
+		return accountUseRefusal(g.paths)
 	}
 	return fmt.Errorf("unknown account subcommand %q — %s", args[0], accountUsage)
 }
@@ -361,9 +361,9 @@ func checkHarness(id string) error {
 
 // addToConfig appends a label to the harness's account order if it is not
 
-// addToConfig appends a label to the harness's account order if it is not
-// already there. Appending is the whole of the ordering: the owner's list is
-// the order runs take, and rearranging it is editing config.toml.
+// addToConfig appends a label to the harness's account list if it is not
+// already there. The list says which accounts take part and breaks ties among
+// them; which one a run takes is the soonest refill (decision 0039).
 func addToConfig(p config.Paths, cfg config.Config, id, label string) error {
 	h := cfg.Harness[id]
 	if slices.Contains(h.Accounts, label) {

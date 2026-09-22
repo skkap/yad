@@ -16,6 +16,7 @@ func TestUnbuiltCommandsSayWhereTheWorkIs(t *testing.T) {
 		name     string
 		args     []string
 		want     []string // each appears in the refusal
+		not      []string // none does
 		commands [][]string
 	}{{
 		name:     "disconnect",
@@ -23,17 +24,14 @@ func TestUnbuiltCommandsSayWhereTheWorkIs(t *testing.T) {
 		want:     []string{"DEV-81"},
 		commands: [][]string{{"daemon", "stop"}},
 	}, {
-		name:     "account use for a harness with accounts",
+		// Which account a run takes is the soonest refill (0039), so the
+		// refusal must not send the owner to reorder a list that decides
+		// nothing but ties.
+		name:     "account use",
 		args:     []string{"account", "use", "claude", "work"},
-		want:     []string{"[harness.claude]", "config.toml", "order runs take"},
-		commands: [][]string{{"account", "list"}, {"daemon", "restart"}},
-	}, {
-		// What the owner typed is not a harness, so it is not repeated as
-		// though it named a section of config.toml.
-		name:     "account use for something that is not a harness",
-		args:     []string{"account", "use", "it's $(id)"},
-		want:     []string{"[harness.<id>]"},
-		commands: [][]string{{"account", "list"}, {"daemon", "restart"}},
+		want:     []string{"0039", "refills soonest", "only breaks ties"},
+		not:      []string{"order runs take", "put the account you want first"},
+		commands: [][]string{{"account", "list"}},
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, _, errs := yad(t, append([]string{"--profile", "side"}, tc.args...)...)
@@ -43,6 +41,11 @@ func TestUnbuiltCommandsSayWhereTheWorkIs(t *testing.T) {
 			for _, stale := range []string{"epic", "DEV-28", "arrives"} {
 				if strings.Contains(errs, stale) {
 					t.Errorf("the refusal still points at finished work (%q): %s", stale, errs)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(errs, n) {
+					t.Errorf("the refusal says %q: %s", n, errs)
 				}
 			}
 			for _, w := range tc.want {

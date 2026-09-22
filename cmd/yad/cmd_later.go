@@ -19,14 +19,12 @@ func cmdDisconnect(g global) error {
 		disconnectTask, g.paths.Command("daemon", "stop"))
 }
 
-// accountUseRefusal is for `yad account use`, which no task plans: the order
-// runs take is config.toml's own list, and editing that list is how it is
-// rearranged.
-func accountUseRefusal(p config.Paths, args []string) error {
-	section := "[harness.<id>]"
-	if len(args) > 0 && checkHarness(args[0]) == nil {
-		section = "[harness." + args[0] + "]"
-	}
-	return fmt.Errorf("`yad account use` does not exist: the order of `accounts` under %s in %s is the order runs take, so put the account you want first there. `%s` shows the accounts, and `%s` makes a running daemon read the new order",
-		section, p.ConfigFile(), p.Command("account", "list"), p.Command("daemon", "restart"))
+// accountUseRefusal is for `yad account use`, which no task plans, because
+// there is nothing for it to set: a run takes the free account whose usage
+// window refills soonest (decision 0039), and config.toml's list only says
+// which accounts take part and breaks ties. Telling the owner to reorder that
+// list would promise a choice the runner does not make.
+func accountUseRefusal(p config.Paths) error {
+	return fmt.Errorf("`yad account use` does not exist, because no account is picked by hand: of a harness's free accounts, a run takes the one whose usage window refills soonest, so quota about to refill is spent rather than wasted (decision 0039). The order of `accounts` in config.toml only breaks ties. `%s` shows each account's state and when it refills",
+		p.Command("account", "list"))
 }

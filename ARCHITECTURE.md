@@ -811,7 +811,7 @@ capacity = 4
 [harness.claude]
 permission_mode = "bypassPermissions"   # the owner's call — 0015; the default when unset
 cap             = 3
-accounts        = ["personal", "family"] # failover order
+accounts        = ["personal", "family"] # which take part; the order breaks ties (0039)
 
 [harness.codex]
 sandbox  = "danger-full-access"   # the owner's call — 0036; this and never are the defaults when unset
@@ -892,9 +892,9 @@ yad account remove <harness> <label> [--yes]
                                    shared transcripts are kept. A running daemon
                                    stops using it at once, and a run on it
                                    finishes there before the home goes
-yad account use                    not built, and not planned: it refuses, saying
-                                   the order of config.toml's `accounts` is the
-                                   order runs take
+yad account use                    not built, and not planned: it refuses, saying a
+                                   run takes the free account that refills soonest
+                                   (0039), so there is nothing to pick by hand
 yad service install|uninstall|status
                                    launchd user agent, systemd user unit (0028)
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1

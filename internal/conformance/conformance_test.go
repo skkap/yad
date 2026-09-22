@@ -223,7 +223,12 @@ func TestEveryCitedSectionIsInHubMD(t *testing.T) {
 		cited[c.section] = append(cited[c.section], c.id)
 	}
 	for _, u := range unchecked {
-		cited[u.section] = append(cited[u.section], "not checked: "+u.rule)
+		if len(u.sections) == 0 {
+			t.Errorf("not checked: %s says nowhere where it is written", u.rule)
+		}
+		for _, sec := range u.sections {
+			cited[sec] = append(cited[sec], "not checked: "+u.rule)
+		}
 	}
 	for s, by := range cited {
 		title, ok := hubSections[s.n]
