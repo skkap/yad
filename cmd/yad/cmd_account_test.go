@@ -243,15 +243,6 @@ func TestAccountRemoveWithoutYesRefusesUnattended(t *testing.T) {
 	}
 }
 
-// `yad account use` is the ordering command, and ordering is failover's.
-func TestAccountUseNamesTheTaskThatBringsIt(t *testing.T) {
-	accountEnv(t)
-	code, _, errs := yadIn(t, "account", "use", "claude", "work")
-	if code == 0 || !strings.Contains(errs, "DEV-28") {
-		t.Errorf("exit %d: %q", code, errs)
-	}
-}
-
 func TestAccountUsageIsPrintedForNonsense(t *testing.T) {
 	accountEnv(t)
 	for _, args := range [][]string{{"account"}, {"account", "wat"}, {"account", "add", "claude"}} {

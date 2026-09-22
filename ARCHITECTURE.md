@@ -870,7 +870,9 @@ yad doctor                         what is installed, what YAD can drive, and wh
                                    this machine or profile is reachable by other users
 yad harnesses [--json]             the capability document, as a hub receives it
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
-yad disconnect <name>
+yad disconnect <name>              not built: its coordination with a running
+                                   daemon is being designed (DEV-81); it refuses
+                                   and says so
 yad daemon start|stop|restart|status|logs [-f] [-n N]
                                    the runner process
 yad status [--json]                connections, capacity, runs, sessions and recent
@@ -890,7 +892,9 @@ yad account remove <harness> <label> [--yes]
                                    shared transcripts are kept. A running daemon
                                    stops using it at once, and a run on it
                                    finishes there before the home goes
-yad account use                    (with failover — DEV-28)
+yad account use                    not built, and not planned: it refuses, saying
+                                   the order of config.toml's `accounts` is the
+                                   order runs take
 yad service install|uninstall|status
                                    launchd user agent, systemd user unit (0028)
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1

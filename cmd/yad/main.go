@@ -90,7 +90,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "conformance":
 		cmdErr = cmdConformance(ctx, rest, stdout)
 	case "disconnect":
-		cmdErr = notYet(cmd, rest)
+		cmdErr = cmdDisconnect(g)
 	case "agents":
 		cmdErr = errors.New("`yad agents` is now `yad harnesses` — Claude Code and Codex are harnesses here (DOMAIN.md)")
 	case "help", "-h", "--help":
@@ -183,7 +183,8 @@ usage: yad [--profile name] <command> [flags]
   version             version and build
 
   disconnect · account use
-                      exist, and each says which epic brings it
+                      not built; each says where the work is, and what to
+                      do meanwhile
 
 ARCHITECTURE.md §9 has the build order; the plan is in Zumino, yad/dev.
 `)

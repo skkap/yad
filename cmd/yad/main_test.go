@@ -93,16 +93,6 @@ func TestHarnessesPrintsTheCapabilityDocument(t *testing.T) {
 	}
 }
 
-// A command that is not built yet must say which epic brings it.
-func TestUnbuiltCommandsNameTheirEpic(t *testing.T) {
-	for cmd := range arrivesIn {
-		code, _, errs := yad(t, cmd)
-		if code != 1 || !strings.Contains(errs, "arrives in epic E") {
-			t.Errorf("yad %s: exit %d, %q", cmd, code, errs)
-		}
-	}
-}
-
 func TestProfileIsValidated(t *testing.T) {
 	if code, _, _ := yad(t, "--profile", "../x", "version"); code != 2 {
 		t.Errorf("a path-shaped profile exited %d", code)

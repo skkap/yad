@@ -38,7 +38,7 @@ func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error
 	case "remove":
 		return accountRemove(ctx, g, args[1:], w)
 	case "use":
-		return errors.New("`yad account use` arrives with failover (DEV-28, Zumino yad/dev) — until then the order in config.toml's `accounts` is the order runs take, and `yad account add` appends to it")
+		return accountUseRefusal(g.paths, args[1:])
 	}
 	return fmt.Errorf("unknown account subcommand %q — %s", args[0], accountUsage)
 }
