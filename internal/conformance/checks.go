@@ -211,6 +211,12 @@ func checks() []check {
 		needs:   secondRun,
 		run:     checkLeaseLapse,
 	}, {
+		id:      "lease/offer-lapse",
+		rule:    "An offer carries the same lease as a claim: an offer its runner does not claim within the lease named beside it goes back in the queue, a claim listed after that is answered with a cancel for the run, and the run is offered again.",
+		section: sectionSync + " (Lease)",
+		needs:   credential,
+		run:     checkOfferLapse,
+	}, {
 		id:      "sync/offers-within-capacity",
 		rule:    "A hub never offers a sync more runs than the free capacity that sync declared — in every answer it gives, not only in answer to a sync written to test it.",
 		section: sectionSync,

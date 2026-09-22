@@ -355,7 +355,7 @@ func (s *session) missing(need requirement) string {
 		// operator has already followed.
 		return "this hub offered its runs one at a time, and the lease rules need two held at once — one to report on and one to leave unrenewed — so they could not be checked against it"
 	case need >= secondRun && s.lapse == "":
-		return "only one run was offered, and the lease rules need a second one to leave unrenewed; queue two runs for harness " + s.opts.Harness + " and run the suite again"
+		return "only one run was offered, and the lease rules need a second one to leave unrenewed; queue three runs for harness " + s.opts.Harness + " and run the suite again"
 	}
 	return ""
 }

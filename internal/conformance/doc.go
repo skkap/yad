@@ -34,9 +34,10 @@
 // which no real run asks for, so a suite pointed at a working hub is offered
 // nothing anyone was waiting on — and burns the registration token it was
 // given. The rules about claiming, events, results and the lease need a run:
-// queue one or two for that harness, and the suite claims them, reports one
-// failed with error class refused (§2's answer for a run a runner will not
-// take) and leaves the other to lose its lease. Without them those checks are
+// queue three for that harness, and the suite claims two, reports one failed
+// with error class refused (§2's answer for a run a runner will not take),
+// leaves the other to lose its lease, and leaves the third offered and
+// unclaimed until its offer lapses. Without them those checks are
 // reported as skipped, with what to queue to make them possible: a skip is
 // never a pass. Given a second registration token, it spends that too, on a
 // second runner that sends events and a result for the run the first one

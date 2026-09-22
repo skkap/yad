@@ -176,7 +176,7 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 	first := slices.IndexFunc(answers, func(ids []string) bool { return len(ids) > 0 })
 	switch {
 	case first < 0:
-		return skipf("the hub offered no run for harness %s in %d syncs, so the rules that need one could not be checked; queue one or two runs for that harness and run the suite again",
+		return skipf("the hub offered no run for harness %s in %d syncs, so the rules that need one could not be checked; queue three runs for that harness and run the suite again",
 			s.opts.Harness, offerSyncs)
 	// Every run the hub dropped, not one of them: seeing A come back says
 	// nothing about B, and a hub that re-offers one run for ever while losing
