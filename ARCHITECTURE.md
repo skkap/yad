@@ -567,7 +567,11 @@ for `codex`); the suite never runs a real harness.
 - **Restart** — [0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md).
   Every run a previous process began is reported lost (`runner_restarted`,
   `last_seq` its last spooled event) through the outbox, never run again; a
-  claim it never began is withdrawn, for the hub to offer again. The
+  claim the hub never acknowledged is withdrawn, with the session it opened,
+  for the hub to offer again — the hub had bound no session to it, and sends
+  the session's next run as new
+  ([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)).
+  An acknowledged claim that never began is reported lost like the rest. The
   spool and the outbox are replayed before the first claim. Sessions keep their
   native id and workdir, so the next run resumes them.
 - **Watchdogs**: inactivity on the event stream (owner default 30 min; a run may

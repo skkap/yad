@@ -1073,6 +1073,35 @@ func (q *Queries) RunsOfferedTo(ctx context.Context, runnerID sql.NullString) ([
 	return items, nil
 }
 
+const sessionSpecs = `-- name: SessionSpecs :many
+SELECT spec FROM runs WHERE session_id = ? ORDER BY created_at, id
+`
+
+// The specs of a session's runs in the order they were submitted, for the
+// sources a run opening the session carries when it names none itself.
+func (q *Queries) SessionSpecs(ctx context.Context, sessionID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, sessionSpecs, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var spec string
+		if err := rows.Scan(&spec); err != nil {
+			return nil, err
+		}
+		items = append(items, spec)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sessionsToClose = `-- name: SessionsToClose :many
 SELECT id FROM sessions
 WHERE runner_id = ?1 AND (close_requested_at IS NOT NULL AND closed_at IS NULL OR close_owed = 1)

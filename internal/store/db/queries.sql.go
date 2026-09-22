@@ -28,6 +28,22 @@ func (q *Queries) AckEvents(ctx context.Context, arg AckEventsParams) error {
 	return err
 }
 
+const acknowledgeClaim = `-- name: AcknowledgeClaim :exec
+UPDATE runs SET acknowledged = 1 WHERE connection = ? AND id = ?
+`
+
+type AcknowledgeClaimParams struct {
+	Connection string
+	ID         string
+}
+
+// The hub answered a sync listing this claim without cancelling it, which is
+// when it bound the run's session to this runner.
+func (q *Queries) AcknowledgeClaim(ctx context.Context, arg AcknowledgeClaimParams) error {
+	_, err := q.db.ExecContext(ctx, acknowledgeClaim, arg.Connection, arg.ID)
+	return err
+}
+
 const appendEvent = `-- name: AppendEvent :exec
 INSERT INTO events (connection, run_id, seq, body) VALUES (?, ?, ?, ?)
 `
@@ -364,7 +380,7 @@ func (q *Queries) FreeSlots(ctx context.Context, arg FreeSlotsParams) error {
 }
 
 const getRun = `-- name: GetRun :one
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs WHERE connection = ? AND id = ?
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent, acknowledged FROM runs WHERE connection = ? AND id = ?
 `
 
 type GetRunParams struct {
@@ -394,6 +410,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.AccountSwitches,
 		&i.HadGrants,
 		&i.Spent,
+		&i.Acknowledged,
 	)
 	return i, err
 }
@@ -670,7 +687,7 @@ func (q *Queries) ListAllAccounts(ctx context.Context) ([]Account, error) {
 }
 
 const listAllHeldRuns = `-- name: ListAllHeldRuns :many
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent, acknowledged FROM runs
 WHERE state IN ('claimed', 'preparing', 'running', 'waiting')
 ORDER BY created_at
 `
@@ -704,6 +721,7 @@ func (q *Queries) ListAllHeldRuns(ctx context.Context) ([]Run, error) {
 			&i.AccountSwitches,
 			&i.HadGrants,
 			&i.Spent,
+			&i.Acknowledged,
 		); err != nil {
 			return nil, err
 		}
@@ -719,7 +737,7 @@ func (q *Queries) ListAllHeldRuns(ctx context.Context) ([]Run, error) {
 }
 
 const listHeldRuns = `-- name: ListHeldRuns :many
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent, acknowledged FROM runs
 WHERE connection = ? AND state IN ('claimed', 'preparing', 'running', 'waiting')
 ORDER BY created_at
 `
@@ -752,6 +770,7 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 			&i.AccountSwitches,
 			&i.HadGrants,
 			&i.Spent,
+			&i.Acknowledged,
 		); err != nil {
 			return nil, err
 		}
@@ -767,7 +786,7 @@ func (q *Queries) ListHeldRuns(ctx context.Context, connection string) ([]Run, e
 }
 
 const listReportingRuns = `-- name: ListReportingRuns :many
-SELECT r.connection, r.id, r.session_id, r.harness, r.model, r.state, r.spec, r.account, r.resumes_at, r.reason, r.created_at, r.updated_at, r.started_at, r.waited_ms, r.waiting_since, r.account_switches, r.had_grants, r.spent FROM runs r JOIN outbox o ON o.connection = r.connection AND o.run_id = r.id
+SELECT r.connection, r.id, r.session_id, r.harness, r.model, r.state, r.spec, r.account, r.resumes_at, r.reason, r.created_at, r.updated_at, r.started_at, r.waited_ms, r.waiting_since, r.account_switches, r.had_grants, r.spent, r.acknowledged FROM runs r JOIN outbox o ON o.connection = r.connection AND o.run_id = r.id
 WHERE r.connection = ? ORDER BY r.created_at
 `
 
@@ -802,6 +821,7 @@ func (q *Queries) ListReportingRuns(ctx context.Context, connection string) ([]R
 			&i.AccountSwitches,
 			&i.HadGrants,
 			&i.Spent,
+			&i.Acknowledged,
 		); err != nil {
 			return nil, err
 		}
@@ -887,7 +907,7 @@ func (q *Queries) ListSessions(ctx context.Context) ([]ListSessionsRow, error) {
 }
 
 const listWaitingRuns = `-- name: ListWaitingRuns :many
-SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent FROM runs WHERE state = 'waiting' ORDER BY created_at, connection, id
+SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent, acknowledged FROM runs WHERE state = 'waiting' ORDER BY created_at, connection, id
 `
 
 // Every parked run, across connections, for the collector: it ends the ones
@@ -923,6 +943,7 @@ func (q *Queries) ListWaitingRuns(ctx context.Context) ([]Run, error) {
 			&i.AccountSwitches,
 			&i.HadGrants,
 			&i.Spent,
+			&i.Acknowledged,
 		); err != nil {
 			return nil, err
 		}

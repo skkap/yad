@@ -95,6 +95,11 @@ SELECT * FROM runs WHERE connection = ? AND id = ?;
 -- name: SetRunState :exec
 UPDATE runs SET state = ?, resumes_at = ?, reason = ?, updated_at = ? WHERE connection = ? AND id = ?;
 
+-- The hub answered a sync listing this claim without cancelling it, which is
+-- when it bound the run's session to this runner.
+-- name: AcknowledgeClaim :exec
+UPDATE runs SET acknowledged = 1 WHERE connection = ? AND id = ?;
+
 -- The moment the run first reached preparing, kept so a run that waited
 -- between two turns still reports the whole of its duration. Written once:
 -- a resumed run is the same run, not a new one.

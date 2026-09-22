@@ -73,9 +73,11 @@ var (
 
 // EnqueueRun puts a run in the queue. A run in a new session creates it; a
 // run continuing one needs the hub to have it. The run's own flag says which,
-// and it is checked rather than trusted, because the runner acts on it: a
-// "new" run in an existing session would start the conversation over, and a
-// continuing one in no session would resume nothing.
+// and it is checked rather than trusted: a "new" run for a session id already
+// taken would join a conversation its submitter never meant, and a continuing
+// one in no session has nothing to continue. The flag the runner is sent is
+// not this one: it is decided at offer, by whether a claim has bound the
+// session yet (decision 0047).
 func (s *Store) EnqueueRun(ctx context.Context, run v1.Run, now time.Time) error {
 	if err := run.Validate(); err != nil {
 		return fmt.Errorf("run %q: %w", run.RunID, err)

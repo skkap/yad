@@ -1,0 +1,13 @@
+-- Whether the hub has acknowledged this run's claim: a sync listing it was
+-- answered without a cancel for it (decision 0047). The hub binds a session
+-- to the runner at that answer and not before, and decides session.new by
+-- whether it has, so a restart has to know which side of it a claim was on.
+--
+-- A claim a previous process held that was never acknowledged is withdrawn at
+-- the next start, with the session it opened: the hub never bound that
+-- session, and sends the next run in it as new. One that was acknowledged and
+-- had not yet begun to prepare -- waiting for its start_at, say -- is reported
+-- lost instead, and its session stays: the hub bound it, and sends the next
+-- run in it as continuing. Rows written before this migration read as not
+-- acknowledged, which is what every claimed row was taken for until now.
+ALTER TABLE runs ADD COLUMN acknowledged INTEGER NOT NULL DEFAULT 0;

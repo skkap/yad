@@ -103,3 +103,44 @@ across a window in which the hub may offer the run to someone else at any
 moment, so whether a late refusal lands would depend on queue order. A grace
 period after the offer is taken back — a second timing every hub would have to
 choose and no runner can learn.
+
+## `session.new` for a session whose first run never bound it (DEV-118)
+
+**Decision.** The hub decides `session.new` when it offers a run: `true` while
+no claim has bound the session, `false` after. `yad hub` no longer sends the
+flag its submitter set — that flag now decides only whether the hub creates
+the session or finds it. And a runner restarting withdraws a claim the hub
+never acknowledged together with the session it opened, as a live process
+does on withdrawal (`settleSession`), while a claim the hub did acknowledge is
+reported lost and keeps its session. HUB.md §8 says so.
+
+**Why.** "The run that opens a session" is the first one a runner claims, and
+only the hub's history says which that is. A session whose first run was
+refused, cancelled on its claim or withdrawn exists on no runner; `yad hub`
+sent its next run with `new: false`, the runner refused it as a session it
+does not hold, and every later run in the session went the same way. Deciding
+at offer time needs the runner to agree on what "bound" means: the hub binds
+at the answer acknowledging a claim, so the runner now records that answer
+(`runs.acknowledged`) and a restart keeps exactly the sessions the hub bound.
+Before, a restart withdrew every claim that had not begun to prepare — an
+acknowledged one waiting for its `start_at` included — and deleted its
+session, which the hub then continued.
+
+**Decided without asking.** A run that goes out as new but named no sources
+— as a continuing run usually does — is sent with the sources its session's
+earlier runs named, oldest first. The runner builds a new session's workdir
+from the run that opens it, and would otherwise build this one empty. HUB.md
+§8 asks the same of every hub.
+
+**What neither side can see.** An acknowledgement the hub sent and the runner
+never read before it stopped: the hub bound the session, the runner withdrew
+it, and the next run, sent as continuing, is refused as a session the runner
+does not hold. It needs a crash inside one round trip, and the refusal names
+the cause; closing it would need the runner to accept `new: true` for a session
+it holds that never ran a turn, which the owner did not choose.
+
+**Considered.** Keeping `new` fixed at submit and failing the rest of a session
+whose first run ended unbound, telling the submitter to start again — every
+refused first run would cost its whole session. Having the runner accept
+`new: true` for a session it holds that never ran a turn — a runner-side guess
+where the hub has the facts.

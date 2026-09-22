@@ -305,6 +305,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 			if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
 				continue
 			}
+			if err := opening(ctx, q, &run); err != nil {
+				return nil, err
+			}
 			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
 				return nil, err
 			}
@@ -321,6 +324,44 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 		}
 	}
 	return runs, nil
+}
+
+// opening sets session.new on a run about to be offered: true while no claim
+// has bound its session, false after (decision 0047). It is decided here and
+// not at submit because the run that opens a session is the first one a
+// runner claims, and which that is only the hub's history can say: a session
+// whose first run was refused, cancelled on its claim or withdrawn exists on
+// no runner, and its next run has to open it. What the submitter said at
+// submit decided only whether the hub created the session or found it.
+//
+// A run opening the session carries the session's sources when it names none
+// itself, as a run continuing one usually does: the runner builds a new
+// session's workdir from the run that opens it, and would build this one
+// empty.
+func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
+	sess, err := q.GetSession(ctx, run.Session.ID)
+	if err != nil {
+		return err
+	}
+	run.Session.New = !sess.RunnerID.Valid
+	if !run.Session.New || len(run.Sources) > 0 {
+		return nil
+	}
+	specs, err := q.SessionSpecs(ctx, run.Session.ID)
+	if err != nil {
+		return err
+	}
+	for _, spec := range specs {
+		var earlier v1.Run
+		if err := json.Unmarshal([]byte(spec), &earlier); err != nil {
+			return fmt.Errorf("stored run in session %s: %w", run.Session.ID, err)
+		}
+		if len(earlier.Sources) > 0 {
+			run.Sources = earlier.Sources
+			return nil
+		}
+	}
+	return nil
 }
 
 // Sweep withdraws offers and loses runs whose leases lapsed, and gives up the

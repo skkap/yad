@@ -909,25 +909,34 @@ A session is a durable conversation with one harness in one working directory,
 on one runner. You choose its id; the runner maps it to the harness's own
 session id, so you never need to know what a transcript file is.
 
-**`session.new` is `true` for the run that opens a session and `false` for
-every later run.** A runner refuses `new: true` for a session id it already
-has, and `new: false` for one it does not hold, rather than guess: guessing
-would resume a conversation that does not exist, or silently start over one
-that does. A later run names the same `sources` as the first, or none.
+**`session.new` is `true` while no claim has bound the session, and `false`
+after** ([0047](docs/decisions/0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)).
+Decide it when you offer the run, not when it is submitted: the run that
+opens a session is the first one a runner claims, and you learn which that is
+only from your own history. A session whose first run was refused, cancelled
+on its claim, withdrawn or left out by the runner was bound by no claim, and
+exists on no runner — so its next run goes out with `new: true`. Once a claim
+has bound the session (§3), every later run in it goes out `false`. A runner
+refuses `new: true` for a session id it already has, and `new: false` for one
+it does not hold, rather than guess: guessing would resume a conversation that
+does not exist, or silently start over one that does.
 
-> **Open point — not yet decided: `session.new` when the first run never
-> bound the session.** "The run that opens a session" is judged on the
-> runner, and a hub cannot always see it. Take a session whose first run was
-> refused, cancelled on its claim, or left out by the runner, so that no
-> claim ever bound it. What a yad runner keeps is defined: a claim you
-> cancelled or it withdrew leaves no session behind (§4), and a refusal
-> creates none — but a claim held by a runner process that died before the
-> claim was answered leaves the session on its disk, and the run is reported
-> `lost` after the restart. `yad hub` sends each run's `new` exactly as its
-> submitter set it, so the second run of a session whose first was refused
-> goes out with `new: false` to a runner that has no such session, and is
-> refused. The protocol has yet to say what a hub should send when it cannot
-> know whether the session was opened.
+A later run names the same `sources` as the first, or none — and a runner
+builds a new session's workdir from the run that opens it. So when a run that
+named none goes out with `new: true`, send it with the sources the session's
+earlier runs named. `yad hub` sends the first ones it finds among them, oldest
+first.
+
+What a runner keeps matches this. A refusal creates no session. A claim you
+cancel before its listing is answered, or one the runner withdraws, takes the
+session it opened with it (§4). A claim held by a runner process that stopped
+before the claim was answered is withdrawn by the next process, session and
+all; one that was answered — so you bound the session — and had not begun to
+prepare is reported `lost`, and its session stays for the next run to
+continue. The one case neither side can see is an answer you sent that the
+runner never read before it stopped: you bound the session, the runner
+withdrew it, and the next run, sent `false`, is refused as a session the
+runner does not hold.
 
 **Sessions stay put.** The first claim in a session binds it to that runner.
 Its later runs are offered to that runner alone — a session is resumable only

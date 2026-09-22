@@ -49,6 +49,11 @@ ON CONFLICT (id) DO NOTHING;
 -- name: GetSession :one
 SELECT * FROM sessions WHERE id = ?;
 
+-- name: SessionSpecs :many
+-- The specs of a session's runs in the order they were submitted, for the
+-- sources a run opening the session carries when it names none itself.
+SELECT spec FROM runs WHERE session_id = ? ORDER BY created_at, id;
+
 -- name: BindSession :exec
 -- The first claim in a session binds it; later ones leave it as it is.
 UPDATE sessions SET runner_id = ? WHERE id = ? AND runner_id IS NULL;
