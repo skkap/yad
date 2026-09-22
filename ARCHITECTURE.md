@@ -4,7 +4,9 @@ What YAD is made of, what it says on the wire, and how it drives a harness.
 [`DOMAIN.md`](DOMAIN.md) owns the words; this file owns the shape; the *why* of
 every choice below that was hard to reverse is a record in
 [`docs/decisions/`](docs/decisions/). Where a section and a record disagree, the
-record is older and this file is stale.
+record is older and this file is stale. The protocol's contract — what a hub
+must do — is [`HUB.md`](HUB.md), beside the generated
+`protocol/v1/openapi.yaml`; §2 here is its shape and its reasons.
 
 ## §0 The problem, stated once
 
@@ -97,13 +99,28 @@ beside them is generated and committed, and a test fails when they drift —
 [0017](docs/decisions/0017-protocol-types-are-the-source.md). A field's
 description reaches the document through its `doc:` struct tag; huma does not
 read Go comments, so a field documented only in a comment generates none.
-Nothing in the protocol is harness-specific: a hub never learns what a rollout
-file is.
+Every field a hub reads or writes carries one, written for someone generating
+a client who will read nothing else. Nothing in the protocol is
+harness-specific: a hub never learns what a rollout file is.
+
+**[`HUB.md`](HUB.md) is the contract, and this section is the why.** A hub is
+built from HUB.md and the document alone — Zumino's is built outside this
+repository — so every rule a hub must follow is written there in full, with
+an endpoint-by-endpoint contract, the state machine and a checklist. What
+follows is the protocol's shape as the runner sees it and the reasons behind
+it, each part naming the HUB.md section that states its rules. Where the two
+disagree, HUB.md is the one a hub was built from: fix whichever is wrong, and
+never leave them apart. `yad conformance` files each rule it checks under a
+part of this section (Calls, Sync, Run, Events, Result, Versioning), which is
+why those headings stay.
 
 A **connection** is a base URL — `https://zumino.cc/api/yad/v1` — and every path
 below is relative to it, so a hub can mount the protocol anywhere.
 
 ### Calls
+
+Contract: [HUB.md §3](HUB.md#3-the-calls), one call at a time, and
+[§10](HUB.md#10-errors-and-next_action) for errors.
 
 | | |
 |---|---|
@@ -141,6 +158,12 @@ base — an unknown path, a wrong method — carries the error envelope, never a
 plain-text 404 or 405.
 
 ### Sync
+
+Contract: [HUB.md §3](HUB.md#post-runnersrunnersync) for the call and the order a
+hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
+[§5](HUB.md#5-leases-timings-and-runners-that-go-away) for leases and timings,
+[§7](HUB.md#7-controls-and-features) for controls and
+[§8](HUB.md#8-sessions) for sessions.
 
 ```
 → { runner_id, fingerprint, capabilities?,        // document only when asked
@@ -254,6 +277,8 @@ plain-text 404 or 405.
 
 ### Run
 
+Contract: [HUB.md §4](HUB.md#4-runs), and [§9](HUB.md#9-grants) for grants.
+
 ```
 { run_id, session: { id, new, mode: "per_run" },
   harness, model,
@@ -275,6 +300,9 @@ that, so both sides check it and a run breaking it is refused whole
 
 ### Run states
 
+Contract: [HUB.md §4](HUB.md#run-states), which adds the two states only a hub
+has, `queued` and `offered`, and the error classes a hub acts on.
+
 ```
 claimed ─► preparing ─► running ─► succeeded | failed | cancelled | timed_out
                           │  ▲
@@ -294,6 +322,8 @@ a hub outage — [0023](docs/decisions/0023-lost-stands-against-a-late-result.md
 
 ### Events
 
+Contract: [HUB.md §6](HUB.md#events).
+
 ```
 { seq, at, kind, text?, tool?: { id, name, input?, output?, truncated? },
   status?, usage?: { model, input, output, cache_read, cache_write, cost_usd? },
@@ -308,9 +338,13 @@ per event; the runner caps text, error messages and a result's final text at
 1 MiB each, so one event or one result stays well under `yad hub`'s 16 MiB body
 limit. A proxy with a limit near 1 MiB can still refuse an outlier; the runner
 halves a refused batch down to one event and then keeps retrying it. Only the runner a run was claimed by may append to it, before or
-after it ends; anyone else gets `403 not_holder`.
+after it ends; anyone else gets `403 not_holder`, or `404 not_found` from a
+hub that will not name the run to a runner that does not hold it.
 
 ### Result
+
+Contract: [HUB.md §6](HUB.md#results), including the table of how a runner
+treats each answer.
 
 ```
 { state, final_text?, error?: { class, message },
@@ -334,6 +368,9 @@ a result from the runner the run was offered to or claimed by, once; the same
 state again is acknowledged.
 
 ### Versioning
+
+Contract: [HUB.md §11](HUB.md#11-versioning) and
+[§7](HUB.md#7-controls-and-features) for the features.
 
 The major version is in the path. Within it, both sides advertise feature
 strings — the runner in its capability document, the hub in its register

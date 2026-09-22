@@ -19,11 +19,6 @@ A hub is anything that hosts the server half of the runner protocol:
 - **`yad hub`** — the same binary in server mode, for anything that would rather
   not embed the protocol.
 
-YAD is deliberately not a tracker, a UI, an orchestrator or a sandbox. The
-vocabulary is in [`DOMAIN.md`](DOMAIN.md), the shape and the protocol in
-[`ARCHITECTURE.md`](ARCHITECTURE.md), and the reasons in
-[`docs/decisions/`](docs/decisions/).
-
 ```
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
@@ -47,21 +42,74 @@ the one this yad was built against is still `ready`, with a `warning:` line
 under the table saying so — as are the things about the machine itself that
 [docs/run-it-safely.md](docs/run-it-safely.md) covers.
 
+## What it is, and what it is not
+
+**It is** a runner: one process per identity, which advertises what the
+machine has, pulls work from any number of hubs over outbound HTTPS, runs one
+harness per run against a session it keeps on disk, and reports every event
+and every ending. It shares its capacity fairly between the hubs it serves,
+waits out a usage limit rather than failing, and moves a run to another of the
+owner's accounts when one runs out. `yad hub` is a small standalone hub beside
+it, and `yad conformance` checks anyone else's.
+
+**It is not** a tracker, a UI, an orchestrator or a scheduler: a hub decides
+what work exists and when, and YAD runs what it is given. **And it is not a
+sandbox.** It runs the harness as you, with whatever you can reach, and turns
+the harness's own permission prompts off, because nobody is there to answer
+them.
+
+## Your responsibility
+
+**Whoever sets YAD up decides what access its harnesses get.** A run can do
+anything the user it runs as can do on that machine: read its files, use its
+credentials, reach its network. The hubs you connect write the instructions.
+So choose the machine, the OS user, the accounts it is logged into and the
+hubs it connects to as deliberately as you would choose who gets a shell on
+it. If you need a run confined — to a directory, away from the network, away
+from your credentials — **sandbox YAD and its harnesses yourself**: a VM, a
+container, a dedicated OS user. YAD does not do it for you, and nothing a hub
+sends can widen or narrow what you set up. [Run it safely](#run-it-safely),
+below, is the short version of how; [docs/run-it-safely.md](docs/run-it-safely.md)
+is the long one.
+
 ## Status
 
-**Foundation, and the first half of epic E2.** Harness detection, the capability
-document, the v1 protocol types and their generated OpenAPI document, the local
-store, the process supervisor, config and profiles. `yad hub` keeps its own
-store and serves register and sync: `yad hub token create` issues a one-time
-registration token, `yad connect <url> --token -` registers a runner, and `yad
-daemon start --foreground` syncs with every connected hub. The adapter that
-drives Claude Code is built and tested against recorded streams, and the
-executor hands it runs: a runner advertises the capacity it has free, claims
-what its hubs offer within it, and reports events and results back. The build
-order is `ARCHITECTURE.md §9`; the epics and tasks are in Zumino, project
-`yad/dev`.
+**Epics E1–E8 are done; nothing is released yet.** Detection and the
+capability document, the v1 protocol and its generated OpenAPI documents,
+`yad hub` with its service API, the Claude Code and Codex adapters, the
+daemon, the control socket and the per-user service, sessions with git and
+folder sources and setup hooks, accounts with failover and waiting out usage
+limits, capacity shared across many hubs with per-harness caps, grants, host
+tools, health in every sync, run metrics, versioning, the conformance suite,
+drain, and `yad upgrade`. The build order is `ARCHITECTURE.md §9`; the epics
+and the backlog are in Zumino, project `yad/dev`.
+
+Not there yet: no release has been tagged, so the install script and `yad
+upgrade` have nothing to fetch — install from source, below. `yad disconnect`
+— and so a runner that deregisters from a hub — is still being designed.
+Live sessions, which keep one harness process across runs, are reserved in
+the protocol and not built. Gemini CLI, GitHub Copilot CLI, OpenCode and
+Cursor Agent are recognised but have no adapter.
 
 ## Install
+
+### From source, today
+
+You need Go 1.27 and access to the repository.
+
+```bash
+gh repo clone skkap/yad && cd yad
+mkdir -p ~/.local/bin
+make install        # builds ./bin/yad and copies it to ~/.local/bin/yad
+yad doctor
+```
+
+If `yad` is not found afterwards, `~/.local/bin` is not on your `PATH`. `yad
+doctor` then shows which harnesses it can drive; a harness has to be installed
+and logged in on its own first — `claude`, `codex` — because YAD uses the
+harness's own login and keeps no token of its own.
+
+### From a release, once there is one
 
 The repository is private, so there is no URL to download from without a token
 — for the binaries or for the install script. `gh` does the fetching, and the
@@ -136,6 +184,53 @@ whole file reports the three you did not download as failures:
 ```bash
 grep " yad-linux-amd64$" checksums.txt | sha256sum -c -   # or: shasum -a 256 -c -
 ```
+
+## Quickstart: a hub, a runner and one run
+
+Everything on one machine, on loopback. It uses your `default` profile and
+spends one short Claude Code turn on the cheapest model, so `claude` must be
+installed and logged in (`yad doctor` says `ready`).
+
+In one terminal, the hub — it serves on `127.0.0.1:7878` and prints the
+commands that act on it:
+
+```bash
+yad hub serve
+```
+
+In another:
+
+```bash
+yad hub admin-token create                  # lets yad hub submit and watch talk to the hub
+yad hub token create |
+  yad connect http://127.0.0.1:7878/v1 --token - --name local
+yad daemon start                            # the runner, in the background
+yad hub submit --harness claude --model haiku --watch "Reply with exactly: pong"
+```
+
+The registration token goes through the pipe, never through your terminal or
+argv. `submit --watch` prints the run as it moves — `queued`, `offered`,
+`claimed`, the harness's words, `succeeded` — and exits 0 when the run
+succeeds. For Codex, `--harness codex` with a Codex model. `yad status` shows
+the runner, `yad hub runners` the hub's view of it.
+
+Then stop both: `yad daemon stop`, and Ctrl-C the hub. The state is in
+`~/.config/yad` and `~/.local/share/yad` — the runner's identity, its
+credential for this hub, the hub's database. To run YAD for real on one
+machine — as a service, in a profile of its own, and removed cleanly
+afterwards — follow [docs/trial.md](docs/trial.md).
+
+## Where to read next
+
+| | |
+|---|---|
+| **[HUB.md](HUB.md)** | building a hub: every call, the run state machine, leases, controls, sessions, grants, errors, versioning, and `yad conformance` — the contract, with `protocol/v1/openapi.yaml` |
+| **[DOMAIN.md](DOMAIN.md)** | the vocabulary: runner, hub, harness, session, run, account, grant, sync, and the words each one replaces |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | the shape: packages, the protocol and why it is so, how each harness is driven, local state, build order |
+| **[docs/run-it-safely.md](docs/run-it-safely.md)** | what a run can do on the machine you give it, and how to limit that |
+| **[docs/trial.md](docs/trial.md)** | running YAD for real on one machine, and removing it |
+| **[docs/decisions/](docs/decisions/)** | why each hard-to-reverse choice was made |
+| **[CHECKS.md](CHECKS.md)** | what `make check` runs before anything is pushed |
 
 ## Run it safely
 

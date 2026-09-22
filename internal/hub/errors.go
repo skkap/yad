@@ -14,7 +14,7 @@ import (
 // so the OpenAPI document declares it once for every operation.
 type ErrorResponse struct {
 	status int
-	Err    v1.Error `json:"error"`
+	Err    v1.Error `json:"error" doc:"What went wrong. Every error response under the base carries this envelope, and next_action is always set."`
 }
 
 func (e *ErrorResponse) Error() string  { return e.Err.Error() }

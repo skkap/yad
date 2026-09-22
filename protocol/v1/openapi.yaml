@@ -6,17 +6,21 @@ components:
       additionalProperties: true
       properties:
         label:
+          description: The owner's name for the account, such as work. Not a secret, and not the identity it is signed in as.
           type: string
         limited_until:
+          description: When a limited account's usage limit resets. Absent for an account that is not limited.
           format: date-time
           type: string
         state:
+          description: "free takes runs. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again at the machine. Absent from runners older than this field: the runner cannot say, which is not a fault."
           enum:
             - free
             - limited
             - needs_login
           type: string
         windows:
+          description: Every usage window the harness last reported for this account, whether or not it is at a limit, so a hub sees an account running low before it runs out. As fresh as the last turn that ran on it. Absent means no run has heard a window yet, never that the account has no limits.
           items:
             $ref: "#/components/schemas/AccountWindow"
           type: array
@@ -45,6 +49,7 @@ components:
       additionalProperties: true
       properties:
         ok:
+          description: Always true. The object exists so a hub can add fields later.
           type: boolean
       required:
         - ok
@@ -53,8 +58,10 @@ components:
       additionalProperties: true
       properties:
         context:
+          description: Background appended to the harness's system prompt, so it survives the harness compacting its conversation.
           type: string
         instruction:
+          description: "The run's one user message: what to do. Required."
           type: string
       required:
         - instruction
@@ -63,10 +70,13 @@ components:
       additionalProperties: true
       properties:
         arch:
+          description: "The CPU architecture as Go names it: amd64 or arm64."
           type: string
         capacity:
           $ref: "#/components/schemas/Capacity"
+          description: "How many runs the runner executes at once, and the owner's per-harness caps. The configured size, not what is free now: that is each sync's health.free_capacity."
         harnesses:
+          description: Every harness in the runner's catalog, installed or not. A run may be offered only for a harness whose kind is first-class, present is true and error is empty.
           items:
             $ref: "#/components/schemas/HarnessReport"
           type: array
@@ -76,23 +86,30 @@ components:
             $ref: "#/components/schemas/HostTool"
           type: array
         labels:
+          description: Free-form routing strings the owner attached, such as linux, gpu or work. The runner never interprets them; a hub may route on them.
           items:
             type: string
           type: array
         name:
+          description: "A name for people: the owner's choice, or the machine's hostname. For display only; two runners may share one."
           type: string
         observed_at:
+          description: When the runner built this document. Left out of the fingerprint, so it changes without the fingerprint moving.
           format: date-time
           type: string
         os:
+          description: "The operating system as Go names it: linux or darwin."
           type: string
         protocol_features:
+          description: "The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain and close_session; live_sessions is reserved. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."
           items:
             type: string
           type: array
         runner_id:
+          description: "The runner's stable id: random, written once to its profile, and the same at every hub it registers with. It is the {runner} in the sync and deregister paths. Not a secret."
           type: string
         yad_version:
+          description: "The yad build: v0.4.0, v0.4.0-4-gabc1234 for a build four commits after it, or dev for an unstamped one. What a hub's min_version is compared against."
           type: string
       required:
         - runner_id
@@ -111,8 +128,10 @@ components:
           additionalProperties:
             format: int64
             type: integer
+          description: "Per-harness bounds by harness id, each applying independently of total. A harness missing from the map is bounded by total alone: the map carries only the caps the owner set, and is absent when there are none."
           type: object
         total:
+          description: Runs in all, across every harness.
           format: int64
           type: integer
       required:
@@ -122,9 +141,11 @@ components:
       additionalProperties: true
       properties:
         closed_at:
+          description: When the runner closed it.
           format: date-time
           type: string
         reason:
+          description: "closed: the hub asked, with close_session. closed_by_owner: the runner's owner closed it on the machine. expired: nothing ran in it for the owner's idle TTL. disk_pressure: the disk under the workdirs ran low and it was among the longest idle. Each means the same for routing: a new run needs a new session."
           enum:
             - closed
             - closed_by_owner
@@ -132,6 +153,7 @@ components:
             - disk_pressure
           type: string
         session_id:
+          description: The session, by the id the hub gave it.
           type: string
       required:
         - session_id
@@ -142,6 +164,7 @@ components:
       additionalProperties: true
       properties:
         kind:
+          description: "cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name."
           enum:
             - cancel
             - interrupt
@@ -152,10 +175,13 @@ components:
             - update
           type: string
         run_id:
+          description: The run, for cancel, interrupt and steer.
           type: string
         session_id:
+          description: The session, for close_session.
           type: string
         text:
+          description: What to tell the harness, for steer.
           type: string
       required:
         - kind
@@ -164,6 +190,7 @@ components:
       additionalProperties: true
       properties:
         reason:
+          description: "Why the runner is leaving, in its own words, for the hub to show beside the runs it settles. Untrusted text: store it bounded and printable."
           type: string
       type: object
     Error:
@@ -173,8 +200,10 @@ components:
           description: "What went wrong, for a program to act on. v1 names ten codes: not_implemented, unauthorized, runner_revoked, version_too_old, conflict, not_found, invalid, unsupported_protocol, not_holder and internal. They are not a closed set: a client meeting a code it does not know acts on the HTTP status and shows message and next_action to a person."
           type: string
         message:
+          description: What went wrong, for a person.
           type: string
         next_action:
+          description: "What the reader should do about it, for a person: the runner's owner reads it on their machine. Required on every error."
           type: string
       required:
         - code
@@ -186,6 +215,7 @@ components:
       properties:
         error:
           $ref: "#/components/schemas/Error"
+          description: What went wrong. Every error response under the base carries this envelope, and next_action is always set.
       required:
         - error
       type: object
@@ -193,11 +223,14 @@ components:
       additionalProperties: true
       properties:
         at:
+          description: When it happened on the runner.
           format: date-time
           type: string
         error:
           $ref: "#/components/schemas/RunError"
+          description: For an error event.
         kind:
+          description: "text: the harness said something (text). thinking: its reasoning (text). tool_call: it called a tool (tool.id, tool.name, tool.input). tool_result: the tool answered (tool.id, tool.output). status: a phase of the run, for people (status, text). usage: tokens one model used (usage). error: something went wrong, whether or not the run carries on (error)."
           enum:
             - text
             - thinking
@@ -208,16 +241,21 @@ components:
             - error
           type: string
         seq:
+          description: "The event's place in its run: 1 for the first, then 2, 3, and so on with no gaps. (run, seq) identifies an event; a resent one keeps its seq."
           format: int64
           type: integer
         status:
+          description: "For a status event, a short label of the phase, such as account, waiting, cancelling or steered. For display: not a closed set, and not to be parsed."
           type: string
         text:
+          description: The words of a text or thinking event, and the detail of some status events. At most 1 MiB. An error event carries its words in error.message instead.
           type: string
         tool:
           $ref: "#/components/schemas/ToolEvent"
+          description: For tool_call and tool_result.
         usage:
           $ref: "#/components/schemas/Usage"
+          description: For a usage event.
       required:
         - seq
         - at
@@ -227,6 +265,7 @@ components:
       additionalProperties: true
       properties:
         acked_through:
+          description: "The highest seq up to which the hub holds every event of the run with no gap: 0 when it holds none, or none from 1 on. The runner resends everything after it, so never answer a seq you have not stored contiguously."
           format: int64
           type: integer
       required:
@@ -236,6 +275,7 @@ components:
       additionalProperties: true
       properties:
         events:
+          description: Events of this run in seq order, at most 100 from a yad runner. A batch may repeat events already sent.
           items:
             $ref: "#/components/schemas/Event"
           type: array
@@ -246,10 +286,13 @@ components:
       additionalProperties: true
       properties:
         base:
+          description: "The ref a new branch is cut from. Absent: the repository's default branch."
           type: string
         branch:
+          description: "The branch the run works on, checked out as a worktree of the repository. Absent: yad/<connection>/<session>, named after the session."
           type: string
         url:
+          description: "The repository: an https or ssh URL, fetched with the machine's own credentials and never with a password in the URL, or an absolute path or file:// URL of a repository on the runner's machine, inside the directories its owner allows. Required."
           type: string
       required:
         - url
@@ -258,13 +301,16 @@ components:
       additionalProperties: true
       properties:
         as:
+          description: "env: set as the variable name=value in the harness's environment. file: written to a 0600 file named name outside the workdir, whose path the harness reads from the variable name."
           enum:
             - env
             - file
           type: string
         name:
+          description: An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH, HOME, LD_* or DYLD_*, nor a variable that picks a harness's credential or home, such as ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR, CODEX_HOME or OPENAI_API_KEY; matched in any case. No two grants may share a name, and no two file grants may differ only by case.
           type: string
         value:
+          description: The secret. Never logged or shown; a hub should keep it only until the run is terminal.
           type: string
       required:
         - name
@@ -275,12 +321,15 @@ components:
       additionalProperties: true
       properties:
         accounts:
+          description: Each account's state, limit and usage windows as of this sync.
           items:
             $ref: "#/components/schemas/AccountReport"
           type: array
         id:
+          description: The harness id.
           type: string
         ready:
+          description: "Whether the harness can take a run now: at least one account is free, or it has no accounts and runs on its own login."
           type: boolean
       required:
         - id
@@ -290,6 +339,7 @@ components:
       additionalProperties: true
       properties:
         accounts:
+          description: The owner's accounts for this harness. Absent when none are configured, and the harness runs on its own login.
           items:
             $ref: "#/components/schemas/AccountReport"
           type: array
@@ -297,15 +347,19 @@ components:
           description: "Why this harness cannot take runs, and the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."
           type: string
         id:
+          description: "The id a run names in its harness field: claude, codex, gemini, copilot, opencode or cursor."
           type: string
         kind:
+          description: "first-class: the runner has an adapter for it and can run it. recognised: detected and reported so the gap is visible, and never the target of a run."
           enum:
             - first-class
             - recognised
           type: string
         label:
+          description: The harness's display name, such as Claude Code.
           type: string
         models:
+          description: "Model aliases the runner knows for this harness, such as opus, sonnet and haiku for claude. Not a limit: a run may name any model, and the harness decides whether it exists."
           items:
             type: string
           type: array
@@ -330,13 +384,17 @@ components:
       additionalProperties: true
       properties:
         disk_free_bytes:
+          description: Free bytes on the disk under the runner's workdirs.
           format: int64
           type: integer
         draining:
+          description: The runner has stopped claiming and exits once the runs it holds have ended. It keeps syncing until then; offer it nothing. The answer to a drain control, which stops repeating once this is true.
           type: boolean
         free_capacity:
           $ref: "#/components/schemas/Capacity"
+          description: "What this sync may be offered, already net of every run the runner holds: total bounds the whole response, and each by_harness figure bounds that harness independently. Offer up to it as sent; do not subtract the runs listed beside it."
         harnesses:
+          description: "Readiness of each harness the runner can drive, with its accounts. A harness with ready false is not claimed for: an offer for it comes back unlisted."
           items:
             $ref: "#/components/schemas/HarnessHealth"
           type: array
@@ -345,6 +403,7 @@ components:
           format: double
           type: number
         outbox_depth:
+          description: Results the runner holds that this hub has not acknowledged.
           format: int64
           type: integer
         recent_errors:
@@ -353,6 +412,7 @@ components:
             type: string
           type: array
         spool_depth:
+          description: Events the runner holds that this hub has not acknowledged.
           format: int64
           type: integer
       required:
@@ -366,13 +426,17 @@ components:
       additionalProperties: true
       properties:
         reason:
+          description: Why the run is in this state, in the runner's words, for display. Not a closed set.
           type: string
         resumes_at:
+          description: "For a waiting run, the earliest moment it continues: the soonest reset among its harness's accounts. It may continue sooner if an account frees."
           format: date-time
           type: string
         run_id:
+          description: The run.
           type: string
         state:
+          description: Where the run is. A run whose result is written but not yet acknowledged stays listed as running, so its lease outlasts a hub outage.
           enum:
             - claimed
             - preparing
@@ -463,6 +527,7 @@ components:
       properties:
         capabilities:
           $ref: "#/components/schemas/Capabilities"
+          description: "The runner's capability document. Keep it: it says what the runner can take until a sync carries a newer one."
       required:
         - capabilities
       type: object
@@ -470,6 +535,7 @@ components:
       additionalProperties: true
       properties:
         hub_features:
+          description: Features this hub has beyond the v1 baseline. v1 defines none, and a hub that sends none is complete.
           items:
             type: string
           type: array
@@ -478,10 +544,13 @@ components:
           format: int64
           type: integer
         min_version:
+          description: The oldest yad this hub takes, such as 0.4.0, compared on the release core alone. Absent is no floor.
           type: string
         runner_credential:
+          description: The secret the runner sends as its bearer on every later call. Issued here and nowhere else; keep only what recognises it, such as a hash.
           type: string
         sync_interval_ms:
+          description: Milliseconds until the runner's next sync, 5000 to 60000 inclusive. A runner clamps a value outside that range and adds its own jitter.
           format: int64
           type: integer
       required:
@@ -494,14 +563,19 @@ components:
       properties:
         error:
           $ref: "#/components/schemas/RunError"
+          description: Why the run did not succeed. A failed result with class refused is the runner declining a run it was offered, before claiming it.
         final_text:
+          description: The harness's last answer, at most 1 MiB.
           type: string
         last_seq:
+          description: The seq of the run's last event, 0 when it had none. The run's event stream is complete once acked_through reaches it.
           format: int64
           type: integer
         metrics:
           $ref: "#/components/schemas/Metrics"
+          description: "How the run went: duration, time to first event, tool calls, retries, stalls, waits and account switches."
         state:
+          description: How the run ended. lost here is the runner's own report of a run a previous process held and could not finish.
           enum:
             - succeeded
             - failed
@@ -511,6 +585,7 @@ components:
           type: string
         usage:
           $ref: "#/components/schemas/RunUsage"
+          description: Tokens the whole run used, by model.
       required:
         - state
         - usage
@@ -522,32 +597,43 @@ components:
       properties:
         brief:
           $ref: "#/components/schemas/Brief"
+          description: What the run is told.
         grants:
+          description: Short-lived secrets for this run alone, delivered to the harness process and deleted when the run ends. Names follow rules the schema cannot state; a run breaking one is refused whole.
           items:
             $ref: "#/components/schemas/Grant"
           type: array
         harness:
+          description: "The harness to run, by its id in the capability document: claude or codex today. Offer a run only to a runner whose document shows this harness first-class, present and without an error."
           type: string
         inactivity_ms:
+          description: "Stop the run when the harness emits no event for this many milliseconds; it ends timed_out with class inactivity_timeout. It can only lower the owner's own timeout (30 minutes unless they changed it), never raise it. Absent or 0: the owner's."
           format: int64
           type: integer
         max_wait_ms:
+          description: "The most milliseconds the run may spend waiting for a free account, summed over every wait. Past it the run ends timed_out with error class max_wait_exceeded. Absent or 0: no cap."
           format: int64
           type: integer
         model:
+          description: "The model the harness runs, in the harness's own terms: an alias such as haiku or a full name such as claude-haiku-4-5 or gpt-5.1-codex. Required; the runner never falls back to a default."
           type: string
         run_id:
+          description: The run's id, chosen by the hub and unique within it. It is the {run} in the events and result paths, and a runner never runs the same id twice.
           type: string
         session:
           $ref: "#/components/schemas/SessionRef"
+          description: The session the run belongs to.
         sources:
+          description: "What the session's workdir is built from, used by the run that opens the session; a run continuing it names the same sources or none. Absent: the workdir starts empty. Each source sets exactly one of git, a repository checked out as a worktree, or path, an absolute directory on the runner's machine worked in place, taken only inside the directories its owner allows (their home unless they listed others) and otherwise failed with class source_refused."
           items:
             $ref: "#/components/schemas/Source"
           type: array
         start_at:
+          description: A moment the run must not start before, once. While it is ahead, offer the run only to a runner advertising start_at, which claims it and holds it; once it has passed, any runner may take it.
           format: date-time
           type: string
         wall_clock_ms:
+          description: "The most milliseconds the harness may run, summed over the run's turns and not counting waits. Past it the run is stopped and ends timed_out with class wall_clock_timeout. Absent or 0: no cap."
           format: int64
           type: integer
       required:
@@ -561,8 +647,10 @@ components:
       additionalProperties: true
       properties:
         class:
+          description: "What kind of failure, for a program to act on: refused, session_closed, resume_rejected, usage_limit, prompt_too_long, source_refused, setup_failed, inactivity_timeout and others. Not a closed set: a class you do not know is a failure to show, not to parse."
           type: string
         message:
+          description: What happened, for a person. At most 1 MiB.
           type: string
       required:
         - class
@@ -574,19 +662,23 @@ components:
         by_model:
           additionalProperties:
             $ref: "#/components/schemas/Usage"
+          description: Tokens for the whole run, every turn and every account, by model.
           type: object
       type: object
     SessionRef:
       additionalProperties: true
       properties:
         id:
+          description: The session's id, chosen by the hub. A session lives on the runner that claimed its first run and is continued only there.
           type: string
         mode:
+          description: "per_run, the default: a fresh harness process for each run, resuming the session's conversation. live is reserved: offer it only to a runner advertising live_sessions, which none does yet."
           enum:
             - per_run
             - live
           type: string
         new:
+          description: true for the run that opens the session, false for every later run. A runner refuses new true for a session id it already has, and new false for one it does not hold.
           type: boolean
       required:
         - id
@@ -618,17 +710,23 @@ components:
       properties:
         capabilities:
           $ref: "#/components/schemas/Capabilities"
+          description: The full capability document, sent on the first sync of every runner process, after the fingerprint moves, and after a report_capabilities control. When present it replaces the one you hold.
         closed_sessions:
+          description: Sessions this runner has closed, each repeated in every sync until one carrying it is answered with a 2xx. Record them by session id, take a repeat as the same news, stop offering runs in them, and end the runs still queued in them. Sent only by runners advertising close_session.
           items:
             $ref: "#/components/schemas/ClosedSession"
           type: array
         fingerprint:
+          description: An opaque hash of the runner's capability document. Compare it with the one that came with the document you hold; when it differs and capabilities is absent, answer with a report_capabilities control.
           type: string
         health:
           $ref: "#/components/schemas/Health"
+          description: "The runner's state for routing and alerting, computed fresh for this sync: free capacity, per-harness readiness, disk, load, what it owes this hub, recent errors, and whether it is draining."
         runner_id:
+          description: "The runner's id: the same as the {runner} in the path, or the sync is refused."
           type: string
         runs:
+          description: Every run the runner holds. Listing a run offered in the previous response claims it; listing a claimed run renews its lease. An offered run left out was never received. A listed run the runner does not hold is answered with a cancel control for it.
           items:
             $ref: "#/components/schemas/HeldRun"
           type: array
@@ -641,6 +739,7 @@ components:
       additionalProperties: true
       properties:
         controls:
+          description: "Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions; a steer is sent once."
           items:
             $ref: "#/components/schemas/Control"
           type: array
@@ -649,11 +748,14 @@ components:
           format: int64
           type: integer
         min_version:
+          description: The oldest yad this hub takes, as in the register response. Absent is no floor.
           type: string
         next_sync_ms:
+          description: Milliseconds until the next sync, 5000 to 60000 inclusive. A runner clamps a value outside that range, adds its own jitter, and syncs sooner when this response offered runs.
           format: int64
           type: integer
         runs:
+          description: "New runs offered. Not claimed yet: a run is claimed when the next sync lists it. Never more than the request's free_capacity, in total or for any harness."
           items:
             $ref: "#/components/schemas/Run"
           type: array
@@ -665,14 +767,19 @@ components:
       additionalProperties: true
       properties:
         id:
+          description: The harness's id for the call, which joins a tool_result to its tool_call.
           type: string
         input:
+          description: The call's input, usually JSON, at most 8 KiB.
           type: string
         name:
+          description: The tool, as the harness names it, such as Read or shell.
           type: string
         output:
+          description: The tool's output, at most 8 KiB.
           type: string
         truncated:
+          description: Input or output was cut to fit 8 KiB.
           type: boolean
       required:
         - id
@@ -681,20 +788,26 @@ components:
       additionalProperties: true
       properties:
         cache_read:
+          description: Input tokens read from the prompt cache.
           format: int64
           type: integer
         cache_write:
+          description: Input tokens written to the prompt cache.
           format: int64
           type: integer
         cost_usd:
+          description: The harness's own cost estimate in US dollars, where it gives one (Claude Code does, Codex does not). Never computed by yad, and absent rather than zero when unknown.
           format: double
           type: number
         input:
+          description: Input tokens not read from a cache.
           format: int64
           type: integer
         model:
+          description: The model the tokens were spent on, as the harness reported it.
           type: string
         output:
+          description: Output tokens.
           format: int64
           type: integer
       required:
