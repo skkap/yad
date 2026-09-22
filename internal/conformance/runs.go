@@ -249,7 +249,10 @@ func checkRefusalBeforeClaim(ctx context.Context, s *session) error {
 			}
 		}
 	}
-	if offer == "" {
+	switch {
+	case offer == "" && s.keepsOffers:
+		return skipf("no run was offered in %d syncs: this hub keeps an offer a sync leaves out (sync/unlisted-offer-taken-back), so the run it last offered is still open to this runner and never offered again", offerSyncs)
+	case offer == "":
 		return skipf("no third run was offered in %d syncs, and this rule needs one besides the two the other rules used; queue three runs for harness %s and run the suite again", offerSyncs, s.opts.Harness)
 	}
 	a, err := s.resultFor(ctx, offer, v1.RunFailed)

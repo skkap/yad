@@ -202,7 +202,8 @@ func checkUnlistedOfferTakenBack(ctx context.Context, s *session) error {
 			}
 		}
 		s.pick(kept)
-		return brokenf("run %s was offered, the next sync did not list it, and a sync listing it after that was answered with no cancel — so the hub had kept the offer open. An offer a sync leaves out was never received and goes back in the queue at that sync, or it waits out its lease on a runner that does not have it: %s",
+		s.keepsOffers = true
+		return brokenf("offered run %s: the next sync did not list it, and a sync listing it after that was answered with no cancel, so the hub had kept the offer open. An offer a sync leaves out was never received and goes back in the queue at that sync, or it waits out its lease on a runner that does not have it: %s",
 			strings.Join(kept, ", "), a)
 	}
 	for _, id := range offered {

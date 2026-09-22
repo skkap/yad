@@ -210,6 +210,11 @@ type session struct {
 	// a run for this runner, and the checks that read one as that say so
 	// rather than report a second failure for the first one's cause.
 	noCancels bool
+	// keepsOffers says the hub kept offers a sync left out. The run it last
+	// offered is then still open to this runner and never offered again,
+	// which the check needing a fresh offer says rather than asking for more
+	// runs to be queued.
+	keepsOffers bool
 
 	// other is the runner the second token registered, once a check has
 	// asked for it, and otherErr why it could not be: the token is spent by

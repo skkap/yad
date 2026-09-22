@@ -275,6 +275,10 @@ func checkRunnerIDMatchesThePath(ctx context.Context, s *session) error {
 	}
 	req := s.syncRequest(0)
 	req.RunnerID = DefaultHarness + "-" + id
+	// Without the document, which names the runner too: a hub comparing the
+	// document's id with the body's would refuse this for a reason of its own
+	// and pass a rule it never checked.
+	req.Capabilities = nil
 	a, err := s.c.do(ctx, call{path: s.syncPath(), bearer: s.cred, body: req})
 	if err != nil {
 		return err

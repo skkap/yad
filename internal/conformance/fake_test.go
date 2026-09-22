@@ -77,7 +77,7 @@ const (
 	flawKeepsUnknownFields = "a sync carrying an unknown field is refused"
 	flawOffersOverCapacity = "a run is offered to a sync with no free capacity"
 	flawNoCancel           = "a run the runner does not hold is answered with nothing"
-	flawForgetsOffers      = "an offered run the next sync did not list is dropped"
+	flawForgetsOffers      = "an offered run the next sync did not list stays offered"
 	flawOffersTwice        = "a claimed run is offered again"
 	flawOffersInvalidRun   = "a run with no model is offered"
 	flawAckJumpsTheGap     = "acked_through is the highest seq stored, gap or not"
