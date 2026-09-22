@@ -274,7 +274,7 @@ func (l *Loop) considerWaiting(ctx context.Context, stale db.Run, res *Reservati
 	}
 	l.Executor.Forget(l.Connection, row.ID)
 	log.Info("the account's limit has reset; the run continues in the same session", "waited_ms", waited)
-	l.Executor.Start(ctx, Claim{Connection: l.Connection, Run: parked, Release: release})
+	l.start(ctx, Claim{Connection: l.Connection, Run: parked, Release: release})
 }
 
 // errNoLongerWaiting ends a transaction that found the run had stopped

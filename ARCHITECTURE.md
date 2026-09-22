@@ -203,6 +203,11 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   twice. An interrupt that reaches a run before its harness is up ends it as a
   cancel does, with nothing spawned —
   [0025](docs/decisions/0025-a-cancel-is-repeated-and-an-answer-that-landed-stands.md).
+  That includes the answer that acknowledges the claim: a control there rides
+  in the run's claim to the executor rather than arriving ahead of it (DEV-113).
+  A cancel in that answer withdraws the claim; an interrupt starts the run
+  already stopped, so it ends `cancelled` with a result, and a steer waits
+  for the harness.
 - **Drain** — [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md).
   A hub sends `drain` only to a runner advertising the `drain` feature, and
   repeats it until a sync's health says `draining`. A draining runner declares
@@ -775,7 +780,7 @@ for `codex`); the suite never runs a real harness.
   collector ends such a run for a connection no loop is serving, which is the
   only thing in the process that touches a parked run without a sync, and it can
   only ever end one. A cancel for a waiting run has no turn to interrupt and ends
-  it where it stands.
+  it where it stands, and so does an interrupt.
 - **While every account of a harness is limited or needs login**, the runner
   stops claiming for it: health says `ready: false` and the offer is left
   unclaimed for the hub to place elsewhere, rather than refused — a refusal is
