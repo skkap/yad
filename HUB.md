@@ -922,10 +922,12 @@ it does not hold, rather than guess: guessing would resume a conversation that
 does not exist, or silently start over one that does.
 
 A later run names the same `sources` as the first, or none — and a runner
-builds a new session's workdir from the run that opens it. So when a run that
-named none goes out with `new: true`, send it with the sources the session's
-earlier runs named. `yad hub` sends the first ones it finds among them, oldest
-first.
+builds a session's workdir from the first run of it that prepares, which need
+not be the first one you sent: the opener may have been refused, or lost to a
+restart before it prepared. So send a run that names no sources with the ones
+the session's earlier runs named, whether it opens the session or continues
+it; a runner takes a continuing run naming its session's own sources as one
+naming none. `yad hub` sends the first ones it finds, oldest run first.
 
 What a runner keeps matches this. A refusal creates no session. A claim you
 cancel before its listing is answered, or one the runner withdraws, takes the

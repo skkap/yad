@@ -11,9 +11,9 @@ import (
 // session.new is decided when a run is offered: true while no claim has bound
 // its session, false after (decision 0047). A session whose first run never
 // bound it — refused, cancelled on its claim, withdrawn — exists on no runner,
-// so the run after it goes out new, carrying the sources the session was
-// submitted with; once a claim binds the session, every later run goes out
-// continuing it.
+// so the run after it goes out new; once a claim binds the session, every
+// later run goes out continuing it. Either way a run that named no sources
+// carries the session's.
 func TestSessionNewIsDecidedAtOffer(t *testing.T) {
 	src := []v1.Source{{Path: "/work/project"}}
 	for _, tc := range []struct {
@@ -77,10 +77,11 @@ func TestSessionNewIsDecidedAtOffer(t *testing.T) {
 			if got.Session.New != tc.wantNew {
 				t.Errorf("b went out with session.new %v, want %v", got.Session.New, tc.wantNew)
 			}
-			// The sources go with the run that opens the session, and only
-			// with it: a continuing run named none and is sent none.
-			if wantSources := tc.wantNew; (len(got.Sources) == 1 && got.Sources[0].Path == src[0].Path) != wantSources {
-				t.Errorf("b went out with sources %+v; opening the session it carries its first run's, continuing it none", got.Sources)
+			// b named no sources and goes out with the session's, opening it
+			// or continuing it: whichever run of the session first prepares on
+			// the runner builds the workdir from them.
+			if len(got.Sources) != 1 || got.Sources[0].Path != src[0].Path {
+				t.Errorf("b went out with sources %+v, want the session's %+v", got.Sources, src)
 			}
 		})
 	}

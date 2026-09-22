@@ -104,7 +104,9 @@ func TestAnAcknowledgedClaimKeepsItsSessionAtRestart(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	l := e.loop(t, 1)
-	e.enqueue(t, testRun("a", "s1"), continued("b", "s1"))
+	a := testRun("a", "s1")
+	a.Sources = []v1.Source{{Path: "/work/project"}}
+	e.enqueue(t, a, continued("b", "s1"))
 	mustSync(t, l)
 	mustSync(t, l)
 	if got := e.exec.ids(); !slices.Equal(got, []string{"a"}) {
@@ -132,6 +134,11 @@ func TestAnAcknowledgedClaimKeepsItsSessionAtRestart(t *testing.T) {
 	res := mustSync(t, l2)
 	if len(res.Runs) != 1 || res.Runs[0].RunID != "b" || res.Runs[0].Session.New {
 		t.Fatalf("offered %+v, want b continuing s1", res.Runs)
+	}
+	// a never prepared, so s1 has no workdir yet and b is the run that
+	// builds it: it must carry the session's sources, or it builds it empty.
+	if got := res.Runs[0].Sources; len(got) != 1 || got[0].Path != "/work/project" {
+		t.Errorf("b continues s1 with sources %+v, want a's", got)
 	}
 	mustSync(t, l2)
 	if got := l2.Executor.(*executor).ids(); !slices.Equal(got, []string{"b"}) {

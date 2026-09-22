@@ -334,17 +334,20 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 // no runner, and its next run has to open it. What the submitter said at
 // submit decided only whether the hub created the session or found it.
 //
-// A run opening the session carries the session's sources when it names none
-// itself, as a run continuing one usually does: the runner builds a new
-// session's workdir from the run that opens it, and would build this one
-// empty.
+// A run that names no sources itself, as a continuing one usually does,
+// carries the session's: the ones its earlier runs named. A runner builds a
+// session's workdir from the first run of it that prepares, whichever that
+// is — the one opening the session, or a continuing one after the opener was
+// lost before it prepared (a restart during a start_at wait) — and would
+// build it empty. A continuing run naming its session's own sources is one
+// the runner takes as naming none.
 func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
 	sess, err := q.GetSession(ctx, run.Session.ID)
 	if err != nil {
 		return err
 	}
 	run.Session.New = !sess.RunnerID.Valid
-	if !run.Session.New || len(run.Sources) > 0 {
+	if len(run.Sources) > 0 {
 		return nil
 	}
 	specs, err := q.SessionSpecs(ctx, run.Session.ID)

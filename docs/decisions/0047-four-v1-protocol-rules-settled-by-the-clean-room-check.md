@@ -126,11 +126,14 @@ Before, a restart withdrew every claim that had not begun to prepare — an
 acknowledged one waiting for its `start_at` included — and deleted its
 session, which the hub then continued.
 
-**Decided without asking.** A run that goes out as new but named no sources
-— as a continuing run usually does — is sent with the sources its session's
-earlier runs named, oldest first. The runner builds a new session's workdir
-from the run that opens it, and would otherwise build this one empty. HUB.md
-§8 asks the same of every hub.
+**Decided without asking.** A run that names no sources — as a continuing
+run usually does — is sent with the sources its session's earlier runs named,
+oldest first, whether it goes out new or continuing. A runner builds a
+session's workdir from the first run of it that prepares: a run opening a
+session late would otherwise build it empty, and so would a continuing run
+after the opener was reported lost at a restart before it prepared (review
+found that second case). A runner takes a continuing run naming its session's
+own sources as naming none. HUB.md §8 asks the same of every hub.
 
 **What neither side can see.** An acknowledgement the hub sent and the runner
 never read before it stopped: the hub bound the session, the runner withdrew
