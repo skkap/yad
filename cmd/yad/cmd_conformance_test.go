@@ -89,7 +89,7 @@ func TestConformanceFailsAndNamesTheRule(t *testing.T) {
 		t.Fatalf("exit %d against a server that is no hub:\n%s", code, out)
 	}
 	flat := strings.Join(strings.Fields(out), " ")
-	for _, want := range []string{"FAIL errors/unknown-path", "ARCHITECTURE.md §2, Calls", "Observed:"} {
+	for _, want := range []string{"FAIL errors/unknown-path", "HUB.md §10 Errors and `next_action`", "Observed:"} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("the report does not say %q:\n%s", want, out)
 		}

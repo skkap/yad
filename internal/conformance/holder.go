@@ -10,7 +10,7 @@ import (
 	"github.com/skkap/yad/internal/buildinfo"
 )
 
-// The far half of §2's holder rule: a run one runner holds takes nothing from
+// The far half of HUB.md's holder rule: a run one runner holds takes nothing from
 // another. The near half — a run the hub cannot match to the caller at all —
 // is events/not-held and result/not-held, and needs only the one runner.
 
@@ -94,8 +94,8 @@ func (s *session) registerOther(ctx context.Context) (*otherRunner, error) {
 	}
 	if !a.ok() {
 		if e, ok := a.envelope(); ok && e.Code == v1.CodeVersionTooOld {
-			return nil, skipf("this hub refuses yad %s and said so: %s. §2 lets a hub set a version floor, so run the suite from a build at or above it to check this",
-				buildinfo.Version, s.c.hide(e.Message))
+			return nil, skipf("this hub refuses yad %s and said so: %s. %s lets a hub set a version floor, so run the suite from a build at or above it to check this",
+				buildinfo.Version, s.c.hide(e.Message), hubVersioning)
 		}
 		return nil, brokenf("the hub refused the second registration token, which this check registers a second runner with: %s", a)
 	}

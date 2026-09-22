@@ -951,8 +951,7 @@ yad conformance <connection url> --token <token> [--second-token <token>] [--har
 Thirty-seven black-box checks against a URL, written from the protocol rather
 than from `yad hub`'s internals — nothing in the suite imports the hub, so it
 tests the protocol and not one implementation of it. A failure gives you the
-rule as a sentence and the part of `ARCHITECTURE.md §2` it is filed under;
-each part of §2 points to the section of this page with the rule.
+rule as a sentence and the section of this page that states it.
 
 The URL is your connection URL — every path is relative to it, so a hub
 mounted at `https://example.com/yad/v1` is named in full. Each token is a

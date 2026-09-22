@@ -11,7 +11,7 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
-// The rules of §2's "Sync", and the two wire rules under "Calls" that a sync
+// The rules of HUB.md's sync, and the two wire rules of its §2 that a sync
 // response is where a hub breaks.
 
 func checkEmptyListsOmitted(ctx context.Context, s *session) error {
@@ -207,11 +207,11 @@ func checkOfferIsRepeated(ctx context.Context, s *session) error {
 		return skipf("run %s was offered on the last of this suite's %d syncs, so no sync followed it and whether the hub offers it again could not be seen. Run the suite again against a hub with a run already queued for harness %s.",
 			strings.Join(dropped, ", "), offerSyncs, s.opts.Harness)
 	case len(others) > 0:
-		return skipf("run %s was offered and not listed, and in the %d sync(s) after it the hub had other runs to offer first (%s), so whether it comes back cannot be told in a bounded number of syncs — §2 names no deadline, and this is not a verdict on the hub. Queue only the runs this suite should use, and run it again: %s",
+		return skipf("run %s was offered and not listed, and in the %d sync(s) after it the hub had other runs to offer first (%s), so whether it comes back cannot be told in a bounded number of syncs — HUB.md names no deadline, and this is not a verdict on the hub. Queue only the runs this suite should use, and run it again: %s",
 			strings.Join(missing, ", "), len(after), strings.Join(sorted(setOf(others)), ", "), last)
 	default:
-		return skipf("run %s was offered and not listed, and the hub did not offer it again in the %d sync(s) after it though this runner declared room for %d. §2 says the hub offers such a run again but names no deadline, so this is not a verdict — read it as a warning instead: a hub that never offers a dropped run again loses every run it drops. %s",
-			strings.Join(missing, ", "), len(after), runsWanted, last)
+		return skipf("run %s was offered and not listed, and the hub did not offer it again in the %d sync(s) after it though this runner declared room for %d. %s says the hub offers such a run again but names no deadline, so this is not a verdict — read it as a warning instead: a hub that never offers a dropped run again loses every run it drops. %s",
+			strings.Join(missing, ", "), len(after), runsWanted, hubSync, last)
 	}
 }
 
@@ -243,7 +243,7 @@ func checkClaimByListing(ctx context.Context, s *session) error {
 		s.lapseAt, s.leaseAtClaim = time.Now(), time.Duration(res.LeaseMS)*time.Millisecond
 	}
 	// Still claimed, never running: this runner prepares no workdir and spawns
-	// no harness, and §2 has a run report running only once its workdir exists.
+	// no harness, and HUB.md has a run report running only once its workdir exists.
 	return nil
 }
 
@@ -270,18 +270,18 @@ func checkLeaseOutlastsTheInterval(_ context.Context, s *session) error {
 	return nil
 }
 
-// The interval a hub may name (§2, Sync — Timings). The default of 15 s is the
+// The interval a hub may name (HUB.md §5). The default of 15 s is the
 // hub's business; the bounds are the protocol's.
 const (
 	v1MinInterval = 5 * time.Second
 	v1MaxInterval = 60 * time.Second
 )
 
-// gated is the controls §2 says a hub sends only to a runner that advertised
+// gated is the controls HUB.md §7 says a hub sends only to a runner that advertised
 // the feature by name. The rest are not gated: cancel and report_capabilities
 // go to every v1 runner, and update is reserved — a runner that does not
 // implement self-update ignores it (decision 0018), so a hub sending one has
-// broken no rule of §2's.
+// broken no rule of HUB.md's.
 var gated = []v1.ControlKind{v1.ControlDrain, v1.ControlCloseSession, v1.ControlSteer, v1.ControlInterrupt}
 
 func checkControlsAreGated(_ context.Context, s *session) error {

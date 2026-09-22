@@ -15,13 +15,13 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
-// fake is a hub of about two hundred lines: enough of §2 for the suite to
+// fake is a hub of about two hundred lines: enough of HUB.md for the suite to
 // pass it, and a flaw switch for the tests that each break one rule. It is
 // here rather than in internal/hub on purpose — a suite checked only against
 // the implementation it was written beside proves nothing about the protocol,
 // which is the whole reason this package exists.
 type fake struct {
-	// flaw is the one rule this hub breaks; empty is a hub that follows §2.
+	// flaw is the one rule this hub breaks; empty is a hub that follows HUB.md.
 	flaw string
 
 	// cancelAfter, with cancel, stops the suite from inside the hub after
@@ -111,7 +111,7 @@ const (
 	// all: a refusal the suite reads and passes is never printed, so a test
 	// over it would prove nothing about what is printed.
 	flawEchoesTheToken = "a refusal quotes the token it was given, and names no next action"
-	// The floor quotes the token as well, and a version refusal is one §2
+	// The floor quotes the token as well, and a version refusal is one HUB.md
 	// grants a hub — so the suite reads it, skips, and prints the hub's own
 	// words rather than a failure.
 	flawVersionFloorQuotes = "the version floor refuses this runner and quotes its token"
@@ -142,7 +142,7 @@ func newFake(t *testing.T, flaw string, queued ...v1.Run) (*fake, string) {
 	t.Helper()
 	f := &fake{
 		flaw: flaw, token: "fake-registration-token", token2: fakeSecondToken, runs: map[string]*fakeRun{},
-		// The shortest pair §2 allows, so a test that waits a lease out waits
+		// The shortest pair HUB.md allows, so a test that waits a lease out waits
 		// six seconds rather than a minute.
 		interval: 5 * time.Second, lease: 5 * time.Second,
 	}
@@ -351,7 +351,7 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	}
 	for _, id := range f.order {
 		run := f.runs[id]
-		// An offer this sync did not list was never received (§2, Sync).
+		// An offer this sync did not list was never received (HUB.md §3).
 		if run.holder == "" && !run.queued && run.offeredTo == runner && !listed[id] && f.flaw != flawForgetsOffers && f.flaw != flawOffersTwiceOver {
 			// Except for the one this hub keeps losing: re-offering another
 			// run for ever says nothing about the rule for this one.
@@ -493,7 +493,7 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 		}
 	}
 	if f.flaw == flawKeepsUnknownFields {
-		// A hub whose decoder is strict: exactly what §2's second wire rule
+		// A hub whose decoder is strict: exactly what HUB.md's second wire rule
 		// forbids, and what a generated TypeScript client does by default.
 		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the body carries a field this hub does not know", "send only the fields in protocol/v1/openapi.yaml")
 		return false

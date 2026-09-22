@@ -12,7 +12,7 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
-// The rules of §2's "Events", "Result" and the lease: everything that needs a
+// The rules of HUB.md §6, Events and results, and of the lease: everything that needs a
 // run the hub has offered this runner.
 
 // minPoll is the shortest pause the suite puts between two syncs of its own.
@@ -45,7 +45,7 @@ func checkEventsIdempotent(ctx context.Context, s *session) error {
 	return s.wantAck(ctx, s.report, seqGap, seqFirst, seqAfter, seqFill, seqGap)
 }
 
-// checkEventsUnknownFields is §2's second wire rule on the call a strict
+// checkEventsUnknownFields is HUB.md's second wire rule on the call a strict
 // decoder is likeliest to be generated for: a hub permissive on sync and
 // strict on a batch refuses a real runner the moment v1 adds an optional
 // event field, which is the break the rule exists to prevent.
@@ -141,7 +141,7 @@ func checkResultNotHeld(ctx context.Context, s *session) error {
 }
 
 // notHolder checks a call for a run this runner does not hold was refused as
-// §2 fixes it: 403 not_holder, or 404 not_found from a hub that has never heard
+// HUB.md fixes it: 403 not_holder, or 404 not_found from a hub that has never heard
 // of the run or will not say to this runner that it has. Any other refusal is
 // a finding, not a pass. A 5xx or a 401 tells the runner to try again, so it
 // resends for ever what the hub will never take, and a 400 says the report
@@ -158,8 +158,8 @@ func notHolder(a *answer) error {
 	case a.Status == http.StatusNotFound && e.Code != v1.CodeNotFound:
 		return brokenf("the hub refused it with 404 and the code %q rather than %q: %s", e.Code, v1.CodeNotFound, a)
 	case a.Status != http.StatusForbidden && a.Status != http.StatusNotFound:
-		return brokenf("the hub refused it with %d, and §2 fixes this refusal as 403 %s, or 404 %s for a run the hub will not name to this runner: %s",
-			a.Status, v1.CodeNotHolder, v1.CodeNotFound, a)
+		return brokenf("the hub refused it with %d, and %s fixes this refusal as 403 %s, or 404 %s for a run the hub will not name to this runner: %s",
+			a.Status, hubErrors, v1.CodeNotHolder, v1.CodeNotFound, a)
 	}
 	return nil
 }
@@ -204,7 +204,7 @@ func checkEventsAfterTheRunEnds(ctx context.Context, s *session) error {
 	return s.wantAck(ctx, s.report, seqLate, seqLate)
 }
 
-// checkGatedRunsAreNotOffered is the offer side of §2's versioning rule: the
+// checkGatedRunsAreNotOffered is the offer side of HUB.md's feature rule: the
 // two things in a run that only a runner advertising a feature may be given.
 // This runner advertises none, so it must be offered neither.
 func checkGatedRunsAreNotOffered(_ context.Context, s *session) error {
@@ -369,9 +369,9 @@ func checkOfferLapse(ctx context.Context, s *session) error {
 				offer, strings.Join(runIDs(res.Runs), ", "))
 		}
 	}
-	// §2 names no deadline for the offer after the lapse, as it names none
+	// HUB.md names no deadline for the offer after the lapse, as it names none
 	// for claim-by-listing's, so this is a warning and not a verdict.
-	return skipf("run %s lapsed and its late claim was cancelled, and in %d syncs declaring room for it the hub did not offer it again. A lapsed offer goes back in the queue, and a hub that never offers it again has lost the run — read this as a warning, since §2 names no deadline", offer, offerSyncs)
+	return skipf("run %s lapsed and its late claim was cancelled, and in %d syncs declaring room for it the hub did not offer it again. A lapsed offer goes back in the queue, and a hub that never offers it again has lost the run — read this as a warning, since HUB.md names no deadline", offer, offerSyncs)
 }
 
 // leaseWait is how long the suite waits a lease out. There is no clock in
@@ -426,7 +426,7 @@ func (s *session) eventsFor(ctx context.Context, runID string, seqs ...int64) (v
 	return ack, a, nil
 }
 
-// resultFor reports a terminal state. A failure is the refusal §2 asks of a
+// resultFor reports a terminal state. A failure is the refusal HUB.md asks of a
 // runner that will not take a run, which is exactly what this one is.
 func (s *session) resultFor(ctx context.Context, runID string, state v1.RunState) (*answer, error) {
 	res := v1.Result{State: state, LastSeq: s.lastSeq}

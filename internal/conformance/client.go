@@ -49,7 +49,7 @@ type call struct {
 }
 
 // answer is a hub's response as a check reads it: the status, the headers and
-// the bytes. Nothing is decoded away, because half of §2's wire rules are
+// the bytes. Nothing is decoded away, because half of HUB.md's wire rules are
 // about which fields the JSON does and does not carry.
 type answer struct {
 	// c is the client that made the call, for the secrets it holds.

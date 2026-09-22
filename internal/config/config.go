@@ -45,7 +45,7 @@ type HarnessConfig struct {
 	Sandbox  string   `toml:"sandbox,omitempty"`
 	Approval string   `toml:"approval,omitempty"`
 	Cap      int      `toml:"cap,omitempty"`      // 0 = only the runner's capacity limits it
-	Accounts []string `toml:"accounts,omitempty"` // failover order
+	Accounts []string `toml:"accounts,omitempty"` // which accounts take part; the order only breaks ties (0039)
 }
 
 // Connection is one hub this runner is registered with. Its credential lives in

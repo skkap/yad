@@ -110,9 +110,9 @@ an endpoint-by-endpoint contract, the state machine and a checklist. What
 follows is the protocol's shape as the runner sees it and the reasons behind
 it, each part naming the HUB.md section that states its rules. Where the two
 disagree, HUB.md is the one a hub was built from: fix whichever is wrong, and
-never leave them apart. `yad conformance` files each rule it checks under a
-part of this section (Calls, Sync, Run, Events, Result, Versioning), which is
-why those headings stay.
+never leave them apart. `yad conformance` files each rule it checks under the
+HUB.md section that states it, and a test fails when one of those headings
+moves.
 
 A **connection** is a base URL — `https://zumino.cc/api/yad/v1` — and every path
 below is relative to it, so a hub can mount the protocol anywhere.
@@ -816,7 +816,7 @@ capacity = 4
 [harness.claude]
 permission_mode = "bypassPermissions"   # the owner's call — 0015; the default when unset
 cap             = 3
-accounts        = ["personal", "family"] # failover order
+accounts        = ["personal", "family"] # which take part; the order breaks ties (0039)
 
 [harness.codex]
 sandbox  = "danger-full-access"   # the owner's call — 0036; this and never are the defaults when unset
@@ -875,7 +875,9 @@ yad doctor                         what is installed, what YAD can drive, and wh
                                    this machine or profile is reachable by other users
 yad harnesses [--json]             the capability document, as a hub receives it
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
-yad disconnect <name>
+yad disconnect <name>              not built: its coordination with a running
+                                   daemon is being designed (DEV-81); it refuses
+                                   and says so
 yad daemon start|stop|restart|status|logs [-f] [-n N]
                                    the runner process
 yad status [--json]                connections, capacity, runs, sessions and recent
@@ -895,7 +897,9 @@ yad account remove <harness> <label> [--yes]
                                    shared transcripts are kept. A running daemon
                                    stops using it at once, and a run on it
                                    finishes there before the home goes
-yad account use                    (with failover — DEV-28)
+yad account use                    not built, and not planned: it refuses, saying a
+                                   run takes the free account that refills soonest
+                                   (0039), so there is nothing to pick by hand
 yad service install|uninstall|status
                                    launchd user agent, systemd user unit (0028)
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1
