@@ -139,36 +139,6 @@ func TestAnAcknowledgedClaimKeepsItsSessionAtRestart(t *testing.T) {
 	}
 }
 
-// A claim whose acknowledgement cannot be written does not start: started
-// unrecorded, a restart before it prepared would withdraw the session the hub
-// bound. It stays pending, is listed again, and starts once the write lands.
-func TestAClaimStartsOnlyOnceItsAcknowledgementIsRecorded(t *testing.T) {
-	e := newEnv(t)
-	l := e.loop(t, 1)
-	e.enqueue(t, testRun("a", "s1"))
-	mustSync(t, l)
-	if _, err := e.store.DB.Exec(`CREATE TRIGGER no_ack BEFORE UPDATE OF acknowledged ON runs BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
-		t.Fatal(err)
-	}
-	mustSync(t, l)
-	if got := e.exec.ids(); len(got) != 0 {
-		t.Fatalf("started %v with its acknowledgement unrecorded", got)
-	}
-	if _, err := e.store.DB.Exec(`DROP TRIGGER no_ack`); err != nil {
-		t.Fatal(err)
-	}
-	res := mustSync(t, l)
-	if slices.ContainsFunc(res.Controls, func(c v1.Control) bool { return c.RunID == "a" }) {
-		t.Fatalf("the claim listed again was answered with %+v", res.Controls)
-	}
-	if got := e.exec.ids(); !slices.Equal(got, []string{"a"}) {
-		t.Fatalf("started %v, want [a] once the acknowledgement was recorded", got)
-	}
-	if r := localRun(t, e, "a"); r.Acknowledged != 1 {
-		t.Errorf("a is acknowledged %d", r.Acknowledged)
-	}
-}
-
 // restarted is the loop a new process of the same runner makes, with an
 // executor of its own so what it starts is told apart from what the last
 // process did.

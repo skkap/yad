@@ -137,7 +137,12 @@ never read before it stopped: the hub bound the session, the runner withdrew
 it, and the next run, sent as continuing, is refused as a session the runner
 does not hold. It needs a crash inside one round trip, and the refusal names
 the cause; closing it would need the runner to accept `new: true` for a session
-it holds that never ran a turn, which the owner did not choose.
+it holds that never ran a turn, which the owner did not choose. A failed
+write of the acknowledgement on the runner ends the same way after a restart.
+Holding such a claim back to retry the write was tried in review and is worse:
+everything else on the runner reads a pending claim as one the hub never
+acknowledged, so a cancel, a drain or a stop would withdraw a run the hub
+holds, and a write that kept failing would resync the hub with no backoff.
 
 **Considered.** Keeping `new` fixed at submit and failing the rest of a session
 whose first run ended unbound, telling the submitter to start again — every
