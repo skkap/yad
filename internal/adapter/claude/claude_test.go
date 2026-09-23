@@ -74,6 +74,8 @@ type seen struct {
 	argv    []string
 	context string
 	stdin   []map[string]any
+	// played is the type of every frame the fake wrote, in order.
+	played []string
 }
 
 func (h *harness) seen(t *testing.T) seen {
@@ -91,6 +93,7 @@ func (h *harness) seen(t *testing.T) seen {
 			Argv    []string `json:"argv"`
 			Context *string  `json:"context"`
 			Stdin   *string  `json:"stdin"`
+			Played  *string  `json:"played"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
 			t.Fatal(err)
@@ -100,6 +103,8 @@ func (h *harness) seen(t *testing.T) seen {
 			s.argv = e.Argv
 		case e.Context != nil:
 			s.context = *e.Context
+		case e.Played != nil:
+			s.played = append(s.played, *e.Played)
 		case e.Stdin != nil:
 			var m map[string]any
 			json.Unmarshal([]byte(*e.Stdin), &m)
@@ -1004,10 +1009,22 @@ func TestAnEffortClaudeIgnoresFailsTheRun(t *testing.T) {
 	if cls := errorClasses(evs); len(cls) == 0 || cls[len(cls)-1] != adapter.ClassHarness {
 		t.Errorf("error events %v, want the stream to end saying %s", cls, adapter.ClassHarness)
 	}
+	// Stopped before its first frame of work, which the fake holds back for
+	// seconds: an adapter that only failed the run at its end would have let
+	// the turn run — commits, pushes and all — at an effort nobody asked for.
+	played := h.seen(t).played
+	for _, typ := range played {
+		if typ != "system" && typ != "user" {
+			t.Fatalf("claude was left to work, playing %v, before the turn was stopped", played)
+		}
+	}
+	if len(played) == 0 {
+		t.Error("the fake played nothing, so this proves nothing about when the turn was stopped")
+	}
 }
 
-// The look at Claude's first output can miss its warning only if stderr was
-// not copied by then; the outcome looks at the whole tail again, so a turn
+// The look before Claude's first frame of work can miss its warning only if
+// stderr was not copied by then; the outcome looks at the whole tail again, so a turn
 // that ran to the end still fails.
 func TestAnEffortRefusalSeenOnlyAtTheEndStillFails(t *testing.T) {
 	tr := newTranslator("s1", func(v1.Event) {})

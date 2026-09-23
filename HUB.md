@@ -936,8 +936,8 @@ model, and they grow with harness releases. Claude Code takes `low`, `medium`,
 and hands the word to the harness: Claude's `--effort`, and the `effort` of
 Codex's `turn/start`. A level the harness does not take fails the run with
 class `harness_error` and the harness's own words — Claude warns and would
-carry on at its default, so the runner stops it at its first output and fails
-it with that warning. Absent, the harness uses its default, on every run: a
+carry on at its default, so the runner stops it before it starts working and
+fails it with that warning. Absent, the harness uses its default, on every run: a
 run continuing a session does not inherit the effort an earlier run in it
 set. Gate it because a runner without the feature drops a
 field it does not know and runs the harness at its default, and the run

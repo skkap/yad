@@ -2,11 +2,14 @@ package codex
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"syscall"
 )
 
 // Codex names no models in the catalog: which it offers depends on the
@@ -93,13 +96,8 @@ func Models(homes ...string) []string {
 }
 
 func readModels(path string) []cachedModel {
-	f, err := os.Open(path)
+	b, err := readRegular(path, modelsCacheCap)
 	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, modelsCacheCap+1))
-	if err != nil || len(b) > modelsCacheCap {
 		return nil
 	}
 	var cache struct {
@@ -109,4 +107,36 @@ func readModels(path string) []cachedModel {
 		return nil
 	}
 	return cache.Models
+}
+
+// errNotRegular is a path that is not a plain file.
+var errNotRegular = errors.New("not a regular file")
+
+// readRegular reads a file Codex wrote, refusing anything but a regular file
+// of at most max bytes. What sits at the path is the harness's, or whatever
+// put it in the harness's home, and a plain open of a FIFO blocks until a
+// writer comes — which on the capability probe would stall the runner's
+// every sync. Opened without blocking and checked on the descriptor, so a
+// path swapped between a check and the open cannot slip past it.
+func readRegular(path string, max int64) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, errNotRegular
+	}
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > max {
+		return nil, fmt.Errorf("larger than %d bytes", max)
+	}
+	return b, nil
 }

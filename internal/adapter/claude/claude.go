@@ -263,10 +263,11 @@ type turn struct {
 	// check is the login check for the owner, in the run's account home.
 	check string
 	// effort is the run's effort; effortRefused, Claude's own words refusing
-	// it, once they are seen; looked counts the lines looked at for them.
+	// it, once they are seen; working, that Claude has begun the turn's work,
+	// after which nothing is gained by stopping it early.
 	effort        string
 	effortRefused string
-	looked        int
+	working       bool
 
 	// Every write to stdin goes through frames, so the instruction, steers,
 	// interrupts and permission answers never interleave.
@@ -458,6 +459,9 @@ loop:
 		select {
 		case <-tick.C:
 			tr.tick()
+			// A Claude still starting up writes nothing to stdout for a while
+			// (hooks, MCP servers), and its warning may be all it has said.
+			t.checkEffort(nil)
 		case it, ok := <-lines:
 			switch {
 			case !ok:
@@ -501,7 +505,7 @@ loop:
 }
 
 func (t *turn) handle(tr *translator, line []byte) {
-	t.checkEffort()
+	t.checkEffort(line)
 	r := tr.line(line)
 	if r.replayed {
 		t.mu.Lock()
@@ -521,24 +525,35 @@ func (t *turn) handle(tr *translator, line []byte) {
 	}
 }
 
-// effortLooks is how many of Claude's first lines of output the adapter looks
-// at stderr beside. Claude says it will ignore an effort while it parses its
-// arguments, long before it writes a line to stdout; the look is repeated
-// only against the copy of stderr lagging the stdout that followed it.
-const effortLooks = 8
-
 // checkEffort stops a turn Claude has said it will run at another effort
 // than the run's. Claude does not refuse a level it does not know: it warns
 // on stderr and runs at its default, and a run that went on would succeed
-// having done the work at an effort nobody asked for. Stopped at its first
-// output, before it has done any; outcome fails the run with Claude's words.
-func (t *turn) checkEffort() {
+// having done the work at an effort nobody asked for.
+//
+// It looks at stderr on every line and every tick until the first frame of
+// work — anything but Claude's system frames and its echo of the instruction
+// — and once more on that frame, so a refusal seen stops the turn before it
+// has done anything. The two pipes are read by two goroutines and nothing
+// orders stderr's copy before stdout's, so this is not a guarantee, only
+// near enough to one: Claude writes the warning while it parses its
+// arguments, and its first frame of work comes after its hooks, its MCP
+// servers and a model round trip, hundreds of milliseconds later. The
+// guarantee is the outcome's second look at the whole stderr tail, which
+// fails the run whatever this one saw; this one is what spares the work.
+func (t *turn) checkEffort(line []byte) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.effort == "" || t.effortRefused != "" || t.looked >= effortLooks {
+	if t.effort == "" || t.effortRefused != "" || t.working {
 		return
 	}
-	t.looked++
+	if line != nil {
+		var f struct {
+			Type     string `json:"type"`
+			IsReplay bool   `json:"isReplay"`
+		}
+		json.Unmarshal(line, &f)
+		t.working = f.Type != "system" && !(f.Type == "user" && f.IsReplay)
+	}
 	if t.effortRefused = effortRefusal(t.p.Stderr()); t.effortRefused != "" {
 		go t.p.Stop(supervise.Ladder{TermGrace: t.termGrace})
 	}

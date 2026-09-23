@@ -40,6 +40,10 @@ var pinned = map[string]string{
 // definition.
 const schemaFile = "codex_app_server_protocol.schemas.json"
 
+// schemaFileCap bounds the bundle read back. 0.147.0's is under a megabyte;
+// one past this is not a schema, and the check reports a failed read.
+const schemaFileCap = 64 << 20
+
 // surface is what the adapter speaks: each method under the union that
 // defines it, and the responses, which the unions do not name.
 var surface = struct {
@@ -248,7 +252,9 @@ func generateSchema(parent context.Context, bin string) ([]byte, failure) {
 	case werr != nil:
 		return nil, failExit
 	}
-	b, err := os.ReadFile(filepath.Join(dir, schemaFile))
+	// Read as models_cache.json is: the file is Codex's, and a FIFO left in
+	// its place would hold this read, and the capability tick, for ever.
+	b, err := readRegular(filepath.Join(dir, schemaFile), schemaFileCap)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, failNoFile

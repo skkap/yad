@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // writeCache puts a models_cache.json in a fresh home, shaped as Codex 0.147.0
@@ -82,6 +84,30 @@ func TestModelsCarryOnlyModelNames(t *testing.T) {
 ]}`)
 	if got := Models(home); !slices.Equal(got, []string{"gpt-5.5"}) {
 		t.Errorf("models = %v, want only gpt-5.5", got)
+	}
+}
+
+// A FIFO at the cache's path is refused, not read: an open of one blocks until
+// a writer comes, and this runs on the daemon's capability probe. A directory
+// there is no cache either.
+func TestModelsDoNotWaitOnAFIFO(t *testing.T) {
+	fifo := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(fifo, modelsCache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, modelsCache), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan []string, 1)
+	go func() { done <- Models(fifo, dir, writeCache(t, cache)) }()
+	select {
+	case got := <-done:
+		if !slices.Equal(got, []string{"gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5"}) {
+			t.Errorf("models = %v, want the one real cache's", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading the models blocked on a FIFO")
 	}
 }
 

@@ -174,6 +174,24 @@ func TestSchemaCheckDoesNotWaitForAHeldPipe(t *testing.T) {
 	}
 }
 
+// A FIFO where codex should have written its bundle is refused, not read: an
+// open of one blocks until a writer comes, and this runs on the daemon's
+// capability tick.
+func TestSchemaCheckDoesNotWaitOnAFIFO(t *testing.T) {
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
+	t.Setenv("CODEX_TEST_SCHEMA", "fifo")
+	done := make(chan string, 1)
+	go func() { done <- SchemaWarning(context.Background(), os.Args[0], "codex-cli fifo") }()
+	select {
+	case w := <-done:
+		if !strings.Contains(w, "could not check") {
+			t.Errorf("warning = %q, want the check reported as not made", w)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the check blocked opening a FIFO in the bundle's place")
+	}
+}
+
 // A check that could not run is believed only for schemaRetry, so a transient
 // failure does not follow a correctly pinned codex around for the daemon's
 // life; one cut short by its caller is not remembered at all.

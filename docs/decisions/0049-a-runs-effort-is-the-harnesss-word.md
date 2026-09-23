@@ -63,16 +63,20 @@ runner. HUB.md §4 says to tell the submitter or resubmit without the effort.
 **Decision.** Claude Code 2.1.280 does not refuse an unknown `--effort`: it
 prints `Warning: Unknown --effort value 'bogus' — ignoring it and using the
 default effort. Valid values: …` on stderr and runs the turn, exit 0. The
-adapter reads stderr beside Claude's first lines of output, and on that
-warning stops the turn and fails the run with class `harness_error` and the
-warning as the message. The outcome looks at the whole stderr tail again, so a
-warning the first look missed still fails the run.
+adapter looks at stderr on every line Claude writes and on a timer, until
+Claude's first frame of work (anything but its system frames and its echo of
+the instruction), and on that warning stops the turn and fails the run with
+class `harness_error` and the warning as the message. Nothing orders the copy
+of stderr before stdout's, so the early look is near-certain rather than
+certain — Claude warns while parsing its arguments, hundreds of milliseconds
+before any work — and the outcome's look at the whole stderr tail is what
+guarantees the run fails.
 
 **Why.** Left alone, the run would succeed having done its work at an effort
 nobody asked for — exactly what the gate prevents for older runners. The
 warning is Claude's verdict, not the runner's: the adapter reads that Claude
-refused a level, and never which levels exist. Stopping at the first output
-means the turn has done nothing yet; failing only at the end would throw away
+refused a level, and never which levels exist. Stopping before the first
+frame of work means the turn has done nothing yet; failing only at the end would throw away
 work already done, commits and pushes included.
 
 **Considered.** Validating Claude's levels in the adapter — a copied list,

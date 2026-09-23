@@ -485,8 +485,9 @@ Claude refuses — no transcript for the id — fails with `resume_rejected`
 ([0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md)).
 `AskUserQuestion` is disallowed — headless, it returns an empty answer. Claude
 does not refuse an `--effort` it does not know: it warns on stderr and runs at
-its default, so the adapter reads that warning beside Claude's first output,
-stops the turn, and fails the run with it (`harness_error`). A steer
+its default, so the adapter watches stderr for that warning until Claude's
+first frame of work, stops the turn, and fails the run with it
+(`harness_error`). A steer
 is another `user` frame: Claude reads it at the next tool boundary, or answers
 it as a follow-up turn in the same process; `--replay-user-messages` echoes
 each frame as it is taken, which is how the adapter knows which result is the

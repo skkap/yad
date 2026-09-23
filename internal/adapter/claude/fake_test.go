@@ -46,6 +46,7 @@ func fakeClaude() {
 	args := os.Args[1:]
 	log("argv", args)
 	session := ""
+	warned := false
 	for i, a := range args {
 		if (a == "--session-id" || a == "--resume") && i+1 < len(args) {
 			session = args[i+1]
@@ -54,6 +55,7 @@ func fakeClaude() {
 		// parses its arguments, then the turn at its default, exit 0.
 		if a == "--effort" && i+1 < len(args) && !slices.Contains([]string{"low", "medium", "high", "xhigh", "max"}, args[i+1]) {
 			os.Stderr.WriteString("Warning: Unknown --effort value '" + args[i+1] + "' — ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max.\n")
+			warned = true
 		}
 		if a == "--append-system-prompt-file" && i+1 < len(args) {
 			b, err := os.ReadFile(args[i+1])
@@ -146,8 +148,18 @@ func fakeClaude() {
 				line = strings.Replace(line, strconv.Quote(f.Response.RequestID), strconv.Quote(id), 1)
 			}
 		}
+		// Having warned, it plays its startup and then holds its first frame
+		// of work for a while, as the real one spends a model round trip
+		// before it: long enough that an adapter reading the warning has
+		// stopped it by then, and one that did not is seen working.
+		if warned && f.Type != "system" && !(f.Type == "user" && f.IsReplay) {
+			out.Flush()
+			time.Sleep(3 * time.Second)
+			warned = false
+		}
 		endsInResult = isResult(line)
 		out.WriteString(line)
+		log("played", f.Type)
 	}
 	out.Flush()
 
