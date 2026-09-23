@@ -334,7 +334,7 @@ a hub outage — [0023](docs/decisions/0023-lost-stands-against-a-late-result.md
 Contract: [HUB.md §6](HUB.md#events).
 
 ```
-{ seq, at, kind, text?, tool?: { id, name, input?, output?, truncated? },
+{ seq, at, kind, text?, tool?: { id, name, input?, output?, truncated?, is_error?, exit_code? },
   status?, usage?: { model, input, output, cache_read, cache_write, cost_usd? },
   error?: { class, message } }
 ```

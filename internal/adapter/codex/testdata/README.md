@@ -13,6 +13,8 @@ the user agent no longer names the terminal it ran in.
 | `plain` | a one-word answer, with a brief context as developer instructions |
 | `tool` | one shell command, then its output as the answer |
 | `error` | an unknown model: the turn fails with Codex's own message |
+| `tool-outcomes` | a command that exits 3 (`status: failed`, `exitCode: 3`), then one that succeeds |
+| `file-change` | a file created with `apply_patch`: a `fileChange` item, `status: completed` |
 | `effort` | `plain` with `effort: low` on the `turn/start` |
 | `effort-rejected` | an effort the model does not take: the turn fails with Codex's own message |
 | `resume-missing` | `thread/resume` of a thread Codex has no rollout for |

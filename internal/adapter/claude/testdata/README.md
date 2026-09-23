@@ -18,6 +18,12 @@ oversized echoed prompt is elided.
 | `steer-followup` | a steer after the last tool boundary: two results |
 | `permission-denied` | `--permission-mode default`, a tool Claude denies itself |
 
+Under `claude-2.1.280/`:
+
+| Fixture | The turn |
+|---|---|
+| `tool-outcomes` | a Bash command that exits 3, one that succeeds, and a `Read` of no file: each result's `is_error` as Claude reports it |
+
 A dead process, a truncated or garbled stream, an oversized line and a
 mismatched session are not recordable on demand; the tests derive them from
 these files (`derive` in `claude_test.go`).

@@ -55,6 +55,10 @@ var scenarios = []scenario{
 	{name: "plain", context: "You are terse.", prompt: "Reply with exactly: pong"},
 	{name: "tool", prompt: "Run the shell command `cat note.txt` and reply with its output only."},
 	{name: "error", prompt: "Reply: hi", model: "gpt-nonexistent-9"},
+	// One tool call of each outcome, for a tool result's is_error and
+	// exit_code: a shell command that fails and one that succeeds.
+	{name: "tool-outcomes", prompt: "Run exactly these two shell commands, one at a time, then reply done: 'echo out; exit 3', then 'echo ok'."},
+	{name: "file-change", prompt: "Use apply_patch to create the file hello.txt containing the line hi, then reply done. Do not run any shell command."},
 	{name: "effort", prompt: "Reply with exactly: pong", effort: "low"},
 	{name: "effort-rejected", prompt: "Reply with exactly: pong", effort: "bogus"},
 	{name: "resume-missing", prompt: "Reply: hi", resume: true},

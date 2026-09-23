@@ -811,10 +811,22 @@ every harness, so a hub never parses a harness's own output:
 | `text` | `text`: something the harness said |
 | `thinking` | `text`: its reasoning |
 | `tool_call` | `tool.id`, `tool.name`, `tool.input` |
-| `tool_result` | `tool.id` (joining it to its call), `tool.output`, `tool.truncated` |
+| `tool_result` | `tool.id` (joining it to its call), `tool.output`, `tool.truncated`, `tool.is_error`, and for a shell command `tool.exit_code` |
 | `status` | `status`, a short label for a phase of the run, and sometimes `text`. For people: not a closed set, and not to be parsed |
 | `usage` | `usage`: tokens one model used |
 | `error` | `error`: a class and message, whether or not the run carries on |
+
+**`tool.is_error` says whether a call failed, as the harness reported it**:
+`true` for a command that exited non-zero, a tool that reported an error, or
+a call the owner's approval policy declined; `false` for one that succeeded.
+It is **absent when the harness did not say** — a Codex web search or image
+view, a status yad does not know — and never guessed from the output, so
+show an absent one as neither. `tool.exit_code` is a shell command's exit
+status where the harness reports one as a number: Codex does, Claude Code
+does not. The output is unchanged either way — Codex's still ends `[exit N]`
+or `[declined: …]` — so a hub that ignores both fields loses nothing. Both
+are new within v1 and are plain optional fields, not enum values, so no
+feature gates them (§11): a hub generated before them ignores them.
 
 Tool input and output are capped at 8 KiB each, and `truncated` says when
 either was cut; text, error messages and a result's final text at 1 MiB each.

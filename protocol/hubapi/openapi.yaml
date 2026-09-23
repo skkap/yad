@@ -609,12 +609,19 @@ components:
     ToolEvent:
       additionalProperties: true
       properties:
+        exit_code:
+          description: "For a tool_result of a shell command, its exit status, where the harness reports one as a number: Codex does, Claude Code does not. Absent otherwise."
+          format: int64
+          type: integer
         id:
           description: The harness's id for the call, which joins a tool_result to its tool_call.
           type: string
         input:
           description: The call's input, usually JSON, at most 8 KiB.
           type: string
+        is_error:
+          description: "For a tool_result: whether the call failed, as the harness reported it — true for a command that exited non-zero, a tool that reported an error, or a call the owner's approval policy declined; false for one that succeeded. Absent when the harness did not say; never guessed from the output."
+          type: boolean
         name:
           description: The tool, as the harness names it, such as Read or shell.
           type: string

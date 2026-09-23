@@ -60,6 +60,9 @@ var scenarios = []scenario{
 	{name: "plain", context: "You are terse.", prompt: "Reply with exactly: pong"},
 	{name: "tool", prompt: "Use the Read tool to read note.txt, then reply with its contents only."},
 	{name: "error", prompt: "Reply: hi", model: "claude-nonexistent-9"},
+	// One tool call of each outcome, for a tool result's is_error: a shell
+	// command that fails, one that succeeds, and a Read of no file.
+	{name: "tool-outcomes", prompt: "Make exactly these three tool calls, one at a time, then reply done: the Bash command 'echo out; exit 3', then the Bash command 'echo ok', then the Read tool on missing.txt."},
 	{name: "prompt-too-long", prompt: "Reply: ok. " + strings.Repeat("lorem ipsum dolor sit amet ", 45000)},
 	{name: "resume-missing", prompt: "Reply: hi", resume: true},
 	{name: "resume", before: "Remember this word: plum. Reply with exactly: ok",

@@ -106,6 +106,7 @@ type item struct {
 	} `json:"changes"`
 
 	// mcpToolCall, dynamicToolCall, collabAgentToolCall
+	Success   *bool           `json:"success"`
 	Server    string          `json:"server"`
 	Tool      json.RawMessage `json:"tool"`
 	Arguments json.RawMessage `json:"arguments"`
@@ -353,7 +354,8 @@ func (t *translator) completed(it item) {
 		}
 		delete(t.called, it.ID)
 		out, cut := adapter.CapTool(toolOutput(it))
-		t.emit(v1.Event{At: t.now(), Kind: v1.EventToolResult, Tool: &v1.ToolEvent{ID: it.ID, Output: out, Truncated: cut}})
+		failed, exit := toolOutcome(it)
+		t.emit(v1.Event{At: t.now(), Kind: v1.EventToolResult, Tool: &v1.ToolEvent{ID: it.ID, Output: out, Truncated: cut, IsError: failed, ExitCode: exit}})
 	}
 }
 
@@ -381,6 +383,47 @@ func toolCall(it item) (name, input string, ok bool) {
 		return "view_image", it.Path, true
 	}
 	return "", "", false
+}
+
+// toolOutcome is whether a finished tool item failed, and a command's exit
+// status, from the fields the pinned protocol gives each item (DEV-125):
+// status for every kind that has one, exitCode for a command, success for a
+// dynamic tool, error for an MCP call. A kind with none of them — a web
+// search, an image view — leaves the answer absent rather than guessed; so
+// does a status Codex has not finished, or one yad does not know.
+func toolOutcome(it item) (failed *bool, exit *int) {
+	yes, no := true, false
+	byStatus := func() *bool {
+		switch it.Status {
+		case "failed", "declined":
+			return &yes
+		case "completed":
+			return &no
+		}
+		return nil
+	}
+	switch it.Type {
+	case "commandExecution":
+		exit = it.ExitCode
+		failed = byStatus()
+		if exit != nil && *exit != 0 {
+			failed = &yes
+		}
+	case "fileChange", "collabAgentToolCall":
+		failed = byStatus()
+	case "mcpToolCall":
+		failed = byStatus()
+		if it.Error != nil {
+			failed = &yes
+		}
+	case "dynamicToolCall":
+		failed = byStatus()
+		if it.Success != nil {
+			v := !*it.Success
+			failed = &v
+		}
+	}
+	return failed, exit
 }
 
 func toolOutput(it item) string {
