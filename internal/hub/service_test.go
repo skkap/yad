@@ -299,10 +299,14 @@ func TestSubmittedRunIsOfferedAndGrantsStayHidden(t *testing.T) {
 	cred := f.register(t, "r1")
 	req := submission("fix it")
 	req.Brief.Context = "you are in the yad repo"
+	req.Effort = "xhigh"
 	req.Grants = []v1.Grant{{Name: "ZUMINO_TOKEN", Value: "grant-secret-value", As: v1.GrantEnv}}
 	var sub hubapi.Run
 	if code, e := f.api(t, "POST", "/runs", tok, req, &sub); code != 201 {
 		t.Fatalf("submit: %d %s", code, e.Message)
+	}
+	if sub.Effort != "xhigh" {
+		t.Errorf("the queued run shows effort %q, want xhigh", sub.Effort)
 	}
 
 	res := f.mustSync(t, "r1", cred, first("r1", 1))
@@ -311,7 +315,7 @@ func TestSubmittedRunIsOfferedAndGrantsStayHidden(t *testing.T) {
 	}
 	got := res.Runs[0]
 	if got.RunID != sub.RunID || got.Session.ID != sub.SessionID || !got.Session.New || got.Session.Mode != v1.SessionPerRun ||
-		got.Brief != req.Brief || len(got.Grants) != 1 || got.Grants[0].Value != "grant-secret-value" {
+		got.Brief != req.Brief || got.Effort != "xhigh" || len(got.Grants) != 1 || got.Grants[0].Value != "grant-secret-value" {
 		t.Errorf("offered %+v", got)
 	}
 

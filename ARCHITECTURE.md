@@ -286,7 +286,7 @@ Contract: [HUB.md §4](HUB.md#4-runs), and [§9](HUB.md#9-grants) for grants.
 
 ```
 { run_id, session: { id, new, mode: "per_run" },
-  harness, model,
+  harness, model, effort?,
   brief: { context, instruction },
   sources: [{ git: { url, base, branch } } | { path }],
   grants: [{ name, value, as: "env" | "file" }],
@@ -294,6 +294,10 @@ Contract: [HUB.md §4](HUB.md#4-runs), and [§9](HUB.md#9-grants) for grants.
 ```
 
 `session.mode = "live"` is reserved and refused until a runner advertises it.
+`effort` is how hard the harness thinks, in its own terms, as `model` is — a
+string and never an enum; the runner passes it through unchecked and the
+harness refuses a level it does not take
+([0049](docs/decisions/0049-a-runs-effort-is-the-harnesss-word.md)).
 A grant's `name` is any valid environment variable name except `PATH`, `HOME`,
 `LD_*` and `DYLD_*`, and except the variables that choose a harness's
 credential or home (`ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and
@@ -384,7 +388,9 @@ sends `drain`, `close_session`, `steer` and `interrupt` only to a runner
 advertising each, and offers a run carrying `start_at` whose moment is still
 ahead only to a runner that will hold it back rather than start it at once —
 once the moment has passed there is nothing to hold, and the run goes to any
-runner, or it would wait for ever on a fleet without the feature. A runner
+runner, or it would wait for ever on a fleet without the feature. A run
+carrying an `effort` goes only to a runner advertising `effort`, for as long
+as that takes: any other would run the harness at its default and say nothing. A runner
 whose fingerprint moved without the document it promised is treated as
 advertising neither, until the document it is asked for arrives. `yad hub` advertises no
 `hub_features` of its own — it has nothing beyond the v1 baseline.
@@ -466,7 +472,7 @@ type Turn interface {
 claude -p --input-format stream-json --output-format stream-json --verbose
        --include-partial-messages --replay-user-messages
        --disallowed-tools AskUserQuestion --permission-mode <owner config>
-       (--session-id <uuid> | --resume <uuid>) [--model m]
+       (--session-id <uuid> | --resume <uuid>) [--model m] [--effort level]
        [--append-system-prompt-file <context file>]
 ```
 
@@ -477,7 +483,10 @@ session id, so nothing has to be scraped; an echoed id that differs means the
 resume silently failed, and the run fails with `session_mismatch`. A resume
 Claude refuses — no transcript for the id — fails with `resume_rejected`
 ([0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md)).
-`AskUserQuestion` is disallowed — headless, it returns an empty answer. A steer
+`AskUserQuestion` is disallowed — headless, it returns an empty answer. Claude
+does not refuse an `--effort` it does not know: it warns on stderr and runs at
+its default, so the adapter reads that warning beside Claude's first output,
+stops the turn, and fails the run with it (`harness_error`). A steer
 is another `user` frame: Claude reads it at the next tool boundary, or answers
 it as a follow-up turn in the same process; `--replay-user-messages` echoes
 each frame as it is taken, which is how the adapter knows which result is the
@@ -497,8 +506,10 @@ run's environment, which carries the hub's grants.
 `codex app-server --listen stdio://`, JSON-RPC over stdin and stdout
 (`internal/adapter/codex/rpc.go`): `initialize` → `initialized` →
 `thread/start`, or `thread/resume` with the stored thread id → one `turn/start`
-with the instruction; the brief's context is the thread's
-`developerInstructions`. Each of those is answered within 30 s. The thread id is
+with the instruction and the run's `effort`, when it has one; the brief's
+context is the thread's `developerInstructions`. Codex's model list is read
+from `models_cache.json` in each home a run may use, for the capability
+document. Each of those is answered within 30 s. The thread id is
 the native session id, exposed the moment `thread/start` answers. Codex writes
 subagents' threads to the same pipe and a resume replays the thread's history,
 so only notifications naming the run's thread and, once it has started, the
@@ -918,7 +929,7 @@ yad account use                    not built, and not planned: it refuses, sayin
 yad service install|uninstall|status
                                    launchd user agent, systemd user unit (0028)
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1
-yad hub submit --harness h --model m [--session id | --new-session id] <instruction | ->
+yad hub submit --harness h --model m [--effort level] [--session id | --new-session id] <instruction | ->
                                    queue a run; prints its id (--watch follows it)
 yad hub watch <run>                a run's events as they arrive, then its result;
                                    exits non-zero unless it succeeded

@@ -13,6 +13,8 @@ the user agent no longer names the terminal it ran in.
 | `plain` | a one-word answer, with a brief context as developer instructions |
 | `tool` | one shell command, then its output as the answer |
 | `error` | an unknown model: the turn fails with Codex's own message |
+| `effort` | `plain` with `effort: low` on the `turn/start` |
+| `effort-rejected` | an effort the model does not take: the turn fails with Codex's own message |
 | `resume-missing` | `thread/resume` of a thread Codex has no rollout for |
 | `resume` | a second turn in a thread; Codex replays the first turn's usage before it |
 | `interrupt` | `turn/interrupt` sent at the first text |

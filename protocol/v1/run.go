@@ -19,7 +19,16 @@ type Run struct {
 	// Model is required: a run names its model, and a harness left to its own
 	// default runs something different, and differently priced, from what the
 	// hub asked for.
-	Model   string   `json:"model" doc:"The model the harness runs, in the harness's own terms: an alias such as haiku or a full name such as claude-haiku-4-5 or gpt-5.1-codex. Required; the runner never falls back to a default."`
+	Model string `json:"model" doc:"The model the harness runs, in the harness's own terms: an alias such as haiku or a full name such as claude-haiku-4-5 or gpt-5.1-codex. Required; the runner never falls back to a default."`
+	// Effort is a string and not an enum, as Model is: the levels are each
+	// harness's own, they differ by model, and they grow with harness
+	// releases — an enum here would be a v1 enum that had to grow with them
+	// (decision 0047), and a runner that checked names would refuse a level
+	// its harness had just learned. The harness decides; the runner passes
+	// the word through. A hub offers a run carrying one only to a runner
+	// advertising the "effort" feature: any other would run it at the
+	// harness's default, and nothing would say so (decision 0049).
+	Effort  string   `json:"effort,omitempty" doc:"How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort."`
 	Brief   Brief    `json:"brief" doc:"What the run is told."`
 	Sources []Source `json:"sources,omitempty" doc:"What the session's workdir is built from, used by the run that opens the session; a run continuing it names the same sources or none. Absent: the workdir starts empty. Each source sets exactly one of git, a repository checked out as a worktree, or path, an absolute directory on the runner's machine worked in place, taken only inside the directories its owner allows (their home unless they listed others) and otherwise failed with class source_refused."`
 	Grants  []Grant  `json:"grants,omitempty" doc:"Short-lived secrets for this run alone, delivered to the harness process and deleted when the run ends. Names follow rules the schema cannot state; a run breaking one is refused whole."`

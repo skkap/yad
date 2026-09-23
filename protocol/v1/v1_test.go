@@ -25,7 +25,7 @@ func TestRoundTrip(t *testing.T) {
 			NextSyncMS: 15000, LeaseMS: 60000,
 			Runs: []Run{{
 				RunID: "r1", Session: SessionRef{ID: "s1", New: true, Mode: SessionPerRun},
-				Harness: "claude", Model: "opus",
+				Harness: "claude", Model: "opus", Effort: "high",
 				Brief:   Brief{Context: "ctx", Instruction: "do it"},
 				Sources: []Source{{Git: &GitSource{URL: "git@github.com:a/b", Base: "master", Branch: "yad/r1"}}, {Path: "/srv/home"}},
 				Grants:  []Grant{{Name: "ZUMINO_TOKEN", Value: "x", As: GrantEnv}},

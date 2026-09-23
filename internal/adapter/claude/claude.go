@@ -37,6 +37,9 @@ type Adapter struct {
 
 func (Adapter) Harness() string { return "claude" }
 
+// AppliesEffort: a run's effort is Claude's --effort.
+func (Adapter) AppliesEffort() bool { return true }
+
 // Timings a test may shorten.
 var (
 	// exitGrace is how long Claude gets to exit once its last result is in and
@@ -104,6 +107,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		ctx:       ctx,
 		p:         p,
 		session:   session,
+		effort:    spec.Effort,
 		check:     spec.HarnessCheck("claude", "-p", "hello"),
 		frames:    make(chan []byte, 16),
 		written:   1,
@@ -166,6 +170,15 @@ func argv(spec adapter.Spec, session, contextFile string) ([]string, error) {
 			return nil, fmt.Errorf("model %q is not a model name — ask the hub to send an alias such as sonnet", spec.Model)
 		}
 		args = append(args, "--model", spec.Model)
+	}
+	if spec.Effort != "" {
+		// Passed as the hub sent it: which levels exist is Claude's to say,
+		// and a level Claude does not know is caught from what it says about
+		// it (effortRefusal). Held to the model's rule for the same reason.
+		if strings.HasPrefix(spec.Effort, "-") {
+			return nil, fmt.Errorf("effort %q is not an effort level — ask the hub to send one Claude Code lists, such as high", spec.Effort)
+		}
+		args = append(args, "--effort", spec.Effort)
 	}
 	if contextFile != "" {
 		args = append(args, "--append-system-prompt-file", contextFile)
@@ -249,6 +262,11 @@ type turn struct {
 	session string
 	// check is the login check for the owner, in the run's account home.
 	check string
+	// effort is the run's effort; effortRefused, Claude's own words refusing
+	// it, once they are seen; looked counts the lines looked at for them.
+	effort        string
+	effortRefused string
+	looked        int
 
 	// Every write to stdin goes through frames, so the instruction, steers,
 	// interrupts and permission answers never interleave.
@@ -470,6 +488,12 @@ loop:
 		final:       t.settled,
 		check:       t.check,
 	}
+	e.effort, e.effortRefused = t.effort, t.effortRefused
+	if e.effortRefused == "" && t.effort != "" {
+		// The look at the start can only miss if Claude's stderr had not
+		// been copied by its first line of output; the whole tail is here now.
+		e.effortRefused = effortRefusal(e.stderr)
+	}
 	t.mu.Unlock()
 	t.outcome = tr.outcome(e)
 	t.q.Close()
@@ -477,6 +501,7 @@ loop:
 }
 
 func (t *turn) handle(tr *translator, line []byte) {
+	t.checkEffort()
 	r := tr.line(line)
 	if r.replayed {
 		t.mu.Lock()
@@ -494,6 +519,47 @@ func (t *turn) handle(tr *translator, line []byte) {
 	if r.result {
 		t.settle(tr.result.QueuedTurnCount)
 	}
+}
+
+// effortLooks is how many of Claude's first lines of output the adapter looks
+// at stderr beside. Claude says it will ignore an effort while it parses its
+// arguments, long before it writes a line to stdout; the look is repeated
+// only against the copy of stderr lagging the stdout that followed it.
+const effortLooks = 8
+
+// checkEffort stops a turn Claude has said it will run at another effort
+// than the run's. Claude does not refuse a level it does not know: it warns
+// on stderr and runs at its default, and a run that went on would succeed
+// having done the work at an effort nobody asked for. Stopped at its first
+// output, before it has done any; outcome fails the run with Claude's words.
+func (t *turn) checkEffort() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.effort == "" || t.effortRefused != "" || t.looked >= effortLooks {
+		return
+	}
+	t.looked++
+	if t.effortRefused = effortRefusal(t.p.Stderr()); t.effortRefused != "" {
+		go t.p.Stop(supervise.Ladder{TermGrace: t.termGrace})
+	}
+}
+
+// effortRefusal is Claude's line saying it will not use the effort it was
+// given, or "" when it said none. The line is the harness's verdict, not the
+// runner's: which levels exist is Claude's to say, and this only notices
+// that it said one did not.
+//
+// Claude 2.1.280 prints: Warning: Unknown --effort value 'bogus' — ignoring
+// it and using the default effort. Valid values: low, medium, high, xhigh,
+// max.
+func effortRefusal(stderr string) string {
+	for _, line := range strings.Split(stderr, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(line, "--effort") && (strings.Contains(lower, "unknown") || strings.Contains(lower, "ignoring")) {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
 }
 
 // reap makes sure the reader ends: Claude is stopped if it lingers after its

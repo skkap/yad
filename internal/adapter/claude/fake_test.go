@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -48,6 +49,11 @@ func fakeClaude() {
 	for i, a := range args {
 		if (a == "--session-id" || a == "--resume") && i+1 < len(args) {
 			session = args[i+1]
+		}
+		// Claude 2.1.280 on an effort it does not know: a warning while it
+		// parses its arguments, then the turn at its default, exit 0.
+		if a == "--effort" && i+1 < len(args) && !slices.Contains([]string{"low", "medium", "high", "xhigh", "max"}, args[i+1]) {
+			os.Stderr.WriteString("Warning: Unknown --effort value '" + args[i+1] + "' — ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max.\n")
 		}
 		if a == "--append-system-prompt-file" && i+1 < len(args) {
 			b, err := os.ReadFile(args[i+1])

@@ -110,7 +110,7 @@ func (h *Hub) registerService(api huma.API) {
 func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error) {
 	req := in.Body
 	run := v1.Run{
-		RunID: req.RunID, Harness: req.Harness, Model: req.Model, Brief: req.Brief,
+		RunID: req.RunID, Harness: req.Harness, Model: req.Model, Effort: req.Effort, Brief: req.Brief,
 		Sources: req.Sources, Grants: req.Grants, StartAt: req.StartAt,
 		MaxWaitMS: req.MaxWaitMS, WallClockMS: req.WallClockMS, InactivityMS: req.InactivityMS,
 		Session: v1.SessionRef{New: true, Mode: v1.SessionPerRun},
@@ -313,6 +313,11 @@ func runView(ctx context.Context, q *db.Queries, runID string) (hubapi.Run, erro
 		t := time.UnixMilli(r.ResumesAt.Int64).UTC()
 		view.ResumesAt = &t
 	}
+	var spec v1.Run
+	if err := json.Unmarshal([]byte(r.Spec), &spec); err != nil {
+		return hubapi.Run{}, fmt.Errorf("stored run %s: %w", runID, err)
+	}
+	view.Effort = spec.Effort
 	if !view.State.Terminal() {
 		c, err := q.FirstControl(ctx, db.FirstControlParams{RunID: runID, Kind: string(v1.ControlCancel)})
 		switch {

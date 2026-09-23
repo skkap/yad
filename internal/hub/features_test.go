@@ -109,6 +109,62 @@ func TestStartAtIsOfferedOnlyToARunnerThatHoldsIt(t *testing.T) {
 	}
 }
 
+// A runner without the effort feature drops a field it does not know and runs
+// the harness at its default: the run succeeds, and nothing says it was not
+// what was asked. So an effort run waits for a runner that advertises it —
+// unlike a start moment, for as long as it takes.
+func TestAnEffortRunIsOfferedOnlyToARunnerThatAppliesIt(t *testing.T) {
+	f := newFixture(t)
+	old := f.register(t, "old")
+	f.mustSync(t, "old", old, downgraded("old", 3, capability.FeatureEffort))
+	hard := run("hard", "s1")
+	hard.Effort = "high"
+	f.enqueue(t, hard, run("plain", "s2"))
+
+	if got := ids(f.mustSync(t, "old", old, req("old", 3)).Runs); !slices.Equal(got, []string{"plain"}) {
+		t.Fatalf("offered %v to a runner without %q, want [plain]", got, capability.FeatureEffort)
+	}
+	// Asked again, still not: nothing about the run changes with time.
+	if got := ids(f.mustSync(t, "old", old, req("old", 3, claimed("plain")...)).Runs); len(got) != 0 {
+		t.Fatalf("offered %v to a runner without %q on its next sync", got, capability.FeatureEffort)
+	}
+	if s := f.state(t, "hard"); s != "queued" {
+		t.Errorf("run hard is %s, want queued", s)
+	}
+
+	cred := f.register(t, "r1")
+	res := f.mustSync(t, "r1", cred, first("r1", 2))
+	if got := ids(res.Runs); len(got) != 1 || got[0] != "hard" {
+		t.Fatalf("offered %v to a runner with %q, want [hard]", got, capability.FeatureEffort)
+	}
+	if res.Runs[0].Effort != "high" {
+		t.Errorf("the offer carries effort %q, want high", res.Runs[0].Effort)
+	}
+}
+
+// As for a start moment: an offer is the one thing a later sync cannot take
+// back, so a runner whose document the hub has asked to replace is offered no
+// effort run until it arrives.
+func TestAnEffortRunWaitsForADocumentTheHubKnowsIsStale(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	f.mustSync(t, "r1", cred, first("r1", 1))
+	hard := run("hard", "s1")
+	hard.Effort = "high"
+	f.enqueue(t, hard)
+
+	moved := req("r1", 1)
+	moved.Fingerprint = "fp-r1-moved"
+	if got := ids(f.mustSync(t, "r1", cred, moved).Runs); len(got) != 0 {
+		t.Errorf("offered %v against a document the hub had just asked to replace", got)
+	}
+	answer := first("r1", 1)
+	answer.Fingerprint = moved.Fingerprint
+	if got := ids(f.mustSync(t, "r1", cred, answer).Runs); len(got) != 1 || got[0] != "hard" {
+		t.Errorf("offered %v once the document arrived, want [hard]", got)
+	}
+}
+
 // downgraded is a sync carrying a document with one feature taken out of it —
 // a runner restarted under an older binary, which keeps its credential.
 func downgraded(id string, free int, without string) v1.SyncRequest {

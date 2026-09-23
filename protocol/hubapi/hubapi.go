@@ -35,8 +35,11 @@ type SubmitRequest struct {
 	Session *SessionChoice `json:"session,omitempty" doc:"The session the run belongs to. Absent: a new session with a generated id."`
 	Harness string         `json:"harness" minLength:"1" doc:"The harness to run, by its id in a runner's capability document: claude or codex."`
 	Model   string         `json:"model" minLength:"1" doc:"The model, in the harness's own terms, such as haiku or gpt-5.1-codex."`
-	Brief   v1.Brief       `json:"brief"`
-	Sources []v1.Source    `json:"sources,omitempty" doc:"What a new session's workdir is built from. A run continuing a session names the same sources or none."`
+	// Effort is queued like any run; the hub offers it only to a runner
+	// advertising the effort feature, so on a fleet without one it waits.
+	Effort  string      `json:"effort,omitempty" doc:"How hard the harness thinks, in its own terms, such as low or high. Offered only to a runner advertising the effort feature. Absent: the harness's default."`
+	Brief   v1.Brief    `json:"brief"`
+	Sources []v1.Source `json:"sources,omitempty" doc:"What a new session's workdir is built from. A run continuing a session names the same sources or none."`
 	// Grants go to the runner with the run and are never returned by this API.
 	Grants       []v1.Grant `json:"grants,omitempty" doc:"Secrets for this run alone. Sent to the runner with the run, never returned by this API, and blanked in the hub's store once the run is terminal."`
 	StartAt      *time.Time `json:"start_at,omitempty" doc:"A moment the run must not start before."`
@@ -75,6 +78,7 @@ type Run struct {
 	SessionID string   `json:"session_id" doc:"The session the run belongs to."`
 	Harness   string   `json:"harness" doc:"The harness it runs on."`
 	Model     string   `json:"model" doc:"The model it runs."`
+	Effort    string   `json:"effort,omitempty" doc:"The effort it was submitted with. Absent: the harness's default."`
 	State     RunState `json:"state" enum:"queued,offered,claimed,preparing,running,waiting,succeeded,failed,cancelled,timed_out,lost" doc:"queued: waiting for a runner that can take it. offered: sent to a runner that has not listed it back yet. Then the protocol's states; the last five are terminal."`
 	// RunnerID is the runner the run was offered to or is held by.
 	RunnerID string `json:"runner_id,omitempty" doc:"The runner the run was offered to or is held by. Absent while queued."`

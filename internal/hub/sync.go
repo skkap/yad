@@ -276,6 +276,13 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 	// early has started. So an undescribed runner is offered nothing it would
 	// have to hold, and hears about those runs a sync later.
 	holdsStartAt := described && advertises(doc, capability.FeatureStartAt)
+	// A run carrying an effort goes only to a runner that will hand it to the
+	// harness. Unlike a start moment it never expires: one without the
+	// feature would drop the field and run at the harness's default, and the
+	// run would succeed with nothing saying so (decision 0049). On a fleet
+	// that advertises none the run stays queued, which is the honest answer.
+	// An undescribed runner is offered none, for the reason above.
+	takesEffort := described && advertises(doc, capability.FeatureEffort)
 	var (
 		runs   []v1.Run
 		cursor db.Run
@@ -310,6 +317,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 				return nil, fmt.Errorf("stored run %s: %w", c.ID, err)
 			}
 			if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
+				continue
+			}
+			if run.Effort != "" && !takesEffort {
 				continue
 			}
 			if err := opening(ctx, q, &run); err != nil {

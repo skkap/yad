@@ -42,6 +42,7 @@ type scenario struct {
 	context  string
 	prompt   string
 	model    string
+	effort   string
 	settings map[string]string
 	resume   bool // resume a thread that does not exist
 	// before, when set, is a first turn in a new thread; the scenario's own
@@ -54,6 +55,8 @@ var scenarios = []scenario{
 	{name: "plain", context: "You are terse.", prompt: "Reply with exactly: pong"},
 	{name: "tool", prompt: "Run the shell command `cat note.txt` and reply with its output only."},
 	{name: "error", prompt: "Reply: hi", model: "gpt-nonexistent-9"},
+	{name: "effort", prompt: "Reply with exactly: pong", effort: "low"},
+	{name: "effort-rejected", prompt: "Reply with exactly: pong", effort: "bogus"},
 	{name: "resume-missing", prompt: "Reply: hi", resume: true},
 	{name: "resume", before: "Remember this word: plum. Reply with exactly: ok",
 		prompt: "Which word did I ask you to remember? Reply with the word only."},
@@ -141,6 +144,7 @@ func TestRecord(t *testing.T) {
 			if s.model != "" {
 				spec.Model = s.model
 			}
+			spec.Effort = s.effort
 			spec.NativeSessionID = native
 			if s.resume {
 				spec.NativeSessionID = "01a0b86e-0000-7000-8000-000000000000"

@@ -15,7 +15,7 @@ type Capabilities struct {
 	Harnesses        []HarnessReport `json:"harnesses" doc:"Every harness in the runner's catalog, installed or not. A run may be offered only for a harness whose kind is first-class, present is true and error is empty."`
 	HostTools        []HostTool      `json:"host_tools,omitempty" doc:"The non-harness tools a run may need, as they exist on this runner. A tool is usable when present is true and error is empty, and, for a tool that has a login, when logged_in is true as well. A tool that is missing or broken is reported rather than left out."`
 	Capacity         Capacity        `json:"capacity" doc:"How many runs the runner executes at once, and the owner's per-harness caps. The configured size, not what is free now: that is each sync's health.free_capacity."`
-	ProtocolFeatures []string        `json:"protocol_features,omitempty" doc:"The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain and close_session; live_sessions is reserved. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."`
+	ProtocolFeatures []string        `json:"protocol_features,omitempty" doc:"The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session and effort; live_sessions is reserved. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."`
 	ObservedAt       time.Time       `json:"observed_at" doc:"When the runner built this document. Left out of the fingerprint, so it changes without the fingerprint moving."`
 }
 
@@ -35,8 +35,11 @@ type HarnessReport struct {
 	Version string `json:"version,omitempty" doc:"The version number the harness reported, such as 2.4.1 or 1.0.0-beta.12, and nothing else of what it printed. Absent when it printed no version."`
 	// Error is the runner's own words, never the harness's: a child's output
 	// and the path it was started from stay on the machine (DEV-60).
-	Error    string          `json:"error,omitempty" doc:"Why this harness cannot take runs, and the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
-	Models   []string        `json:"models,omitempty" doc:"Model aliases the runner knows for this harness, such as opus, sonnet and haiku for claude. Not a limit: a run may name any model, and the harness decides whether it exists."`
+	Error string `json:"error,omitempty" doc:"Why this harness cannot take runs, and the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
+	// Models for codex are read from the model list Codex itself caches in
+	// its home, so they are the models its login offers; an account whose
+	// harness has not fetched the list yet adds none (DEV-124).
+	Models   []string        `json:"models,omitempty" doc:"Models the runner knows for this harness: the aliases opus, sonnet and haiku for claude; for codex, the models Codex lists for the runner's logins, such as gpt-5.5, in Codex's own order. Not a limit: a run may name any model, and the harness decides whether it exists. Absent when the runner knows none."`
 	Accounts []AccountReport `json:"accounts,omitempty" doc:"The owner's accounts for this harness. Absent when none are configured, and the harness runs on its own login."`
 	// Warnings are what the runner found wrong with a harness it can still
 	// drive — an installed Codex whose app-server protocol differs from the

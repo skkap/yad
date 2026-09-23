@@ -270,6 +270,32 @@ func TestPlainRun(t *testing.T) {
 	if tp["threadId"] != thread || !strings.Contains(mustJSON(tp["input"]), "do the thing") {
 		t.Errorf("turn/start = %v", tp)
 	}
+	if _, ok := tp["effort"]; ok {
+		t.Errorf("a run with no effort named one, where Codex's default was asked for: %v", tp)
+	}
+}
+
+// A run's effort is its turn's, as the hub sent it: Codex decides which
+// levels a model takes, and the runner checks none. Neither thread/start nor
+// thread/resume carries it, so a continued session is not left at an effort
+// an earlier run chose.
+func TestEffortGoesOnTheTurn(t *testing.T) {
+	h := &harness{fixture: fixture("effort")}
+	spec := h.spec(t)
+	spec.Effort = "low"
+	if _, out, _ := drive(t, context.Background(), spec, nil); out.State != v1.RunSucceeded || out.FinalText != "pong" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	s := h.seen(t)
+	if got := s.params(t, "turn/start")["effort"]; got != "low" {
+		t.Errorf("turn/start effort = %v, want low", got)
+	}
+	if _, ok := s.params(t, "thread/start")["effort"]; ok {
+		t.Errorf("thread/start carries the effort: %v", s.params(t, "thread/start"))
+	}
+	if !(Adapter{}).AppliesEffort() {
+		t.Error("the codex adapter does not say it applies an effort, and the runner would refuse every run carrying one")
+	}
 }
 
 func mustJSON(v any) string {
@@ -328,6 +354,10 @@ func TestFailures(t *testing.T) {
 	}{
 		{name: "an unknown model", fixture: "error", class: adapter.ClassHarness,
 			inMessage: "The 'gpt-nonexistent-9' model is not supported"},
+		// Codex takes the turn and its API refuses the level: the run fails
+		// with Codex's words, which name the levels it would take.
+		{name: "an effort the model does not take", fixture: "effort-rejected", class: adapter.ClassHarness,
+			inMessage: "Invalid value: 'bogus'"},
 		{name: "a context window exceeded", fixture: "prompt-too-long", class: adapter.ClassPromptTooLong,
 			inMessage: "ran out of room"},
 		{name: "a usage limit, with its window", fixture: "usage-limit", class: adapter.ClassUsageLimit,

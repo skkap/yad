@@ -329,8 +329,8 @@ func checkEventsAfterTheRunEnds(ctx context.Context, s *session) error {
 }
 
 // checkGatedRunsAreNotOffered is the offer side of HUB.md's feature rule: the
-// two things in a run that only a runner advertising a feature may be given.
-// This runner advertises none, so it must be offered neither.
+// three things in a run that only a runner advertising a feature may be
+// given. This runner advertises none, so it must be offered none of them.
 func checkGatedRunsAreNotOffered(_ context.Context, s *session) error {
 	for _, run := range s.offers {
 		switch {
@@ -339,6 +339,9 @@ func checkGatedRunsAreNotOffered(_ context.Context, s *session) error {
 		case run.StartAt != nil && run.StartAt.After(time.Now()):
 			return brokenf("the hub offered run %s with a start_at still ahead (%s), which goes only to a runner advertising start_at — any other starts it on arrival, which is the one thing that moment exists to prevent",
 				run.RunID, run.StartAt.UTC().Format(time.RFC3339))
+		case run.Effort != "":
+			return brokenf("the hub offered run %s with effort %q, which goes only to a runner advertising effort — any other runs the harness at its default and says nothing of it",
+				run.RunID, run.Effort)
 		}
 	}
 	return nil

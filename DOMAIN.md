@@ -29,7 +29,7 @@ _See_: [0003](docs/decisions/0003-hub-is-a-role-runner-is-multi-homed.md), `inte
 **Profile** — one runner's config directory: its identity, connections,
 accounts and state. One machine can carry several profiles, and each is a
 separate runner that knows nothing of the others.
-_Avoid_: using it for per-run harness settings — there are none in the protocol
+_Avoid_: using it for per-run harness settings — a run's model and effort travel with the run, and nothing else does
 _See_: `internal/config`
 
 **Hub** — whatever gives a runner work: anything that hosts the server half of
@@ -148,6 +148,13 @@ harness retries by itself (`system/api_retry`); it never makes a run wait.
 **Model** — what the harness is pointed at for one run (`opus`, `gpt-5.1-codex`).
 Chosen per run, never per runner: the same machine serves cheap and expensive
 work.
+
+**Effort** — how hard the harness thinks on one run, in the harness's own
+words: Claude Code's `--effort` (`low` … `max`), Codex's reasoning effort
+(`low` … `xhigh`, more for some models). Optional; absent is the harness's
+default. Chosen per run, like the model, and never checked by the runner — the
+harness decides which levels exist.
+_See_: [0049](docs/decisions/0049-a-runs-effort-is-the-harnesss-word.md)
 
 ### The work
 
