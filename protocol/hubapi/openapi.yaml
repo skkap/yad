@@ -347,6 +347,9 @@ components:
           description: When the run was submitted.
           format: date-time
           type: string
+        effort:
+          description: "The effort it was submitted with. Absent: the harness's default."
+          type: string
         harness:
           description: The harness it runs on.
           type: string
@@ -552,6 +555,9 @@ components:
       properties:
         brief:
           $ref: "#/components/schemas/Brief"
+        effort:
+          description: "How hard the harness thinks, in its own terms, such as low or high: at most 64 letters, digits, - and _, or the run is refused. Offered only to a runner advertising the effort feature. Absent: the harness's default."
+          type: string
         grants:
           description: Secrets for this run alone. Sent to the runner with the run, never returned by this API, and blanked in the hub's store once the run is terminal.
           items:

@@ -35,8 +35,13 @@ func (e *LocalError) Unwrap() error { return e.Err }
 // it: the workdir exists, the account's harness home is chosen, grants are
 // already in Env or on disk.
 type Spec struct {
-	RunID   string
-	Model   string
+	RunID string
+	Model string
+	// Effort is the run's effort, in the harness's own terms, or "" for the
+	// harness's default. An adapter hands it over unchecked — the harness
+	// decides which levels exist — and only an adapter that is an
+	// EffortApplier is ever given one.
+	Effort  string
 	Workdir string
 	// SessionID is YAD's; NativeSessionID is the harness's own, empty for a new
 	// session. Claude lets YAD choose it up front; Codex assigns its own.
@@ -73,6 +78,22 @@ type Spec struct {
 type Adapter interface {
 	Harness() string
 	Start(ctx context.Context, spec Spec) (Turn, error)
+}
+
+// EffortApplier is an adapter that hands Spec.Effort to its harness. The
+// runner refuses a run carrying an effort for a harness whose adapter is not
+// one, rather than run it at the harness's default and say nothing: the
+// hub asked for the effort, and a run that quietly ignored it would read as
+// one that honoured it (decision 0049).
+type EffortApplier interface {
+	AppliesEffort() bool
+}
+
+// AppliesEffort reports whether an adapter hands a run's effort to its
+// harness.
+func AppliesEffort(a Adapter) bool {
+	e, ok := a.(EffortApplier)
+	return ok && e.AppliesEffort()
 }
 
 // Turn is one run in flight.

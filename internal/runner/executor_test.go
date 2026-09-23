@@ -293,6 +293,50 @@ func TestExecutorFailuresAreResults(t *testing.T) {
 	}
 }
 
+// A run's effort reaches the adapter as the hub sent it; the runner checks no
+// name. One carrying an effort for a harness whose adapter cannot apply it is
+// refused rather than run at the harness's default, which would read to the
+// hub as the effort it asked for (decision 0049).
+func TestExecutorHandsOverTheEffortOrRefusesTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		noEffort bool
+		effort   string
+		state    v1.RunState
+	}{
+		{"an adapter that applies it", false, "some-level-yad-never-heard-of", v1.RunSucceeded},
+		{"an adapter that cannot", true, "high", v1.RunFailed},
+		{"no effort, an adapter that cannot", true, "", v1.RunSucceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			l := e.loop(t, 1)
+			run := testRun("a", "s1")
+			run.Effort = tc.effort
+			e.enqueue(t, run)
+			ad := fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, FinalText: "ok"}})
+			ad.NoEffort = tc.noEffort
+			claimAndRun(t, l, e.executor(ad))
+			res, ok := outboxResult(t, e, "a")
+			if !ok || res.State != tc.state {
+				t.Fatalf("result = %+v (error %+v), %v, want %s", res, res.Error, ok, tc.state)
+			}
+			if tc.state == v1.RunFailed {
+				if res.Error == nil || res.Error.Class != ClassRefused || !strings.Contains(res.Error.Message, "effort") {
+					t.Errorf("error %+v, want %s naming the effort", res.Error, ClassRefused)
+				}
+				if len(ad.Starts) != 0 {
+					t.Errorf("the harness was started for a run it would have run at the wrong effort")
+				}
+				return
+			}
+			if len(ad.Starts) != 1 || ad.Starts[0].Effort != tc.effort {
+				t.Errorf("the adapter was handed %+v, want effort %q", ad.Starts, tc.effort)
+			}
+		})
+	}
+}
+
 // startErr is an adapter whose Start fails with err.
 type startErr struct{ err error }
 

@@ -440,8 +440,9 @@ func openLog() *os.File {
 
 // schema is `codex app-server generate-json-schema --out DIR`: it writes the
 // bundle named by CODEX_TEST_SCHEMA, or fails as a codex without the command
-// would. With CODEX_TEST_SCHEMA_DETACH set, it leaves behind a detached
-// process holding its stdout.
+// would, or with "fifo" leaves a FIFO in the bundle's place. With
+// CODEX_TEST_SCHEMA_DETACH set, it leaves behind a detached process holding
+// its stdout.
 func schema() {
 	args := os.Args[1:]
 	if len(args) != 4 || args[0] != "app-server" || args[1] != "generate-json-schema" || args[2] != "--out" {
@@ -452,6 +453,13 @@ func schema() {
 	if src == "fail" {
 		os.Stderr.WriteString("error: unrecognized subcommand 'generate-json-schema'\n")
 		os.Exit(2)
+	}
+	if src == "fifo" {
+		// A FIFO where the bundle should be, which no one will ever write.
+		if err := syscall.Mkfifo(filepath.Join(args[3], SchemaFile), 0o600); err != nil {
+			os.Exit(6)
+		}
+		return
 	}
 	if os.Getenv("CODEX_TEST_SCHEMA_DETACH") != "" {
 		// A descendant that leaves the process group with setsid and keeps

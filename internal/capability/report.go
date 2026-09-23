@@ -28,7 +28,7 @@ import (
 // A hub must not use a feature the runner did not advertise, so "live_sessions"
 // is absent until it is built.
 func Features() []string {
-	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession}
+	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession, FeatureEffort}
 }
 
 // FeatureStartAt is a runner that holds a run until its start_at rather than
@@ -54,6 +54,13 @@ const FeatureDrain = "drain"
 // TTL or disk pressure — in its syncs' closed_sessions (decision 0035).
 const FeatureCloseSession = "close_session"
 
+// FeatureEffort is a runner that hands a run's effort to its harness. A hub
+// offers a run carrying one only to such a runner: any other would drop the
+// field it does not know and run the harness at its default, and the run
+// would succeed saying nothing of it (decision 0049). Advertised because
+// every first-class adapter applies it — a test holds the two together.
+const FeatureEffort = "effort"
+
 // Build probes the machine and assembles the document from it and the owner's
 // config.
 //
@@ -72,6 +79,7 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []a
 	}()
 	found := Detect(ctx)
 	<-done
+	addCodexModels(found, cfg, accounts)
 
 	goos, goarch := harness.Platform()
 	name := cfg.Name
@@ -116,6 +124,32 @@ func Detect(ctx context.Context) []harness.Detected {
 		}
 	}
 	return found
+}
+
+// addCodexModels fills in Codex's models from the list Codex caches in each
+// home a run may use: every account's, or with none configured the default
+// home a run inherits. The catalog cannot name them — they are the login's
+// plan's, and they move with Codex releases.
+//
+// An owner who configured accounts but whose account states could not be
+// read gets none: the homes are the accounts', and without them the default
+// home would describe a login no run uses.
+func addCodexModels(found []harness.Detected, cfg config.Config, accounts []account.Account) {
+	for i, d := range found {
+		if d.ID != "codex" || !d.Present || len(d.Models) > 0 {
+			continue
+		}
+		var homes []string
+		switch mine := account.For(accounts, "codex"); {
+		case len(mine) > 0:
+			for _, a := range mine {
+				homes = append(homes, a.Home)
+			}
+		case len(cfg.Harness["codex"].Accounts) == 0:
+			homes = []string{codex.DefaultHome()}
+		}
+		found[i].Models = codex.Models(homes...)
+	}
 }
 
 // Harnesses turns detection into the public report, with the owner's accounts

@@ -25,7 +25,7 @@ func TestRoundTrip(t *testing.T) {
 			NextSyncMS: 15000, LeaseMS: 60000,
 			Runs: []Run{{
 				RunID: "r1", Session: SessionRef{ID: "s1", New: true, Mode: SessionPerRun},
-				Harness: "claude", Model: "opus",
+				Harness: "claude", Model: "opus", Effort: "high",
 				Brief:   Brief{Context: "ctx", Instruction: "do it"},
 				Sources: []Source{{Git: &GitSource{URL: "git@github.com:a/b", Base: "master", Branch: "yad/r1"}}, {Path: "/srv/home"}},
 				Grants:  []Grant{{Name: "ZUMINO_TOKEN", Value: "x", As: GrantEnv}},
@@ -196,6 +196,12 @@ func TestRunValidate(t *testing.T) {
 		{"no model", func(r *Run) { r.Model = "" }},
 		{"no instruction", func(r *Run) { r.Brief.Instruction = "" }},
 		{"unknown session mode", func(r *Run) { r.Session.Mode = "warm" }},
+		// Long enough to push Claude's warning quoting it out of the stderr
+		// the runner keeps, so its refusal would go unseen.
+		{"effort longer than a level", func(r *Run) { r.Effort = strings.Repeat("x", 65) }},
+		{"effort with a space", func(r *Run) { r.Effort = "high please" }},
+		{"effort with a newline", func(r *Run) { r.Effort = "high\nmax" }},
+		{"effort with a quote", func(r *Run) { r.Effort = "hi'gh" }},
 		{"empty source", func(r *Run) { r.Sources = []Source{{}} }},
 		{"source with both", func(r *Run) { r.Sources = []Source{{Git: &GitSource{URL: "u"}, Path: "/p"}} }},
 		{"git source without url", func(r *Run) { r.Sources = []Source{{Git: &GitSource{}}} }},
@@ -213,6 +219,15 @@ func TestRunValidate(t *testing.T) {
 				t.Error("accepted")
 			}
 		})
+	}
+	// Validity is the shape only: a level no harness has is the harness's to
+	// refuse.
+	for _, effort := range []string{"low", "xhigh", "ultra", "some_level-2", strings.Repeat("x", 64)} {
+		r := good
+		r.Effort = effort
+		if err := r.Validate(); err != nil {
+			t.Errorf("effort %q refused: %v", effort, err)
+		}
 	}
 	for _, src := range []Source{{Git: &GitSource{URL: "u"}}, {Path: "/p"}} {
 		if err := src.Validate(); err != nil {

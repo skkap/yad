@@ -74,6 +74,8 @@ type seen struct {
 	argv    []string
 	context string
 	stdin   []map[string]any
+	// played is the type of every frame the fake wrote, in order.
+	played []string
 }
 
 func (h *harness) seen(t *testing.T) seen {
@@ -91,6 +93,7 @@ func (h *harness) seen(t *testing.T) seen {
 			Argv    []string `json:"argv"`
 			Context *string  `json:"context"`
 			Stdin   *string  `json:"stdin"`
+			Played  *string  `json:"played"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
 			t.Fatal(err)
@@ -100,6 +103,8 @@ func (h *harness) seen(t *testing.T) seen {
 			s.argv = e.Argv
 		case e.Context != nil:
 			s.context = *e.Context
+		case e.Played != nil:
+			s.played = append(s.played, *e.Played)
 		case e.Stdin != nil:
 			var m map[string]any
 			json.Unmarshal([]byte(*e.Stdin), &m)
@@ -906,6 +911,7 @@ func TestStartRefuses(t *testing.T) {
 		{"no binary", func(s *adapter.Spec) { s.Binary = "" }, "yad doctor"},
 		{"a session id that is not a uuid", func(s *adapter.Spec) { s.NativeSessionID = "--dangerously-skip-permissions" }, "not a UUID"},
 		{"a model that is a flag", func(s *adapter.Spec) { s.Model = "--dangerously-skip-permissions" }, "not a model"},
+		{"an effort that is a flag", func(s *adapter.Spec) { s.Effort = "--dangerously-skip-permissions" }, "not an effort level"},
 		{"a permission mode that is a flag", func(s *adapter.Spec) {
 			s.Settings = map[string]string{"permission_mode": "--dangerously-skip-permissions"}
 		}, "config.toml"},
@@ -952,12 +958,97 @@ func TestPermissionMode(t *testing.T) {
 			if got, _ := s.flag("--permission-mode"); got != c.want {
 				t.Errorf("--permission-mode %q, want %q (argv %q)", got, c.want, s.argv)
 			}
-			for _, flag := range []string{"--model", "--append-system-prompt-file"} {
+			for _, flag := range []string{"--model", "--effort", "--append-system-prompt-file"} {
 				if _, ok := s.flag(flag); ok {
 					t.Errorf("argv has %s with nothing configured: %q", flag, s.argv)
 				}
 			}
 		})
+	}
+}
+
+// A run's effort is Claude's --effort, as the hub sent it: which levels exist
+// is Claude's to say, and the adapter names none.
+func TestEffortIsClaudesFlag(t *testing.T) {
+	if !(Adapter{}).AppliesEffort() {
+		t.Fatal("the claude adapter does not say it applies an effort, and the runner would refuse every run carrying one")
+	}
+	for _, level := range []string{"low", "max"} {
+		h := &harness{fixture: fixture("plain")}
+		spec := h.spec(t)
+		spec.Effort = level
+		if _, out, _ := drive(t, context.Background(), spec, nil); out.State != v1.RunSucceeded {
+			t.Fatalf("effort %s: outcome %+v (%+v)", level, out, out.Error)
+		}
+		if got, _ := h.seen(t).flag("--effort"); got != level {
+			t.Errorf("--effort %q, want %q (argv %q)", got, level, h.seen(t).argv)
+		}
+	}
+}
+
+// Claude does not refuse an effort it does not know: it warns on stderr and
+// runs the turn at its default. A run that went on would succeed having done
+// its work at an effort nobody asked for, so the warning is taken as Claude's
+// refusal: the turn is stopped and the run fails in Claude's words.
+func TestAnEffortClaudeIgnoresFailsTheRun(t *testing.T) {
+	h := &harness{fixture: fixture("plain")}
+	spec := h.spec(t)
+	spec.Effort = "bogus"
+	evs, out, _ := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassHarness {
+		t.Fatalf("outcome %+v (%+v), want failed %s", out, out.Error, adapter.ClassHarness)
+	}
+	for _, want := range []string{`"bogus"`, "Unknown --effort value 'bogus'", "Valid values: low", "no effort for its default"} {
+		if !strings.Contains(out.Error.Message, want) {
+			t.Errorf("message %q does not carry %q", out.Error.Message, want)
+		}
+	}
+	if out.FinalText != "" {
+		t.Errorf("a run failed for its effort carries final text %q", out.FinalText)
+	}
+	if cls := errorClasses(evs); len(cls) == 0 || cls[len(cls)-1] != adapter.ClassHarness {
+		t.Errorf("error events %v, want the stream to end saying %s", cls, adapter.ClassHarness)
+	}
+	// Stopped before its first frame of work, which the fake holds back for
+	// seconds: an adapter that only failed the run at its end would have let
+	// the turn run — commits, pushes and all — at an effort nobody asked for.
+	played := h.seen(t).played
+	for _, typ := range played {
+		if typ != "system" && typ != "user" {
+			t.Fatalf("claude was left to work, playing %v, before the turn was stopped", played)
+		}
+	}
+	if len(played) == 0 {
+		t.Error("the fake played nothing, so this proves nothing about when the turn was stopped")
+	}
+}
+
+// The look before Claude's first frame of work can miss its warning only if
+// stderr was not copied by then; the outcome looks at the whole tail again, so a turn
+// that ran to the end still fails.
+func TestAnEffortRefusalSeenOnlyAtTheEndStillFails(t *testing.T) {
+	tr := newTranslator("s1", func(v1.Event) {})
+	tr.result = &frame{Type: "result", Subtype: "success", Result: "ok"}
+	out := tr.outcome(ended{final: true, effort: "bogus",
+		effortRefused: effortRefusal("some noise\nWarning: Unknown --effort value 'bogus' — ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max.\n")})
+	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassHarness || out.FinalText != "" {
+		t.Fatalf("outcome %+v (%+v), want failed %s with no final text", out, out.Error, adapter.ClassHarness)
+	}
+}
+
+func TestEffortRefusal(t *testing.T) {
+	for _, c := range []struct{ stderr, want string }{
+		{"Warning: Unknown --effort value 'bogus' — ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max.\n",
+			"Warning: Unknown --effort value 'bogus' — ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max."},
+		{"", ""},
+		// Other warnings are not about the effort, and one that mentions it
+		// without refusing it is not a refusal.
+		{"Warning: an update is available\n", ""},
+		{"Note: --effort high uses more of your plan\n", ""},
+	} {
+		if got := effortRefusal(c.stderr); got != c.want {
+			t.Errorf("effortRefusal(%q) = %q, want %q", c.stderr, got, c.want)
+		}
 	}
 }
 

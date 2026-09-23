@@ -190,7 +190,7 @@ func checks() []check {
 		run:     checkOfferedRunIsValid,
 	}, {
 		id:      "run/gated-features",
-		rule:    "Neither side uses what the other did not advertise: a run in a live session goes only to a runner advertising live_sessions, and a run whose start_at is still ahead only to one advertising start_at, since any other runner starts it on arrival.",
+		rule:    "Neither side uses what the other did not advertise: a run in a live session goes only to a runner advertising live_sessions, a run whose start_at is still ahead only to one advertising start_at, since any other runner starts it on arrival, and a run carrying an effort only to one advertising effort, since any other runs the harness at its default.",
 		section: hubControls,
 		needs:   heldRun,
 		run:     checkGatedRunsAreNotOffered,

@@ -40,6 +40,9 @@ type Adapter struct {
 
 func (Adapter) Harness() string { return "codex" }
 
+// AppliesEffort: a run's effort is the effort of its turn/start.
+func (Adapter) AppliesEffort() bool { return true }
+
 // Timings a test may shorten.
 var (
 	// handshakeTimeout bounds each step before the turn runs: initialize,
@@ -402,7 +405,7 @@ func (t *turn) respond(method string, m *Message) {
 			t.stop()
 			return
 		}
-		t.send("turn/start", map[string]any{"threadId": r.Thread.ID, "input": textInput(t.spec.Brief.Instruction)})
+		t.send("turn/start", turnStart(r.Thread.ID, t.spec))
 	case "turn/start":
 		var r struct {
 			Turn turnInfo `json:"turn"`
@@ -414,6 +417,21 @@ func (t *turn) respond(method string, m *Message) {
 		t.tr.rateLimits(m.Result)
 		t.stop()
 	}
+}
+
+// turnStart is the run's turn/start. The effort goes on the turn, where the
+// pinned protocol takes it as "the reasoning effort for this turn and
+// subsequent turns" — a string the model advertises, which Codex checks and
+// the runner does not. Absent, Codex uses its configured default: the
+// protocol says an effort holds for later turns, but each run is its own
+// app-server, and a resumed thread was measured running at the default
+// again after a run that set low (DEV-124, decision 0049).
+func turnStart(thread string, spec adapter.Spec) map[string]any {
+	params := map[string]any{"threadId": thread, "input": textInput(spec.Brief.Instruction)}
+	if spec.Effort != "" {
+		params["effort"] = spec.Effort
+	}
+	return params
 }
 
 func (t *turn) startThread() {

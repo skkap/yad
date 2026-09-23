@@ -83,7 +83,7 @@ func (f hubFlags) watchCommand(runID string) string {
 	return f.paths.Command(append(args, runID)...)
 }
 
-const submitUsage = "usage: yad hub submit --harness h --model m [--context text | --context-file f] [--session id | --new-session id] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
+const submitUsage = "usage: yad hub submit --harness h --model m [--effort level] [--context text | --context-file f] [--session id | --new-session id] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
 
 // cmdHubSubmit queues a run and prints its id — alone on stdout, so a script
 // can capture it — or, with --watch, follows it to its end.
@@ -92,6 +92,7 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 	hf := addHubFlags(fs, g)
 	harness := fs.String("harness", "", "the harness to run, e.g. claude or codex (required)")
 	model := fs.String("model", "", "the model to point it at, e.g. haiku for claude or gpt-5.6-luna for codex (required)")
+	effort := fs.String("effort", "", "how hard the harness thinks, in its own terms, e.g. low or high (default: the harness's own); only a runner advertising the effort feature is offered the run")
 	contextText := fs.String("context", "", "context appended to the harness's system prompt")
 	contextFile := fs.String("context-file", "", "read the context from this file")
 	session := fs.String("session", "", "continue this session, which the hub already has")
@@ -140,7 +141,7 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 		}
 		brief.Context = string(b)
 	}
-	req := hubapi.SubmitRequest{RunID: *runID, Harness: *harness, Model: *model, Brief: brief}
+	req := hubapi.SubmitRequest{RunID: *runID, Harness: *harness, Model: *model, Effort: *effort, Brief: brief}
 	switch {
 	case *gitURL != "":
 		req.Sources = []v1.Source{{Git: &v1.GitSource{URL: *gitURL, Base: *base, Branch: *branch}}}

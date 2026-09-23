@@ -483,8 +483,9 @@ A run is one turn of one harness against one session: one instruction in,
 one terminal state out. It names its `session`, `harness` and `model`
 explicitly — a runner infers none of them — and carries a `brief` (the
 `instruction`, and optional `context` appended to the harness's system
-prompt), optional `sources` to build the session's working directory from,
-optional `grants` (§9), and optional timings: `start_at`, `max_wait_ms`,
+prompt), an optional `effort` (how hard the harness thinks, in its own terms,
+as `model` is), optional `sources` to build the session's working directory
+from, optional `grants` (§9), and optional timings: `start_at`, `max_wait_ms`,
 `wall_clock_ms` and `inactivity_ms`. The document describes each field and its
 absent case.
 
@@ -513,6 +514,9 @@ and not your input. Here is all of it:
 - `run_id`, `session.id`, `harness`, `model` and `brief.instruction` are each
   non-empty.
 - `session.mode`, when given, is `per_run` or `live`.
+- `effort`, when given, is at most 64 bytes of letters, digits, `-` and `_`.
+  Which levels exist is the harness's business; the shape is the runner's,
+  because a harness's refusal quotes the word, and a long one hides it (§7).
 - each `Source` is exactly one of `git` or `path`, and a `git` source has a
   non-empty `url`.
 - each grant is delivered `as` either `env` or `file`.
@@ -599,9 +603,13 @@ on how deep another's queue is. That is the runner's business: you see only
 the free capacity it gives you.
 
 **Only what the runner's features allow.** A run carrying a `start_at` still
-in the future goes only to a runner advertising `start_at`; a run whose
-`session.mode` is `live` only to one advertising `live_sessions` (none does
-yet). §7 has the table.
+in the future goes only to a runner advertising `start_at`; a run carrying an
+`effort` only to one advertising `effort`; a run whose `session.mode` is
+`live` only to one advertising `live_sessions` (none does yet). §7 has the
+table. Unlike a `start_at`, an `effort` never lapses: on a fleet that
+advertises none the run stays queued, and a run continuing a session bound to
+a runner that does not advertise it (§8) is never offered at all — tell
+whoever submitted it, or submit it without the effort.
 
 **Session rules** decide the rest (§8): a run in a session bound to another
 runner is not offerable here, and neither is a run whose session already has
@@ -648,7 +656,7 @@ these are the ones worth acting on:
 
 | class | state | what it means for you |
 |---|---|---|
-| `refused` | failed | the runner would not take the run — invalid, a harness it cannot drive, a session rule broken. Retrying the same run changes nothing; the message says why |
+| `refused` | failed | the runner would not take the run — invalid, a harness it cannot drive, a session rule broken, an `effort` for a harness whose effort it cannot set. Retrying the same run changes nothing; the message says why |
 | `session_closed` | failed | the run names a session the runner has closed or is closing. Start a new session |
 | `resume_rejected` | failed | the harness had no conversation to continue: the transcript is gone. Start a new session |
 | `session_mismatch` | failed | the harness ran under another session id; the conversation's context is lost |
@@ -660,7 +668,7 @@ these are the ones worth acting on:
 | `prompt_too_long` | failed | the conversation no longer fits the model's context |
 | `runner_stopping` | cancelled | the runner cancelled it on its way down, not you |
 | `runner_restarted` | lost | the runner process holding it stopped without finishing it |
-| `harness_error`, `harness_exited`, `harness_start_failed`, `adapter_error` | failed | the harness failed, or could not be started |
+| `harness_error`, `harness_exited`, `harness_start_failed`, `adapter_error` | failed | the harness failed, or could not be started — including a harness refusing the run's `effort`, in its own words |
 
 `steer_failed` and `interrupt_failed` appear only as `error` *events*, never
 in a result: the control did not reach the harness, and the run carried on.
@@ -902,6 +910,7 @@ asked for it.
 | `drain` | the `drain` control |
 | `close_session` | the `close_session` control. A runner advertising it also reports every close in `closed_sessions`; one that does not advertise it may report closes too, and each is believed all the same (§8) |
 | `start_at` | a run carrying `start_at` — offer one only to a runner that advertises it |
+| `effort` | a run carrying `effort` — offer one only to a runner that advertises it, however long it waits |
 | `live_sessions` | a run whose `session.mode` is `live` — offer one only to a runner that advertises it. The spec lists `live` as an enum value and connects it to no feature, so this pairing exists only here |
 
 **A feature gates what you send, never what you accept** ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)).
@@ -921,6 +930,23 @@ may offer it early. Once the moment has passed there is nothing to hold, and
 the run may go to any runner; otherwise it would wait for ever on a fleet
 without the feature. There is no recurrence anywhere in the protocol: a
 schedule is yours, and it makes runs.
+
+**`effort` is the harness's word, not the protocol's.** It is a string, like
+`model`, and not an enum: the levels are each harness's own, they differ by
+model, and they grow with harness releases. Claude Code takes `low`, `medium`,
+`high`, `xhigh` and `max`; Codex takes the reasoning levels its model lists —
+`low` to `xhigh` for most, `max` or `ultra` for some. A runner checks no name,
+only the shape §4 gives, and hands the word to the harness: Claude's `--effort`, and the `effort` of
+Codex's `turn/start`. A level the harness does not take fails the run with
+class `harness_error` and the harness's own words — Claude warns and would
+carry on at its default, so the runner stops it before it starts working and
+fails it with that warning. Absent, the harness uses its default, on every run: a
+run continuing a session does not inherit the effort an earlier run in it
+set. Gate it because a runner without the feature drops a
+field it does not know and runs the harness at its default, and the run
+succeeds with nothing to say it was not what you asked for. A runner that
+advertises `effort` but is handed one for a harness whose effort it cannot set
+refuses the run, class `refused`; both harnesses yad drives today take one.
 
 **A draining runner is offered nothing.** Stop offering to a runner as soon as
 you have decided to drain it, not only once its health says `draining` — an
@@ -1234,7 +1260,7 @@ is something **your hub still has to get right** with nothing to catch you:
 |---|---|
 | `POST /runners/{runner}/deregister` — held runs lost, offers requeued, the runner's sessions closed and their queued runs ended | deregistering retires the runner every other check is made as; the second runner `--second-token` registers could carry it, and does not yet. `yad hub` implements it; implement it in yours |
 | The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
-| `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
+| `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, `effort`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
 | Sessions staying put — first claim binds the session to that runner, later runs to that runner alone, one at a time — and `session.new` set right | needs two runs in one session, which only your own queueing can arrange |
 | Closes in `closed_sessions` believed from the holder or the last-offered runner, whatever features it advertises, a repeat taken as the same news, and the runs queued in a closed session ended; nothing offered in a session you have sent `close_session` for until the close is reported | the suite advertises no feature, so no hub asks it to close a session, and the only sessions it has hold its runs, which no runner closes; the queued runs need a second run in the session |
 | Offers only for a harness the runner can drive — first-class, present, no `error` — and preferably one whose health says `ready` | the suite is offered only what you queued for the one harness it advertises; seeing another offered needs a run queued for it |
@@ -1293,7 +1319,7 @@ checks; the rest is yours to get right.
 - [ ] Offers within `free_capacity`, both `total` and each `by_harness`, as sent — [§4](#who-may-be-offered-what) (C)
 - [ ] Offers only for harnesses that are first-class, present and error-free — [§4](#who-may-be-offered-what)
 - [ ] Every offered run passes the rules the schema cannot state — [§4](#rules-the-schema-cannot-state) (C)
-- [ ] `start_at` still ahead and `live` sessions only to runners advertising them — [§7](#7-controls-and-features) (C)
+- [ ] `start_at` still ahead, `effort`, and `live` sessions only to runners advertising them — [§7](#7-controls-and-features) (C)
 - [ ] `report_capabilities` when the fingerprint moves without a document — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync refused when its body's `runner_id` or its capability document's differs from the path, or its credential is another runner's — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync never refused over a dashboard field — load, disk, spool or outbox depth — only over what routing reads — [§3](#post-runnersrunnersync) (C)

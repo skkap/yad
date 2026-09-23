@@ -25,7 +25,7 @@ var unchecked = []struct {
 	sections: []section{hubControls},
 	why:      "nothing in the protocol asks a hub for a control: only a hub's own API can, and that is outside v1. A conformance runner can only wait for one it cannot cause.",
 }, {
-	rule:     "start_at, min_version, the feature gates on drain, steer, interrupt, close_session and start_at, and holding back every gated control and gated run while a fingerprint has moved and its document has not arrived.",
+	rule:     "start_at, min_version, the feature gates on drain, steer, interrupt, close_session, start_at and effort, and holding back every gated control and gated run while a fingerprint has moved and its document has not arrived.",
 	sections: []section{hubControls, hubVersioning},
 	why:      "each needs a run or a control the protocol gives a runner no way to ask for. What is checked is the other half of the same rule: that a hub sends no control it should have gated.",
 }, {

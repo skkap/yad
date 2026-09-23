@@ -44,6 +44,10 @@ type Script struct {
 type Adapter struct {
 	ID   string
 	Next func(adapter.Spec) Script
+	// NoEffort is an adapter that cannot hand a run's effort to its harness,
+	// as a harness added later might be; the fake applies one by default, as
+	// both real adapters do.
+	NoEffort bool
 
 	mu     sync.Mutex
 	Starts []adapter.Spec
@@ -63,6 +67,8 @@ func (a *Adapter) Harness() string {
 	}
 	return a.ID
 }
+
+func (a *Adapter) AppliesEffort() bool { return !a.NoEffort }
 
 func (a *Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, error) {
 	if a.Next == nil {

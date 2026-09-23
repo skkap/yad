@@ -473,6 +473,14 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassRefused, fmt.Sprintf("this runner has no adapter for harness %q — it should not have advertised it; report this as a yad bug", run.Harness))
 		return
 	}
+	// Refused rather than run at the harness's default: the hub asked for an
+	// effort, and a run that went on without it would read as one that had
+	// it (decision 0049). Both first-class adapters apply one, so this is for
+	// a harness added later without it.
+	if run.Effort != "" && !adapter.AppliesEffort(ad) {
+		fail(ClassRefused, fmt.Sprintf("this runner cannot set the effort of harness %q — send the run without an effort, or to a runner that can", run.Harness))
+		return
+	}
 	bin, ok := e.Binary(run.Harness)
 	if !ok {
 		fail(ClassStart, fmt.Sprintf("harness %q is not installed on this runner any more — `%s` shows where it was looked for", run.Harness, e.Paths.RemoteCommand("doctor")))
@@ -612,7 +620,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		turnEnv := append(append([]string(nil), env...), account.Env(run.Harness, home)...)
 
 		spec := adapter.Spec{
-			RunID: run.RunID, Model: run.Model, Workdir: prep.Dir,
+			RunID: run.RunID, Model: run.Model, Effort: run.Effort, Workdir: prep.Dir,
 			SessionID: run.Session.ID, NativeSessionID: native, Brief: run.Brief,
 			Home: home, Env: turnEnv, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
 			Yad: e.Paths.RemoteCommand,

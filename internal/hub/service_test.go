@@ -144,6 +144,7 @@ func TestServiceErrorsHaveTheEnvelope(t *testing.T) {
 		{"negative cursor", "GET", "/runs/nope/events?after=-1", nil, 422},
 		{"empty harness", "POST", "/runs", hubapi.SubmitRequest{Model: "opus", Brief: v1.Brief{Instruction: "x"}}, 422},
 		{"malformed body", "POST", "/runs", `{`, 400},
+		{"an effort that is not a level", "POST", "/runs", hubapi.SubmitRequest{Harness: "claude", Model: "opus", Effort: strings.Repeat("x", 65), Brief: v1.Brief{Instruction: "x"}}, 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, e := f.api(t, tc.method, tc.path, tok, tc.body, nil)
@@ -299,10 +300,14 @@ func TestSubmittedRunIsOfferedAndGrantsStayHidden(t *testing.T) {
 	cred := f.register(t, "r1")
 	req := submission("fix it")
 	req.Brief.Context = "you are in the yad repo"
+	req.Effort = "xhigh"
 	req.Grants = []v1.Grant{{Name: "ZUMINO_TOKEN", Value: "grant-secret-value", As: v1.GrantEnv}}
 	var sub hubapi.Run
 	if code, e := f.api(t, "POST", "/runs", tok, req, &sub); code != 201 {
 		t.Fatalf("submit: %d %s", code, e.Message)
+	}
+	if sub.Effort != "xhigh" {
+		t.Errorf("the queued run shows effort %q, want xhigh", sub.Effort)
 	}
 
 	res := f.mustSync(t, "r1", cred, first("r1", 1))
@@ -311,7 +316,7 @@ func TestSubmittedRunIsOfferedAndGrantsStayHidden(t *testing.T) {
 	}
 	got := res.Runs[0]
 	if got.RunID != sub.RunID || got.Session.ID != sub.SessionID || !got.Session.New || got.Session.Mode != v1.SessionPerRun ||
-		got.Brief != req.Brief || len(got.Grants) != 1 || got.Grants[0].Value != "grant-secret-value" {
+		got.Brief != req.Brief || got.Effort != "xhigh" || len(got.Grants) != 1 || got.Grants[0].Value != "grant-secret-value" {
 		t.Errorf("offered %+v", got)
 	}
 

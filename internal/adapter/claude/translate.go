@@ -418,6 +418,9 @@ type ended struct {
 	final bool
 	// check is the login check for the owner, in the run's account home.
 	check string
+	// effort is the run's effort, and effortRefused Claude's line saying it
+	// would not use it, when it said one.
+	effort, effortRefused string
 }
 
 // outcome decides how the turn ended. Only a result decides success: exit 0
@@ -458,6 +461,11 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		o.FinalText = ""
 		o.Error = &v1.RunError{Class: adapter.ClassSessionMismatch, Message: t.mismatchMessage()}
 		return o
+	case e.effortRefused != "":
+		// Whatever the turn did, it did at an effort nobody asked for. Claude
+		// ignores a level it does not know rather than refusing it, so its
+		// warning is its refusal, and the run fails with it.
+		return fail(adapter.ClassHarness, fmt.Sprintf("claude would not run at effort %q: %s — send a level claude lists, or no effort for its default", e.effort, e.effortRefused))
 	case r == nil && (e.interrupted || e.cancelled):
 		return cancelled()
 	case r == nil:

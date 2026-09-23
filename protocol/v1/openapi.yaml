@@ -101,7 +101,7 @@ components:
           description: "The operating system as Go names it: linux or darwin."
           type: string
         protocol_features:
-          description: "The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain and close_session; live_sessions is reserved. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."
+          description: "The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session and effort; live_sessions is reserved. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."
           items:
             type: string
           type: array
@@ -359,7 +359,7 @@ components:
           description: The harness's display name, such as Claude Code.
           type: string
         models:
-          description: "Model aliases the runner knows for this harness, such as opus, sonnet and haiku for claude. Not a limit: a run may name any model, and the harness decides whether it exists."
+          description: "Models the runner knows for this harness: the aliases opus, sonnet and haiku for claude; for codex, the models Codex lists for the runner's logins, such as gpt-5.5, in Codex's own order. Not a limit: a run may name any model, and the harness decides whether it exists. Absent when the runner knows none."
           items:
             type: string
           type: array
@@ -594,6 +594,9 @@ components:
         brief:
           $ref: "#/components/schemas/Brief"
           description: What the run is told.
+        effort:
+          description: "How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. It must still look like a level — at most 64 bytes of letters, digits, - and _ — or the run is refused whole. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort."
+          type: string
         grants:
           description: Short-lived secrets for this run alone, delivered to the harness process and deleted when the run ends. Names follow rules the schema cannot state; a run breaking one is refused whole.
           items:
