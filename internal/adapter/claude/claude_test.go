@@ -23,6 +23,10 @@ var _ adapter.Adapter = Adapter{}
 const fixtures = "testdata/claude-2.1.276"
 
 func TestMain(m *testing.M) {
+	if help := os.Getenv("CLAUDE_TEST_HELP"); help != "" {
+		fakeHelp(help)
+		return
+	}
 	if os.Getenv("CLAUDE_TEST_FIXTURE") != "" {
 		fakeClaude()
 		return

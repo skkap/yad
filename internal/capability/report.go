@@ -17,11 +17,13 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/account"
+	"github.com/skkap/yad/internal/adapter/claude"
 	"github.com/skkap/yad/internal/adapter/codex"
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/hostool"
+	"github.com/skkap/yad/internal/probe"
 )
 
 // Features is what this build of the runner supports beyond the v1 baseline.
@@ -119,6 +121,18 @@ func Detect(ctx context.Context) []harness.Detected {
 	for i, d := range found {
 		if d.ID == "codex" && d.Ready() {
 			if w := codex.SchemaWarning(ctx, d.Path, d.Version); w != "" {
+				found[i].Warnings = append(found[i].Warnings, w)
+			}
+		}
+		// A Claude without a flag every run passes would fail each run at
+		// its arguments, so it is reported unable to take any rather than
+		// claim them (AGENTS.md, decision 0050).
+		if d.ID == "claude" && d.Ready() {
+			e, w := claude.FlagsCheck(ctx, probe.Find(d.EnvPath, d.Binary, d.VersionArgs), d.Version)
+			if e != "" {
+				found[i].Error = e
+			}
+			if w != "" {
 				found[i].Warnings = append(found[i].Warnings, w)
 			}
 		}

@@ -133,8 +133,17 @@ func (f Found) Try(command, toSee string) string { return f.run("`"+command+"`",
 // it names as "it".
 func (f Found) TryIt(toSee string) string { return f.run("it", toSee) }
 
+// Do is advice to run command by hand to put something right: "run `command`
+// on this machine to purpose", with the variable noted as Try notes it.
+func (f Found) Do(command, purpose string) string {
+	return f.shell(fmt.Sprintf("run `%s` on this machine to %s", command, purpose))
+}
+
 func (f Found) run(what, toSee string) string {
-	s := fmt.Sprintf("run %s on this machine to see %s", what, toSee)
+	return f.shell(fmt.Sprintf("run %s on this machine to see %s", what, toSee))
+}
+
+func (f Found) shell(s string) string {
 	if f.FromOverride {
 		s += fmt.Sprintf(", with %s set in that shell to the path the runner has", f.envVar)
 	}

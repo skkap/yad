@@ -489,6 +489,9 @@ The brief's context is appended to the system prompt on every run, and
 than replay the one it recorded on the session's first request — without it a
 resumed run's context never reaches the model
 ([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md)).
+The capability probe asks the installed claude's `--help` for every flag a run
+passes, and a Claude lacking one is reported with an error — not drivable —
+saying to run `claude update`.
 `AskUserQuestion` is disallowed — headless, it returns an empty answer. Claude
 does not refuse an `--effort` it does not know: it warns on stderr and runs at
 its default, so the adapter watches stderr for that warning until Claude's

@@ -72,10 +72,18 @@ read 23.8k tokens from cache and wrote 328).
 
 ## What it costs
 
-- **A Claude that does not know `--system-prompt-snapshot`** fails every run
-  at its arguments. Every installed version checked, 2.1.276 to 2.1.280, has
-  it; an older one's run fails saying to upgrade Claude Code rather than to
-  log in again.
+- **A Claude that does not know `--system-prompt-snapshot`** would fail every
+  run at its arguments, so it is not offered any. The flag's first release is
+  not known for certain — every installed version checked, 2.1.276 to
+  2.1.280, has it — so the capability probe asks the installed claude's
+  `--help` for every flag a run passes, once per binary and version, and one
+  lacking a flag is reported with the harness's `error` and the next action,
+  `claude update`: a harness with an error is not drivable, so no hub offers
+  it a run and the runner refuses one offered anyway. This holds AGENTS.md's
+  guardrail that a runner never accepts a run it cannot drive. A probe that
+  could not run is a warning and is asked again in ten minutes; the adapter's
+  own message, saying to upgrade Claude Code rather than to log in again, is
+  the backstop for a run that reaches such a Claude all the same.
 - **A Codex thread keeps each resumed run's context in its history**, one
   developer message per run. They are short and the latest is the one in
   force; a run does not erase what an earlier one said, and HUB.md says so.

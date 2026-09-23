@@ -1,8 +1,10 @@
 // Package codex drives Codex through `codex app-server --listen stdio://`,
 // JSON-RPC over its stdin and stdout: initialize, then thread/start for a new
-// session or thread/resume for one Codex already has, then one turn/start per
-// run, with turn/steer and turn/interrupt while it runs (decision 0006,
-// ARCHITECTURE.md §3). The thread id is the session's native id.
+// session or thread/resume for one Codex already has — followed, on a resume
+// whose run has a context, by thread/inject_items putting that context in the
+// thread (decision 0050) — then one turn/start per run, with turn/steer and
+// turn/interrupt while it runs (decision 0006, ARCHITECTURE.md §3). The
+// thread id is the session's native id.
 //
 // How the conversation becomes a run — which notifications are the run's,
 // which answer decides it, what the owner's approval and sandbox settings
@@ -46,7 +48,8 @@ func (Adapter) AppliesEffort() bool { return true }
 // Timings a test may shorten.
 var (
 	// handshakeTimeout bounds each step before the turn runs: initialize,
-	// thread/start or thread/resume, turn/start. A resume loads the thread's
+	// thread/start or thread/resume, thread/inject_items on a resume with a
+	// context, turn/start. A resume loads the thread's
 	// whole rollout, so it is generous; an app-server that answers none of
 	// them in this long is wedged, and nothing else would notice until the
 	// inactivity watchdog, half an hour later.
