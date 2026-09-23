@@ -144,6 +144,7 @@ func TestServiceErrorsHaveTheEnvelope(t *testing.T) {
 		{"negative cursor", "GET", "/runs/nope/events?after=-1", nil, 422},
 		{"empty harness", "POST", "/runs", hubapi.SubmitRequest{Model: "opus", Brief: v1.Brief{Instruction: "x"}}, 422},
 		{"malformed body", "POST", "/runs", `{`, 400},
+		{"an effort that is not a level", "POST", "/runs", hubapi.SubmitRequest{Harness: "claude", Model: "opus", Effort: strings.Repeat("x", 65), Brief: v1.Brief{Instruction: "x"}}, 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, e := f.api(t, tc.method, tc.path, tok, tc.body, nil)

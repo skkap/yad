@@ -37,7 +37,7 @@ type SubmitRequest struct {
 	Model   string         `json:"model" minLength:"1" doc:"The model, in the harness's own terms, such as haiku or gpt-5.1-codex."`
 	// Effort is queued like any run; the hub offers it only to a runner
 	// advertising the effort feature, so on a fleet without one it waits.
-	Effort  string      `json:"effort,omitempty" doc:"How hard the harness thinks, in its own terms, such as low or high. Offered only to a runner advertising the effort feature. Absent: the harness's default."`
+	Effort  string      `json:"effort,omitempty" doc:"How hard the harness thinks, in its own terms, such as low or high: at most 64 letters, digits, - and _, or the run is refused. Offered only to a runner advertising the effort feature. Absent: the harness's default."`
 	Brief   v1.Brief    `json:"brief"`
 	Sources []v1.Source `json:"sources,omitempty" doc:"What a new session's workdir is built from. A run continuing a session names the same sources or none."`
 	// Grants go to the runner with the run and are never returned by this API.

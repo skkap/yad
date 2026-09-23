@@ -3,6 +3,7 @@ package v1
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -28,7 +29,7 @@ type Run struct {
 	// the word through. A hub offers a run carrying one only to a runner
 	// advertising the "effort" feature: any other would run it at the
 	// harness's default, and nothing would say so (decision 0049).
-	Effort  string   `json:"effort,omitempty" doc:"How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort."`
+	Effort  string   `json:"effort,omitempty" doc:"How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. It must still look like a level — at most 64 bytes of letters, digits, - and _ — or the run is refused whole. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort."`
 	Brief   Brief    `json:"brief" doc:"What the run is told."`
 	Sources []Source `json:"sources,omitempty" doc:"What the session's workdir is built from, used by the run that opens the session; a run continuing it names the same sources or none. Absent: the workdir starts empty. Each source sets exactly one of git, a repository checked out as a worktree, or path, an absolute directory on the runner's machine worked in place, taken only inside the directories its owner allows (their home unless they listed others) and otherwise failed with class source_refused."`
 	Grants  []Grant  `json:"grants,omitempty" doc:"Short-lived secrets for this run alone, delivered to the harness process and deleted when the run ends. Names follow rules the schema cannot state; a run breaking one is refused whole."`
@@ -155,6 +156,9 @@ func (r Run) Validate() error {
 			errs = append(errs, fmt.Errorf("%s is required", f.name))
 		}
 	}
+	if r.Effort != "" && !effortPattern.MatchString(r.Effort) {
+		errs = append(errs, fmt.Errorf("effort %q is not an effort level: send at most %d letters, digits, - or _, such as high, or no effort for the harness's default", clip(r.Effort, maxEffortLen), maxEffortLen))
+	}
 	switch r.Session.Mode {
 	case "", SessionPerRun, SessionLive:
 	default:
@@ -192,6 +196,28 @@ func (r Run) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// maxEffortLen bounds an effort. The longest level either harness has is
+// six bytes; the bound leaves room for levels not yet invented and none for
+// text. It is checked here, before any adapter sees the word, because an
+// adapter learns of a level its harness refused only from what the harness
+// says about it — Claude's refusal is a warning on stderr quoting the word,
+// and a word longer than the runner keeps of stderr pushes the warning out of
+// sight, so the run would go ahead at the harness's default (DEV-124).
+const maxEffortLen = 64
+
+// effortPattern is what a level looks like in every harness so far: low,
+// xhigh, max, ultra.
+var effortPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// clip shortens what an error quotes back, so a refusal of a long word is
+// not itself long.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // Validate enforces exactly one of git or path. The generated schema says it

@@ -514,6 +514,9 @@ and not your input. Here is all of it:
 - `run_id`, `session.id`, `harness`, `model` and `brief.instruction` are each
   non-empty.
 - `session.mode`, when given, is `per_run` or `live`.
+- `effort`, when given, is at most 64 bytes of letters, digits, `-` and `_`.
+  Which levels exist is the harness's business; the shape is the runner's,
+  because a harness's refusal quotes the word, and a long one hides it (§7).
 - each `Source` is exactly one of `git` or `path`, and a `git` source has a
   non-empty `url`.
 - each grant is delivered `as` either `env` or `file`.
@@ -932,8 +935,8 @@ schedule is yours, and it makes runs.
 `model`, and not an enum: the levels are each harness's own, they differ by
 model, and they grow with harness releases. Claude Code takes `low`, `medium`,
 `high`, `xhigh` and `max`; Codex takes the reasoning levels its model lists —
-`low` to `xhigh` for most, `max` or `ultra` for some. A runner checks no name
-and hands the word to the harness: Claude's `--effort`, and the `effort` of
+`low` to `xhigh` for most, `max` or `ultra` for some. A runner checks no name,
+only the shape §4 gives, and hands the word to the harness: Claude's `--effort`, and the `effort` of
 Codex's `turn/start`. A level the harness does not take fails the run with
 class `harness_error` and the harness's own words — Claude warns and would
 carry on at its default, so the runner stops it before it starts working and

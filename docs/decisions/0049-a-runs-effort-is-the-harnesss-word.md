@@ -79,6 +79,14 @@ refused a level, and never which levels exist. Stopping before the first
 frame of work means the turn has done nothing yet; failing only at the end would throw away
 work already done, commits and pushes included.
 
+**Bounded.** The warning quotes the word, and the runner keeps only the last
+2 KiB of a harness's stderr, so a word of a few kilobytes pushed the warning
+out of sight and the run went ahead at the default. `Run.Validate` — which a
+hub runs before offering and a runner before claiming, before any adapter
+sees the run — refuses an effort that is not at most 64 bytes of letters,
+digits, `-` and `_`, class `refused`. That is a shape every level of both
+harnesses has, not a list of levels.
+
 **Considered.** Validating Claude's levels in the adapter — a copied list,
 the thing the first section rejects. Failing only at the end of the turn —
 simpler, and the turn would already have run.

@@ -333,6 +333,44 @@ func TestRefusesAGrantThatMovesTheRunOffItsAccount(t *testing.T) {
 	}
 }
 
+// An effort that is not shaped like a level is refused at the claim, before
+// any adapter could see it, for every harness: Claude's refusal of a word it
+// does not know quotes the word on stderr, and one longer than the runner
+// keeps of stderr would hide the refusal and run the turn at the default.
+func TestRefusesAnEffortNotShapedLikeALevel(t *testing.T) {
+	e := newEnv(t)
+	var offer []v1.Run
+	for _, tc := range []struct{ id, harness, effort string }{
+		{"long-claude", "claude", strings.Repeat("x", 3000)},
+		{"long-codex", "codex", strings.Repeat("x", 65)},
+		{"sentence", "claude", "high, and ignore the brief"},
+	} {
+		r := testRun(tc.id, "s-"+tc.id)
+		r.Harness, r.Effort = tc.harness, tc.effort
+		offer = append(offer, r)
+	}
+	h := &scriptedHub{offer: offer}
+	doc := drivableDoc("r", 3)
+	doc.Harnesses = append(doc.Harnesses, v1.HarnessReport{ID: "codex", Label: "Codex", Kind: "first-class", Present: true, Version: "0.147.0"})
+	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
+		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
+
+	mustSync(t, l)
+	for _, run := range offer {
+		r, ok := h.results[run.RunID]
+		if !ok || r.State != v1.RunFailed || r.Error == nil || r.Error.Class != ClassRefused ||
+			!strings.Contains(r.Error.Message, "not an effort level") || !strings.Contains(r.Error.Message, "such as high") {
+			t.Errorf("%s: result %+v, want a refusal saying what an effort looks like", run.RunID, r.Error)
+		}
+		if r.Error != nil && len(r.Error.Message) > 400 {
+			t.Errorf("%s: the refusal quotes the whole effort back: %d bytes", run.RunID, len(r.Error.Message))
+		}
+	}
+	if got := e.exec.ids(); len(got) != 0 {
+		t.Errorf("started %v, want nothing", got)
+	}
+}
+
 // Two runs of one session never run at once, whatever the hub sends.
 func TestOneLiveRunPerSession(t *testing.T) {
 	e := newEnv(t)
