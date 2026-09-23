@@ -36,7 +36,6 @@ jobs:
     # The self-hosted runner on the Mac mini `ashikaga`: Linux arm64 in a Colima
     # VM, one ephemeral runner per job with its own Docker daemon (gpi-tools
     # ci-runners/). GitHub-hosted minutes on this account are budget-capped.
-    # release.yml stays on ubuntu-latest: it runs rarely and builds for amd64.
     runs-on: [self-hosted, ashikaga]
     steps:
       - uses: actions/checkout@v5

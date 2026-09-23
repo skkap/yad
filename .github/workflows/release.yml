@@ -25,7 +25,9 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # Same runner as ci.yml. `make dist` cross-compiles every target with
+    # GOOS/GOARCH, so the host being arm64 changes nothing it produces.
+    runs-on: [self-hosted, ashikaga]
     steps:
       - uses: actions/checkout@v5
         with:
