@@ -51,6 +51,11 @@ type ToolEvent struct {
 	Input     string `json:"input,omitempty" doc:"The call's input, usually JSON, at most 8 KiB."`
 	Output    string `json:"output,omitempty" doc:"The tool's output, at most 8 KiB."`
 	Truncated bool   `json:"truncated,omitempty" doc:"Input or output was cut to fit 8 KiB."`
+	// IsError and ExitCode are pointers because absent is an answer of its
+	// own: the harness did not say, which is not the same as a success or
+	// an exit status of 0. Neither is ever read out of Output (DEV-125).
+	IsError  *bool `json:"is_error,omitempty" doc:"For a tool_result: whether the call failed, as the harness reported it — true for a command that exited non-zero, a tool that reported an error, or a call the owner's approval policy declined; false for one that succeeded. Absent when the harness did not say; never guessed from the output."`
+	ExitCode *int  `json:"exit_code,omitempty" doc:"For a tool_result of a shell command, its exit status, where the harness reports one as a number: Codex does, Claude Code does not. Absent otherwise."`
 }
 
 // Usage is tokens for one model. Cost is the harness's own estimate where it

@@ -14,6 +14,7 @@ import (
 // A sync response survives a JSON round trip unchanged — the cheapest guard
 // against a tag typo that would silently drop a field on the wire.
 func TestRoundTrip(t *testing.T) {
+	failed, exit := false, 0 // both zero values, which must survive: absent is another answer
 	at := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	cost := 0.42
 	for _, tc := range []struct {
@@ -38,7 +39,8 @@ func TestRoundTrip(t *testing.T) {
 			Usage:   RunUsage{ByModel: map[string]Usage{"opus": {Input: 1, Output: 2, CostUSD: &cost}}},
 			Metrics: Metrics{DurationMS: 9, ToolCalls: 3}, LastSeq: 7,
 		}, &Result{}},
-		{"event batch", EventBatch{Events: []Event{{Seq: 1, At: at, Kind: EventToolCall, Tool: &ToolEvent{ID: "t", Name: "Bash", Input: "ls"}}}}, &EventBatch{}},
+		{"event batch", EventBatch{Events: []Event{{Seq: 1, At: at, Kind: EventToolCall, Tool: &ToolEvent{ID: "t", Name: "Bash", Input: "ls"}},
+			{Seq: 2, At: at, Kind: EventToolResult, Tool: &ToolEvent{ID: "t", Output: "x", IsError: &failed, ExitCode: &exit}}}}, &EventBatch{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b, err := json.Marshal(tc.v)

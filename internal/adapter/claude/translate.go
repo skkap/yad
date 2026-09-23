@@ -86,6 +86,7 @@ type block struct {
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
+	IsError   bool            `json:"is_error"`
 }
 
 type modelUsage struct {
@@ -334,7 +335,15 @@ func (t *translator) toolResults(f *frame) {
 			continue
 		}
 		out, cut := adapter.CapTool(toolOutput(b.Content))
-		t.emit(v1.Event{At: t.now(), Kind: v1.EventToolResult, Tool: &v1.ToolEvent{ID: b.ToolUseID, Output: out, Truncated: cut}})
+		// Claude's own flag, and the Messages API's: absent is false. Claude
+		// Code sets it true on every failure recorded — a command that exited
+		// non-zero, a Read of no file, a call its permission mode refused —
+		// and leaves it out only on some successes (a Read), so absent is
+		// read as the API defines it, not guessed (DEV-125). Claude reports
+		// no exit status as a number, so exit_code stays absent: its "Exit
+		// code N" is text, and text is not parsed.
+		failed := b.IsError
+		t.emit(v1.Event{At: t.now(), Kind: v1.EventToolResult, Tool: &v1.ToolEvent{ID: b.ToolUseID, Output: out, Truncated: cut, IsError: &failed}})
 	}
 }
 
