@@ -146,6 +146,14 @@ func argv(spec adapter.Spec, session, contextFile string) ([]string, error) {
 		// Headless, it returns an empty answer and the turn carries on as if the
 		// question had been answered.
 		"--disallowed-tools", "AskUserQuestion",
+		// Claude records a conversation's system prompt on its first request
+		// and replays that record on every resume, whatever a later launch
+		// appends: a continuing run's context would never reach the model,
+		// only the session's first run's. Off, the prompt is rendered afresh
+		// on every request, this run's context with it, and after a
+		// compaction too (decision 0050). The text is the same on every
+		// request of a run, so the prompt cache still holds.
+		"--system-prompt-snapshot", "off",
 	}
 	mode := permissionMode(spec)
 	if strings.HasPrefix(mode, "-") {

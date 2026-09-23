@@ -23,6 +23,10 @@ var _ adapter.Adapter = Adapter{}
 const fixtures = "testdata/claude-2.1.276"
 
 func TestMain(m *testing.M) {
+	if help := os.Getenv("CLAUDE_TEST_HELP"); help != "" {
+		fakeHelp(help)
+		return
+	}
 	if os.Getenv("CLAUDE_TEST_FIXTURE") != "" {
 		fakeClaude()
 		return
@@ -964,6 +968,46 @@ func TestPermissionMode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A run's context is the system prompt of that run, new session or resumed.
+// Claude replays a conversation's first system prompt on every resume unless
+// told not to record it, so without --system-prompt-snapshot off a
+// continuing run's context never reaches the model (decision 0050).
+func TestEveryRunsContextIsItsSystemPrompt(t *testing.T) {
+	for _, resume := range []bool{false, true} {
+		h := &harness{fixture: fixture("plain")}
+		spec := h.spec(t)
+		spec.Brief.Context = "The codeword is BLUE."
+		if resume {
+			spec.NativeSessionID = newUUID()
+		}
+		if _, out, _ := drive(t, context.Background(), spec, nil); out.State != v1.RunSucceeded {
+			t.Fatalf("resume %v: outcome %+v (%+v)", resume, out, out.Error)
+		}
+		s := h.seen(t)
+		if got, _ := s.flag("--system-prompt-snapshot"); got != "off" {
+			t.Errorf("resume %v: --system-prompt-snapshot %q, want off (argv %q)", resume, got, s.argv)
+		}
+		if _, ok := s.flag("--append-system-prompt-file"); !ok || s.context != spec.Brief.Context {
+			t.Errorf("resume %v: context file %q, want the run's context (argv %q)", resume, s.context, s.argv)
+		}
+		if resume {
+			if got, _ := s.flag("--resume"); got != spec.NativeSessionID {
+				t.Errorf("--resume %q, want %q", got, spec.NativeSessionID)
+			}
+		}
+	}
+}
+
+// A Claude from before --system-prompt-snapshot refuses every run at its
+// arguments; the run says to upgrade it, not to log in again.
+func TestAClaudeTooOldForTheSnapshotFlagSaysSo(t *testing.T) {
+	tr := newTranslator("s1", func(v1.Event) {})
+	out := tr.outcome(ended{stderr: "error: unknown option '--system-prompt-snapshot'\n"})
+	if out.State != v1.RunFailed || out.Error == nil || !strings.Contains(out.Error.Message, "claude update") {
+		t.Fatalf("outcome %+v (%+v), want a failure saying to upgrade Claude Code", out, out.Error)
 	}
 }
 

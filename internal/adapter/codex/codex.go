@@ -1,8 +1,10 @@
 // Package codex drives Codex through `codex app-server --listen stdio://`,
 // JSON-RPC over its stdin and stdout: initialize, then thread/start for a new
-// session or thread/resume for one Codex already has, then one turn/start per
-// run, with turn/steer and turn/interrupt while it runs (decision 0006,
-// ARCHITECTURE.md §3). The thread id is the session's native id.
+// session or thread/resume for one Codex already has — followed, on a resume
+// whose run has a context, by thread/inject_items putting that context in the
+// thread (decision 0050) — then one turn/start per run, with turn/steer and
+// turn/interrupt while it runs (decision 0006, ARCHITECTURE.md §3). The
+// thread id is the session's native id.
 //
 // How the conversation becomes a run — which notifications are the run's,
 // which answer decides it, what the owner's approval and sandbox settings
@@ -46,7 +48,8 @@ func (Adapter) AppliesEffort() bool { return true }
 // Timings a test may shorten.
 var (
 	// handshakeTimeout bounds each step before the turn runs: initialize,
-	// thread/start or thread/resume, turn/start. A resume loads the thread's
+	// thread/start or thread/resume, thread/inject_items on a resume with a
+	// context, turn/start. A resume loads the thread's
 	// whole rollout, so it is generous; an app-server that answers none of
 	// them in this long is wedged, and nothing else would notice until the
 	// inactivity watchdog, half an hour later.
@@ -405,7 +408,20 @@ func (t *turn) respond(method string, m *Message) {
 			t.stop()
 			return
 		}
+		if method == "thread/resume" && t.spec.Brief.Context != "" {
+			t.send("thread/inject_items", injectContext(r.Thread.ID, t.spec.Brief.Context))
+			return
+		}
 		t.send("turn/start", turnStart(r.Thread.ID, t.spec))
+	case "thread/inject_items":
+		t.mu.Lock()
+		interrupted := t.interrupted
+		t.mu.Unlock()
+		if interrupted {
+			t.stop()
+			return
+		}
+		t.send("turn/start", turnStart(t.thread, t.spec))
 	case "turn/start":
 		var r struct {
 			Turn turnInfo `json:"turn"`
@@ -444,7 +460,11 @@ func (t *turn) startThread() {
 		params["model"] = t.spec.Model
 	}
 	// Codex's equivalent of Claude's appended system prompt: kept outside the
-	// conversation, so it survives compaction.
+	// conversation, so it survives compaction. On a resume Codex keeps it as
+	// the thread's and puts it before the model only when it rebuilds the
+	// thread's opening, at a compaction; until then the thread still opens
+	// with the first run's, so the run's context is also injected before its
+	// turn (injectContext, decision 0050).
 	if t.spec.Brief.Context != "" {
 		params["developerInstructions"] = t.spec.Brief.Context
 	}
@@ -454,6 +474,20 @@ func (t *turn) startThread() {
 		return
 	}
 	t.send("thread/start", params)
+}
+
+// injectContext puts a resumed run's context in the thread as a developer
+// message, the role Codex gives developerInstructions itself, just before the
+// run's turn. Measured on Codex 0.147.0: thread/resume's developerInstructions
+// reach the model only after a compaction, so a continuing run otherwise
+// works under the context of the run that opened the session. Injected on
+// every resumed run that has a context, so each run's own is the latest one
+// the model has read; one that has none injects nothing (decision 0050).
+func injectContext(thread, context string) map[string]any {
+	return map[string]any{"threadId": thread, "items": []any{map[string]any{
+		"type": "message", "role": "developer",
+		"content": []any{map[string]any{"type": "input_text", "text": context}},
+	}}}
 }
 
 func setting(spec adapter.Spec, key, def string) string {
@@ -470,6 +504,8 @@ func (t *turn) refused(method string, e *RPCError) {
 		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("codex has no thread %s on this runner (%s) — the session's rollout is gone; start a new session", t.asked, e.Message))
 	case method == "turn/start":
 		t.tr.fail(adapter.ClassHarness, "codex refused the turn: "+e.Message)
+	case method == "thread/inject_items":
+		t.tr.fail(adapter.ClassHarness, "codex would not take the run's context into the resumed thread: "+e.Message+" — check `codex --version` against the protocol this yad was built for")
 	default:
 		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("codex refused %s: %s — check the owner's [harness.codex] settings in config.toml and `codex --version`", method, e.Message))
 	}

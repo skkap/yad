@@ -49,7 +49,7 @@ components:
       additionalProperties: true
       properties:
         context:
-          description: Background appended to the harness's system prompt, so it survives the harness compacting its conversation.
+          description: "Standing background for this run, continuing runs included: appended to Claude's system prompt, and Codex's developer instructions. It outlasts a compaction, and it is this run's, not the session's — send it whole on every run of the session."
           type: string
         instruction:
           description: "The run's one user message: what to do. Required."

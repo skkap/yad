@@ -482,8 +482,8 @@ lists it among the rules it cannot check (§12).
 A run is one turn of one harness against one session: one instruction in,
 one terminal state out. It names its `session`, `harness` and `model`
 explicitly — a runner infers none of them — and carries a `brief` (the
-`instruction`, and optional `context` appended to the harness's system
-prompt), an optional `effort` (how hard the harness thinks, in its own terms,
+`instruction`, and optional `context`, the run's standing background, below),
+an optional `effort` (how hard the harness thinks, in its own terms,
 as `model` is), optional `sources` to build the session's working directory
 from, optional `grants` (§9), and optional timings: `start_at`, `max_wait_ms`,
 `wall_clock_ms` and `inactivity_ms`. The document describes each field and its
@@ -491,6 +491,39 @@ absent case.
 
 There is deliberately no permission, sandbox or tool-policy field. A hub
 cannot set or widen what a harness may do on someone's machine.
+
+### Context and instruction
+
+**`brief.context` is the standing background of the run that carries it —
+every run, the ones continuing a session included.** It reaches the harness
+outside the conversation, where it outlasts a compaction:
+
+- **Claude Code**: appended to the system prompt, rendered afresh on every
+  request. Claude would otherwise record a conversation's system prompt on its
+  first request and replay that record on every resume, so a continuing run's
+  context never reached the model — only the session's first run's did. The
+  runner turns the record off.
+- **Codex**: the thread's developer instructions. Codex reads new ones on a
+  resumed thread only once a compaction rebuilds the thread's opening, so the
+  runner also puts the run's context in the thread as a developer message just
+  before the run's turn.
+
+So a continuing run's context is the latest background the model has read,
+whatever the session's earlier runs carried. What a context does **not** do is
+erase an earlier one: Claude's system prompt holds this run's context alone,
+but a Codex thread keeps each earlier run's context in its history, and both
+harnesses keep every earlier answer. A run without a context runs with none of
+its own, not with the session's last.
+
+**What goes where.** Put in `context` what every run of the session must
+obey or know, and send it **whole on every run** — standing rules ("this is a
+smoke test: change nothing"), who the agent is working for, the task it
+belongs to, a codeword. It is not the turn's request and never appears as one.
+Put in `instruction` what this run is to do — the new message, the question,
+the task's next step. It is the run's one user turn, and becomes part of the
+conversation every later run reads. A rule sent only in the first run's
+context, or only in an instruction, is history to later runs rather than a
+rule, and a harness may weigh it that way.
 
 ### Rules the schema cannot state
 

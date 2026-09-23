@@ -270,6 +270,9 @@ func TestPlainRun(t *testing.T) {
 	if tp["threadId"] != thread || !strings.Contains(mustJSON(tp["input"]), "do the thing") {
 		t.Errorf("turn/start = %v", tp)
 	}
+	if n := len(s.sent("thread/inject_items")); n != 0 {
+		t.Errorf("a new thread, whose developer instructions open it, injected %d items", n)
+	}
 	if _, ok := tp["effort"]; ok {
 		t.Errorf("a run with no effort named one, where Codex's default was asked for: %v", tp)
 	}
@@ -458,6 +461,45 @@ func TestResume(t *testing.T) {
 	}
 	if got := text(evs); got != "plum" {
 		t.Errorf("text = %q: something replayed reached the run", got)
+	}
+	if n := len(h.seen(t).sent("thread/inject_items")); n != 0 {
+		t.Errorf("a resumed run with no context injected %d items", n)
+	}
+}
+
+// A continuing run's context reaches the model. Codex takes thread/resume's
+// developerInstructions as the thread's but reads them only once a
+// compaction rebuilds the thread's opening, so the adapter also injects the
+// context as a developer message between the resume and the turn (decision
+// 0050). Recorded: the first turn had no context, and the answer is the one
+// only this run's context holds.
+func TestAResumedRunCarriesItsContext(t *testing.T) {
+	h := &harness{fixture: fixture("resume-context")}
+	spec := h.spec(t)
+	spec.NativeSessionID = threadIn(t, "resume-context")
+	spec.Brief.Context = "The codeword is BLUE. If asked, give the codeword."
+	_, out, _ := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunSucceeded || out.FinalText != "BLUE" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	s := h.seen(t)
+	if got := s.params(t, "thread/resume")["developerInstructions"]; got != spec.Brief.Context {
+		t.Errorf("thread/resume developerInstructions = %v: after a compaction the thread would lose the context", got)
+	}
+	inj := mustJSON(s.params(t, "thread/inject_items"))
+	for _, want := range []string{`"role":"developer"`, `"type":"input_text"`, "The codeword is BLUE."} {
+		if !strings.Contains(inj, want) {
+			t.Errorf("thread/inject_items %s lacks %s", inj, want)
+		}
+	}
+	var order []string
+	for _, m := range s.stdin {
+		if method, _ := m["method"].(string); method == "thread/resume" || method == "thread/inject_items" || method == "turn/start" {
+			order = append(order, method)
+		}
+	}
+	if !slices.Equal(order, []string{"thread/resume", "thread/inject_items", "turn/start"}) {
+		t.Errorf("sent %v, want the context injected between the resume and the turn", order)
 	}
 }
 

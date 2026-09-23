@@ -514,6 +514,11 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 }
 
 func exitedMessage(e ended) string {
+	if strings.Contains(e.stderr, "unknown option '--system-prompt-snapshot'") {
+		// Every run passes it (decision 0050); a Claude from before it
+		// refuses every run the same way, and logging in again is no help.
+		return "this claude is older than yad needs: it does not know --system-prompt-snapshot — upgrade Claude Code on the runner (`claude update`)"
+	}
 	return "claude exited without reporting a result" + exitDetail(e) + " — check that it runs and is logged in: " + e.loginCheck()
 }
 

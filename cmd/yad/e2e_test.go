@@ -146,6 +146,11 @@ func fakeClaude() {
 		os.Stdout.WriteString("2.1.276 (Claude Code)\n")
 		return
 	}
+	// The flags probe: every flag a run passes is one this claude knows.
+	if len(args) == 1 && args[0] == "--help" {
+		os.Stdout.WriteString("Usage: claude [options]\n  --system-prompt-snapshot <on|off>\n")
+		return
+	}
 	if len(args) == 2 && args[0] == "auth" {
 		fakeClaudeAuth(args[1])
 		return

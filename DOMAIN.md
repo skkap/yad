@@ -201,9 +201,11 @@ _Rules_: No recurrence exists anywhere in YAD. A schedule is a hub's, and it
 makes runs.
 _See_: [0008](docs/decisions/0008-runners-hold-no-schedules.md)
 
-**Brief** — what a run is told. Two parts: the **context**, appended to the
-harness's system prompt so it survives compaction, and the **instruction**,
-which is the run's one user turn.
+**Brief** — what a run is told. Two parts: the **context**, the run's
+standing background, kept outside the conversation — Claude's system prompt,
+Codex's developer instructions — so it survives compaction, and reaching the
+harness on every run of a session, not only the first; and the
+**instruction**, which is the run's one user turn.
 _Avoid_: prompt, for the whole thing — the prompt is only the instruction
 
 **Sources** — the material a run's workdir is built from: git repositories

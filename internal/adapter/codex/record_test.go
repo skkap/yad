@@ -60,6 +60,11 @@ var scenarios = []scenario{
 	{name: "resume-missing", prompt: "Reply: hi", resume: true},
 	{name: "resume", before: "Remember this word: plum. Reply with exactly: ok",
 		prompt: "Which word did I ask you to remember? Reply with the word only."},
+	// A continuing run whose context the session's first run did not have:
+	// the adapter injects it before the turn, and the answer shows it arrived.
+	{name: "resume-context", before: "Say hello.",
+		context: "The codeword is BLUE. If asked, give the codeword.",
+		prompt:  "What is the codeword? Reply with the word only."},
 	{name: "interrupt", prompt: "Write the numbers from 1 to 200 as English words, one per line. No tools.",
 		act: func(t *testing.T, tr adapter.Turn, e v1.Event) bool {
 			if e.Kind != v1.EventText {
