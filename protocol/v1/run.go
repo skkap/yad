@@ -64,7 +64,7 @@ type SessionRef struct {
 // Brief is what the run is told: context goes into the harness's system prompt
 // so it survives compaction; the instruction is the one user turn.
 type Brief struct {
-	Context     string `json:"context,omitempty" doc:"Background appended to the harness's system prompt, so it survives the harness compacting its conversation."`
+	Context     string `json:"context,omitempty" doc:"Standing background for this run, continuing runs included: appended to Claude's system prompt, and Codex's developer instructions. It outlasts a compaction, and it is this run's, not the session's — send it whole on every run of the session."`
 	Instruction string `json:"instruction" doc:"The run's one user message: what to do. Required."`
 }
 

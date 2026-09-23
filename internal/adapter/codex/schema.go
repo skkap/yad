@@ -33,7 +33,7 @@ import (
 // pinned maps each known surface hash to the Codex version it was recorded
 // from, in testdata/codex-<version>/codex_app_server_protocol.schemas.json.
 var pinned = map[string]string{
-	"6ea9f30289e32723059a16e951c8069a5e93ce0223083e6dc0d78e3bc3a4ca3c": "0.147.0",
+	"e502eefe1909eaa70bbaa1e60f07c33b30c4a22c637ed593aaff4efb1efd5bde": "0.147.0",
 }
 
 // schemaFile is the bundle generate-json-schema writes, holding every
@@ -51,7 +51,7 @@ var surface = struct {
 	responses []string
 }{
 	methods: map[string][]string{
-		"ClientRequest": {"initialize", "thread/start", "thread/resume", "turn/start", "turn/steer",
+		"ClientRequest": {"initialize", "thread/start", "thread/resume", "thread/inject_items", "turn/start", "turn/steer",
 			"turn/interrupt", "account/rateLimits/read"},
 		"ClientNotification": {"initialized"},
 		"ServerNotification": {"turn/started", "turn/completed", "item/started", "item/completed",
@@ -62,7 +62,7 @@ var surface = struct {
 			"item/permissions/requestApproval", "mcpServer/elicitation/request",
 			"execCommandApproval", "applyPatchApproval"},
 	},
-	responses: []string{"InitializeResponse", "ThreadStartResponse", "ThreadResumeResponse",
+	responses: []string{"InitializeResponse", "ThreadStartResponse", "ThreadResumeResponse", "ThreadInjectItemsResponse",
 		"TurnStartResponse", "TurnSteerResponse", "GetAccountRateLimitsResponse",
 		"CommandExecutionRequestApprovalResponse", "FileChangeRequestApprovalResponse",
 		"PermissionsRequestApprovalResponse", "McpServerElicitationRequestResponse",

@@ -471,7 +471,8 @@ type Turn interface {
 ```
 claude -p --input-format stream-json --output-format stream-json --verbose
        --include-partial-messages --replay-user-messages
-       --disallowed-tools AskUserQuestion --permission-mode <owner config>
+       --disallowed-tools AskUserQuestion --system-prompt-snapshot off
+       --permission-mode <owner config>
        (--session-id <uuid> | --resume <uuid>) [--model m] [--effort level]
        [--append-system-prompt-file <context file>]
 ```
@@ -483,6 +484,11 @@ session id, so nothing has to be scraped; an echoed id that differs means the
 resume silently failed, and the run fails with `session_mismatch`. A resume
 Claude refuses — no transcript for the id — fails with `resume_rejected`
 ([0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md)).
+The brief's context is appended to the system prompt on every run, and
+`--system-prompt-snapshot off` makes Claude render that prompt afresh rather
+than replay the one it recorded on the session's first request — without it a
+resumed run's context never reaches the model
+([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md)).
 `AskUserQuestion` is disallowed — headless, it returns an empty answer. Claude
 does not refuse an `--effort` it does not know: it warns on stderr and runs at
 its default, so the adapter watches stderr for that warning until Claude's
@@ -508,7 +514,10 @@ run's environment, which carries the hub's grants.
 (`internal/adapter/codex/rpc.go`): `initialize` → `initialized` →
 `thread/start`, or `thread/resume` with the stored thread id → one `turn/start`
 with the instruction and the run's `effort`, when it has one; the brief's
-context is the thread's `developerInstructions`. Codex's model list is read
+context is the thread's `developerInstructions`, and on a resume it is also
+put in the thread as a developer message (`thread/inject_items`) before the
+turn, since Codex reads a resume's instructions only after a compaction
+([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md)). Codex's model list is read
 from `models_cache.json` in each home a run may use, for the capability
 document. Each of those is answered within 30 s. The thread id is
 the native session id, exposed the moment `thread/start` answers. Codex writes

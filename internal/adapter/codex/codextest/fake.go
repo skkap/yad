@@ -31,6 +31,10 @@ import (
 // rewritten to the one the adapter asked for, as Codex would have used it,
 // unless CODEX_TEST_KEEP_THREAD is set (and threads are not kept, below).
 //
+// A thread/inject_items the fixture did not record is answered at once with an
+// empty result, as Codex answers one, so a fixture recorded without a context
+// still plays for a resumed run that has one.
+//
 // CODEX_TEST_HOLD names a file the fake waits for before it writes anything;
 // CODEX_TEST_WAIT is how long it waits for each message it expects (10s).
 //
@@ -154,6 +158,13 @@ func play() {
 			case m := <-in:
 				if match(m) {
 					return m, true
+				}
+				if m.Method == "thread/inject_items" {
+					// A fixture recorded without a context has no injection
+					// to match; Codex answers one with an empty result.
+					out.WriteString(`{"id":` + string(m.ID) + `,"result":{}}` + "\n")
+					out.Flush()
+					continue
 				}
 				early = append(early, m)
 			case <-timeout:
