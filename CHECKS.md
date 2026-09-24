@@ -21,7 +21,7 @@ enough — truncates that query and every one after it. `make generate` then
 fails naming queries nowhere near the cause.
 
 ## Module
-Setup: none — needs `sqlc` 1.31.1 on PATH (`brew install sqlc`)
+Setup: none — needs `sqlc` 1.31.1 and `shellcheck` on PATH (`brew install sqlc shellcheck`)
 Timeout: 6m
 
 ```bash
@@ -34,6 +34,7 @@ which is, in order:
 gofmt -l .                       # must print nothing — make lint turns output into a failure
 go vet ./...
 go tool staticcheck ./...        # pinned in go.mod as a tool, so everyone runs the same version
+shellcheck -x scripts/*.sh machines/…   # the install script and the work-machine kit are shell a stranger runs
 CGO_ENABLED=1 go test -race ./...
 go build ./cmd/yad
 make check-generated             # make check-openapi, then sqlc: git diff --exit-code over every generated file

@@ -32,6 +32,21 @@ separate runner that knows nothing of the others.
 _Avoid_: using it for per-run harness settings — a run's model and effort travel with the run, and nothing else does
 _See_: `internal/config`
 
+**Work machine** — a Linux VM built by `machines/yad-machine` to hold one
+runner and nothing of the host it runs on: no mounted directory, no forwarded
+port, and a runner's user that reaches the internet but not the host, its LAN
+or its tailnet. The shape of "one runner per trust domain" that holds on a Mac,
+where a second OS user cannot keep a runner service up.
+_Avoid_: area, box, environment, sandbox — it confines what the machine reaches,
+not what a hub may ask of it
+_See_: [0052](docs/decisions/0052-a-work-machine-is-a-lima-vm-built-from-a-spec.md), `machines/README.md`
+
+**Machine spec** — the directory a work machine is built from: `machine.env`
+(name, size, harnesses, egress), the runner's first `config.toml`, an optional
+`provision.sh`, and `home/`, laid over the runner's user's home. It holds no
+secret; the machine's own credentials are logged in by hand, once.
+_Avoid_: spec alone where a hub's run spec could be meant
+
 **Hub** — whatever gives a runner work: anything that hosts the server half of
 the runner protocol. A role, not a product — Zumino becomes a hub by embedding
 it, yashiki by embedding it or by using `yad hub`, which is the standalone one.
