@@ -154,10 +154,12 @@ cmd_up() {
 	tar -C "$tmp/stage" -cf - . | guest sudo bash -c "rm -rf $STAGE && mkdir -m 0755 $STAGE && tar -C $STAGE --no-same-owner -xf - && chmod -R a+rX $STAGE"
 
 	say "provisioning $name as root"
-	guest sudo bash "$STAGE/guest/root.sh" "$STAGE"
+	# </dev/null here and below: limactl shell reads stdin, so a script that
+	# runs `up` and then something else would have the rest of itself eaten.
+	guest sudo bash "$STAGE/guest/root.sh" "$STAGE" </dev/null
 
 	say "provisioning $name as $AGENT_USER"
-	guest sudo bash -c "uid=\$(id -u $AGENT_USER) && exec sudo -iu $AGENT_USER env XDG_RUNTIME_DIR=/run/user/\$uid bash $STAGE/guest/agent.sh $STAGE"
+	guest sudo bash -c "uid=\$(id -u $AGENT_USER) && exec sudo -iu $AGENT_USER env XDG_RUNTIME_DIR=/run/user/\$uid bash $STAGE/guest/agent.sh $STAGE" </dev/null
 
 	# Autostart brings the VM up at the host user's login; the runner inside is
 	# a systemd user service with lingering on, so it follows the VM.
@@ -196,7 +198,9 @@ cmd_shell() {
 	check_name "$name"
 	[[ $(instance_status "$name") == Running ]] || die "$name is not running — $(cmd limactl start "$name") starts it"
 	local uid
-	uid=$(guest id -u "$AGENT_USER") || die "$name has no $AGENT_USER user — it was not built by yad-machine up"
+	# </dev/null: limactl shell reads stdin, and this lookup would swallow what
+	# was piped in for the command — a key handed to a setup step, say.
+	uid=$(guest id -u "$AGENT_USER" </dev/null) || die "$name has no $AGENT_USER user — it was not built by yad-machine up"
 	if [[ $# -eq 0 ]]; then
 		exec limactl shell --workdir / "$name" sudo -iu "$AGENT_USER" env XDG_RUNTIME_DIR="/run/user/$uid" bash -l
 	fi
