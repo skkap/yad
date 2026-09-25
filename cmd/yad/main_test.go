@@ -150,6 +150,25 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 		t.Errorf("claude not reported ready:\n%s", o.String())
 	}
 
+	// A Claude that answers every probe and is not logged in: the fix is the
+	// login its error names, and the footer says so rather than blaming the
+	// version probe (decision 0053). Its own path, because the login answer
+	// is kept per binary for a minute.
+	loggedOut := dir + "/claude-logged-out"
+	script := "#!/bin/sh\ncase \"$*\" in\n'auth status') echo '{\"loggedIn\": false}'; exit 1 ;;\n--help) echo '  --system-prompt-snapshot <on|off>' ;;\n*) echo '2.1.276 (Claude Code)' ;;\nesac\n"
+	if err := os.WriteFile(loggedOut, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAD_CLAUDE_PATH", loggedOut)
+	o.Reset()
+	run(context.Background(), []string{"doctor"}, &o, &e)
+	if !regexp.MustCompile(`Claude Code +needs login`).MatchString(o.String()) ||
+		!strings.Contains(o.String(), "is not logged in — log it in as the error above says") ||
+		strings.Contains(o.String(), "failed its version probe") {
+		t.Errorf("claude logged out:\n%s", o.String())
+	}
+	t.Setenv("YAD_CLAUDE_PATH", bin)
+
 	// A broken Claude beside a recognised Gemini: the fix is the probe
 	// error, not an install.
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {

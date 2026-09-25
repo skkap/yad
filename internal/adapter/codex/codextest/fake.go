@@ -537,6 +537,12 @@ func Main() {
 			os.Exit(1)
 		}
 	case len(args) == 2 && args[0] == "login" && args[1] == "status":
+		// With no CODEX_HOME this is the default home, logged in for every
+		// test that is not about logins (decision 0053).
+		if home := os.Getenv("CODEX_HOME"); home == "" {
+			os.Stdout.WriteString("Logged in using ChatGPT\n")
+			return
+		}
 		if _, err := os.Stat(filepath.Join(os.Getenv("CODEX_HOME"), "auth.json")); err != nil {
 			os.Stdout.WriteString("Not logged in\n")
 			os.Exit(1)

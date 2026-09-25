@@ -34,16 +34,25 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		return err
 	}
 	found := capability.Detect(ctx)
+	// The login check needs to know which harnesses have accounts. A profile
+	// with no config yet has none, which is what Load's default says; one
+	// that cannot be read is no reason to refuse the rest of the answer.
+	if cfg, err := config.Load(g.paths); err == nil {
+		capability.DefaultLogins(ctx, found, cfg)
+	}
 	if *asJSON {
 		return writeJSON(w, found)
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "HARNESS\tSTATUS\tVERSION\tPATH")
-	ready, broken, noAdapter := 0, 0, 0
+	ready, broken, needsLogin, noAdapter := 0, 0, 0, 0
 	for _, d := range found {
 		status := "—"
 		switch {
+		case d.NeedsLogin:
+			status = "needs login"
+			needsLogin++
 		case d.Present && d.Error != "":
 			status = "broken"
 			broken++
@@ -95,6 +104,10 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		// Checked before noAdapter: a broken Claude beside a working Codex needs
 		// fixing, not installing.
 		fmt.Fprintln(w, "No drivable harness: an installed one failed its version probe — fix the errors above and run this again.")
+		return nil
+	case needsLogin > 0:
+		// Its version probe passed; the error above names the login to run.
+		fmt.Fprintln(w, "No drivable harness: an installed one is not logged in — log it in as the error above says, and run this again.")
 		return nil
 	case noAdapter > 0:
 		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — install Claude Code or Codex, which have one.")

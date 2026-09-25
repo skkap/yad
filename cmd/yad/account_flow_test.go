@@ -42,9 +42,21 @@ func fakeClaudeAuth(cmd string) {
 			os.Exit(1)
 		}
 	case "status":
-		_, err := os.Stat(cred)
-		b, _ := json.Marshal(map[string]any{"loggedIn": err == nil})
+		// With no account's home, this is the harness's own default home,
+		// which every test that is not about logins wants logged in: the
+		// runner refuses runs for a harness whose own login is missing
+		// (decision 0053).
+		in := os.Getenv("CLAUDE_CONFIG_DIR") == ""
+		if !in {
+			_, err := os.Stat(cred)
+			in = err == nil
+		}
+		b, _ := json.Marshal(map[string]any{"loggedIn": in})
 		os.Stdout.Write(append(b, '\n'))
+		// As claude 2.1.281 does: a "no" exits 1 as well.
+		if !in {
+			os.Exit(1)
+		}
 	default:
 		os.Exit(2)
 	}

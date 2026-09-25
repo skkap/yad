@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -82,6 +83,13 @@ func suggest(harness, binary, home string, args []string) string {
 	return name + "=" + shellword.Quote(value) + " " + cmd
 }
 
+// LoginArgs is the harness's own login command after its binary, or nil for a
+// harness yad cannot log in.
+func LoginArgs(harness string) []string { return slices.Clone(loginArgs[harness]) }
+
+// StatusArgs is the harness's own login check after its binary, or nil.
+func StatusArgs(harness string) []string { return slices.Clone(statusArgs[harness]) }
+
 // CanLogIn says whether `yad account add` knows how to log this harness in.
 func CanLogIn(harness string) bool {
 	_, ok := loginArgs[harness]
@@ -141,7 +149,14 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 	// would hold the run's result behind it for ever.
 	ctx, cancel := context.WithTimeout(ctx, statusTimeout)
 	defer cancel()
-	proc, err := supervise.Start(ctx, supervise.Spec{Path: binary, Args: args, Dir: home, Env: Env(harness, home)})
+	// An empty home is the harness's own default one, which a run with no
+	// account uses: the check then runs where such a run's environment points
+	// it, from the user's home directory.
+	dir := home
+	if dir == "" {
+		dir, _ = os.UserHomeDir()
+	}
+	proc, err := supervise.Start(ctx, supervise.Spec{Path: binary, Args: args, Dir: dir, Env: Env(harness, home)})
 	if err != nil {
 		return false, fmt.Errorf("could not ask %s whether %s holds a login: %w", harness, home, err)
 	}
@@ -197,18 +212,26 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 		// none of what the command printed.
 		return false, fmt.Errorf("could not read codex's login state for the home %s — run `%s` to see what it says", home, suggest(harness, binary, home, args))
 	default:
-		if err != nil {
-			return false, fmt.Errorf("`%s` failed: %w", suggest(harness, binary, home, args), err)
-		}
-		// Only this one field is decoded. A version that stops answering in
+		// Only this one field is decoded, and it decides whatever the exit
+		// status: measured on claude 2.1.281, a home with no login answers
+		// {"loggedIn": false} and exits 1, so an exit status read first would
+		// turn every "no" into "could not tell", and an account whose login
+		// expired would never be parked. A version that stops answering in
 		// JSON is an error rather than a guess: reporting an account free
 		// because a status line could not be read would send runs to a login
 		// that is not there.
 		var s struct {
 			LoggedIn *bool `json:"loggedIn"`
 		}
-		if err := json.Unmarshal(stdout, &s); err != nil || s.LoggedIn == nil {
+		if jerr := json.Unmarshal(stdout, &s); jerr != nil || s.LoggedIn == nil {
+			if err != nil {
+				return false, fmt.Errorf("`%s` failed: %w", suggest(harness, binary, home, args), err)
+			}
 			return false, fmt.Errorf("could not read %s's login state for the home %s — run `%s` to see what it says", harness, home, suggest(harness, binary, home, args))
+		}
+		if *s.LoggedIn && err != nil {
+			// "Yes" with a failure is not an answer to trust either way.
+			return false, fmt.Errorf("`%s` failed: %w", suggest(harness, binary, home, args), err)
 		}
 		return *s.LoggedIn, nil
 	}

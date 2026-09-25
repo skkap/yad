@@ -184,9 +184,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   from before it omits it, a hub must not refuse one that does, and absent
   means the runner cannot say rather than that anything is wrong. A limited
   account and one that needs login are both skipped for runs; `ready` is
-  whether a harness has a free account, or no accounts at all, in which case it
-  runs on the harness's own login. A harness with no accounts is a state, not a
-  failure.
+  whether a harness has a free account, or no accounts at all and a login in
+  its own default home, which its runs then use
+  ([0053](docs/decisions/0053-a-harness-on-its-own-login-is-checked-like-an-account.md)).
+  A harness with no accounts is a state, not a failure.
 - **Account windows**: each account's usage windows, by the harness's own name
   — Claude's `five_hour` and `seven_day`, Codex's `primary` and `secondary` —
   with `used_percent` (0-100, whatever scale the harness reported) and
@@ -726,7 +727,11 @@ for `codex`); the suite never runs a real harness.
   remotely is backlog (DEV-57).
 - **No accounts is a state.** A harness the owner configured none for runs on
   the harness's own default home and reports no accounts. It is never an error
-  that stops a runner registering.
+  that stops a runner registering. That home's login is checked as an
+  account's is, at most once a minute (`capability.DefaultLogins`): without one
+  the harness reports an error naming its own login command and takes no runs,
+  and `yad doctor` shows it as `needs login`
+  ([0053](docs/decisions/0053-a-harness-on-its-own-login-is-checked-like-an-account.md)).
 - **Detection**: Codex publishes `account/rateLimits/updated` with each window's
   use and reset; Claude reports a limit in its result with a reset time, and
   carries every window's use and reset in each `rate_limit_event`

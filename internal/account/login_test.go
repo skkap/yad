@@ -74,6 +74,11 @@ func fakeHarness(id string, args []string) int {
 			"configDirectory": home,
 		})
 		fmt.Println(string(b))
+		// As claude 2.1.281 does: the answer is in the JSON, and a "no"
+		// exits 1 as well.
+		if !loggedIn() {
+			return 1
+		}
 		return 0
 	case "login status":
 		// Prints the logged-out phrase and then hangs, so the deadline kills
