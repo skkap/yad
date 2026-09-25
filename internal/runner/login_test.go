@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,12 @@ const (
 // fakeClaudeLogin is `claude auth login`, as the test binary re-executed.
 func fakeClaudeLogin() int {
 	mode := os.Getenv(fakeLoginMode)
+	// Not claude's behaviour, a tripwire: a login handed the account's stored
+	// token would be outranked by it, so a test sees one was.
+	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+		fmt.Println("this fake refuses a login made with a token in its environment")
+		return 1
+	}
 	fmt.Print("Opening browser to sign in…\n")
 	switch mode {
 	case "nourl":
@@ -108,6 +115,8 @@ func newLoginRig(t *testing.T, e *env, cfg config.Config, mode string) *loginRig
 		Log:     slog.New(slog.NewJSONHandler(r.log, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		URLWait: 20 * time.Second, CodeWait: 20 * time.Second, ExitWait: 20 * time.Second,
 	}
+	// As Serve wires it: an account the owner removes ends its login.
+	accounts.onRemoved(r.accountRemoved)
 	t.Cleanup(r.Close)
 	return r
 }
@@ -311,8 +320,10 @@ func TestAHubStoresATokenForAListedAccount(t *testing.T) {
 	}
 }
 
-// A link login on a token account sets the token aside, as `yad account add`
-// does: gone once the login takes, back when it does not.
+// A link login on a token account leaves the token to the account's runs
+// while it is made, and is made and checked without it — handed the token,
+// the login would be outranked and claude's check would say yes to anything.
+// The token goes once the login takes, and stays when it does not.
 func TestALinkLoginOnATokenAccountKeepsTheTokenUnlessItTakes(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -334,6 +345,11 @@ func TestALinkLoginOnATokenAccountKeepsTheTokenUnlessItTakes(t *testing.T) {
 			}
 			r.Control("hub", startLogin("lg1", "claude", "work"))
 			r.until(t, "lg1", v1.LoginWaiting)
+			// Until the new login is confirmed, the account still runs on its
+			// token: a run placed on it meanwhile is handed it.
+			if env, _ := account.TurnEnv("claude", home); !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "CLAUDE_CODE_OAUTH_TOKEN=") }) {
+				t.Errorf("a run during the login is handed no token: %v", env)
+			}
 			r.Control("hub", loginCode("lg1", tc.code))
 			want := v1.LoginSucceeded
 			if tc.keepToken {
@@ -365,6 +381,8 @@ func TestALoginTheRunnerRefusesSaysWhatToDoAtTheMachine(t *testing.T) {
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "<label>", "--token", "-"}},
 		{"codex", startLogin("lg1", "codex", "work"), "not built yet",
 			[]string{"yad", "--profile", "test", "account", "add", "codex", "work", "--device"}},
+		{"codex's own login", startLogin("lg1", "codex", ""), "not built yet",
+			[]string{"yad", "--profile", "test", "doctor"}},
 		{"a token that is not one", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Account: "work", Token: "two words"}, "not stored", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -418,5 +436,62 @@ func TestALoginIsReportedUntilItsEndIsAnswered(t *testing.T) {
 	r.Control("hub", startLogin("lg1", "claude", "work"))
 	if got := r.Reports("hub"); len(got) != 1 || got[0].State != v1.LoginWaiting {
 		t.Errorf("a repeated start_login moved the login: %+v", got)
+	}
+}
+
+// An account the owner removes while a hub login is on it: the login ends
+// cancelled saying so, and the home goes once the login has let go of it,
+// with whatever the login wrote there — whether the removal lands while the
+// link waits for its code, or while a token login waits for the login it
+// replaced to let go, and whether or not the daemon told the login.
+func TestRemovingTheAccountEndsItsHubLogin(t *testing.T) {
+	removed := func(t *testing.T, r *loginRig) {
+		t.Helper()
+		if _, err := r.Accounts.Reload(context.Background(), account.Lists{}, account.Ref{Harness: "claude", Label: "work"}, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gone := func(t *testing.T, e *env) {
+		t.Helper()
+		if _, err := os.Stat(account.HomeDir(e.paths.Data, "claude", "work")); !os.IsNotExist(err) {
+			t.Errorf("the removed account's home is still on disk (%v)", err)
+		}
+	}
+	t.Run("while the link waits for its code", func(t *testing.T) {
+		e := newEnv(t)
+		r := newLoginRig(t, e, accountConfig("work"), "")
+		r.Control("hub", startLogin("lg1", "claude", "work"))
+		r.until(t, "lg1", v1.LoginWaiting)
+		removed(t, r)
+		if rep := r.until(t, "lg1", v1.LoginCancelled); !strings.Contains(rep.Error, "removed") {
+			t.Errorf("the login ended saying %q", rep.Error)
+		}
+		r.Close()
+		gone(t, e)
+	})
+	for _, told := range []bool{true, false} {
+		t.Run(fmt.Sprintf("while a token login waits, told %v", told), func(t *testing.T) {
+			e := newEnv(t)
+			r := newLoginRig(t, e, accountConfig("work"), "")
+			if !told {
+				r.Accounts.onRemoved(nil)
+			}
+			// A login still letting go of the home, standing in for one the
+			// token login replaces.
+			r.init()
+			prev := &hubLogin{conn: "hub", id: "prev", ref: account.Ref{Harness: "claude", Label: "work"}, method: v1.LoginByLink,
+				state: v1.LoginWaiting, updated: time.Now(), done: make(chan struct{})}
+			r.mu.Lock()
+			r.live[prev.ref] = prev
+			r.mu.Unlock()
+			r.Control("hub", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg2", Harness: "claude", Account: "work", Token: "sk-ant-oat01-for-a-removed-account"})
+			removed(t, r)
+			close(prev.done)
+			if rep := r.until(t, "lg2", v1.LoginCancelled); !strings.Contains(rep.Error, "removed") {
+				t.Errorf("the login ended saying %q", rep.Error)
+			}
+			r.Close()
+			gone(t, e)
+		})
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // Connect registers this runner with the hub at hubURL, exchanging the
@@ -35,7 +36,15 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 	var none v1.RegisterResponse
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return config.Connection{}, none, notes, errors.New("no registration token — create one at the hub (`yad hub token create`, or its Add runner) and pass it with --token")
+		// Both commands are pasted: the hub's with what only its operator
+		// knows as placeholders, this one's as it will run here.
+		again := []string{"connect", hubURL}
+		if name != "" {
+			again = append(again, "--name", name)
+		}
+		hubToken := shellword.Command("yad", "--profile", "<hub profile>", "hub", "token", "create", "--db", "<the database yad hub serve was given>")
+		return config.Connection{}, none, notes, fmt.Errorf("no registration token — create one at the hub (on a yad hub, `%s`; on another, its Add runner), then `%s` and paste it",
+			hubToken, p.Command(append(again, "--token", "-")...))
 	}
 	if err := config.CheckHubURL(hubURL); err != nil {
 		return config.Connection{}, none, notes, err

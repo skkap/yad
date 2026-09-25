@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -28,6 +29,11 @@ import (
 // a link, a prompt, and a credential only for the right code.
 const fakeClaudeLogin = "E2E_CLAUDE_LOGIN"
 
+// fakeClaudeLoginSpy, when set, is a file the fake's `auth login` writes what
+// it saw of the account's token to: whether its environment carried one, and
+// whether the token file was still in the home while the login ran.
+const fakeClaudeLoginSpy = "E2E_CLAUDE_LOGIN_SPY"
+
 // fakeClaudeAuth is `claude auth login` and `claude auth status`, keeping a
 // stand-in credential in the home it is pointed at, as claude keeps one in
 // CLAUDE_CONFIG_DIR. Its contents never matter: nothing in YAD reads them.
@@ -35,6 +41,10 @@ func fakeClaudeAuth(cmd string) {
 	cred := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".credentials.json")
 	switch cmd {
 	case "login":
+		if spy := os.Getenv(fakeClaudeLoginSpy); spy != "" {
+			_, err := os.Stat(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "yad-oauth-token"))
+			os.WriteFile(spy, []byte(fmt.Sprintf("token-env=%v token-file=%v", os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "", err == nil)), 0o600)
+		}
 		if os.Getenv(fakeClaudeLogin) == "fails" {
 			os.Stderr.WriteString("login cancelled\n")
 			os.Exit(1)
@@ -447,9 +457,13 @@ func TestAccountAddRefusesABadTokenBeforeMakingItsHome(t *testing.T) {
 }
 
 // Logging a token account in the harness's own way removes its token: left
-// in place it would outrank the new login in every run (decision 0054).
+// in place it would outrank the new login in every run (decision 0054). Until
+// the login has taken, the token stays in its file for the runs still on the
+// account, and out of the login's own environment.
 func TestAPlainLoginReplacesAStoredToken(t *testing.T) {
 	p := accountHarness(t, claudeE2E)
+	spy := filepath.Join(t.TempDir(), "spy")
+	t.Setenv(fakeClaudeLoginSpy, spy)
 	home, err := account.Ensure(p.Data, "claude", "tl")
 	if err != nil {
 		t.Fatal(err)
@@ -467,10 +481,14 @@ func TestAPlainLoginReplacesAStoredToken(t *testing.T) {
 	if !strings.Contains(out, "its stored token is removed") {
 		t.Errorf("the owner was not told the token went:\n%s", out)
 	}
+	if saw, _ := os.ReadFile(spy); string(saw) != "token-env=false token-file=true" {
+		t.Errorf("while the login ran: %q, want the token out of its environment and still in its file", saw)
+	}
 }
 
-// A plain login walked away from gives a token account its token back: the
-// token is set aside for the login, not deleted, until the login has taken.
+// A plain login walked away from leaves a token account its token: nothing
+// touches the token until the login has taken — and the check that says
+// whether it took is asked without it, or it would say yes to the token.
 func TestAnAbandonedPlainLoginKeepsTheStoredToken(t *testing.T) {
 	p := accountHarness(t, claudeE2E)
 	t.Setenv(fakeClaudeLogin, "fails")

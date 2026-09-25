@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -275,8 +276,7 @@ func (m *Logins) start(conn string, c v1.Control, method v1.LoginMethod) {
 		defer close(l.done)
 		defer cancel()
 		// The one before it may still be letting go of the same home — a
-		// token it set aside, a process being killed. Nothing here touches
-		// the home until it has.
+		// process being killed. Nothing here touches the home until it has.
 		if prev != nil {
 			select {
 			case <-prev.done:
@@ -305,7 +305,7 @@ func (m *Logins) refusal(ref account.Ref, method v1.LoginMethod, token string) (
 		// The wire carries Codex's device code (user_code); driving its login
 		// from here is the follow-up decision 0055 leaves open.
 		if ref.Label == "" {
-			return "", "logging Codex in from a hub is not built yet — at the machine, as the runner's user, `codex login --device-auth` logs its own login in with a code entered on any other machine"
+			return "", "logging Codex in from a hub is not built yet — at the machine, `" + m.Paths.RemoteCommand("doctor") + "` names Codex's own login command; with --device-auth it takes a code entered on any other machine"
 		}
 		return "", "logging Codex in from a hub is not built yet — at the machine, `" + m.Paths.RemoteCommand("account", "add", "codex", ref.Label, "--device") + "` logs it in with a code entered on any other machine"
 	}
@@ -441,13 +441,61 @@ func (m *Logins) endLocked(l *hubLogin, state v1.LoginState, msg string) {
 	log.Warn("a hub login ended without taking", "state", state, "reason", msg)
 }
 
-// home is where the login happens: the account's home, made if the owner
+// errRemoved is an account the owner removed before its login could begin.
+var errRemoved = errors.New("removed")
+
+// claim is where the login happens: the account's home, made if the owner
 // listed it by hand and it was never made, or "" for the harness's default.
-func (m *Logins) home(l *hubLogin) (string, error) {
+// An account is held (Accounts.takeForLogin) until release: the check that
+// it is still listed, made after any login it replaced has let go, and the
+// hold that keeps a removal from deleting the home under the login — the
+// home goes when release lets go of it, with whatever the login wrote there.
+func (m *Logins) claim(l *hubLogin) (home string, release func(), err error) {
 	if l.ref.Label == "" {
-		return "", nil
+		return "", func() {}, nil
 	}
-	return account.Ensure(m.Data, l.ref.Harness, l.ref.Label)
+	hold, ok := m.Accounts.takeForLogin(l.ref, l.id)
+	if !ok {
+		return "", nil, errRemoved
+	}
+	release = func() { m.Accounts.release(hold) }
+	if home, err = account.Ensure(m.Data, l.ref.Harness, l.ref.Label); err != nil {
+		release()
+		return "", nil, err
+	}
+	return home, release, nil
+}
+
+// claimed is claim, ending the login when it cannot begin. ok false means it
+// has ended.
+func (m *Logins) claimed(l *hubLogin, log *slog.Logger) (home string, release func(), ok bool) {
+	home, release, err := m.claim(l)
+	switch {
+	case errors.Is(err, errRemoved):
+		m.end(l, v1.LoginCancelled, m.removedReason(l.ref))
+		return "", nil, false
+	case err != nil:
+		log.Error("a hub login could not prepare the account's home", "err", err)
+		m.end(l, v1.LoginFailed, "the account's home could not be prepared — `"+m.Paths.RemoteCommand("daemon", "logs")+"` at the machine says why")
+		return "", nil, false
+	}
+	return home, release, true
+}
+
+func (m *Logins) removedReason(r account.Ref) string {
+	return fmt.Sprintf("%s account %q was removed on the machine, and a hub never adds one back", r.Harness, r.Label)
+}
+
+// accountRemoved ends the login in flight on an account the owner has just
+// removed. Its hold keeps the home until its process has stopped, and the
+// home goes then with anything the login wrote in it.
+func (m *Logins) accountRemoved(r account.Ref) {
+	m.init()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if l := m.live[r]; l != nil {
+		m.endLocked(l, v1.LoginCancelled, m.removedReason(r))
+	}
 }
 
 // byLink drives the harness's own login over pipes: the link out, the code
@@ -456,41 +504,26 @@ func (m *Logins) home(l *hubLogin) (string, error) {
 func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 	log := m.Log.With("connection", l.conn, "login", l.id, "harness", l.ref.Harness, "account", l.ref.Label)
 	h := l.ref.Harness
-	home, err := m.home(l)
-	if err != nil {
-		log.Error("a hub login could not prepare the account's home", "err", err)
-		m.end(l, v1.LoginFailed, "the account's home could not be prepared — `"+m.Paths.RemoteCommand("daemon", "logs")+"` at the machine says why")
+	home, release, ok := m.claimed(l, log)
+	if !ok {
 		return
 	}
-	took := false
-	if home != "" {
-		// A stored token outranks any login made beside it (decision 0054),
-		// so it is set aside, as `yad account add` sets it aside, and comes
-		// back unless this login takes.
-		restore, drop, err := account.SetTokenAside(home)
-		if err != nil {
-			log.Error("a hub login could not set the account's token aside", "err", err)
-			m.end(l, v1.LoginFailed, "the account runs on a stored token, which could not be set aside to log it in instead — `"+m.Paths.RemoteCommand("daemon", "logs")+"` at the machine says why")
-			return
-		}
-		defer func() {
-			put := restore
-			if took {
-				put = drop
-			}
-			if err := put(); err != nil {
-				log.Error("the account's stored token could not be put back or removed after a hub login", "took", took, "err", err)
-			}
-		}()
-	}
+	// Deferred first, so it runs last: the process is stopped before the
+	// home can go.
+	defer release()
 	dir := home
 	if dir == "" {
 		dir, _ = os.UserHomeDir()
 	}
 	// No terminal: the login is driven over pipes, and one that wanted a
 	// person at a terminal fails at once rather than waiting for nobody.
+	//
+	// A stored token stays in its file, for the runs still on the account,
+	// and out of this environment: handed to the login it would outrank the
+	// login being made (decision 0054). It goes once the new login is
+	// confirmed (check).
 	proc, err := supervise.Start(ctx, supervise.Spec{
-		Path: bin, Args: account.LoginArgs(h), Dir: dir, Env: account.Env(h, home),
+		Path: bin, Args: account.LoginArgs(h), Dir: dir, Env: account.LoginEnv(h, home),
 		Stdin: true, NoTTY: true, MergeStderr: true,
 	})
 	if err != nil {
@@ -556,19 +589,18 @@ func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 		return
 	}
 	proc.Stop(supervise.Ladder{TermGrace: 2 * time.Second})
-	took = m.check(ctx, l, bin, home, log)
+	m.check(ctx, l, bin, home, log)
 }
 
 // byToken stores the token as the account's login (decision 0054) and asks
 // the harness's own check whether the account now runs.
 func (m *Logins) byToken(ctx context.Context, l *hubLogin, bin, token string) {
 	log := m.Log.With("connection", l.conn, "login", l.id, "harness", l.ref.Harness, "account", l.ref.Label)
-	home, err := m.home(l)
-	if err != nil {
-		log.Error("a hub login could not prepare the account's home", "err", err)
-		m.end(l, v1.LoginFailed, "the account's home could not be prepared — `"+m.Paths.RemoteCommand("daemon", "logs")+"` at the machine says why")
+	home, release, ok := m.claimed(l, log)
+	if !ok {
 		return
 	}
+	defer release()
 	m.set(l, v1.LoginChecking, "")
 	if err := account.SetToken(home, token); err != nil {
 		// SetToken's own errors name a file, never its contents.
@@ -580,21 +612,37 @@ func (m *Logins) byToken(ctx context.Context, l *hubLogin, bin, token string) {
 }
 
 // check ends a login by the harness's own answer, and on a yes puts the
-// account in service the way an added account is. It reports whether the
-// login took.
-func (m *Logins) check(ctx context.Context, l *hubLogin, bin, home string, log *slog.Logger) bool {
+// account in service the way an added account is.
+//
+// A link login is asked about as the harness's own (account.OwnLogin): with a
+// token stored beside it, claude's check says yes to the token whatever the
+// login did. Only once that says yes does the token go, since from then it
+// would outrank the login in every run. A token login is asked about as its
+// runs will run.
+func (m *Logins) check(ctx context.Context, l *hubLogin, bin, home string, log *slog.Logger) {
 	h := l.ref.Harness
-	in, err := account.LoggedIn(ctx, h, bin, home)
+	ask := account.LoggedIn
+	if l.method == v1.LoginByLink {
+		ask = account.OwnLogin
+	}
+	in, err := ask(ctx, h, bin, home)
 	switch {
 	case ctx.Err() != nil:
-		return false
+		return
 	case err != nil:
 		log.Warn("a hub login could not read whether it took", "err", err)
 		m.end(l, v1.LoginFailed, fmt.Sprintf("whether the login took could not be read from %s — `%s` at the machine shows the account's state", h, m.Paths.RemoteCommand("account", "list")))
-		return false
+		return
 	case !in:
 		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own check finds no login after the code — it may have been mistyped, cut short or used already; start a new login", h))
-		return false
+		return
+	}
+	if l.method == v1.LoginByLink && home != "" && account.TokenFileExists(home) {
+		if err := account.ClearToken(home); err != nil {
+			log.Error("a hub login took, and the account's stored token could not be removed", "err", err)
+			m.end(l, v1.LoginFailed, "the login took, and the token the account ran on, which would outrank it, could not be removed — `"+m.Paths.RemoteCommand("daemon", "logs")+"` at the machine says why")
+			return
+		}
 	}
 	if l.ref.Label == "" {
 		// The capability document keeps its answer about a default login
@@ -602,13 +650,12 @@ func (m *Logins) check(ctx context.Context, l *hubLogin, bin, home string, log *
 		capability.ForgetDefaultLogin(h)
 	} else if _, err := m.Accounts.LoggedInAgain(ctx, l.ref); err != nil {
 		m.end(l, v1.LoginFailed, err.Error())
-		return false
+		return
 	}
 	if m.Changed != nil {
 		m.Changed()
 	}
 	m.end(l, v1.LoginSucceeded, "")
-	return true
 }
 
 // addArgs is the yad command, after `yad`, that logs this login's account in

@@ -119,6 +119,8 @@ func Serve(ctx context.Context, o Options) error {
 	logins := &Logins{Data: o.Paths.Data, Paths: o.Paths, Accounts: o.Accounts, Changed: o.LoginTook, Log: o.Log}
 	logins.bind(ctx)
 	defer logins.Close()
+	o.Accounts.onRemoved(logins.accountRemoved)
+	defer o.Accounts.onRemoved(nil)
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{

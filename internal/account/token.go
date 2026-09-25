@@ -92,31 +92,6 @@ func ClearToken(home string) error {
 	return err
 }
 
-// SetTokenAside moves an account's token out of the way for a login in the
-// harness's own way, which the token would otherwise outrank. restore puts it
-// back — the login did not complete, and the account keeps the credential it
-// had — and drop deletes it once the login has taken. Either is safe to call
-// when there was no token.
-func SetTokenAside(home string) (restore, drop func() error, err error) {
-	from := filepath.Join(home, tokenFile)
-	aside := filepath.Join(home, "."+tokenFile+".aside")
-	none := func() error { return nil }
-	if err := os.Rename(from, aside); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return none, none, nil
-		}
-		return nil, nil, err
-	}
-	restore = func() error { return os.Rename(aside, from) }
-	drop = func() error {
-		if err := os.Remove(aside); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		return nil
-	}
-	return restore, drop, nil
-}
-
 // readToken is the account's token file read the one way every caller reads
 // it: the token when it is usable, and otherwise why not — "" for no file at
 // all. A file others can read is not used: it is a secret that must be

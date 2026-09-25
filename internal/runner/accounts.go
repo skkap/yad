@@ -54,13 +54,22 @@ type Accounts struct {
 	// prune at start is done; Reload waits for it.
 	attached   chan struct{}
 	attachOnce sync.Once
+	// removed is told of every account the owner removes, once the lists no
+	// longer name it: a hub login in flight on it is ended then (decision
+	// 0055), rather than left writing a credential into a home on its way out.
+	removed func(account.Ref)
 }
 
 // accountHold is one run on one account, from the moment the account is
-// chosen for it until the run moves off it, parks or ends.
+// chosen for it until the run moves off it, parks or ends — or one hub login
+// in the account's home, from before the home is made until the login has let
+// go of it. Either keeps a removed account's home until it ends.
 type accountHold struct {
 	ref account.Ref
 	run string
+	// login marks a hub login's hold, which is no run: removing the account
+	// does not name it among the runs still on it.
+	login bool
 }
 
 // NewAccounts is the lists as the daemon starts with them. data is where the
@@ -98,12 +107,27 @@ func (a *Accounts) Load(ctx context.Context, q *db.Queries, now time.Time) ([]ac
 // removal either sees this hold or this take sees the removal; there is no
 // order in which a run starts on an account whose home is being deleted.
 func (a *Accounts) take(r account.Ref, run string) (*accountHold, bool) {
+	return a.hold(&accountHold{ref: r, run: run})
+}
+
+// takeForLogin is take for a hub login: the check that the account is still
+// listed, and the hold that keeps its home until the login lets go, in one
+// step under the lists' lock — a removal either sees the hold and waits for
+// it, or the login sees the removal and touches nothing.
+func (a *Accounts) takeForLogin(r account.Ref, loginID string) (*accountHold, bool) {
+	if a == nil {
+		return nil, false
+	}
+	return a.hold(&accountHold{ref: r, run: loginID, login: true})
+}
+
+func (a *Accounts) hold(h *accountHold) (*accountHold, bool) {
+	r := h.ref
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.lists.Has(r) {
 		return nil, false
 	}
-	h := &accountHold{ref: r, run: run}
 	if a.held[r] == nil {
 		a.held[r] = map[*accountHold]bool{}
 	}
@@ -156,6 +180,17 @@ func (a *Accounts) release(h *accountHold) {
 		return
 	}
 	log.Info("the last run on a removed account has ended; its home is deleted")
+}
+
+// onRemoved sets who is told of an account the owner removes. Serve tells its
+// hub logins.
+func (a *Accounts) onRemoved(fn func(account.Ref)) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.removed = fn
 }
 
 // Keep cancels a pending deletion of an account's home: `yad account add` is
@@ -256,10 +291,14 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 	var asideErr error
 	if removed {
 		for h := range a.held[r] {
-			runs = append(runs, h.run)
+			if !h.login {
+				runs = append(runs, h.run)
+			}
 		}
 		slices.Sort(runs)
-		if len(runs) > 0 {
+		// A login's hold keeps the home as a run's does: its process may
+		// still be in there, and it is told to stop just below.
+		if len(a.held[r]) > 0 {
 			a.doomed[r] = true
 		} else {
 			asideErr = account.SetAside(a.data, r.Harness, r.Label)
@@ -270,8 +309,12 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 		delete(a.doomed, r)
 	}
 	st := a.store
+	onRemoved := a.removed
 	a.mu.Unlock()
 
+	if removed && onRemoved != nil {
+		onRemoved(r)
+	}
 	log := a.log().With("harness", r.Harness, "account", r.Label)
 	if st != nil {
 		if _, err := account.Prune(ctx, st.Queries, lists); err != nil {
