@@ -506,3 +506,35 @@ func TestAnAbandonedPlainLoginKeepsTheStoredToken(t *testing.T) {
 		t.Error("the stored token was lost to a login that did not complete")
 	}
 }
+
+// A token account that was first logged in its own way still has that old
+// credential beside its token. A plain login walked away from on it adds
+// nothing and keeps the token, though claude's check says yes to the old
+// credential: the login's own failure decides, whatever the check says.
+func TestAFailedPlainLoginBesideAnOldCredentialKeepsTheToken(t *testing.T) {
+	p := accountHarness(t, claudeE2E)
+	t.Setenv(fakeClaudeLogin, "fails")
+	home, err := account.Ensure(p.Data, "claude", "tl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".credentials.json"), []byte(`{"stand_in":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetToken(home, "sk-ant-oat01-the-owners-choice"); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errs := yadIn(t, "account", "add", "claude", "tl"); code == 0 {
+		t.Fatalf("a login that failed was taken for one that took:\n%s%s", out, errs)
+	}
+	if !account.HasToken(home) {
+		t.Error("the token was removed by a login that did not complete")
+	}
+	cfg, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Harness["claude"].Accounts) != 0 {
+		t.Errorf("config.toml lists %v after a failed login", cfg.Harness["claude"].Accounts)
+	}
+}

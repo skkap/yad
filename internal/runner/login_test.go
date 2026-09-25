@@ -226,7 +226,7 @@ func TestALinkLoginEndsAtItsDeadlines(t *testing.T) {
 	}{
 		{"no link", "nourl", false, v1.LoginFailed, "printed no link"},
 		{"no code", "", false, v1.LoginExpired, "no code arrived"},
-		{"no exit after the code", "hang", true, v1.LoginFailed, "finds no login"},
+		{"no exit after the code", "hang", true, v1.LoginFailed, "had not finished"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -383,6 +383,13 @@ func TestALoginTheRunnerRefusesSaysWhatToDoAtTheMachine(t *testing.T) {
 			[]string{"yad", "--profile", "test", "account", "add", "codex", "work", "--device"}},
 		{"codex's own login", startLogin("lg1", "codex", ""), "not built yet",
 			[]string{"yad", "--profile", "test", "doctor"}},
+		{"a harness hub login does not log in", startLogin("lg1", "gemini", "work"), "logs in claude",
+			[]string{"yad", "--profile", "test", "doctor"}},
+		// A name the hub sent is quoted in the words, and a backtick in it
+		// must not read as the start of a second command.
+		{"a harness named with a backtick", startLogin("lg1", "x`yad account list`", ""), "logs in claude",
+			[]string{"yad", "--profile", "test", "doctor"}},
+		{"no harness at all", startLogin("lg1", "", "work"), "naming one: hub login logs in claude", nil},
 		{"a token that is not one", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Account: "work", Token: "two words"}, "not stored", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -463,9 +470,15 @@ func TestRemovingTheAccountEndsItsHubLogin(t *testing.T) {
 		r.Control("hub", startLogin("lg1", "claude", "work"))
 		r.until(t, "lg1", v1.LoginWaiting)
 		removed(t, r)
-		if rep := r.until(t, "lg1", v1.LoginCancelled); !strings.Contains(rep.Error, "removed") {
+		rep := r.until(t, "lg1", v1.LoginCancelled)
+		if !strings.Contains(rep.Error, "removed") {
 			t.Errorf("the login ended saying %q", rep.Error)
 		}
+		cmds := shellwordtest.Commands(rep.Error, "yad ")
+		if len(cmds) != 1 {
+			t.Fatalf("want one command in %q", rep.Error)
+		}
+		shellwordtest.Check(t, cmds[0], "yad", "--profile", "test", "account", "add", "claude", "work")
 		r.Close()
 		gone(t, e)
 	})
@@ -492,6 +505,103 @@ func TestRemovingTheAccountEndsItsHubLogin(t *testing.T) {
 			}
 			r.Close()
 			gone(t, e)
+		})
+	}
+}
+
+// An account first logged in its own way and later put on a token still has
+// its old credential beside the token. A link login on it counts only when
+// claude's own login succeeded with this code — a refusal, or a login still
+// asking when the deadline comes, is a failure whatever claude's check says of
+// the old credential — so a mistyped code neither reports success nor removes
+// the token the owner chose. The right code still takes, and the token goes.
+func TestALoginThatRefusedItsCodeFailsWhateverTheHomeHolds(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode, code string
+		want             v1.LoginState
+		keepToken        bool
+	}{
+		{"a code claude refuses", "", "not-the-code", v1.LoginFailed, true},
+		{"a login still asking at the deadline", "hang", "not-the-code", v1.LoginFailed, true},
+		{"the right code", "", fakeLoginCode, v1.LoginSucceeded, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			r := newLoginRig(t, e, accountConfig("work"), tc.mode)
+			r.ExitWait = 500 * time.Millisecond
+			home := plantCredential(t, e.paths.Data, "work")
+			if err := account.SetToken(home, "sk-ant-oat01-the-owners-choice"); err != nil {
+				t.Fatal(err)
+			}
+			if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountNeedsLogin, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			r.Control("hub", startLogin("lg1", "claude", "work"))
+			r.until(t, "lg1", v1.LoginWaiting)
+			r.Control("hub", loginCode("lg1", tc.code))
+			r.until(t, "lg1", tc.want)
+			r.Close()
+			if got := account.HasToken(home); got != tc.keepToken {
+				t.Errorf("the account has its token: %v, want %v", got, tc.keepToken)
+			}
+			want := v1.AccountNeedsLogin
+			if tc.want == v1.LoginSucceeded {
+				want = v1.AccountFree
+			}
+			if got := accountState(t, e, "work"); got != want {
+				t.Errorf("the account is %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// A login cancelled or replaced is still in the account's home until its
+// goroutine has let go — its process being stopped, its check running — and
+// the next login for the account waits for it, whichever order the hub's
+// answer carries the cancel and the start in. Here the old login is held
+// mid-teardown, and the new one must not write its token until it lets go.
+func TestANewLoginWaitsForTheOldOneToLetGoOfTheHome(t *testing.T) {
+	cancelOld := v1.Control{Kind: v1.ControlCancelLogin, LoginID: "old"}
+	startNew := v1.Control{Kind: v1.ControlLoginToken, LoginID: "new", Harness: "claude", Account: "work", Token: "sk-ant-oat01-the-new-one"}
+	for _, tc := range []struct {
+		name  string
+		order []v1.Control
+	}{
+		{"cancel then start", []v1.Control{cancelOld, startNew}},
+		{"start then cancel", []v1.Control{startNew, cancelOld}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			r := newLoginRig(t, e, accountConfig("work"), "")
+			home, err := account.Ensure(e.paths.Data, "claude", "work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.init()
+			old := &hubLogin{conn: "hub", id: "old", ref: account.Ref{Harness: "claude", Label: "work"}, method: v1.LoginByLink,
+				state: v1.LoginWaiting, updated: time.Now(), code: make(chan string, 1), done: make(chan struct{}), cancel: func() {}}
+			r.mu.Lock()
+			r.byKey[loginKey{"hub", "old"}], r.live[old.ref] = old, old
+			r.mu.Unlock()
+			for _, c := range tc.order {
+				r.Control("hub", c)
+			}
+			r.until(t, "old", v1.LoginCancelled)
+			time.Sleep(300 * time.Millisecond)
+			if account.TokenFileExists(home) {
+				t.Fatal("the new login wrote its token while the old one was still in the home")
+			}
+			for _, rep := range r.Reports("hub") {
+				if rep.LoginID == "new" && rep.State != v1.LoginStarting {
+					t.Fatalf("the new login moved to %s before the old one let go", rep.State)
+				}
+			}
+			close(old.done)
+			r.until(t, "new", v1.LoginSucceeded)
+			if !account.HasToken(home) {
+				t.Error("the new login stored no token once the old one let go")
+			}
 		})
 	}
 }

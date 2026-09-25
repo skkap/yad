@@ -161,8 +161,15 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 		loginErr = account.Login(ctx, id, bin, home, stdin, w, os.Stderr, extra...)
 		check = account.OwnLogin
 	}
-	in, checkErr := check(ctx, id, bin, home)
-	if checkErr != nil || !in {
+	// The login's own failure is a failure whatever the check says: a home
+	// with a credential from before — an account's own login, from before it
+	// ran on a token — answers yes to the check, and a login walked away from
+	// would be added, and the token the owner chose removed.
+	in, checkErr := false, error(nil)
+	if loginErr == nil {
+		in, checkErr = check(ctx, id, bin, home)
+	}
+	if loginErr != nil || checkErr != nil || !in {
 		// Not added, and said as a failure: a non-zero exit is how a script
 		// finds out. The login's own error, if it had one, goes with it.
 		why := "the login did not complete"

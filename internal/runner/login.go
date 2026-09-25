@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,8 +59,12 @@ type Logins struct {
 	once  sync.Once
 	mu    sync.Mutex
 	byKey map[loginKey]*hubLogin
-	// live is the login in flight for each account, the default login keyed
-	// with an empty label: one per account at a time.
+	// live is the last login started for each account, the default login
+	// keyed with an empty label, until its goroutine has let go of the home —
+	// not only until it ends. A login cancelled or replaced is still in the
+	// home while its process is stopped or its check runs, and the next
+	// login for the account waits on it however the controls that ended it
+	// and started the next arrived.
 	live map[account.Ref]*hubLogin
 	base context.Context
 	stop context.CancelFunc
@@ -262,9 +267,11 @@ func (m *Logins) start(conn string, c v1.Control, method v1.LoginMethod) {
 		return
 	}
 	// One login per account: the newer one is what the owner is looking at.
+	// The older one may already have ended — cancelled by a cancel_login
+	// earlier in the same answer — and still be letting go of the home.
 	prev := m.live[ref]
 	if prev != nil {
-		m.endLocked(prev, v1.LoginCancelled, fmt.Sprintf("login %s for the same account replaced it", l.id))
+		m.endLocked(prev, v1.LoginCancelled, fmt.Sprintf("login %s for the same account replaced it — follow that one", l.id))
 	}
 	m.live[ref] = l
 	ctx, cancel := context.WithCancel(m.base)
@@ -274,15 +281,22 @@ func (m *Logins) start(conn string, c v1.Control, method v1.LoginMethod) {
 	go func() {
 		defer m.wg.Done()
 		defer close(l.done)
-		defer cancel()
-		// The one before it may still be letting go of the same home — a
-		// process being killed. Nothing here touches the home until it has.
-		if prev != nil {
-			select {
-			case <-prev.done:
-			case <-ctx.Done():
-				return
+		defer func() {
+			m.mu.Lock()
+			if m.live[ref] == l {
+				delete(m.live, ref)
 			}
+			m.mu.Unlock()
+		}()
+		defer cancel()
+		// Nothing here touches the home until the one before has let go of
+		// it — waited for even when this one is cancelled meanwhile, since a
+		// login after this one waits only on this one's done.
+		if prev != nil {
+			<-prev.done
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		if method == v1.LoginByToken {
 			m.byToken(ctx, l, bin, token)
@@ -299,7 +313,7 @@ func (m *Logins) start(conn string, c v1.Control, method v1.LoginMethod) {
 func (m *Logins) refusal(ref account.Ref, method v1.LoginMethod, token string) (string, string) {
 	h := ref.Harness
 	if h == "" {
-		return "", "the hub named no harness to log in"
+		return "", "the hub named no harness to log in — start the login again naming one: hub login logs in " + strings.Join(hubLoginHarnesses, " and ")
 	}
 	if h == "codex" {
 		// The wire carries Codex's device code (user_code); driving its login
@@ -309,12 +323,13 @@ func (m *Logins) refusal(ref account.Ref, method v1.LoginMethod, token string) (
 		}
 		return "", "logging Codex in from a hub is not built yet — at the machine, `" + m.Paths.RemoteCommand("account", "add", "codex", ref.Label, "--device") + "` logs it in with a code entered on any other machine"
 	}
-	if !account.CanLogIn(h) {
-		return "", fmt.Sprintf("yad cannot log %s in", h)
+	if !slices.Contains(hubLoginHarnesses, h) {
+		return "", fmt.Sprintf("hub login logs in %s, and %s is not one of them — start the login again naming one, or see at the machine what this runner drives with `%s`",
+			strings.Join(hubLoginHarnesses, " and "), named(h), m.Paths.RemoteCommand("doctor"))
 	}
 	if method == v1.LoginByToken {
 		if !account.CanUseToken(h) {
-			return "", fmt.Sprintf("%s does not run on a stored token", h)
+			return "", fmt.Sprintf("%s does not run on a stored token — log it in by link instead, starting the login without one", h)
 		}
 		if ref.Label == "" {
 			// A token is always an account (decision 0054): the default
@@ -376,10 +391,10 @@ func (m *Logins) cancelLogin(conn, id string) {
 	defer m.mu.Unlock()
 	l, ok := m.byKey[loginKey{conn, id}]
 	if !ok {
-		m.echo(conn, id, v1.LoginCancelled, "cancelled before this runner had it")
+		m.echo(conn, id, v1.LoginCancelled, "cancelled before this runner had it — start a new login to log the account in")
 		return
 	}
-	m.endLocked(l, v1.LoginCancelled, "cancelled from the hub")
+	m.endLocked(l, v1.LoginCancelled, "cancelled from the hub — start a new login to log the account in")
 }
 
 // echo reports a login this runner never had, once, so a hub waiting on it
@@ -425,9 +440,6 @@ func (m *Logins) endLocked(l *hubLogin, state v1.LoginState, msg string) {
 	// The link is spent either way, and a stale one shown beside an end
 	// would invite the owner to follow it.
 	l.url = ""
-	if m.live[l.ref] == l {
-		delete(m.live, l.ref)
-	}
 	if l.cancel != nil {
 		l.cancel()
 	}
@@ -483,7 +495,23 @@ func (m *Logins) claimed(l *hubLogin, log *slog.Logger) (home string, release fu
 }
 
 func (m *Logins) removedReason(r account.Ref) string {
-	return fmt.Sprintf("%s account %q was removed on the machine, and a hub never adds one back", r.Harness, r.Label)
+	return fmt.Sprintf("%s account %q was removed on the machine, and a hub never adds one back — at the machine, `%s` adds it again",
+		r.Harness, r.Label, m.Paths.RemoteCommand("account", "add", r.Harness, r.Label))
+}
+
+// hubLoginHarnesses are the harnesses a hub login can log in here. Codex's
+// device code has its place on the wire and waits on its runner side
+// (decision 0055).
+var hubLoginHarnesses = []string{"claude"}
+
+// named is a name a hub sent, fit to quote in words that go back to it: one
+// line, bounded, and with no backtick to be read as the start of a command.
+func named(s string) string {
+	s = strings.ReplaceAll(s, "`", "'")
+	if len(s) > 64 {
+		s = s[:64] + "…"
+	}
+	return strconv.Quote(s)
 }
 
 // accountRemoved ends the login in flight on an account the owner has just
@@ -545,14 +573,14 @@ func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 	select {
 	case link := <-links:
 		if link == "" {
-			m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login ended without printing a link to sign in at — its output may have changed; log it in at the machine with `%s`",
-				h, m.Paths.RemoteCommand(m.addArgs(l)...)))
+			m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login ended without printing a link to sign in at — its output may have changed; %s",
+				h, m.atTheMachine(l)))
 			return
 		}
 		m.set(l, v1.LoginWaiting, link)
 	case <-urlWait.C:
-		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login printed no link to sign in at within %s — its output may have changed; log it in at the machine with `%s`",
-			h, m.URLWait, m.Paths.RemoteCommand(m.addArgs(l)...)))
+		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login printed no link to sign in at within %s — its output may have changed; %s",
+			h, m.URLWait, m.atTheMachine(l)))
 		return
 	case <-ctx.Done():
 		return
@@ -578,17 +606,26 @@ func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login stopped before it took the code — start a new login", h))
 		return
 	}
+	// The login's own success is a condition of this one, never its words:
+	// a login that exits non-zero, or is still asking when the deadline
+	// comes, did not take this code, whatever the home holds. The check
+	// alone would say yes on a credential already there — an account's own
+	// login from before it ran on a token — and a mistyped code would then
+	// end succeeded and remove the token the owner chose.
 	exitWait := time.NewTimer(m.ExitWait)
 	defer exitWait.Stop()
 	select {
 	case <-proc.Done():
 	case <-exitWait.C:
-		// Still running is most likely asking again for a code it refused.
-		// Whether it took is read from the home below, not from this.
+		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login had not finished %s after the code, so it most likely did not accept it — start a new login", h, m.ExitWait))
+		return
 	case <-ctx.Done():
 		return
 	}
-	proc.Stop(supervise.Ladder{TermGrace: 2 * time.Second})
+	if err := proc.Wait(); err != nil {
+		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login did not accept the code — it may have been mistyped, cut short or used already; start a new login", h))
+		return
+	}
 	m.check(ctx, l, bin, home, log)
 }
 
@@ -634,7 +671,7 @@ func (m *Logins) check(ctx context.Context, l *hubLogin, bin, home string, log *
 		m.end(l, v1.LoginFailed, fmt.Sprintf("whether the login took could not be read from %s — `%s` at the machine shows the account's state", h, m.Paths.RemoteCommand("account", "list")))
 		return
 	case !in:
-		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own check finds no login after the code — it may have been mistyped, cut short or used already; start a new login", h))
+		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own check finds no login after it — start a new login, or %s", h, m.atTheMachine(l)))
 		return
 	}
 	if l.method == v1.LoginByLink && home != "" && account.TokenFileExists(home) {
@@ -649,7 +686,9 @@ func (m *Logins) check(ctx context.Context, l *hubLogin, bin, home string, log *
 		// for a minute; the owner who just logged in should not wait on it.
 		capability.ForgetDefaultLogin(h)
 	} else if _, err := m.Accounts.LoggedInAgain(ctx, l.ref); err != nil {
-		m.end(l, v1.LoginFailed, err.Error())
+		// Only a removal, or a label no listing could hold, gets here.
+		log.Warn("a hub login took on an account no longer listed", "err", err)
+		m.end(l, v1.LoginFailed, m.removedReason(l.ref))
 		return
 	}
 	if m.Changed != nil {
@@ -658,13 +697,15 @@ func (m *Logins) check(ctx context.Context, l *hubLogin, bin, home string, log *
 	m.end(l, v1.LoginSucceeded, "")
 }
 
-// addArgs is the yad command, after `yad`, that logs this login's account in
-// at the machine instead.
-func (m *Logins) addArgs(l *hubLogin) []string {
+// atTheMachine is how the owner logs this login's account in at the machine
+// instead: `yad account add` for an account, and for the harness's own
+// default login `yad doctor`, which names the harness's own command as that
+// machine resolves it.
+func (m *Logins) atTheMachine(l *hubLogin) string {
 	if l.ref.Label == "" {
-		return []string{"doctor"}
+		return "at the machine, `" + m.Paths.RemoteCommand("doctor") + "` names its own login command"
 	}
-	return []string{"account", "add", l.ref.Harness, l.ref.Label}
+	return "log it in at the machine with `" + m.Paths.RemoteCommand("account", "add", l.ref.Harness, l.ref.Label) + "`"
 }
 
 // readLink reads the login's output until the first link to an authorize
