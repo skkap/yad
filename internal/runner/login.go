@@ -550,8 +550,16 @@ func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 	// and out of this environment: handed to the login it would outrank the
 	// login being made (decision 0054). It goes once the new login is
 	// confirmed (check).
+	//
+	// And no browser (DEV-133). Over pipes claude still opens the machine's
+	// browser before it prints the link, and a browser here that is signed
+	// in to claude.ai finishes the login through its own callback — as
+	// whoever is signed in there, with no code at all. A hub login is signed
+	// in by the person at the hub, so the harness is handed a browser that
+	// opens nothing, and the only way through is the code it was sent.
+	// `yad account add`, with the owner at the machine, keeps the browser.
 	proc, err := supervise.Start(ctx, supervise.Spec{
-		Path: bin, Args: account.LoginArgs(h), Dir: dir, Env: account.LoginEnv(h, home),
+		Path: bin, Args: account.LoginArgs(h), Dir: dir, Env: append(account.LoginEnv(h, home), noBrowser),
 		Stdin: true, NoTTY: true, MergeStderr: true,
 	})
 	if err != nil {
@@ -592,6 +600,10 @@ func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 	select {
 	case code = <-l.code:
 	case <-proc.Done():
+		if proc.Wait() == nil {
+			m.signedInWithoutCode(ctx, l, bin, home, log)
+			return
+		}
 		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login stopped while it waited for the code — start a new login", h))
 		return
 	case <-codeWait.C:
@@ -627,6 +639,34 @@ func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 		return
 	}
 	m.check(ctx, l, bin, home, log)
+}
+
+// noBrowser is the browser a hub login's harness is given: `true`, which opens
+// nothing and exits 0, so the harness goes on to wait for the code. A command
+// name rather than a path, found on the login's PATH as any tool of its is.
+const noBrowser = "BROWSER=true"
+
+// signedInWithoutCode ends a link login whose harness succeeded before any code
+// arrived. The login did not take the hub's code, so it is not this login's
+// success; but the home may now hold a login all the same — made by something
+// on this machine, as whoever it was signed in as. Saying only that the login
+// failed would leave the owner believing the account is still logged out
+// while it takes runs on an account they did not choose (DEV-133).
+func (m *Logins) signedInWithoutCode(ctx context.Context, l *hubLogin, bin, home string, log *slog.Logger) {
+	h := l.ref.Harness
+	in, err := account.OwnLogin(ctx, h, bin, home)
+	if ctx.Err() != nil {
+		return
+	}
+	if err != nil || !in {
+		if err != nil {
+			log.Warn("a hub login ended before its code, and whether the account is logged in could not be read", "err", err)
+		}
+		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login stopped while it waited for the code — start a new login", h))
+		return
+	}
+	m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login finished before any code arrived: something on this machine signed it in, not this login, so the account may now run as whoever that was — check it at the machine with `%s`, and log it in again there if it is not the account you meant",
+		h, m.Paths.RemoteCommand("account", "list")))
 }
 
 // byToken stores the token as the account's login (decision 0054) and asks

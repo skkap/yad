@@ -32,7 +32,11 @@ const (
 	fakeLoginCode = "Kq7-right-code#state-q9Xw"
 	// fakeLoginMode picks how the fake's login behaves: "" as measured,
 	// "osc8" with the link in a terminal hyperlink as a TTY would get it,
-	// "nourl" printing no link, "hang" never exiting after the code.
+	// "nourl" printing no link, "hang" never exiting after the code,
+	// "browser" as claude 2.1.282 on a machine whose browser is signed in to
+	// claude.ai — signed in by that browser, no code, unless $BROWSER opens
+	// nothing (DEV-133) — and "signedin" signing in that way whatever
+	// $BROWSER says.
 	fakeLoginMode = "RUNNER_TEST_LOGIN"
 )
 
@@ -46,6 +50,21 @@ func fakeClaudeLogin() int {
 		return 1
 	}
 	fmt.Print("Opening browser to sign in…\n")
+	// Measured on claude 2.1.282: with a browser signed in to claude.ai, the
+	// link and the prompt are printed as usual, and then the browser's own
+	// callback finishes the login with nothing read from stdin. `true` is the
+	// one browser here that opens nothing.
+	if mode == "signedin" || (mode == "browser" && os.Getenv("BROWSER") != "true") {
+		fmt.Print("If the browser didn't open, visit: " + fakeLoginURL + "\n")
+		fmt.Print("Paste code here if prompted > ")
+		time.Sleep(300 * time.Millisecond)
+		if err := os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".credentials.json"), []byte(`{"claudeAiOauth":{"browser":true}}`), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Println("Login successful.")
+		return 0
+	}
 	switch mode {
 	case "nourl":
 		io.Copy(io.Discard, os.Stdin)
@@ -188,6 +207,47 @@ func TestAHubLogsAListedAccountInByLink(t *testing.T) {
 				t.Error("nothing was told the login took, so the capability document waits for its next probe")
 			}
 		})
+	}
+}
+
+// A hub login is signed in by the person at the hub, never by a browser on the
+// runner's machine (DEV-133): the harness is handed one that opens nothing, so
+// on a machine whose browser is signed in to claude.ai the login still waits
+// for the code, and takes that one.
+func TestAHubLinkLoginOpensNoBrowserOnTheMachine(t *testing.T) {
+	// As on a desktop: no BROWSER of the owner's own.
+	t.Setenv("BROWSER", "")
+	e := newEnv(t)
+	r := newLoginRig(t, e, accountConfig("work"), "browser")
+	r.Control("hub", startLogin("lg1", "claude", "work"))
+	r.until(t, "lg1", v1.LoginWaiting)
+	home := account.HomeDir(e.paths.Data, "claude", "work")
+	// Past the moment a signed-in browser would have finished it (the fake's
+	// 300ms), the login is still waiting and the home still holds nothing.
+	time.Sleep(time.Second)
+	if credentialIn(home) {
+		t.Fatal("the machine's browser signed the account in before any code arrived")
+	}
+	if rep := r.until(t, "lg1", v1.LoginWaiting); rep.State != v1.LoginWaiting {
+		t.Fatalf("the login is %s, not still waiting for its code", rep.State)
+	}
+	r.Control("hub", loginCode("lg1", fakeLoginCode))
+	r.until(t, "lg1", v1.LoginSucceeded)
+}
+
+// Should something on the machine sign the login in anyway, before any code,
+// the report says so and that the account may be logged in as someone else —
+// not a bare failure that leaves the owner thinking it is still logged out.
+func TestALoginSignedInOnTheMachineSaysSo(t *testing.T) {
+	e := newEnv(t)
+	r := newLoginRig(t, e, accountConfig("work"), "signedin")
+	r.Control("hub", startLogin("lg1", "claude", "work"))
+	rep := r.until(t, "lg1", v1.LoginFailed)
+	if !strings.Contains(rep.Error, "something on this machine signed it in") || !strings.Contains(rep.Error, "account list") {
+		t.Errorf("the error %q does not say the account was signed in on the machine, or how to check it", rep.Error)
+	}
+	if !credentialIn(account.HomeDir(e.paths.Data, "claude", "work")) {
+		t.Fatal("the fake did not sign the account in")
 	}
 }
 

@@ -89,7 +89,18 @@ minute and the check then says logged in: the exit is a condition, never its
 wording, and the check alone would say yes to a credential already in the
 home — an account's own login from before it ran on a token — so a mistyped
 code would end succeeded and remove the token. A plain `yad account add`
-counts the same way. A link login on a token account leaves the token in its file for the
+counts the same way.
+
+A link login's harness is given a browser that opens nothing (`BROWSER=true`;
+[DEV-133](https://zumino.cc/app/yad/t/DEV-133)). Measured on claude 2.1.282:
+over pipes it still opens the machine's browser before printing the link, and
+a browser there signed in to claude.ai finishes the login through its own
+callback — as whoever is signed in there, with no code. A hub login is signed
+in by the person at the hub, so the only way through is the code. Should a
+login finish before any code all the same and the account then be logged in,
+the report says something on the machine signed it in and how to check which
+account it is, rather than a bare failure. `yad account add`, with the owner at
+the machine, still opens the browser. A link login on a token account leaves the token in its file for the
 runs still on the account, runs and judges the login without it — claude's
 check says yes to any token — and removes it only once the login has taken;
 a plain `yad account add` does the same. A login holds its account as a run
