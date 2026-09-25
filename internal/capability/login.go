@@ -9,6 +9,7 @@ import (
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/probe"
 	"github.com/skkap/yad/internal/shellword"
 )
 
@@ -72,9 +73,9 @@ func defaultLogin(ctx context.Context, d harness.Detected) (errMsg, warning stri
 	// travel to every hub (DEV-60, DEV-67).
 	switch {
 	case err != nil:
-		a.warning = "yad could not tell whether it is logged in, and runs may fail — as the runner's user, `" + command(d, account.StatusArgs(d.ID)) + "` says"
+		a.warning = "yad could not tell whether it is logged in, and runs may fail — as the runner's user, " + probed(d).Try(command(d, account.StatusArgs(d.ID)), "what it says")
 	case !in:
-		a.err = "not logged in on this machine — as the runner's user, `" + command(d, account.LoginArgs(d.ID)) + "` logs it in"
+		a.err = "not logged in on this machine — as the runner's user, " + probed(d).Do(command(d, account.LoginArgs(d.ID)), "log it in")
 	}
 	loginMu.Lock()
 	loginAsked[key] = a
@@ -82,13 +83,18 @@ func defaultLogin(ctx context.Context, d harness.Detected) (errMsg, warning stri
 	return a.err, a.warning
 }
 
-// command is one of the harness's own commands, by its name rather than the
-// path detection resolved, which is the machine's and stays on it. A runner
-// whose environment moves the harness's home carries that move as a
-// placeholder: the value is a path, and the command without it would reach a
-// home no run uses.
+// probed is the binary detection probed, as probe.Find answers for it: the
+// program a printed command names is the one the check ran.
+func probed(d harness.Detected) probe.Found { return probe.Find(d.EnvPath, d.Binary, d.VersionArgs) }
+
+// command is one of the harness's own commands, naming the binary detection
+// probed the way every probe's advice does (probe.Found.Command): by its name
+// when PATH found it, as "$YAD_<ID>_PATH" when an override did — never the
+// path, which is the machine's and stays on it. A runner whose environment
+// moves the harness's home carries that move as a placeholder: the value is a
+// path, and the command without it would reach a home no run uses.
 func command(d harness.Detected, args []string) string {
-	return homePrefix(d.ID) + shellword.Command(append([]string{d.Binary}, args...)...)
+	return homePrefix(d.ID) + probed(d).Command(args...)
 }
 
 func homePrefix(id string) string {

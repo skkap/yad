@@ -2,11 +2,14 @@
 // home, the transcript directory they share, the state a hub sees, and which
 // account a run takes (ARCHITECTURE.md §3, decisions 0013 and 0039).
 //
-// The one rule the package exists to keep: YAD stores no account tokens of its
-// own. The harness logs itself in, inside its own home, and nothing here reads,
-// copies, moves or prints what that login writes. A label is not a secret and a
-// credential is — the label travels in events, in health and in
-// `yad account list`; nothing else from a home travels anywhere.
+// The one rule the package exists to keep: YAD stores no account credential of
+// its own but one. The harness logs itself in, inside its own home, and nothing
+// here reads, copies, moves or prints what that login writes. The exception is
+// a token account (decision 0054): a `claude setup-token` token the owner
+// piped in, kept 0600 in the account's home and handed to that account's runs
+// in their environment — never printed, logged or sent anywhere. A label is
+// not a secret and a credential is — the label travels in events, in health
+// and in `yad account list`; nothing else from a home travels anywhere.
 package account
 
 import (
@@ -233,17 +236,26 @@ func HomeVar(harness string) string { return homeVar[harness] }
 // The home variable is first because suggest prints exactly that one: the
 // token must never be part of a command yad prints.
 func Env(harness, home string) []string {
+	env, _ := TurnEnv(harness, home)
+	return env
+}
+
+// TurnEnv is Env and the TokenID of the token in it, from one read of the
+// token file, so a refusal is held against the token the turn was actually
+// handed and not one stored while it ran.
+func TurnEnv(harness, home string) (env []string, tokenID string) {
 	v, ok := homeVar[harness]
 	if !ok || home == "" {
-		return nil
+		return nil, ""
 	}
-	env := []string{v + "=" + home}
+	env = []string{v + "=" + home}
 	if CanUseToken(harness) {
 		if t := token(home); t != "" {
 			env = append(env, tokenVar+"="+t)
+			tokenID = idOf(t)
 		}
 	}
-	return env
+	return env, tokenID
 }
 
 // Ensure creates an account's harness home and links the shared transcript

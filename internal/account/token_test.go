@@ -128,3 +128,92 @@ func TestAnAgeingTokenIsWarnedAbout(t *testing.T) {
 		t.Errorf("an account with no token was warned about one: %q", w)
 	}
 }
+
+// Every reader agrees on whether the token file counts: runs, list's LOGIN
+// column, the expiry warning and the next action all read it one way, so a
+// file yad will not use is never shown as a working token (decision 0054).
+func TestEveryReaderAgreesOnWhetherATokenCounts(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		prepare func(t *testing.T, home string)
+		counts  bool
+		problem bool
+	}{
+		{"none", func(t *testing.T, home string) {}, false, false},
+		{"a good token", func(t *testing.T, home string) { mustSetToken(t, home, "sk-ant-oat01-x") }, true, false},
+		{"readable by others", func(t *testing.T, home string) {
+			mustSetToken(t, home, "sk-ant-oat01-x")
+			if err := os.Chmod(filepath.Join(home, tokenFile), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, false, true},
+		{"empty", func(t *testing.T, home string) {
+			if err := os.WriteFile(filepath.Join(home, tokenFile), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, false, true},
+		{"a link", func(t *testing.T, home string) {
+			target := filepath.Join(t.TempDir(), "elsewhere")
+			if err := os.WriteFile(target, []byte("sk-ant-oat01-x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(home, tokenFile)); err != nil {
+				t.Fatal(err)
+			}
+		}, false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home, err := Ensure(t.TempDir(), "claude", "tl")
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.prepare(t, home)
+			_, stored := TokenStored(home)
+			env, id := TurnEnv("claude", home)
+			for what, got := range map[string]bool{
+				"HasToken": HasToken(home), "TokenStored": stored, "in the run's env": len(env) == 2,
+				"TokenID": id != "", "the expiry warning": TokenWarning("tl", home, time.Now().Add(TokenLife)) != "",
+				"--token - in the next action": slices.Contains(AddArgs("claude", "tl", home), "--token"),
+			} {
+				if got != c.counts {
+					t.Errorf("%s = %v, want %v", what, got, c.counts)
+				}
+			}
+			if got := TokenProblem(home) != ""; got != c.problem {
+				t.Errorf("TokenProblem = %q, want one = %v", TokenProblem(home), c.problem)
+			}
+		})
+	}
+}
+
+// ClearToken turns a token account back into a login account; TokenID moves
+// with the token and never is it.
+func TestClearTokenAndTokenID(t *testing.T) {
+	home, err := Ensure(t.TempDir(), "claude", "tl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustSetToken(t, home, "sk-ant-oat01-one")
+	one := TokenID(home)
+	mustSetToken(t, home, "sk-ant-oat01-two")
+	two := TokenID(home)
+	if one == "" || one == two || strings.Contains(one+two, "sk-ant") {
+		t.Errorf("TokenID one=%q two=%q", one, two)
+	}
+	if err := ClearToken(home); err != nil {
+		t.Fatal(err)
+	}
+	if TokenFileExists(home) || HasToken(home) || TokenID(home) != "" {
+		t.Error("the token is still there after ClearToken")
+	}
+	if err := ClearToken(home); err != nil {
+		t.Errorf("clearing an account with no token: %v", err)
+	}
+}
+
+func mustSetToken(t *testing.T, home, tok string) {
+	t.Helper()
+	if err := SetToken(home, tok); err != nil {
+		t.Fatal(err)
+	}
+}

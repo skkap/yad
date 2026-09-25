@@ -111,3 +111,31 @@ func TestTheProbeLeavesFreeAccountsAndMissingHomesAlone(t *testing.T) {
 		t.Errorf("the probe wrote state %q for an account that was already free", got)
 	}
 }
+
+// A token account's check says yes for any token, the refused one included,
+// so the probe must not put a parked token account back in service: it would
+// be refused again at its next run, every interval. A new token, stored
+// through `yad account add --token -`, is its way back (decision 0054).
+func TestTheProbeLeavesAParkedTokenAccountParked(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	cfg := accountConfig("work")
+	home, err := account.Ensure(e.paths.Data, "claude", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetToken(home, "sk-ant-oat01-refused"); err != nil {
+		t.Fatal(err)
+	}
+	// What claude's check sees in a token account: a yes.
+	plantCredential(t, e.paths.Data, "work")
+	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountNeedsLogin, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if freed := probeFor(t, e, cfg).Sweep(ctx); freed != 0 {
+		t.Errorf("the probe freed %d token accounts on a check that says yes to any token", freed)
+	}
+	if got := accountState(t, e, "work"); got != v1.AccountNeedsLogin {
+		t.Errorf("the account is %q, want needs_login", got)
+	}
+}

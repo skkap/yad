@@ -410,11 +410,55 @@ func TestAccountAddRefusesATokenItCannotUse(t *testing.T) {
 		if code == 0 || !strings.Contains(errs, c.want) {
 			t.Errorf("%q: exit %d, stderr %q, want a refusal naming %q", c.args, code, errs, c.want)
 		}
-		if strings.Contains(out+errs, "sk-ant-oat01-x") && !strings.Contains(c.args[len(c.args)-1], "sk-ant") {
-			t.Errorf("%q echoed a token", c.args)
+		// The argv token must not be repeated back: the refusal is about
+		// where the token came from, and printing it would spread it further.
+		if strings.Contains(out+errs, "sk-ant-oat01-x") {
+			t.Errorf("%q echoed the token:\n%s%s", c.args, out, errs)
 		}
 		if _, err := os.Stat(account.HomeDir(p.Data, c.args[2], "tl")); err == nil {
 			t.Errorf("%q made the account's home before refusing", c.args)
 		}
+	}
+}
+
+// A token that is not one word is refused before the account's home is made,
+// so a bad paste leaves nothing behind.
+func TestAccountAddRefusesABadTokenBeforeMakingItsHome(t *testing.T) {
+	for _, in := range []string{"", "two words\n"} {
+		p := accountHarness(t, claudeE2E)
+		interactive = func() bool { return false }
+		old := stdin
+		stdin = strings.NewReader(in)
+		code, _, errs := yadIn(t, "account", "add", "claude", "tl", "--token", "-")
+		stdin = old
+		if code == 0 {
+			t.Errorf("%q: stored", in)
+		}
+		if _, err := os.Stat(account.HomeDir(p.Data, "claude", "tl")); err == nil {
+			t.Errorf("%q: the account's home was made before the token was refused (%s)", in, errs)
+		}
+	}
+}
+
+// Logging a token account in the harness's own way removes its token: left
+// in place it would outrank the new login in every run (decision 0054).
+func TestAPlainLoginReplacesAStoredToken(t *testing.T) {
+	p := accountHarness(t, claudeE2E)
+	home, err := account.Ensure(p.Data, "claude", "tl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetToken(home, "sk-ant-oat01-refused"); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := yadIn(t, "account", "add", "claude", "tl")
+	if code != 0 {
+		t.Fatalf("exit %d: %s\n%s", code, errs, out)
+	}
+	if account.TokenFileExists(home) {
+		t.Error("the stored token survived a plain login")
+	}
+	if !strings.Contains(out, "its stored token is removed") {
+		t.Errorf("the owner was not told the token went:\n%s", out)
 	}
 }

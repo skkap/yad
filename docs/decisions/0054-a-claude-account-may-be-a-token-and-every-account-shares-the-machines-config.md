@@ -47,6 +47,26 @@ dead token from a good one, the Claude adapter reports `api_error_status` 401
 as `Outcome.AuthRejected` — the harness's structure, not its wording — and the
 runner parks the account in `needs_login` on it without asking. The class a
 hub sees is unchanged (`harness_error`); nothing is added to the protocol.
+Three things keep that parking honest:
+
+- **The refusal is held against the token the turn was handed.** Each turn
+  reads the token once (`account.TurnEnv`) and keeps a hash of it; a refusal
+  parks the account only if that is still the stored token. An owner who
+  stores a new token and then revokes the old one has turns still running on
+  the old one.
+- **The login probe leaves a token account alone.** It would hear "yes" for the
+  refused token and put the account back in service to be refused again, every
+  interval. A token account comes back when a new token is stored, which tells
+  the daemon itself.
+- **Every next action for a token account is `--token -`** — the hub's
+  no-free-account error, the runner's log and `yad account list`. A plain
+  `yad account add` on a token account removes the stored token first and says
+  so: left in place it would outrank the new login in every run.
+
+**One reading of the token file.** A file that is not a plain file, is empty,
+or can be read by others is not used, and every reader agrees: the account
+shows `token ignored` in `yad account list`, with why and what to do, not a
+working token nor a refused one.
 
 **A token's year is counted from when it was stored.** Neither the token nor
 Claude says when it expires. From eleven months on, the harness report carries
