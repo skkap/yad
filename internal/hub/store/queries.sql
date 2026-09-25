@@ -283,3 +283,62 @@ SELECT id FROM sessions WHERE runner_id = sqlc.arg(runner_id) AND closed_at IS N
 SELECT DISTINCT r.id FROM runners r JOIN sessions s ON s.runner_id = r.id
 WHERE s.closed_at IS NULL AND r.last_sync_at IS NOT NULL AND r.last_sync_at <= sqlc.arg(cutoff)
 ORDER BY r.id;
+
+-- Hub logins (decision 0055).
+
+-- name: CreateLogin :exec
+INSERT INTO logins (id, runner_id, harness, account, method, token, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetLogin :one
+SELECT * FROM logins WHERE id = ?;
+
+-- Every login of this runner not yet over, oldest first.
+-- name: OpenLogins :many
+SELECT * FROM logins WHERE runner_id = ? AND state IN ('requested', 'starting', 'waiting', 'checking')
+ORDER BY created_at, id;
+
+-- The open logins of one account on one runner: what a new login for it
+-- replaces.
+-- name: OpenLoginsFor :many
+SELECT * FROM logins WHERE runner_id = sqlc.arg(runner_id) AND harness = sqlc.arg(harness) AND account = sqlc.arg(account)
+  AND state IN ('requested', 'starting', 'waiting', 'checking')
+ORDER BY created_at, id;
+
+-- A runner's report of a login this hub started on it. An end the hub already
+-- holds stands, and a report about another runner's login changes nothing.
+-- updated_at moves only with the state, so it says when the login last did.
+-- name: RecordLoginReport :execrows
+UPDATE logins SET state = sqlc.arg(state), url = sqlc.arg(url), user_code = sqlc.arg(user_code), error = sqlc.arg(error),
+  updated_at = CASE WHEN state = sqlc.arg(state) THEN updated_at ELSE sqlc.arg(now) END
+WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id)
+  AND state IN ('requested', 'starting', 'waiting', 'checking');
+
+-- name: SetLoginCode :exec
+UPDATE logins SET code = sqlc.arg(code) WHERE id = sqlc.arg(id) AND state = 'waiting';
+
+-- name: RequestLoginCancel :exec
+UPDATE logins SET cancel_requested_at = COALESCE(cancel_requested_at, sqlc.arg(now))
+WHERE id = sqlc.arg(id) AND state IN ('requested', 'starting', 'waiting', 'checking');
+
+-- The hub ending a login by its own act.
+-- name: EndLogin :execrows
+UPDATE logins SET state = sqlc.arg(state), error = sqlc.arg(error), url = '', updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND state IN ('requested', 'starting', 'waiting', 'checking');
+
+-- Logins that never reached their runner by the cutoff: it is not syncing,
+-- and a token must not wait in this database for it to come back.
+-- name: ExpireUndeliveredLogins :execrows
+UPDATE logins SET state = 'expired', error = sqlc.arg(error), updated_at = sqlc.arg(now)
+WHERE state = 'requested' AND created_at <= sqlc.arg(cutoff);
+
+-- Logins a runner took and has not finished by the cutoff, which is well past
+-- every deadline a runner holds one to: it stopped reporting them.
+-- name: ExpireStaleLogins :execrows
+UPDATE logins SET state = 'failed', error = sqlc.arg(error), url = '', updated_at = sqlc.arg(now)
+WHERE state IN ('starting', 'waiting', 'checking') AND created_at <= sqlc.arg(cutoff);
+
+-- A runner that deregisters finishes none of its logins.
+-- name: EndRunnerLogins :execrows
+UPDATE logins SET state = 'failed', error = sqlc.arg(error), url = '', updated_at = sqlc.arg(now)
+WHERE runner_id = sqlc.arg(runner_id) AND state IN ('requested', 'starting', 'waiting', 'checking');

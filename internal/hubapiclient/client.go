@@ -123,6 +123,39 @@ func (c *Client) Session(ctx context.Context, sessionID string) (hubapi.Session,
 	return out, err
 }
 
+// StartLogin logs an account in on a runner (decision 0055): by link, or by
+// token when the request carries one.
+func (c *Client) StartLogin(ctx context.Context, runnerID string, req hubapi.LoginRequest) (hubapi.Login, error) {
+	var out hubapi.Login
+	err := c.do(ctx, http.MethodPost, "/runners/"+url.PathEscape(runnerID)+"/logins", req, &out)
+	return out, err
+}
+
+// Login reads a login: its state, and its link while it waits for a code.
+func (c *Client) Login(ctx context.Context, runnerID, loginID string) (hubapi.Login, error) {
+	var out hubapi.Login
+	err := c.do(ctx, http.MethodGet, c.loginPath(runnerID, loginID), nil, &out)
+	return out, err
+}
+
+// SendLoginCode sends the code the owner got after signing in.
+func (c *Client) SendLoginCode(ctx context.Context, runnerID, loginID, code string) (hubapi.Login, error) {
+	var out hubapi.Login
+	err := c.do(ctx, http.MethodPost, c.loginPath(runnerID, loginID)+"/code", hubapi.LoginCodeRequest{Code: code}, &out)
+	return out, err
+}
+
+// CancelLogin ends a login at its runner's next sync.
+func (c *Client) CancelLogin(ctx context.Context, runnerID, loginID string) (hubapi.Login, error) {
+	var out hubapi.Login
+	err := c.do(ctx, http.MethodPost, c.loginPath(runnerID, loginID)+"/cancel", struct{}{}, &out)
+	return out, err
+}
+
+func (c *Client) loginPath(runnerID, loginID string) string {
+	return "/runners/" + url.PathEscape(runnerID) + "/logins/" + url.PathEscape(loginID)
+}
+
 // Events long-polls once for the events after the cursor, waiting up to wait
 // when there are none.
 func (c *Client) Events(ctx context.Context, runID string, after int64, wait time.Duration) (hubapi.EventPage, error) {

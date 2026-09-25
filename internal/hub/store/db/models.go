@@ -21,6 +21,23 @@ type Event struct {
 	ReceivedAt int64
 }
 
+type Login struct {
+	ID                string
+	RunnerID          string
+	Harness           string
+	Account           string
+	Method            string
+	State             string
+	Url               string
+	UserCode          string
+	Error             string
+	Code              string
+	Token             string
+	CancelRequestedAt sql.NullInt64
+	CreatedAt         int64
+	UpdatedAt         int64
+}
+
 type RegistrationToken struct {
 	Hash      string
 	CreatedAt int64
