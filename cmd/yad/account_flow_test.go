@@ -23,7 +23,9 @@ import (
 )
 
 // fakeClaudeLogin, set to "fails", makes the fake claude's `auth login` exit 1
-// having written nothing: the owner walking away from the browser.
+// having written nothing: the owner walking away from the browser. Set to
+// "link", it is claude 2.1.281's login over pipes, as a hub login drives it:
+// a link, a prompt, and a credential only for the right code.
 const fakeClaudeLogin = "E2E_CLAUDE_LOGIN"
 
 // fakeClaudeAuth is `claude auth login` and `claude auth status`, keeping a
@@ -36,6 +38,10 @@ func fakeClaudeAuth(cmd string) {
 		if os.Getenv(fakeClaudeLogin) == "fails" {
 			os.Stderr.WriteString("login cancelled\n")
 			os.Exit(1)
+		}
+		if os.Getenv(fakeClaudeLogin) == "link" {
+			fakeClaudeLinkLogin(cred)
+			return
 		}
 		if err := os.WriteFile(cred, []byte(`{"stand_in":true}`), 0o600); err != nil {
 			os.Stderr.WriteString(err.Error())
