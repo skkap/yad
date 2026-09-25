@@ -9,6 +9,8 @@ import (
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
 func TestMeetsFloor(t *testing.T) {
@@ -94,9 +96,7 @@ func TestRegisterRefusesBelowMinVersion(t *testing.T) {
 					t.Errorf("message %q does not name %q", env.Error.Message, want)
 				}
 			}
-			if !strings.Contains(env.Error.NextAction, "yad upgrade") {
-				t.Errorf("next action %q does not say what to run", env.Error.NextAction)
-			}
+			upgradeRunsAsPrinted(t, env.Error.NextAction)
 			// The refusal came before the burn: the same token registers the
 			// runner once it has been upgraded.
 			if res, env := post(t, f.floored(floor), "/v1/runners/register", registerBody(t, versioned("r1", floor)), headers(tok)); res.StatusCode != http.StatusOK {
@@ -142,9 +142,7 @@ func TestSyncRefusesBelowMinVersion(t *testing.T) {
 	if res.StatusCode != http.StatusUpgradeRequired || env.Error.Code != v1.CodeVersionTooOld {
 		t.Fatalf("sync: %d %+v, want 426 %s", res.StatusCode, env, v1.CodeVersionTooOld)
 	}
-	if !strings.Contains(env.Error.NextAction, "yad upgrade") {
-		t.Errorf("next action %q does not say what to run", env.Error.NextAction)
-	}
+	upgradeRunsAsPrinted(t, env.Error.NextAction)
 	after, err := f.store.GetRunner(ctx, "r1")
 	if err != nil {
 		t.Fatal(err)
@@ -186,4 +184,17 @@ func TestMinVersionIsAdvertised(t *testing.T) {
 	if sync.MinVersion != floor {
 		t.Errorf("sync min_version %q, want %q", sync.MinVersion, floor)
 	}
+}
+
+// upgradeRunsAsPrinted checks the refusal's `yad upgrade` pasted into a shell:
+// on the runner's profile, and from the repository yad was installed from,
+// both of which only that machine knows.
+func upgradeRunsAsPrinted(t *testing.T, next string) {
+	t.Helper()
+	cmds := shellwordtest.Commands(next, "yad ")
+	if len(cmds) != 1 {
+		t.Fatalf("want one command in %q", next)
+	}
+	shellwordtest.CheckEnv(t, cmds[0], map[string]string{"YAD_REPO": "<the repository yad was installed from>"},
+		"yad", "--profile", "<runner profile>", "upgrade")
 }

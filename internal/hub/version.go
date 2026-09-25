@@ -48,5 +48,5 @@ func (h *Hub) refuseOld(runnerVersion string) error {
 	}
 	return Fail(http.StatusUpgradeRequired, v1.CodeVersionTooOld,
 		fmt.Sprintf("this hub takes runners from yad %s; this one is %s", h.minVersion, runnerVersion),
-		fmt.Sprintf("run `yad upgrade` on that machine to %s or newer, then start the runner again", h.minVersion))
+		fmt.Sprintf("on that machine, `%s` to %s or newer, then start the runner again", upgradeCommand(), h.minVersion))
 }

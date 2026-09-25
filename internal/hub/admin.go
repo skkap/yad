@@ -22,8 +22,6 @@ const adminTokenPrefix = "yadadm_"
 // adminNamePattern bounds a token's name: a person types it to revoke one.
 var adminNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-const newAdminTokenAction = "create one on the hub's machine with `yad hub admin-token create`, and send it as `Authorization: Bearer <token>`"
-
 // ErrAdminTokenNameTaken is a create under a name the hub already holds. The
 // next action is left to the caller: it is a command naming this hub's database
 // and profile, which only the CLI that opened the store knows.
@@ -79,12 +77,12 @@ func RevokeAdminToken(ctx context.Context, s *store.Store, name string) error {
 // different table: a runner can never submit work, even to itself.
 func (h *Hub) authenticateAdmin(ctx context.Context, tok string) error {
 	if tok == "" {
-		return Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "no admin token", newAdminTokenAction)
+		return Fail(http.StatusUnauthorized, v1.CodeUnauthorized, "no admin token", adminTokenAction(h))
 	}
 	_, err := h.store.GetAdminToken(ctx, hashSecret(tok))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Fail(http.StatusUnauthorized, v1.CodeUnauthorized,
-			"this hub does not know that admin token — it was revoked, or it belongs to another hub", newAdminTokenAction)
+			"this hub does not know that admin token — it was revoked, or it belongs to another hub", adminTokenAction(h))
 	}
 	return err
 }

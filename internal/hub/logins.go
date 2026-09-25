@@ -129,7 +129,7 @@ func (h *Hub) startLogin(ctx context.Context, in *startLoginInput) (*loginOutput
 	case req.Account != "" && config.ValidName(req.Account) != nil:
 		return nil, Fail(http.StatusBadRequest, v1.CodeInvalid,
 			fmt.Sprintf("account %q is not an account label: labels are lowercase letters, digits, dashes and underscores", req.Account),
-			"name the account as `yad account list` shows it on the runner's machine")
+			"name the account as `"+runnerCommand("account", "list")+"` shows it on the runner's machine")
 	case method == v1.LoginByToken && req.Account == "":
 		// A token is always an account's (decision 0054); the runner would
 		// refuse it, and the token would have been stored here for nothing.
@@ -151,7 +151,7 @@ func (h *Hub) startLogin(ctx context.Context, in *startLoginInput) (*loginOutput
 		if err != nil {
 			return err
 		}
-		if err := refuseUnadvertised(r, v1.ControlStartLogin, capability.FeatureLogin, ", or log the account in at the machine with `yad account add`"); err != nil {
+		if err := refuseUnadvertised(r, v1.ControlStartLogin, capability.FeatureLogin, loginAtTheMachine(req.Harness, req.Account)); err != nil {
 			return err
 		}
 		if _, err := q.GetLogin(ctx, id); err == nil {
@@ -160,19 +160,17 @@ func (h *Hub) startLogin(ctx context.Context, in *startLoginInput) (*loginOutput
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		// One login per account (decision 0055). One the runner has taken
-		// is replaced there, and it reports the old one cancelled; one it
-		// has not heard of yet is ended here, so it is never sent.
+		// One login per account (decision 0055). One no answer has carried
+		// yet is ended here, and never sent. One that went out may already
+		// be the runner's — a token stored, a login taken — so it gets a
+		// cancel_login and stays open until the runner says how it ended,
+		// which it does whether or not it had it.
 		older, err := q.OpenLoginsFor(ctx, db.OpenLoginsForParams{RunnerID: r.ID, Harness: req.Harness, Account: req.Account})
 		if err != nil {
 			return err
 		}
 		for _, o := range older {
-			if o.State != string(hubapi.LoginRequested) {
-				continue
-			}
-			if _, err := q.EndLogin(ctx, db.EndLoginParams{State: string(v1.LoginCancelled),
-				Error: fmt.Sprintf("login %s for the same account replaced it before it reached the runner", id), Now: store.Ms(now), ID: o.ID}); err != nil {
+			if err := h.endOrCancel(ctx, q, o, fmt.Sprintf("login %s for the same account replaced it before it reached the runner", id), now); err != nil {
 				return err
 			}
 		}
@@ -238,10 +236,7 @@ func (h *Hub) cancelLogin(ctx context.Context, in *loginInput) (*loginOutput, er
 		if err != nil {
 			return err
 		}
-		// Even one the runner has not heard of yet: the start may already
-		// be in an answer on its way, so cancel_login goes instead of the
-		// start, and the runner answers either way.
-		if err := q.RequestLoginCancel(ctx, db.RequestLoginCancelParams{Now: sql.NullInt64{Int64: store.Ms(h.now()), Valid: true}, ID: l.ID}); err != nil {
+		if err := h.endOrCancel(ctx, q, l, "cancelled before it reached the runner", h.now()); err != nil {
 			return err
 		}
 		if l, err = q.GetLogin(ctx, l.ID); err != nil {
@@ -256,19 +251,43 @@ func (h *Hub) cancelLogin(ctx context.Context, in *loginInput) (*loginOutput, er
 	return &loginOutput{Body: view}, nil
 }
 
+// endOrCancel ends a login the hub means to stop. One no answer has carried
+// to its runner ends here, and is never sent. Once one has, 'requested' says
+// only that no report has come back: the runner may have stored the token or
+// taken the login already, and an end written here would be the hub's guess
+// against the machine's fact. That one gets a cancel_login, and stays open
+// until the runner reports how it ended.
+func (h *Hub) endOrCancel(ctx context.Context, q *db.Queries, l db.Login, why string, now time.Time) error {
+	if l.State == string(hubapi.LoginRequested) && !l.SentAt.Valid {
+		_, err := q.EndLogin(ctx, db.EndLoginParams{State: string(v1.LoginCancelled), Error: why, Now: store.Ms(now), ID: l.ID})
+		return err
+	}
+	return q.RequestLoginCancel(ctx, db.RequestLoginCancelParams{Now: sql.NullInt64{Int64: store.Ms(now), Valid: true}, ID: l.ID})
+}
+
 // loginOf is one of a runner's logins, or the service API's own 404.
 func loginOf(ctx context.Context, q *db.Queries, runnerID, loginID string) (db.Login, error) {
 	l, err := q.GetLogin(ctx, loginID)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && l.RunnerID != runnerID {
 		return db.Login{}, Fail(http.StatusNotFound, v1.CodeNotFound, fmt.Sprintf("runner %q has no login %q on this hub", runnerID, loginID),
-			"check the runner and login ids — `yad hub login start` prints both")
+			"check the runner and login ids: the answer that started the login carries both")
 	}
 	return l, err
 }
 
 func noRunner(id string) error {
-	return Fail(http.StatusNotFound, v1.CodeNotFound, fmt.Sprintf("this hub has no runner %q", id),
-		"check the runner id — `yad daemon start` prints it on the runner's machine, and `yad hub runners` lists them")
+	return Fail(http.StatusNotFound, v1.CodeNotFound, fmt.Sprintf("this hub has no runner %q", id), noRunnerAction())
+}
+
+// loginAtTheMachine is how the owner logs the account in at the runner's
+// machine instead, for a runner this hub cannot ask: `yad account add` for an
+// account, and for the harness's own default login `yad doctor`, which names
+// the harness's own login command as that machine resolves it.
+func loginAtTheMachine(harness, label string) string {
+	if label == "" {
+		return ", or at the machine, `" + runnerCommand("doctor") + "` names the harness's own login command"
+	}
+	return ", or log the account in at the machine with `" + runnerCommand("account", "add", harness, label) + "`"
 }
 
 // loginView is a login as the service API shows it: never its code or token.
@@ -302,6 +321,7 @@ func syncLogins(ctx context.Context, q *db.Queries, runnerID string, reports []v
 		if _, err := q.RecordLoginReport(ctx, db.RecordLoginReportParams{
 			State: string(r.State), Url: bounded(r.URL, maxLoginURL), UserCode: bounded(r.UserCode, maxLoginURL),
 			Error: bounded(r.Error, maxLoginError), Now: store.Ms(now), ID: r.LoginID, RunnerID: runnerID,
+			Terminal: boolInt(r.State.IsTerminal()),
 		}); err != nil {
 			return nil, err
 		}
@@ -329,10 +349,17 @@ func syncLogins(ctx context.Context, q *db.Queries, runnerID string, reports []v
 		switch {
 		case l.CancelRequestedAt.Valid:
 			out = append(out, v1.Control{Kind: v1.ControlCancelLogin, LoginID: l.ID})
-		case l.State == string(hubapi.LoginRequested) && l.Method == string(v1.LoginByToken):
-			out = append(out, v1.Control{Kind: v1.ControlLoginToken, LoginID: l.ID, Harness: l.Harness, Account: l.Account, Token: l.Token})
 		case l.State == string(hubapi.LoginRequested):
-			out = append(out, v1.Control{Kind: v1.ControlStartLogin, LoginID: l.ID, Harness: l.Harness, Account: l.Account})
+			// From this answer on the runner may have it, and only its
+			// report can end it (endOrCancel).
+			if err := q.MarkLoginSent(ctx, db.MarkLoginSentParams{Now: sql.NullInt64{Int64: store.Ms(now), Valid: true}, ID: l.ID}); err != nil {
+				return nil, err
+			}
+			c := v1.Control{Kind: v1.ControlStartLogin, LoginID: l.ID, Harness: l.Harness, Account: l.Account}
+			if l.Method == string(v1.LoginByToken) {
+				c.Kind, c.Token = v1.ControlLoginToken, l.Token
+			}
+			out = append(out, c)
 		case l.State == string(v1.LoginWaiting) && l.Code != "":
 			out = append(out, v1.Control{Kind: v1.ControlLoginCode, LoginID: l.ID, Code: l.Code})
 		}
@@ -340,8 +367,9 @@ func syncLogins(ctx context.Context, q *db.Queries, runnerID string, reports []v
 	return out, nil
 }
 
-// sweepLogins ends the logins time alone decides: one that never reached its
-// runner, and one its runner stopped reporting.
+// sweepLogins ends the logins time alone decides: one no answer ever carried
+// to its runner, and one sent that its runner has not finished. A runner's
+// own report of an end still replaces the second, should one come.
 func sweepLogins(ctx context.Context, q *db.Queries, now time.Time) error {
 	if _, err := q.ExpireUndeliveredLogins(ctx, db.ExpireUndeliveredLoginsParams{
 		Error: fmt.Sprintf("the runner did not sync within %s of the login starting, so it never heard of it — check it is running, and start a new login", loginDeliverWithin),
@@ -350,7 +378,7 @@ func sweepLogins(ctx context.Context, q *db.Queries, now time.Time) error {
 		return err
 	}
 	_, err := q.ExpireStaleLogins(ctx, db.ExpireStaleLoginsParams{
-		Error: fmt.Sprintf("the runner took the login and did not say how it ended within %s — start a new login", loginFinishWithin),
+		Error: fmt.Sprintf("the runner was sent the login and did not say how it ended within %s — start a new login", loginFinishWithin),
 		Now:   store.Ms(now), Cutoff: store.Ms(now.Add(-loginFinishWithin)),
 	})
 	return err

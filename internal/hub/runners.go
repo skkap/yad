@@ -61,7 +61,7 @@ func (h *Hub) registerRunners(api huma.API) {
 			r, err := q.GetRunner(ctx, in.Runner)
 			if errors.Is(err, sql.ErrNoRows) {
 				return Fail(http.StatusNotFound, v1.CodeNotFound, fmt.Sprintf("this hub has no runner %q", in.Runner),
-					"check the runner id — `yad daemon start` prints it on the runner's machine, and `yad hub runners` lists the ones this hub knows")
+					noRunnerAction())
 			}
 			if err != nil {
 				return err

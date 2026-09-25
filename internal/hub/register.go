@@ -37,12 +37,7 @@ var connectAgain = shellword.Command("yad", "--profile", "<runner profile>", "co
 // opened with, and a bare `yad hub token create` issues into the default
 // profile's database, whose token this hub refuses; both are placeholders.
 func (h *Hub) tokenCommand(args ...string) string {
-	args = append([]string{"hub", "token", "create"}, args...)
-	if h.command != nil {
-		return h.command(args...)
-	}
-	argv := append([]string{"yad", "--profile", "<hub profile>"}, args...)
-	return shellword.Command(append(argv, "--db", "<the database yad hub serve was given>")...)
+	return h.hubCommand(append([]string{"hub", "token", "create"}, args...)...)
 }
 
 // newTokenAction is the next action for a runner whose token or credential

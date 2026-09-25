@@ -34,6 +34,8 @@ type Login struct {
 	Code              string
 	Token             string
 	CancelRequestedAt sql.NullInt64
+	SentAt            sql.NullInt64
+	HubEnded          int64
 	CreatedAt         int64
 	UpdatedAt         int64
 }

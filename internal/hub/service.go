@@ -300,7 +300,7 @@ func runView(ctx context.Context, q *db.Queries, runID string) (hubapi.Run, erro
 	r, err := q.GetRun(ctx, runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return hubapi.Run{}, Fail(http.StatusNotFound, v1.CodeNotFound, fmt.Sprintf("this hub has no run %q", runID),
-			"check the run id — `yad hub submit` prints it")
+			"check the run id: the answer that queued the run carries it")
 	}
 	if err != nil {
 		return hubapi.Run{}, err

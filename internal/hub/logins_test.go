@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,15 @@ func withLogins(r v1.SyncRequest, logins ...v1.LoginReport) v1.SyncRequest {
 
 func report(id string, state v1.LoginState, url string) v1.LoginReport {
 	return v1.LoginReport{LoginID: id, Harness: "claude", Account: "work", Method: v1.LoginByLink, State: state, URL: url, UpdatedAt: time.Now()}
+}
+
+func (f *fixture) login(t *testing.T, tok, id string) hubapi.Login {
+	t.Helper()
+	var v hubapi.Login
+	if code, e := f.api(t, "GET", "/runners/r1/logins/"+id, tok, nil, &v); code != http.StatusOK {
+		t.Fatalf("get %s: %d %+v", id, code, e)
+	}
+	return v
 }
 
 // raw is a service API answer's body as it went over the wire, for a test
@@ -241,20 +251,113 @@ func TestAHubEndsLoginsItsRunnerCannotFinish(t *testing.T) {
 		t.Errorf("a login replaced before it reached the runner: %+v", v)
 	}
 	var view hubapi.Login
-	if code, e := f.api(t, "POST", "/runners/r1/logins/newer/cancel", tok, nil, &view); code != http.StatusOK || view.CancelRequestedAt == nil {
-		t.Fatalf("cancel: %d %+v %+v", code, e, view)
+	// Never sent: a cancel ends it here, and nothing goes to the runner.
+	if code, e := f.api(t, "POST", "/runners/r1/logins/newer/cancel", tok, nil, &view); code != http.StatusOK || view.State != hubapi.LoginState(v1.LoginCancelled) {
+		t.Fatalf("cancel before it was sent: %d %+v %+v", code, e, view)
+	}
+	start("sent", "d", "")
+	if cs := loginControls(f.mustSync(t, "r1", cred, req("r1", 1))); len(cs) != 1 || cs[0].Kind != v1.ControlStartLogin {
+		t.Fatalf("controls %+v, want start_login for sent", cs)
+	}
+	// Sent, and not reported: the runner may have it, so the cancel goes to
+	// the runner and the login stays open until it answers.
+	if code, e := f.api(t, "POST", "/runners/r1/logins/sent/cancel", tok, nil, &view); code != http.StatusOK || view.CancelRequestedAt == nil || view.State != hubapi.LoginRequested {
+		t.Fatalf("cancel once sent: %d %+v %+v", code, e, view)
 	}
 	cs := loginControls(f.mustSync(t, "r1", cred, req("r1", 1)))
-	if len(cs) != 1 || cs[0].Kind != v1.ControlCancelLogin || cs[0].LoginID != "newer" {
-		t.Fatalf("controls %+v, want cancel_login for newer and nothing else", cs)
+	if len(cs) != 1 || cs[0].Kind != v1.ControlCancelLogin || cs[0].LoginID != "sent" {
+		t.Fatalf("controls %+v, want cancel_login for sent and nothing else", cs)
 	}
-	echo := v1.LoginReport{LoginID: "newer", State: v1.LoginCancelled, Error: "cancelled before this runner had it", UpdatedAt: time.Now()}
+	echo := v1.LoginReport{LoginID: "sent", State: v1.LoginCancelled, Error: "cancelled before this runner had it", UpdatedAt: time.Now()}
 	f.mustSync(t, "r1", cred, withLogins(req("r1", 1), echo))
-	if v := state("newer"); v.State != hubapi.LoginState(v1.LoginCancelled) || v.CancelRequestedAt != nil {
+	if v := state("sent"); v.State != hubapi.LoginState(v1.LoginCancelled) || v.CancelRequestedAt != nil {
 		t.Errorf("after the runner answered the cancel: %+v", v)
 	}
 	if cs := loginControls(f.mustSync(t, "r1", cred, req("r1", 1))); len(cs) != 0 {
 		t.Errorf("controls after every login ended: %+v", cs)
+	}
+}
+
+// 'requested' says only that no report has come: once an answer has carried a
+// login, the runner may already have stored its token or taken it, and the
+// hub ends it on its own word no more. Each way the hub used to — a newer
+// login replacing it, the ten minutes a login may wait to be delivered, the
+// half hour it may take — is tried against a login the runner did take, and
+// each ends agreeing with the runner. An end the hub did write gives way to
+// the runner's report of one.
+func TestALoginSentToTheRunnerIsEndedByTheRunner(t *testing.T) {
+	type step func(t *testing.T, f *fixture, tok, cred string)
+	tokenLogin := func(id string) hubapi.LoginRequest {
+		return hubapi.LoginRequest{LoginID: id, Harness: "claude", Account: "work", Token: "sk-ant-oat01-" + id}
+	}
+	succeeded := v1.LoginReport{LoginID: "a", Harness: "claude", Account: "work", Method: v1.LoginByToken, State: v1.LoginSucceeded, UpdatedAt: time.Now()}
+	for _, tc := range []struct {
+		name string
+		// between runs after the answer carrying a's login_token, before the
+		// sync reporting a's end.
+		between step
+		// then is what the sync reporting a's end must answer.
+		then []v1.ControlKind
+	}{
+		{"a newer login for the account", func(t *testing.T, f *fixture, tok, _ string) {
+			if code, e := f.api(t, "POST", "/runners/r1/logins", tok, hubapi.LoginRequest{LoginID: "b", Harness: "claude", Account: "work"}, nil); code != http.StatusCreated {
+				t.Fatalf("start b: %d %+v", code, e)
+			}
+			// Not ended on the hub's word: asked to stop, and still open.
+			if v := f.login(t, tok, "a"); v.State != hubapi.LoginRequested || v.CancelRequestedAt == nil {
+				t.Errorf("a login already sent, once replaced: %+v", v)
+			}
+		}, []v1.ControlKind{v1.ControlStartLogin}},
+		{"the delivery deadline", func(t *testing.T, f *fixture, tok, _ string) {
+			f.clock.Advance(loginDeliverWithin)
+			if err := f.hub.Sweep(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if v := f.login(t, tok, "a"); v.State != hubapi.LoginRequested {
+				t.Errorf("a login already sent, past the delivery deadline: %+v", v)
+			}
+		}, nil},
+		{"the finishing deadline, then the runner's word", func(t *testing.T, f *fixture, tok, _ string) {
+			f.clock.Advance(loginFinishWithin + time.Minute)
+			if err := f.hub.Sweep(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			var v hubapi.Login
+			f.api(t, "GET", "/runners/r1/logins/a", tok, nil, &v)
+			if v.State != hubapi.LoginState(v1.LoginFailed) {
+				t.Fatalf("a login sent and silent past the half hour: %+v", v)
+			}
+		}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			tok := f.admin(t, "cli")
+			cred := f.register(t, "r1")
+			f.mustSync(t, "r1", cred, first("r1", 1))
+			if code, e := f.api(t, "POST", "/runners/r1/logins", tok, tokenLogin("a"), nil); code != http.StatusCreated {
+				t.Fatalf("start a: %d %+v", code, e)
+			}
+			// Just inside the ten minutes: the last answer before the mark.
+			f.clock.Advance(loginDeliverWithin - time.Minute)
+			if cs := loginControls(f.mustSync(t, "r1", cred, req("r1", 1))); len(cs) != 1 || cs[0].Kind != v1.ControlLoginToken {
+				t.Fatalf("controls %+v, want login_token for a", cs)
+			}
+			// The runner stores the token and a takes; the hub hears at the
+			// next sync.
+			tc.between(t, f, tok, cred)
+			var kinds []v1.ControlKind
+			for _, c := range loginControls(f.mustSync(t, "r1", cred, withLogins(req("r1", 1), succeeded))) {
+				kinds = append(kinds, c.Kind)
+			}
+			if !slices.Equal(kinds, tc.then) {
+				t.Errorf("the sync reporting a's end answered %v, want %v", kinds, tc.then)
+			}
+			var v hubapi.Login
+			f.api(t, "GET", "/runners/r1/logins/a", tok, nil, &v)
+			if v.State != hubapi.LoginState(v1.LoginSucceeded) || v.Error != "" {
+				t.Errorf("the hub says a is %+v; the runner stored its token and it took", v)
+			}
+		})
 	}
 }
 

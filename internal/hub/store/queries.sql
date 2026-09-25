@@ -305,14 +305,22 @@ SELECT * FROM logins WHERE runner_id = sqlc.arg(runner_id) AND harness = sqlc.ar
   AND state IN ('requested', 'starting', 'waiting', 'checking')
 ORDER BY created_at, id;
 
--- A runner's report of a login this hub started on it. An end the hub already
--- holds stands, and a report about another runner's login changes nothing.
--- updated_at moves only with the state, so it says when the login last did.
+-- A sync's answer carries the login's start: from now the runner may have it.
+-- name: MarkLoginSent :exec
+UPDATE logins SET sent_at = COALESCE(sent_at, sqlc.arg(now)) WHERE id = sqlc.arg(id);
+
+-- A runner's report of a login this hub started on it. An end the runner
+-- reported stands; an end the hub made by its own act gives way to the
+-- runner's own report of an end, which knows what happened on the machine.
+-- A report about another runner's login changes nothing. updated_at moves
+-- only with the state, so it says when the login last did.
 -- name: RecordLoginReport :execrows
 UPDATE logins SET state = sqlc.arg(state), url = sqlc.arg(url), user_code = sqlc.arg(user_code), error = sqlc.arg(error),
+  hub_ended = 0,
   updated_at = CASE WHEN state = sqlc.arg(state) THEN updated_at ELSE sqlc.arg(now) END
 WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id)
-  AND state IN ('requested', 'starting', 'waiting', 'checking');
+  AND (state IN ('requested', 'starting', 'waiting', 'checking')
+    OR hub_ended = 1 AND CAST(sqlc.arg(terminal) AS INTEGER) = 1);
 
 -- name: SetLoginCode :exec
 UPDATE logins SET code = sqlc.arg(code) WHERE id = sqlc.arg(id) AND state = 'waiting';
@@ -321,24 +329,27 @@ UPDATE logins SET code = sqlc.arg(code) WHERE id = sqlc.arg(id) AND state = 'wai
 UPDATE logins SET cancel_requested_at = COALESCE(cancel_requested_at, sqlc.arg(now))
 WHERE id = sqlc.arg(id) AND state IN ('requested', 'starting', 'waiting', 'checking');
 
--- The hub ending a login by its own act.
+-- The hub ending a login by its own act: only ever one no answer has
+-- carried to its runner, or one its runner can no longer report.
 -- name: EndLogin :execrows
-UPDATE logins SET state = sqlc.arg(state), error = sqlc.arg(error), url = '', updated_at = sqlc.arg(now)
+UPDATE logins SET state = sqlc.arg(state), error = sqlc.arg(error), url = '', hub_ended = 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND state IN ('requested', 'starting', 'waiting', 'checking');
 
--- Logins that never reached their runner by the cutoff: it is not syncing,
--- and a token must not wait in this database for it to come back.
+-- Logins no answer carried to their runner by the cutoff: it is not syncing,
+-- and a token must not wait in this database for it to come back. One an
+-- answer did carry is the runner's, and falls to ExpireStaleLogins.
 -- name: ExpireUndeliveredLogins :execrows
-UPDATE logins SET state = 'expired', error = sqlc.arg(error), updated_at = sqlc.arg(now)
-WHERE state = 'requested' AND created_at <= sqlc.arg(cutoff);
+UPDATE logins SET state = 'expired', error = sqlc.arg(error), hub_ended = 1, updated_at = sqlc.arg(now)
+WHERE state = 'requested' AND sent_at IS NULL AND created_at <= sqlc.arg(cutoff);
 
--- Logins a runner took and has not finished by the cutoff, which is well past
+-- Logins sent to a runner and not finished by the cutoff, which is well past
 -- every deadline a runner holds one to: it stopped reporting them.
 -- name: ExpireStaleLogins :execrows
-UPDATE logins SET state = 'failed', error = sqlc.arg(error), url = '', updated_at = sqlc.arg(now)
-WHERE state IN ('starting', 'waiting', 'checking') AND created_at <= sqlc.arg(cutoff);
+UPDATE logins SET state = 'failed', error = sqlc.arg(error), url = '', hub_ended = 1, updated_at = sqlc.arg(now)
+WHERE (state IN ('starting', 'waiting', 'checking') OR state = 'requested' AND sent_at IS NOT NULL)
+  AND created_at <= sqlc.arg(cutoff);
 
 -- A runner that deregisters finishes none of its logins.
 -- name: EndRunnerLogins :execrows
-UPDATE logins SET state = 'failed', error = sqlc.arg(error), url = '', updated_at = sqlc.arg(now)
+UPDATE logins SET state = 'failed', error = sqlc.arg(error), url = '', hub_ended = 1, updated_at = sqlc.arg(now)
 WHERE runner_id = sqlc.arg(runner_id) AND state IN ('requested', 'starting', 'waiting', 'checking');
