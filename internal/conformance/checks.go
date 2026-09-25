@@ -153,6 +153,12 @@ func checks() []check {
 		needs:   credential,
 		run:     checkDashboardHealthOptional,
 	}, {
+		id:      "sync/logins-accepted",
+		rule:    "A sync reporting hub logins in logins is accepted, one reporting a login the hub never started included: a runner repeats each until a sync carrying its end is answered, and a refused sync renews no lease.",
+		section: hubControls,
+		needs:   credential,
+		run:     checkLoginsAccepted,
+	}, {
 		id:      "sync/report-capabilities",
 		rule:    "A sync whose fingerprint differs from the one that came with the document the hub holds, and that carries no document, is answered with a report_capabilities control.",
 		section: hubSync,
@@ -348,7 +354,7 @@ func checks() []check {
 		run:     checkLeaseOutlastsTheInterval,
 	}, {
 		id:      "versioning/controls-are-gated",
-		rule:    "Neither side uses what the other did not advertise: drain, close_session, steer and interrupt go only to a runner whose capability document advertises each by name, and this runner advertises none.",
+		rule:    "Neither side uses what the other did not advertise: drain, close_session, steer and interrupt go only to a runner whose capability document advertises each by name, start_login, login_code, login_token and cancel_login only to one advertising login, and this runner advertises none.",
 		section: hubControls,
 		needs:   credential,
 		run:     checkControlsAreGated,
