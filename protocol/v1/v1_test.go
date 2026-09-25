@@ -172,6 +172,8 @@ func TestEnumTagsMatchSets(t *testing.T) {
 		{ClosedSession{}, "Reason", reasons},
 		{Grant{}, "As", []string{string(GrantEnv), string(GrantFile)}},
 		{SessionRef{}, "Mode", []string{string(SessionPerRun), string(SessionLive)}},
+		{LoginReport{}, "Method", strs(LoginMethods())},
+		{LoginReport{}, "State", strs(LoginStates())},
 	} {
 		f, ok := reflect.TypeOf(tc.v).FieldByName(tc.field)
 		if !ok {
@@ -181,6 +183,14 @@ func TestEnumTagsMatchSets(t *testing.T) {
 			t.Errorf("%T.%s enum tag = %v, want %v", tc.v, tc.field, got, tc.want)
 		}
 	}
+}
+
+func strs[S ~string](xs []S) []string {
+	out := make([]string, len(xs))
+	for i, x := range xs {
+		out[i] = string(x)
+	}
+	return out
 }
 
 func TestRunValidate(t *testing.T) {
