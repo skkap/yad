@@ -697,7 +697,11 @@ for `codex`); the suite never runs a real harness.
   home variable, so a printed command never carries it. Claude's login check
   answers yes for any token, so a token is found wanting by the run it fails:
   a result with `api_error_status` 401 (`adapter.Outcome.AuthRejected`) parks
-  the account in `needs_login` without asking. The token's year is counted
+  the account in `needs_login` without asking — if the refused token is still
+  the stored one (`account.TurnEnv` hashes the turn's). The login probe skips
+  a token account, whose check would say yes to the refused token; every next
+  action for one is `--token -`, and a plain `yad account add` on it removes
+  the token first. The token's year is counted
   from when it was stored; the month before, the harness report carries a
   warning and `yad account list` says so.
 - **Every home shares the machine's config** (0054): each time a home is

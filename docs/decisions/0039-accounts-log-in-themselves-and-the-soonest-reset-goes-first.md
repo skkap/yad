@@ -1,4 +1,5 @@
 ---
+status: amended by 0054 — a Claude account may be a `claude setup-token` token yad stores in its home
 date: 2026-09-19
 ---
 

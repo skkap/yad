@@ -140,9 +140,11 @@ usage: yad [--profile name] <command> [flags]
   sessions close [--connection c] <session>
                       close a session and reclaim its workdir; its hub hears
                       of it. One with a run held closes when the run ends
-  account add <harness> <label>
+  account add <harness> <label> [--token - | --device]
                       run the harness's own login in a home of its own, with
-                      you at the terminal; yad keeps no token of its own
+                      you at the terminal (--device: Codex's link and code);
+                      or --token -: store a claude setup-token token read
+                      from stdin, for a machine with no browser
   account list [--json]
                       the accounts this runner has, and the state of each
   account remove <harness> <label> [--yes]

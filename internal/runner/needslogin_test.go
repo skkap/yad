@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -364,5 +365,78 @@ func TestALoginCheckThatCannotAnswerLeavesTheStateAlone(t *testing.T) {
 	// And it is not silent about it: the owner has to be able to find out.
 	if !strings.Contains(logged.String(), "could not check whether the account is still logged in") {
 		t.Errorf("nothing was logged about the check failing:\n%s", logged.String())
+	}
+}
+
+// A refusal is held against the token the turn was handed. An owner who
+// stores a new token and then revokes the old one has turns still running on
+// the old one; their refusal must not park the account on the token that now
+// works (decision 0054).
+func TestARefusalOfAReplacedTokenParksNothing(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	home, err := account.Ensure(e.paths.Data, "claude", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetToken(home, "sk-ant-oat01-old"); err != nil {
+		t.Fatal(err)
+	}
+	_, used := account.TurnEnv("claude", home)
+	if err := account.SetToken(home, "sk-ant-oat01-new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetState(ctx, e.store.Queries, "claude", "work", v1.AccountFree, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{}))
+	fakeClaudeBinary(t, x)
+	a := account.Account{Harness: "claude", Label: "work", Home: home, State: v1.AccountFree}
+	res := v1.Result{State: v1.RunFailed, Error: &v1.RunError{Class: adapter.ClassHarness, Message: "401"}}
+	log := slog.New(slog.DiscardHandler)
+
+	x.checkLogin(ctx, a, "", res, true, used, log)
+	if got := accountState(t, e, "work"); got != v1.AccountFree {
+		t.Errorf("a refusal of the replaced token left the account %q, want free", got)
+	}
+	// The same refusal of the token still stored parks it.
+	_, current := account.TurnEnv("claude", home)
+	x.checkLogin(ctx, a, "", res, true, current, log)
+	if got := accountState(t, e, "work"); got != v1.AccountNeedsLogin {
+		t.Errorf("a refusal of the stored token left the account %q, want needs_login", got)
+	}
+}
+
+// The error a hub sees when every account needs login names the command that
+// fixes each kind: the plain login for a login account, --token - for a token
+// account, whose token a plain login could not replace (decision 0054).
+func TestNoFreeAccountNamesTheLoginThatFixesIt(t *testing.T) {
+	e := newEnv(t)
+	tokenHome, err := account.Ensure(e.paths.Data, "claude", "tl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetToken(tokenHome, "sk-ant-oat01-x"); err != nil {
+		t.Fatal(err)
+	}
+	loginHome, err := account.Ensure(e.paths.Data, "claude", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		label, home, want string
+	}{
+		{"tl", tokenHome, "account add claude tl --token -"},
+		{"work", loginHome, "account add claude work`"},
+	} {
+		msg := (&noFreeAccountError{paths: e.paths, harness: "claude", accounts: []account.Account{
+			{Harness: "claude", Label: c.label, Home: c.home, State: v1.AccountNeedsLogin},
+		}}).Error()
+		if !strings.Contains(msg, c.want) {
+			t.Errorf("%s: %q does not name %q", c.label, msg, c.want)
+		}
+		if strings.Contains(msg, "sk-ant") {
+			t.Errorf("%s: the error carries the token: %q", c.label, msg)
+		}
 	}
 }

@@ -109,6 +109,9 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 			return fmt.Errorf("read the token from stdin: %w", err)
 		}
 		tok = string(b)
+		if err := account.CheckToken(tok); err != nil {
+			return fmt.Errorf("%s account %q was not added: %w", id, label, err)
+		}
 	}
 	bin, ok := harness.Locate(id)
 	if !ok {
@@ -143,8 +146,16 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 		}
 		fmt.Fprintf(w, "%s account %q: the token is stored in %s (0600); yad hands it to this account's runs and to nothing else\n", id, label, home)
 	} else {
+		// A token left in place would outrank the login about to be made, in
+		// every run, and be refused in every run (decision 0054).
+		if account.TokenFileExists(home) {
+			if err := account.ClearToken(home); err != nil {
+				return fmt.Errorf("%s account %q runs on a stored token, which could not be removed to log it in instead: %w", id, label, err)
+			}
+			fmt.Fprintf(w, "%s account %q: its stored token is removed; it logs in %s's own way from now on\n", id, label, id)
+		}
 		fmt.Fprintf(w, "%s account %q: running %s's own login in %s\n", id, label, id, home)
-		fmt.Fprintln(w, "yad stores no token of its own; whatever the login writes stays in that directory.")
+		fmt.Fprintln(w, "yad keeps no token for this account; whatever the login writes stays in that directory.")
 		var extra []string
 		if *device {
 			extra = []string{"--device-auth"}
@@ -288,7 +299,10 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 	now := time.Now()
 	for _, a := range accounts {
 		_, token := account.TokenStored(a.Home)
+		problem := account.TokenProblem(a.Home)
 		switch {
+		case problem != "":
+			fmt.Fprintf(w, "\n%s %q: %s — `%s`\n", a.Harness, a.Label, problem, g.paths.Command("account", "add", a.Harness, a.Label, "--token", "-"))
 		case a.State == v1.AccountNeedsLogin && token:
 			fmt.Fprintf(w, "\n%s %q needs login: its token was refused — make a new one with `claude setup-token` and pipe it into `%s`\n", a.Harness, a.Label, g.paths.Command("account", "add", a.Harness, a.Label, "--token", "-"))
 		case a.State == v1.AccountNeedsLogin:
@@ -306,6 +320,9 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 func loginColumn(a account.Account) string {
 	if at, ok := account.TokenStored(a.Home); ok {
 		return "token " + at.Local().Format("2006-01-02")
+	}
+	if account.TokenProblem(a.Home) != "" {
+		return "token ignored"
 	}
 	return "login"
 }
