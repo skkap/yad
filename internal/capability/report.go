@@ -80,6 +80,7 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []a
 		tools = hostool.Detect(ctx)
 	}()
 	found := Detect(ctx)
+	DefaultLogins(ctx, found, cfg)
 	<-done
 	addCodexModels(found, cfg, accounts)
 

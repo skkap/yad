@@ -34,6 +34,12 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		return err
 	}
 	found := capability.Detect(ctx)
+	// The login check needs to know which harnesses have accounts. A profile
+	// with no config yet has none, which is what Load's default says; one
+	// that cannot be read is no reason to refuse the rest of the answer.
+	if cfg, err := config.Load(g.paths); err == nil {
+		capability.DefaultLogins(ctx, found, cfg)
+	}
 	if *asJSON {
 		return writeJSON(w, found)
 	}
@@ -44,6 +50,9 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	for _, d := range found {
 		status := "—"
 		switch {
+		case d.NeedsLogin:
+			status = "needs login"
+			broken++
 		case d.Present && d.Error != "":
 			status = "broken"
 			broken++
