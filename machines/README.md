@@ -73,6 +73,7 @@ machines/yad-machine status [NAME] [--json]     every machine, or one: runner, h
 machines/yad-machine login NAME                 make every login the machine is missing, one by one
 machines/yad-machine shell NAME [COMMAND...]    a login shell, or a command, as agent
 machines/yad-machine start NAME                 start a machine that is stopped
+machines/yad-machine autostart NAME             start it at the host user's login again
 machines/yad-machine destroy NAME               delete the VM and everything in it
 ```
 

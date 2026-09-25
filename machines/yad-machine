@@ -9,6 +9,7 @@
 #   yad-machine login NAME                 make every login the machine is missing, one by one
 #   yad-machine shell NAME [COMMAND...]    a login shell, or a command, as the runner's user
 #   yad-machine start NAME                 start a machine that is stopped
+#   yad-machine autostart NAME             start it at the host user's login again
 #   yad-machine destroy NAME               delete the VM and everything in it
 #
 # Runs on the host — macOS or Linux, with limactl and jq on PATH. `up` is
@@ -18,7 +19,19 @@
 # login PATH) — so a laptop can see and log in the machines on a server.
 set -euo pipefail
 
-KIT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# The kit is the directory this file really lives in: a link to it on PATH
+# (the README's suggestion for remote use) must still find guest/ beside it.
+# readlink without -f, which macOS's lacks, one hop at a time.
+self_path=${BASH_SOURCE[0]}
+while [[ -L $self_path ]]; do
+	link=$(readlink "$self_path")
+	case $link in
+	/*) self_path=$link ;;
+	*) self_path=$(dirname "$self_path")/$link ;;
+	esac
+done
+KIT_DIR=$(cd "$(dirname "$self_path")" && pwd)
+unset self_path link
 # The runner's user inside the machine. Not the Lima user, which has
 # passwordless sudo: a run must not be able to lift the egress rules or replace
 # the yad binary, so the user it runs as has no sudo at all.
@@ -66,8 +79,16 @@ need_lima() {
 		die "limactl is not on PATH — install Lima (https://lima-vm.io; \`brew install lima\` on macOS) and run this again"
 }
 
+# instance_status is the machine's Lima status, empty when Lima has no such
+# machine, and "unknown" when Lima could not be asked — which is not the same
+# as the machine being gone, and nothing may act as if it were.
 instance_status() {
-	limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | awk -v n="$1" '$1 == n { print $2 }'
+	local out
+	if ! out=$(limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null); then
+		echo unknown
+		return 0
+	fi
+	awk -v n="$1" '$1 == n { print $2 }' <<<"$out"
 }
 
 check_name() {
@@ -184,7 +205,7 @@ cmd_up() {
 	# Autostart brings the VM up at the host user's login; the runner inside is
 	# a systemd user service with lingering on, so it follows the VM.
 	limactl autostart enable "$name" >/dev/null 2>&1 ||
-		echo "note: could not register $name to start at login — on the host that runs it, run \`$(cmd limactl autostart enable "$name")\`"
+		echo "note: could not register $name to start at login — \`$(me autostart "$name")\` tries again"
 	limactl protect "$name" >/dev/null 2>&1 || true
 	mkdir -p "$REGISTRY"
 	printf '%s\n' "$spec" >"$REGISTRY/$name"
@@ -323,7 +344,9 @@ cmd_status() {
 		st=$(instance_status "$name")
 		if [[ $st != Running ]]; then
 			rows+="$name"$'\t'"${st:-no VM}"$'\t—\t—\t—\n'
-			if [[ -z $st ]]; then
+			if [[ $st == unknown ]]; then
+				notes+="  $name: limactl could not list its machines — \`limactl list\` says why"$'\n'
+			elif [[ -z $st ]]; then
 				notes+="  $name: its VM is gone — \`$(me up "$(spec_of "$name")")\` builds it again, or \`$(me destroy "$name")\` forgets it"$'\n'
 			else
 				notes+="  $name: its VM is $st — \`$(me start "$name")\` starts it"$'\n'
@@ -444,6 +467,14 @@ cmd_login() {
 	cmd_status "$name"
 }
 
+cmd_autostart() {
+	[[ $# -eq 1 ]] || die "usage: yad-machine autostart NAME"
+	need_lima
+	name=$1
+	check_name "$name"
+	limactl autostart enable "$name"
+}
+
 cmd_start() {
 	[[ $# -eq 1 ]] || die "usage: yad-machine start NAME"
 	need_lima
@@ -458,7 +489,10 @@ cmd_destroy() {
 	need_lima
 	name=$1
 	check_name "$name"
-	if [[ -z $(instance_status "$name") ]]; then
+	local st
+	st=$(instance_status "$name")
+	[[ $st != unknown ]] || die "limactl could not list its machines, so nothing was changed — \`limactl list\` says why"
+	if [[ -z $st ]]; then
 		# Gone outside the kit — limactl delete, a renamed spec: what is left
 		# is its entry in the registry, which status would list for ever.
 		if [[ -f $REGISTRY/$name ]]; then
@@ -488,16 +522,25 @@ main() {
 		# so a key piped in still arrives as a pipe.
 		# The remote side prints commands with this prefix, so what it says
 		# to run is run from here, through this same kit.
-		local print
-		print=$(cmd env YAD_MACHINE_HOST="$YAD_MACHINE_HOST" ${YAD_MACHINE_REMOTE:+YAD_MACHINE_REMOTE="$YAD_MACHINE_REMOTE"} "$KIT_DIR/yad-machine")
-		print=${print#env }
+		#
+		# Each variable is NAME= and then its quoted value: a quoted
+		# 'NAME=value' is a command name to a shell, not an assignment. The
+		# release an `up` fetches (YAD_VERSION, YAD_REPO) goes with it, both
+		# to the remote and into what it prints.
+		local print='' env='' v
+		for v in YAD_MACHINE_HOST YAD_MACHINE_REMOTE YAD_VERSION YAD_REPO; do
+			[[ -n ${!v:-} ]] || continue
+			print+="$v=$(sq "${!v}") "
+			[[ $v == YAD_MACHINE_HOST || $v == YAD_MACHINE_REMOTE ]] || env+="$v=$(sq "${!v}") "
+		done
+		print+=$(sq "$KIT_DIR/yad-machine")
 		# ${tty[@]+…}: bash 3.2, macOS's own, calls an empty array unbound
 		# under set -u, which is exactly the no-terminal case this is for.
 		local tty=()
 		[[ -t 0 ]] && tty=(-t)
-		exec ssh ${tty[@]+"${tty[@]}"} "$YAD_MACHINE_HOST" "YAD_MACHINE_PRINT=$(sq "$print") exec \$SHELL -lc $(sq "$(cmd "${YAD_MACHINE_REMOTE:-yad-machine}" "$@")")"
+		exec ssh ${tty[@]+"${tty[@]}"} "$YAD_MACHINE_HOST" "YAD_MACHINE_PRINT=$(sq "$print") ${env}exec \$SHELL -lc $(sq "$(cmd "${YAD_MACHINE_REMOTE:-yad-machine}" "$@")")"
 	fi
-	[[ $# -ge 1 ]] || { sed -n '6,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+	[[ $# -ge 1 ]] || { sed -n '6,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 	local sub=$1
 	shift
 	case $sub in
@@ -506,9 +549,10 @@ main() {
 	status) cmd_status "$@" ;;
 	login) cmd_login "$@" ;;
 	start) cmd_start "$@" ;;
+	autostart) cmd_autostart "$@" ;;
 	destroy) cmd_destroy "$@" ;;
-	-h | --help | help) sed -n '6,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
-	*) die "unknown command $(sq "$sub") — up, status, login, shell, start or destroy" ;;
+	-h | --help | help) sed -n '6,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+	*) die "unknown command $(sq "$sub") — up, status, login, shell, start, autostart or destroy" ;;
 	esac
 }
 
