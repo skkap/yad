@@ -46,13 +46,13 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "HARNESS\tSTATUS\tVERSION\tPATH")
-	ready, broken, noAdapter := 0, 0, 0
+	ready, broken, needsLogin, noAdapter := 0, 0, 0, 0
 	for _, d := range found {
 		status := "—"
 		switch {
 		case d.NeedsLogin:
 			status = "needs login"
-			broken++
+			needsLogin++
 		case d.Present && d.Error != "":
 			status = "broken"
 			broken++
@@ -104,6 +104,10 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		// Checked before noAdapter: a broken Claude beside a working Codex needs
 		// fixing, not installing.
 		fmt.Fprintln(w, "No drivable harness: an installed one failed its version probe — fix the errors above and run this again.")
+		return nil
+	case needsLogin > 0:
+		// Its version probe passed; the error above names the login to run.
+		fmt.Fprintln(w, "No drivable harness: an installed one is not logged in — log it in as the error above says, and run this again.")
 		return nil
 	case noAdapter > 0:
 		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — install Claude Code or Codex, which have one.")
