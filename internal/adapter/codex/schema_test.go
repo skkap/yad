@@ -303,3 +303,26 @@ func TestSchemaWarningQuotesNothingItWasTold(t *testing.T) {
 		})
 	}
 }
+
+// The work-machine kit installs one Codex by default (machines/guest/agent.sh).
+// A default this adapter was not recorded against gives every new machine a
+// Codex that yad doctor warns about, so the default must be one of pinned.
+func TestMachineKitInstallsAPinnedCodex(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "machines", "guest", "agent.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const marker = "${CODEX_VERSION:-"
+	i := strings.Index(string(b), marker)
+	if i < 0 {
+		t.Fatalf("machines/guest/agent.sh no longer defaults CODEX_VERSION with %q", marker)
+	}
+	rest := string(b[i+len(marker):])
+	want := rest[:strings.IndexByte(rest, '}')]
+	for _, v := range pinned {
+		if v == want {
+			return
+		}
+	}
+	t.Errorf("machines/guest/agent.sh installs Codex %s by default, which is not among the pinned versions %v — move the default to one of them", want, pinned)
+}

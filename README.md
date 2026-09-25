@@ -245,6 +245,12 @@ on the machine you give it, why a profile separates YAD's state but not the
 machine (so each profile wants its own OS user), what turning a harness's own
 guardrails back on costs, and the three things `yad doctor` now warns about.
 
+To build such a machine, **[machines/](machines/README.md)** makes one Lima VM
+per runner from a directory you keep in a repository: the tools, the harnesses,
+the files in the runner's home and its configuration, with the runner's user
+shut out of the host, its LAN and its tailnet. One command builds it; the
+logins are made by hand, once.
+
 You trust the hubs you connect, and YAD does not police what they send
 ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A hub
 writes the brief, and a brief can tell the harness to read any file or send any

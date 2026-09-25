@@ -214,6 +214,12 @@ If the answer is no, the machine is the wrong one. A personal laptop with a
 logged-in cloud CLI, a production ssh key and a password manager agent is the
 wrong one.
 
+`machines/` builds one: a Lima VM per runner, from a directory that says what
+goes in it, with the runner's user shut out of the host, its LAN and its
+tailnet ([machines/README.md](../machines/README.md)). On a Mac it is also the
+way to get a second trust domain at all — see the end of "An OS user per
+profile".
+
 Two details that are easy to miss:
 
 - **`claude -p` loads a repository's `.claude/settings.json` hooks and its
@@ -271,6 +277,11 @@ Two consequences worth knowing before you start:
 - **On Linux a user unit stops at logout** unless lingering is on for that user.
   `install` checks and prints the exact `loginctl enable-linger` command; it
   never runs it, because lingering keeps *every* unit of that account running.
+- **On macOS a second user's runner does not start by itself.** The service is
+  a launchd agent in that user's GUI domain, which exists only while the user
+  is logged in at the console — and a Mac logs in one user automatically. Claude
+  Code also keeps its login in that user's login Keychain, which only a GUI
+  login unlocks. A work machine (`machines/`) is the way round both.
 
 ## Never root
 

@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+# yad-machine builds a work machine: a Lima VM that holds one runner, its
+# harnesses and its tools, and nothing of the host. A spec directory says what
+# goes in it; README.md next to this file says what a spec is and why the
+# machine is shaped the way it is.
+#
+#   yad-machine up SPEC_DIR [--yad PATH]   create or update the machine SPEC_DIR describes
+#   yad-machine shell NAME [COMMAND...]    a login shell, or a command, as the runner's user
+#   yad-machine status NAME                the VM, the runner service and yad doctor
+#   yad-machine destroy NAME               delete the VM and everything in it
+#
+# Runs on the host — macOS or Linux, with limactl on PATH. `up` is idempotent:
+# run it again after changing the spec, or to take a newer yad.
+set -euo pipefail
+
+KIT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# The runner's user inside the machine. Not the Lima user, which has
+# passwordless sudo: a run must not be able to lift the egress rules or replace
+# the yad binary, so the user it runs as has no sudo at all.
+AGENT_USER=agent
+# /var/tmp, not /tmp: a stage that vanished with a reboot between `up`'s steps
+# would fail the next step with a missing-file error that names nothing useful.
+STAGE=/var/tmp/yad-machine
+
+die() { printf 'yad-machine: %s\n' "$*" >&2; exit 1; }
+say() { printf '==> %s\n' "$*"; }
+
+# sq quotes one word for a POSIX shell, so a command printed below runs as
+# pasted whatever the word holds.
+sq() {
+	local s=${1//\'/\'\\\'\'}
+	case $1 in
+	'' | *[!A-Za-z0-9_./:=@%+,-]*) printf "'%s'" "$s" ;;
+	*) printf '%s' "$1" ;;
+	esac
+}
+# cmd prints argv as one pasteable command line.
+cmd() {
+	local out='' w
+	for w in "$@"; do out+="${out:+ }$(sq "$w")"; done
+	printf '%s' "$out"
+}
+
+need_lima() {
+	command -v limactl >/dev/null 2>&1 ||
+		die "limactl is not on PATH — install Lima (https://lima-vm.io; \`brew install lima\` on macOS) and run this again"
+}
+
+instance_status() {
+	limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | awk -v n="$1" '$1 == n { print $2 }'
+}
+
+check_name() {
+	[[ $1 =~ ^[a-z][a-z0-9-]{0,30}$ ]] ||
+		die "machine name $(sq "$1") must be lowercase letters, digits and dashes, starting with a letter, at most 31 characters — Lima uses it as a hostname"
+}
+
+guest() { limactl shell --workdir / "$name" "$@"; }
+
+load_spec() {
+	spec=$(cd "$1" 2>/dev/null && pwd) || die "no spec directory at $(sq "$1")"
+	[[ -f $spec/machine.env ]] || die "$(sq "$spec") has no machine.env — see $KIT_DIR/README.md for what a spec holds, or copy $KIT_DIR/example"
+	[[ -f $spec/config.toml ]] || die "$(sq "$spec") has no config.toml — the runner's own configuration; copy $KIT_DIR/example/config.toml and edit it"
+	# The spec is shell the owner wrote, read the way a Makefile is.
+	# shellcheck source=/dev/null
+	source "$spec/machine.env"
+	name=${MACHINE_NAME:-}
+	[[ -n $name ]] || die "$(sq "$spec/machine.env") sets no MACHINE_NAME"
+	check_name "$name"
+}
+
+host_arch() {
+	case $(uname -m) in
+	arm64 | aarch64) echo arm64 ;;
+	x86_64 | amd64) echo amd64 ;;
+	*) die "no yad build for a $(uname -m) guest — build one with \`GOOS=linux go build ./cmd/yad\` and pass --yad" ;;
+	esac
+}
+
+sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{ print $1 }'
+}
+
+# fetch_yad downloads a released linux yad for the guest's architecture and
+# checks it against the release's checksums.txt, as scripts/install.sh does.
+fetch_yad() {
+	local arch repo version base dir asset want got
+	arch=$(host_arch)
+	repo=${YAD_REPO:-skkap/yad}
+	version=${YAD_VERSION:-latest}
+	asset=yad-linux-$arch
+	if [[ $version == latest ]]; then
+		base=https://github.com/$repo/releases/latest/download
+	else
+		base=https://github.com/$repo/releases/download/$version
+	fi
+	dir=$1
+	if ! curl -fsSL -o "$dir/checksums.txt" "$base/checksums.txt" ||
+		! curl -fsSL -o "$dir/yad" "$base/$asset"; then
+		die "could not fetch yad $version from $repo — build one in a yad checkout with \`make dist\` and pass --yad dist/$asset"
+	fi
+	want=$(awk -v a="$asset" '$2 == a || $2 == "*"a { print $1 }' "$dir/checksums.txt")
+	got=$(sha256 "$dir/yad")
+	[[ -n $want && $want == "$got" ]] ||
+		die "the downloaded $asset does not match $repo's checksums.txt for $version — nothing was installed; try again, and if it repeats, report it"
+}
+
+cmd_up() {
+	local yad_path=''
+	[[ $# -ge 1 ]] || die "usage: yad-machine up SPEC_DIR [--yad PATH]"
+	local spec_arg=$1
+	shift
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+		--yad) yad_path=${2:-}; [[ -n $yad_path ]] || die "--yad needs a path to a linux yad binary"; shift 2 ;;
+		*) die "unknown argument $(sq "$1") — usage: yad-machine up SPEC_DIR [--yad PATH]" ;;
+		esac
+	done
+	need_lima
+	load_spec "$spec_arg"
+
+	# Global, not local: the EXIT trap runs after cmd_up has returned.
+	tmp=$(mktemp -d)
+	trap 'rm -rf "$tmp"' EXIT
+	mkdir -p "$tmp/stage"
+	if [[ -n $yad_path ]]; then
+		[[ -f $yad_path ]] || die "no file at --yad $(sq "$yad_path")"
+		cp "$yad_path" "$tmp/stage/yad"
+	else
+		say "fetching yad ${YAD_VERSION:-latest}"
+		fetch_yad "$tmp/stage"
+	fi
+	cp -R "$KIT_DIR/guest" "$tmp/stage/guest"
+	cp -R "$spec" "$tmp/stage/spec"
+
+	local status
+	status=$(instance_status "$name")
+	if [[ -z $status ]]; then
+		say "creating $name"
+		# --plain: no host directory mounted, no guest port forwarded to the
+		# host, no containerd. The machine reaches the host only as the network
+		# gateway, which root.sh closes to the runner's user.
+		limactl create --tty=false --name="$name" --plain \
+			--cpus="${MACHINE_CPUS:-4}" --memory="${MACHINE_MEMORY:-8}" --disk="${MACHINE_DISK:-60}" \
+			"${MACHINE_IMAGE:-template:ubuntu-24.04}"
+		status=Stopped
+	fi
+	if [[ $status != Running ]]; then
+		say "starting $name"
+		limactl start --tty=false "$name"
+	fi
+
+	say "copying the kit, the spec and yad into $name"
+	tar -C "$tmp/stage" -cf - . | guest sudo bash -c "rm -rf $STAGE && mkdir -m 0755 $STAGE && tar -C $STAGE --no-same-owner -xf - && chmod -R a+rX $STAGE"
+
+	say "provisioning $name as root"
+	# </dev/null here and below: limactl shell reads stdin, so a script that
+	# runs `up` and then something else would have the rest of itself eaten.
+	guest sudo bash "$STAGE/guest/root.sh" "$STAGE" </dev/null
+
+	say "provisioning $name as $AGENT_USER"
+	guest sudo bash -c "uid=\$(id -u $AGENT_USER) && exec sudo -iu $AGENT_USER env XDG_RUNTIME_DIR=/run/user/\$uid bash $STAGE/guest/agent.sh $STAGE" </dev/null
+
+	# Autostart brings the VM up at the host user's login; the runner inside is
+	# a systemd user service with lingering on, so it follows the VM.
+	limactl autostart enable "$name" >/dev/null 2>&1 ||
+		printf 'note: could not register %s to start at login — run %s\n' "$name" "$(cmd limactl autostart enable "$name")"
+	limactl protect "$name" >/dev/null 2>&1 || true
+
+	local self
+	self="$KIT_DIR/yad-machine"
+	cat <<EOF
+
+$name is up. What only a person can do, once:
+
+  1. Log the harnesses in, as the runner's user:
+       $(cmd "$self" shell "$name")
+       claude                      # then /login, and /exit once it says you are in
+       codex login --device-auth   # only if the spec installs Codex
+
+  2. Give it the machine's own credentials — the ones a spec's secrets.md lists,
+     such as a read-only GitHub token:
+       gh auth login --with-token < token-file && gh auth setup-git
+
+  3. Connect it to its hub, and restart the service so it picks the hub up:
+       yad connect <hub url> --token -
+       yad service install
+
+$(cmd "$self" status "$name") shows where it stands.
+EOF
+}
+
+cmd_shell() {
+	[[ $# -ge 1 ]] || die "usage: yad-machine shell NAME [COMMAND...]"
+	need_lima
+	name=$1
+	shift
+	check_name "$name"
+	[[ $(instance_status "$name") == Running ]] || die "$name is not running — $(cmd limactl start "$name") starts it"
+	local uid
+	# </dev/null: limactl shell reads stdin, and this lookup would swallow what
+	# was piped in for the command — a key handed to a setup step, say.
+	uid=$(guest id -u "$AGENT_USER" </dev/null) || die "$name has no $AGENT_USER user — it was not built by yad-machine up"
+	if [[ $# -eq 0 ]]; then
+		exec limactl shell --workdir / "$name" sudo -iu "$AGENT_USER" env XDG_RUNTIME_DIR="/run/user/$uid" bash -l
+	fi
+	local line
+	line=$(cmd "$@")
+	exec limactl shell --workdir / "$name" sudo -iu "$AGENT_USER" env XDG_RUNTIME_DIR="/run/user/$uid" bash -lc "$line"
+}
+
+cmd_status() {
+	[[ $# -eq 1 ]] || die "usage: yad-machine status NAME"
+	need_lima
+	name=$1
+	check_name "$name"
+	local status
+	status=$(instance_status "$name")
+	[[ -n $status ]] || die "there is no machine called $name — $(cmd "$KIT_DIR/yad-machine" up SPEC_DIR) creates one"
+	limactl list "$name"
+	[[ $status == Running ]] || return 0
+	echo
+	cmd_shell_quiet yad service status
+	echo
+	cmd_shell_quiet yad status || true
+	echo
+	cmd_shell_quiet yad doctor
+}
+
+cmd_shell_quiet() { (cmd_shell "$name" "$@"); }
+
+cmd_destroy() {
+	[[ $# -eq 1 ]] || die "usage: yad-machine destroy NAME"
+	need_lima
+	name=$1
+	check_name "$name"
+	[[ -n $(instance_status "$name") ]] || { echo "there is no machine called $name"; return 0; }
+	printf 'This deletes %s and everything in it: harness logins, the runner credential,\nits sessions and workdirs. The hub keeps the runner until it is removed there.\nType the name to confirm: ' "$name"
+	local answer
+	read -r answer
+	[[ $answer == "$name" ]] || die "not confirmed; nothing was deleted"
+	limactl autostart disable "$name" >/dev/null 2>&1 || true
+	limactl unprotect "$name" >/dev/null 2>&1 || true
+	limactl delete --force "$name"
+}
+
+main() {
+	[[ $# -ge 1 ]] || { sed -n '6,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+	local sub=$1
+	shift
+	case $sub in
+	up) cmd_up "$@" ;;
+	shell) cmd_shell "$@" ;;
+	status) cmd_status "$@" ;;
+	destroy) cmd_destroy "$@" ;;
+	-h | --help | help) sed -n '6,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+	*) die "unknown command $(sq "$sub") — up, shell, status or destroy" ;;
+	esac
+}
+
+main "$@"
