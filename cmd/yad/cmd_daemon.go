@@ -235,6 +235,14 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			// The same ring `yad status` shows. Health reports the messages
 			// alone, never the attrs — see runner.healthErrors.
 			RecentErrors: recent.Records,
+			// A hub login that took is news for the document now, as an
+			// account the owner added is.
+			LoginTook: func() {
+				select {
+				case rebuild <- struct{}{}:
+				default:
+				}
+			},
 		})
 	}()
 

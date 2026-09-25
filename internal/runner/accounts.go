@@ -290,6 +290,32 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 	return Changed{State: state}, nil
 }
 
+// LoggedInAgain is Reload's added-account half for an account the lists
+// already name, which a hub login has just logged in (decision 0055): the
+// harness's own check is asked again and its answer written, so the account
+// goes free the way one `yad account add` added does. Nothing about the lists
+// changes — a hub never adds an account — and one removed since the login
+// began is refused rather than brought back.
+func (a *Accounts) LoggedInAgain(ctx context.Context, r account.Ref) (v1.AccountState, error) {
+	if a == nil {
+		return "", fmt.Errorf("this runner lists no %s account %q", r.Harness, r.Label)
+	}
+	if err := checkRef(r); err != nil {
+		return "", err
+	}
+	a.mu.Lock()
+	listed := a.lists.Has(r)
+	st := a.store
+	a.mu.Unlock()
+	if !listed {
+		return "", fmt.Errorf("%s account %q was removed on the machine while it was being logged in", r.Harness, r.Label)
+	}
+	log := a.log().With("harness", r.Harness, "account", r.Label)
+	state := a.checkAdded(ctx, st, r, log)
+	log.Info("a hub logged the account in", "state", state)
+	return state, nil
+}
+
 // checkAdded asks the harness whether a newly added account is logged in,
 // records a definite answer, and returns the account's state as a run would
 // now read it.

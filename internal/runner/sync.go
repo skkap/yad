@@ -150,6 +150,10 @@ type Loop struct {
 	// connection: what has gone wrong on this runner lately. Nil sends no
 	// recent_errors. Only the messages are reported — see healthErrors.
 	RecentErrors func() []logfile.Record
+	// Logins acts on the hub's login controls and is what this loop reports
+	// in logins (decision 0055), shared with every other connection. Nil
+	// ignores the controls, and reports none.
+	Logins *Logins
 
 	sentFingerprint string
 	wantDocument    bool
@@ -371,6 +375,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 		return v1.SyncResponse{}, err
 	}
 	req.ClosedSessions = closed
+	req.Logins = l.Logins.Reports(l.Connection)
 	listed := map[string]bool{}
 	for _, r := range held {
 		listed[r.ID] = true
@@ -399,6 +404,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 		l.sentFingerprint, l.wantDocument = fp, false
 	}
 	l.reported(ctx, closed)
+	l.Logins.Reported(l.Connection, req.Logins)
 
 	// Controls that name a run wait for the runs this sync starts: a run
 	// acknowledged by this very answer is not the executor's yet, and an
@@ -419,6 +425,12 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 			}
 		case v1.ControlCloseSession:
 			l.closeSession(ctx, c.SessionID)
+		case v1.ControlStartLogin, v1.ControlLoginCode, v1.ControlLoginToken, v1.ControlCancelLogin:
+			if l.Logins == nil {
+				l.Log.Warn("the hub sent a login control, and nothing here can act on it", "connection", l.Connection, "kind", c.Kind)
+				continue
+			}
+			l.Logins.Control(l.Connection, c)
 		}
 	}
 	for id, cs := range l.answered {

@@ -31,6 +31,9 @@ func TestMain(m *testing.M) {
 }
 
 func fakeClaudeAuth(args []string) int {
+	if strings.Join(args, " ") == "auth login" {
+		return fakeClaudeLogin()
+	}
 	if strings.Join(args, " ") != "auth status" {
 		fmt.Fprintf(os.Stderr, "unexpected argv %q\n", args)
 		return 2
@@ -43,7 +46,9 @@ func fakeClaudeAuth(args []string) int {
 	}
 	home := os.Getenv("CLAUDE_CONFIG_DIR")
 	_, err := os.Stat(filepath.Join(home, ".credentials.json"))
-	b, _ := json.Marshal(map[string]any{"loggedIn": err == nil, "email": "owner@example.com"})
+	// As claude does: any CLAUDE_CODE_OAUTH_TOKEN is a login to its check.
+	in := err == nil || os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != ""
+	b, _ := json.Marshal(map[string]any{"loggedIn": in, "email": "owner@example.com"})
 	fmt.Println(string(b))
 	return 0
 }

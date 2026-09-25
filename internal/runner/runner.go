@@ -46,6 +46,9 @@ type Options struct {
 	// RecentErrors is the ring the process keeps for `yad status`; health
 	// reports its messages to every hub. Nil sends no recent_errors.
 	RecentErrors func() []logfile.Record
+	// LoginTook is told when a hub login took (decision 0055), so the
+	// process can rebuild the capability document at once. Nil tells nobody.
+	LoginTook func()
 }
 
 // Serve syncs every configured connection, all of them drawing on one
@@ -111,6 +114,11 @@ func Serve(ctx context.Context, o Options) error {
 		log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{},
 		hubless: len(o.Config.Connections) == 0}
 	sv.probe = &LoginProbe{Store: st, Accounts: o.Accounts, Log: o.Log}
+	// Bound to Serve's own context, and closed before the store: a login
+	// that takes writes the account's row as it ends.
+	logins := &Logins{Data: o.Paths.Data, Paths: o.Paths, Accounts: o.Accounts, Changed: o.LoginTook, Log: o.Log}
+	logins.bind(ctx)
+	defer logins.Close()
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -148,7 +156,7 @@ func Serve(ctx context.Context, o Options) error {
 			Capabilities: o.Capabilities, Executor: executor, Drain: o.Drain,
 			Accounts:   o.Accounts,
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
-			RecentErrors: o.RecentErrors,
+			RecentErrors: o.RecentErrors, Logins: logins,
 		})
 	}
 	return sv.run(ctx)
