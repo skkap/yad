@@ -2,6 +2,7 @@ package capability
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,10 @@ import (
 // fakeLoginHarness installs a claude or codex that answers its version, its
 // --help (with every flag a Claude run passes) and its own login check the way
 // the real one does, logged in or not, and records each login check in calls.
-func fakeLoginHarness(t *testing.T, id, answer string) (calls string) {
+//
+// By default it is found through YAD_<ID>_PATH, as every other fake here is;
+// onPath puts it on PATH instead, with no override.
+func fakeLoginHarness(t *testing.T, id, answer string, onPath ...bool) (calls string) {
 	t.Helper()
 	noTools(t)
 	dir := t.TempDir()
@@ -48,7 +52,11 @@ func fakeLoginHarness(t *testing.T, id, answer string) (calls string) {
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("YAD_"+strings.ToUpper(id)+"_PATH", bin)
+	if len(onPath) > 0 && onPath[0] {
+		t.Setenv("PATH", dir)
+	} else {
+		t.Setenv("YAD_"+strings.ToUpper(id)+"_PATH", bin)
+	}
 	return calls
 }
 
@@ -142,21 +150,26 @@ func TestTheDefaultLoginAnswerIsKept(t *testing.T) {
 }
 
 // The login a logged-out report names is a command an owner pastes: sh runs
-// the harness's own login with the home the runner's environment moved it to
-// set apart as a placeholder, never the path itself.
+// the binary the check ran — by name when PATH found it, as "$YAD_<ID>_PATH"
+// when an override did, never its path — with the home the runner's
+// environment moved it to set apart as a placeholder, never the path itself
+// (advice_test.go holds every probe's advice to the same rule).
 func TestTheLoginCommandRunsAsPrinted(t *testing.T) {
 	for _, tc := range []struct {
-		id, homeVar string
-		moved       bool
-		want        []string
+		id, homeVar     string
+		override, moved bool
+		args            []string
 	}{
-		{"claude", "CLAUDE_CONFIG_DIR", false, []string{"claude", "auth", "login"}},
-		{"claude", "CLAUDE_CONFIG_DIR", true, []string{"claude", "auth", "login"}},
-		{"codex", "CODEX_HOME", false, []string{"codex", "login"}},
-		{"codex", "CODEX_HOME", true, []string{"codex", "login"}},
+		{"claude", "CLAUDE_CONFIG_DIR", false, false, []string{"auth", "login"}},
+		{"claude", "CLAUDE_CONFIG_DIR", false, true, []string{"auth", "login"}},
+		{"claude", "CLAUDE_CONFIG_DIR", true, false, []string{"auth", "login"}},
+		{"claude", "CLAUDE_CONFIG_DIR", true, true, []string{"auth", "login"}},
+		{"codex", "CODEX_HOME", false, false, []string{"login"}},
+		{"codex", "CODEX_HOME", true, true, []string{"login"}},
 	} {
-		t.Run(tc.id, func(t *testing.T) {
-			fakeLoginHarness(t, tc.id, "out")
+		t.Run(fmt.Sprintf("%s/override=%v/moved=%v", tc.id, tc.override, tc.moved), func(t *testing.T) {
+			fakeLoginHarness(t, tc.id, "out", !tc.override)
+			envVar := "YAD_" + strings.ToUpper(tc.id) + "_PATH"
 			env := map[string]string{tc.homeVar: ""}
 			if tc.moved {
 				moved := filepath.Join(t.TempDir(), "it's home")
@@ -164,14 +177,25 @@ func TestTheLoginCommandRunsAsPrinted(t *testing.T) {
 				env[tc.homeVar] = "<runner " + tc.homeVar + ">"
 			}
 			h := report(t, tc.id, config.Default())
-			if tc.moved && strings.Contains(h.Error, "it's home") {
-				t.Errorf("the error names the runner's home: %q", h.Error)
+			if strings.Contains(h.Error, "it's home") || strings.Contains(h.Error, os.TempDir()) {
+				t.Errorf("the error names a path on the machine: %q", h.Error)
 			}
-			cmds := shellwordtest.Commands(h.Error, tc.id)
+			prefix := tc.id + " "
+			if tc.override {
+				prefix = `"$` + envVar + `" `
+				if !strings.Contains(h.Error, envVar+" set in that shell") {
+					t.Errorf("error %q does not say %s must be set where it is pasted", h.Error, envVar)
+				}
+			}
+			cmds := shellwordtest.Commands(h.Error, prefix)
 			if len(cmds) != 1 {
-				t.Fatalf("want one %s command in %q, got %q", tc.id, h.Error, cmds)
+				t.Fatalf("want one command starting %s in %q, got %q", prefix, h.Error, cmds)
 			}
-			shellwordtest.CheckEnv(t, cmds[0], env, tc.want...)
+			if tc.override {
+				shellwordtest.CheckEnv(t, envVar+"=stub\n"+cmds[0], env, append([]string{"stub"}, tc.args...)...)
+			} else {
+				shellwordtest.CheckEnv(t, cmds[0], env, append([]string{tc.id}, tc.args...)...)
+			}
 		})
 	}
 }
