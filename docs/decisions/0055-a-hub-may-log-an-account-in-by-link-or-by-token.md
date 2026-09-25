@@ -36,9 +36,10 @@ What was measured, claude 2.1.281, on a work machine:
 - **By token.** The owner runs `claude setup-token` wherever they like and
   pastes the token into the hub, which sends it once with `login_token`. The
   runner stores it as a token account (0054) and checks it. Unlike the code,
-  the token is a working credential for a year: a hub holds it sealed, only
-  until the runner has answered the sync that carried it, and never shows it
-  again. The runner never logs, echoes or reports it.
+  the token is a working credential for a year: a hub holds it — sealed, where
+  it has a way to seal secrets — only until the runner has answered the sync
+  that carried it, which is the first sync reporting that login, and never
+  shows it again. The runner never logs, echoes or reports it.
 
 **Any connected hub may start a login.** The owner trusts the hubs it connects
 ([0038](0038-the-owner-trusts-the-hubs-it-connects.md)); a login is finished by
@@ -55,6 +56,15 @@ time per account; ten minutes to finish; `cancel_login` ends it. It is
 advertised as the protocol feature `login`, and a hub sends none of these
 controls to a runner that does not advertise it.
 
+**A login lives in the runner's memory, and a restart forgets it.** Its
+process cannot outlive the daemon, so nothing of it goes to `state.db`. Since
+a runner reports every login until its end is answered, one it reported and
+then leaves out of a sync while it was not over is one it lost, and a hub ends
+it `failed`. Each control is repeated until the reports answer it, as every
+control is: `start_login` and `login_token` until the login is reported,
+`login_code` while it is reported `waiting`, `cancel_login` until it is
+reported over.
+
 ## Considered options
 
 **Owner opt-in per hub or per machine.** Weighed and not taken: it adds a gate
@@ -68,3 +78,14 @@ remains the better shape for the token and is worth revisiting.
 **The hub holds tokens and delivers them per run** (Terragon). Still what the
 terms forbid, and every machine's subscription in one database — this decision
 has the hub hold a token only until one delivery.
+
+## As built
+
+The runner reads one thing from the harness's login output — the first link
+whose path is an OAuth authorize page — and gives it thirty seconds to
+appear; ten minutes for the code after it; a minute to exit once it has the
+code. A link login on a token account sets the token aside, as
+`yad account add` does, and puts it back unless the login takes. `yad hub`
+keeps a token as it keeps a grant (0041): in `hub.db`, blanked by a trigger
+the moment the runner reports the login and never returned by its API, and it
+expires a login that has not reached its runner in ten minutes, token and all.

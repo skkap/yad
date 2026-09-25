@@ -289,6 +289,7 @@ the runner the path names, and the body's `runner_id` must equal the path's.
 | `health.draining` | the runner has stopped taking work (§7) |
 | `runs` | **every run the runner holds**, with its state. Listing is claiming and lease renewal (below) |
 | `closed_sessions` | sessions the runner has closed, repeated until answered (§8) |
+| `logins` | the hub logins you started on this runner, each repeated until one carrying its end is answered (§7) |
 
 The rest of `health` — load, disk, spool and outbox depth, recent errors — is
 for your operators and dashboards. It is the runner's own words, bounded, and
@@ -353,7 +354,9 @@ says why it goes where it does):
    Nothing depends on which, and conformance sends no such sync
    ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)).
 5. **Take the closes** in `closed_sessions` (§8), and add a `close_session`
-   control for each session you are closing on this runner.
+   control for each session you are closing on this runner. Take the
+   `logins` too, and add the login controls each open one still needs (§7) —
+   a draining runner still reports them.
 6. **Take back every run you offered this runner that this sync did not
    list.** It was never received. It goes back in your queue now, in this
    sync — not when its lease lapses — for this runner or another, and step 7
@@ -940,6 +943,10 @@ a rule for when to stop sending it:
 | `close_session` | `session_id` | closes the session and deletes its workdir; a session with a run held closes when that run ends; one it does not hold or already closed is reported closed | in every response until the session appears in the runner's `closed_sessions` (§8) |
 | `drain` | nothing | stops claiming, lets the runs it holds finish, then exits. Its health says `draining` and its free capacity is zero | in every response until a sync's health says `draining` |
 | `report_capabilities` | nothing | sends its capability document in the next sync | while the fingerprint differs from the document you hold |
+| `start_login` | `login_id`, `harness`, `account` (absent: the harness's own default login) | runs the harness's own login in that account's home and reports its link as `url` while the login is `waiting` | in every response until the runner reports the login in `logins` |
+| `login_code` | `login_id`, `code` | writes the code the owner got at the link to the login, which then moves to `checking` | in every response while the runner reports the login `waiting` |
+| `login_token` | `login_id`, `harness`, `account`, `token` | stores a `claude setup-token` token as the account's login | in every response until the runner reports the login — then forget the token |
+| `cancel_login` | `login_id` | ends the login `cancelled`; one it never had is reported `cancelled` all the same | in every response until the runner reports the login over |
 | `update` | — | reserved; never send it | never |
 
 **Features are promises, not decoration.** A runner advertises
@@ -956,6 +963,7 @@ asked for it.
 | `close_session` | the `close_session` control. A runner advertising it also reports every close in `closed_sessions`; one that does not advertise it may report closes too, and each is believed all the same (§8) |
 | `start_at` | a run carrying `start_at` — offer one only to a runner that advertises it |
 | `effort` | a run carrying `effort` — offer one only to a runner that advertises it, however long it waits |
+| `login` | the four login controls. A runner advertising it reports each login in `logins` |
 | `live_sessions` | a run whose `session.mode` is `live` — offer one only to a runner that advertises it. The spec lists `live` as an enum value and connects it to no feature, so this pairing exists only here |
 
 **A feature gates what you send, never what you accept** ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)).
@@ -992,6 +1000,37 @@ field it does not know and runs the harness at its default, and the run
 succeeds with nothing to say it was not what you asked for. A runner that
 advertises `effort` but is handed one for a harness whose effort it cannot set
 refuses the run, class `refused`; both harnesses yad drives today take one.
+
+**Hub login** ([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md))
+lets your UI log a runner's account in without a shell on the machine: by
+**link** — `start_login`, show the `url` the runner reports, take the code the
+owner pastes and send it with `login_code` — or by **token** — `login_token`
+with a `claude setup-token` token the owner pasted. Choose the `login_id`;
+it is 1–128 letters, digits, dots, dashes or underscores. The account is a
+label the owner listed on that machine, which the runner's health names: a
+runner never adds one, and answers any other with `failed`. A token needs an
+account; a link login without one logs in the harness's own default login.
+
+Each login's `state` moves `starting` → `waiting` (`url` set) → `checking` →
+one of `succeeded`, `failed`, `expired`, `cancelled`, and the runner repeats
+it in every sync until one carrying the end is answered — take a repeat as the
+same news, and a report for a login you never started as news you may ignore.
+`error` says why a login did not take, in the runner's words with the next
+action. Success is the harness's own login check on the machine, never its
+output. A newer login for the same account replaces the older one, which the
+runner reports `cancelled`. yad's runner gives a code ten minutes (`expired`
+after) and answers Codex with `failed` until its side is built; `user_code` is
+for that device-code login.
+
+**Two rules the reports cannot enforce for you.** The `code` and the `token`
+are secrets: never log them, never show them again, never return them from an
+API. Hold a token **only until a sync reports the login it was delivered for**
+— the runner's answer to the sync that carried it — and blank it then (`yad
+hub` does it in a trigger, and opens its database with `secure_delete`); a
+login that never reaches its runner should expire and lose its token too. And
+a login the runner reported and then **leaves out** of a sync while it was not
+over is gone — the runner restarted, and a login in flight does not survive
+that — so end it `failed` rather than show it waiting for ever.
 
 **A draining runner is offered nothing.** Stop offering to a runner as soon as
 you have decided to drain it, not only once its health says `draining` — an
@@ -1388,6 +1427,7 @@ checks; the rest is yours to get right.
 **Controls, sessions, grants, versions**
 
 - [ ] `cancel` and `interrupt` repeated until the run ends; `steer` sent once; `drain` and `close_session` repeated until answered — [§7](#7-controls-and-features)
+- [ ] Login controls only to a runner advertising `login`, each repeated until `logins` answers it; a sync carrying `logins` taken; a token held only until the runner reports its login; a login reported and then left out ended `failed` — [§7](#7-controls-and-features) (C, as far as the gate and taking the reports)
 - [ ] No gated control to a runner that does not advertise its feature — [§7](#7-controls-and-features) (C, as far as a runner advertising none)
 - [ ] Sessions bound by their first claim, later runs to that runner only, one at a time; `session.new` set right — [§8](#8-sessions)
 - [ ] Nothing offered in a session you have sent `close_session` for until its close is reported — [§8](#8-sessions)
