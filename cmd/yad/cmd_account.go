@@ -140,6 +140,9 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 		return err
 	}
 	var loginErr error
+	// tokenKept says a stored token set aside for this login goes back: true
+	// until the login is confirmed, so any way out before then restores it.
+	tokenKept := true
 	if useToken {
 		if err := account.SetToken(home, tok); err != nil {
 			return fmt.Errorf("%s account %q was not added: %w", id, label, err)
@@ -147,13 +150,26 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 		fmt.Fprintf(w, "%s account %q: the token is stored in %s (0600); yad hands it to this account's runs and to nothing else\n", id, label, home)
 	} else {
 		// A token left in place would outrank the login about to be made, in
-		// every run, and be refused in every run (decision 0054).
-		if account.TokenFileExists(home) {
-			if err := account.ClearToken(home); err != nil {
-				return fmt.Errorf("%s account %q runs on a stored token, which could not be removed to log it in instead: %w", id, label, err)
-			}
-			fmt.Fprintf(w, "%s account %q: its stored token is removed; it logs in %s's own way from now on\n", id, label, id)
+		// every run, and be refused in every run (decision 0054). It is set
+		// aside rather than deleted: a login walked away from gives it back.
+		hadToken := account.TokenFileExists(home)
+		restore, drop, err := account.SetTokenAside(home)
+		if err != nil {
+			return fmt.Errorf("%s account %q runs on a stored token, which could not be moved aside to log it in instead: %w", id, label, err)
 		}
+		defer func() {
+			if tokenKept {
+				if err := restore(); err != nil {
+					fmt.Fprintf(os.Stderr, "the account's stored token could not be put back (%v) — store it again with `%s`\n", err, g.paths.Command("account", "add", id, label, "--token", "-"))
+				}
+				return
+			}
+			if hadToken {
+				if err := drop(); err == nil {
+					fmt.Fprintf(w, "%s account %q: its stored token is removed; it logs in %s's own way from now on\n", id, label, id)
+				}
+			}
+		}()
 		fmt.Fprintf(w, "%s account %q: running %s's own login in %s\n", id, label, id, home)
 		fmt.Fprintln(w, "yad keeps no token for this account; whatever the login writes stays in that directory.")
 		var extra []string
@@ -172,6 +188,7 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 		}
 		return errors.Join(loginErr, fmt.Errorf("%s account %q was not added: %s. config.toml is unchanged, and %s is kept for the next try — run `%s` again when you can finish the login", id, label, why, home, again))
 	}
+	tokenKept = false
 
 	// Read again, not the copy from before the login: that took minutes, and
 	// a `yad connect` in another terminal meanwhile must not be written over.

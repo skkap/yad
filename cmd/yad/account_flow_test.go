@@ -462,3 +462,23 @@ func TestAPlainLoginReplacesAStoredToken(t *testing.T) {
 		t.Errorf("the owner was not told the token went:\n%s", out)
 	}
 }
+
+// A plain login walked away from gives a token account its token back: the
+// token is set aside for the login, not deleted, until the login has taken.
+func TestAnAbandonedPlainLoginKeepsTheStoredToken(t *testing.T) {
+	p := accountHarness(t, claudeE2E)
+	t.Setenv(fakeClaudeLogin, "fails")
+	home, err := account.Ensure(p.Data, "claude", "tl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetToken(home, "sk-ant-oat01-kept"); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errs := yadIn(t, "account", "add", "claude", "tl"); code == 0 {
+		t.Fatalf("an abandoned login succeeded:\n%s%s", out, errs)
+	}
+	if !account.HasToken(home) {
+		t.Error("the stored token was lost to a login that did not complete")
+	}
+}
