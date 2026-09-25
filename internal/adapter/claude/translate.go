@@ -519,6 +519,11 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 	case slices.ContainsFunc(r.Errors, func(s string) bool { return strings.HasPrefix(s, "No conversation found") }):
 		return fail(adapter.ClassSessionNotFound, msg+" — the session's transcript is not on this runner; start a new session")
 	}
+	// Measured on claude 2.1.281 with a revoked setup-token: is_error, subtype
+	// "success", terminal_reason "api_error" and api_error_status 401. The
+	// class stays harness_error — what the hub sees does not change — and the
+	// status is what tells the runner the credential itself was refused.
+	o.AuthRejected = r.APIErrorStatus != nil && *r.APIErrorStatus == 401
 	return fail(adapter.ClassHarness, msg)
 }
 

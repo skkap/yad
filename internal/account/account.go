@@ -225,15 +225,25 @@ func TranscriptDir(data, harness string) string {
 // names it; empty for a harness with no home of its own.
 func HomeVar(harness string) string { return homeVar[harness] }
 
-// Env is the single variable that points a harness at an account's home, ready
-// to append to a child's environment. Empty for a harness with no home of its
-// own, whose runs use the harness's default.
+// Env is what points a harness at an account, ready to append to a child's
+// environment: the variable naming the account's home, first, and for a token
+// account the token after it (decision 0054). Empty for a harness with no
+// home of its own, whose runs use the harness's default.
+//
+// The home variable is first because suggest prints exactly that one: the
+// token must never be part of a command yad prints.
 func Env(harness, home string) []string {
 	v, ok := homeVar[harness]
 	if !ok || home == "" {
 		return nil
 	}
-	return []string{v + "=" + home}
+	env := []string{v + "=" + home}
+	if CanUseToken(harness) {
+		if t := token(home); t != "" {
+			env = append(env, tokenVar+"="+t)
+		}
+	}
+	return env
 }
 
 // Ensure creates an account's harness home and links the shared transcript
@@ -250,6 +260,9 @@ func Ensure(data, harness, label string) (string, error) {
 		return "", err
 	}
 	if err := os.Chmod(home, 0o700); err != nil {
+		return "", err
+	}
+	if err := shareConfig(harness, home); err != nil {
 		return "", err
 	}
 	name, ok := transcriptDir[harness]

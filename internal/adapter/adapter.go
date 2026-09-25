@@ -140,6 +140,12 @@ type Outcome struct {
 	// A window the turn never heard about is absent rather than zero: zero
 	// use is what a fresh window reads, and the two must not be confused.
 	Windows []Window
+	// AuthRejected is the provider refusing the credential the turn ran on,
+	// said in the harness's own structure rather than its wording — Claude's
+	// api_error_status 401. The runner parks the account on it without asking
+	// the harness's login check, which for a token account answers "logged
+	// in" whatever the token is worth (decision 0054). Never on the protocol.
+	AuthRejected bool
 	// APIRetries counts transient rate-limit retries the harness did itself.
 	// A rate limit is not a usage limit (DOMAIN.md): it never sets Limit and
 	// never costs the account its state.

@@ -145,14 +145,18 @@ _Avoid_: driver, provider, backend, runtime
 _See_: [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md), `internal/adapter`
 
 **Account** — one harness login (subscription) on a runner, with its own harness
-home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), logged in by the harness's own login.
-Configured by the owner per harness; the free account whose window resets
-soonest takes the next run. Hubs see an account's label, state and reset time,
-never its credentials.
+home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), logged in by the harness's own login —
+or, for Claude, a **token account**: a `claude setup-token` token the owner
+pipes in, which yad keeps in the home and hands to the account's runs. Every
+home shares the machine's own instructions, settings and skills from the
+harness's default home. Configured by the owner per harness; the free account
+whose window resets soonest takes the next run. Hubs see an account's label,
+state and reset time, never its credentials.
 _Kinds_: free | limited | needs_login
 _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
 [0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md),
-[0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md)
+[0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md),
+[0054](docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md)
 
 **Usage limit** — a subscription window an account has exhausted: Claude's
 five-hour and weekly limits, Codex's primary and secondary windows. Has a reset

@@ -712,7 +712,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		}
 		if hasAccount {
 			e.recordUsage(bg, acct, out, turnLog)
-			e.checkLogin(bg, acct, bin, res, turnLog)
+			e.checkLogin(bg, acct, bin, res, out.AuthRejected, turnLog)
 		}
 		if res.State == v1.RunCancelled && w.cancelled {
 			res.Error = runnerStopped(a.stoppedByRunner())

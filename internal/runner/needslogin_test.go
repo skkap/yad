@@ -92,16 +92,20 @@ func TestAFailedTurnWithNoLoginMarksTheAccountNeedsLogin(t *testing.T) {
 		credential   bool
 		class        string
 		before, want v1.AccountState
+		rejected     bool
 	}{
-		{"no login behind an unexplained failure", false, adapter.ClassHarness, v1.AccountFree, v1.AccountNeedsLogin},
-		{"no login behind a harness that just exited", false, adapter.ClassHarnessExited, v1.AccountFree, v1.AccountNeedsLogin},
+		{"no login behind an unexplained failure", false, adapter.ClassHarness, v1.AccountFree, v1.AccountNeedsLogin, false},
+		{"no login behind a harness that just exited", false, adapter.ClassHarnessExited, v1.AccountFree, v1.AccountNeedsLogin, false},
 		// A bad model fails the same way and must not cost the account its
 		// state: the login is there, so the check says so.
-		{"a failure with the login intact", true, adapter.ClassHarness, v1.AccountFree, v1.AccountFree},
+		{"a failure with the login intact", true, adapter.ClassHarness, v1.AccountFree, v1.AccountFree, false},
+		// A token account's login check says yes for any token, so the
+		// provider refusing the credential is what parks it (decision 0054).
+		{"a refused credential behind a login check that says yes", true, adapter.ClassHarness, v1.AccountFree, v1.AccountNeedsLogin, true},
 		// A usage limit says why it failed. Reading it as a login problem
 		// would hide DEV-27's state behind this one.
-		{"a usage limit is not a login problem", false, adapter.ClassUsageLimit, v1.AccountFree, v1.AccountFree},
-		{"a prompt that does not fit", false, adapter.ClassPromptTooLong, v1.AccountFree, v1.AccountFree},
+		{"a usage limit is not a login problem", false, adapter.ClassUsageLimit, v1.AccountFree, v1.AccountFree, false},
+		{"a prompt that does not fit", false, adapter.ClassPromptTooLong, v1.AccountFree, v1.AccountFree, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -121,7 +125,7 @@ func TestAFailedTurnWithNoLoginMarksTheAccountNeedsLogin(t *testing.T) {
 			l := e.loop(t, 1)
 			e.enqueue(t, testRun("a", "s1"))
 			x, _ := e.accountExecutor(t, accountConfig("work"), fakeHarness(fake.Script{
-				Outcome: adapter.Outcome{State: v1.RunFailed, Error: &v1.RunError{Class: c.class, Message: "it failed"}},
+				Outcome: adapter.Outcome{State: v1.RunFailed, Error: &v1.RunError{Class: c.class, Message: "it failed"}, AuthRejected: c.rejected},
 			}))
 			fakeClaudeBinary(t, x)
 			claimAndRun(t, l, x)
