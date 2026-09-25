@@ -74,6 +74,12 @@ me() {
 	fi
 }
 
+# lima_error is what limactl said when it last could not list its machines.
+lima_error() {
+	local f="${TMPDIR:-/tmp}/yad-machine-lima-error.$$"
+	if [[ -s $f ]]; then cat "$f"; else echo "it gave no reason"; fi
+}
+
 need_lima() {
 	command -v limactl >/dev/null 2>&1 ||
 		die "limactl is not on PATH — install Lima (https://lima-vm.io; \`brew install lima\` on macOS) and run this again"
@@ -82,12 +88,22 @@ need_lima() {
 # instance_status is the machine's Lima status, empty when Lima has no such
 # machine, and "unknown" when Lima could not be asked — which is not the same
 # as the machine being gone, and nothing may act as if it were.
+#
+# Why Lima could not be asked — limactl's own first line, control characters
+# removed — is kept in a file named for this process, since this runs in a
+# subshell, so a message can say it rather than send its reader to run
+# limactl, which from another computer would ask the wrong Lima.
 instance_status() {
-	local out
-	if ! out=$(limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null); then
+	local out err
+	err=$(mktemp)
+	if ! out=$(limactl list --format '{{.Name}} {{.Status}}' 2>"$err"); then
+		head -n 1 "$err" | tr -d '\000-\037\177' >"$err.why"
+		mv "$err.why" "${TMPDIR:-/tmp}/yad-machine-lima-error.$$"
+		rm -f -- "$err"
 		echo unknown
 		return 0
 	fi
+	rm -f -- "$err"
 	awk -v n="$1" '$1 == n { print $2 }' <<<"$out"
 }
 
@@ -345,7 +361,7 @@ cmd_status() {
 		if [[ $st != Running ]]; then
 			rows+="$name"$'\t'"${st:-no VM}"$'\t—\t—\t—\n'
 			if [[ $st == unknown ]]; then
-				notes+="  $name: limactl could not list its machines — \`limactl list\` says why"$'\n'
+				notes+="  $name: limactl could not list its machines: $(lima_error)"$'\n'
 			elif [[ -z $st ]]; then
 				notes+="  $name: its VM is gone — \`$(me up "$(spec_of "$name")")\` builds it again, or \`$(me destroy "$name")\` forgets it"$'\n'
 			else
@@ -491,7 +507,7 @@ cmd_destroy() {
 	check_name "$name"
 	local st
 	st=$(instance_status "$name")
-	[[ $st != unknown ]] || die "limactl could not list its machines, so nothing was changed — \`limactl list\` says why"
+	[[ $st != unknown ]] || die "limactl could not list its machines, so nothing was changed: $(lima_error)"
 	if [[ -z $st ]]; then
 		# Gone outside the kit — limactl delete, a renamed spec: what is left
 		# is its entry in the registry, which status would list for ever.
