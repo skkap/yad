@@ -101,8 +101,10 @@ systemctl enable --quiet nftables
 nft -f /etc/yad-machine/egress.nft
 
 say "yad"
-# Root-owned, so a run cannot replace the runner that runs it.
+# Root-owned, so a run cannot replace the runner that runs it — nor the report
+# the host reads to say whether the machine is well.
 install -m 0755 "$stage/yad" /usr/local/bin/yad
+install -m 0755 "$stage/guest/report.sh" /usr/local/bin/yad-machine-report
 
 if [[ -f $stage/spec/provision.sh ]]; then
 	say "the spec's provision.sh"

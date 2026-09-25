@@ -25,7 +25,7 @@ lint:
 	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 	go vet ./...
 	go tool staticcheck ./...
-	shellcheck -x scripts/*.sh machines/yad-machine machines/guest/*.sh machines/example/provision.sh
+	shellcheck -x scripts/*.sh machines/yad-machine machines/guest/*.sh machines/example/provision.sh machines/example/home/.config/yad-machine/checks/*
 
 # -race needs cgo, so the tests are the one place it is switched back on.
 test:
