@@ -249,7 +249,10 @@ To build such a machine, **[machines/](machines/README.md)** makes one Lima VM
 per runner from a directory you keep in a repository: the tools, the harnesses,
 the files in the runner's home and its configuration, with the runner's user
 shut out of the host, its LAN and its tailnet. One command builds it; the
-logins are made by hand, once.
+logins are made once — at the machine, or from a hub that supports logging a
+runner's accounts in: by a link and a code, or a pasted `claude setup-token`
+token, the credential ending up on the machine either way
+([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)).
 
 You trust the hubs you connect, and YAD does not police what they send
 ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A hub

@@ -1,4 +1,5 @@
 ---
+status: amended by 0055 — a hub may relay a Claude login, and deliver a token once; Anthropic support allowed it on 2026-09-25
 date: 2026-09-25
 ---
 

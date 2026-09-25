@@ -3,6 +3,7 @@ package capability
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,6 +82,19 @@ func defaultLogin(ctx context.Context, d harness.Detected) (errMsg, warning stri
 	loginAsked[key] = a
 	loginMu.Unlock()
 	return a.err, a.warning
+}
+
+// ForgetDefaultLogin drops what is kept about a harness's default login, so
+// the next document asks again: a hub has just logged it in (decision 0055),
+// and the owner watching should not wait out loginRecheck to see it.
+func ForgetDefaultLogin(id string) {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	for key := range loginAsked {
+		if strings.HasPrefix(key, id+"\x00") {
+			delete(loginAsked, key)
+		}
+	}
 }
 
 // probed is the binary detection probed, as probe.Find answers for it: the

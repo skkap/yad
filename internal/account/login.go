@@ -121,7 +121,7 @@ func Login(ctx context.Context, harness, binary, home string, in io.Reader, out,
 	// inside another Claude Code, and one that inherited ANTHROPIC_API_KEY
 	// would not be logging the subscription in at all. The child a run gets
 	// sees neither, so neither does this.
-	cmd.Env = append(supervise.Scrub(os.Environ(), nil), Env(harness, home)...)
+	cmd.Env = append(supervise.Scrub(os.Environ(), nil), LoginEnv(harness, home)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, errw
 	// Codex refuses to start outside a directory it trusts (DEV-24), and the
 	// home is one it made itself, so the login runs there rather than in
@@ -130,13 +130,41 @@ func Login(ctx context.Context, harness, binary, home string, in io.Reader, out,
 	return cmd.Run()
 }
 
-// LoggedIn asks the harness whether this home holds a login.
+// LoginEnv is what points a harness's own login at an account's home: the home
+// variable, and never the account's stored token (decision 0054). A token in
+// the environment would outrank the login being made and make the harness's
+// check say yes to it, so a login beside a token is made, and checked, as if
+// the token were not there — while the token stays in its file for the runs
+// that are still using it, until the new login is confirmed.
+func LoginEnv(harness, home string) []string {
+	v, ok := homeVar[harness]
+	if !ok || home == "" {
+		return nil
+	}
+	return []string{v + "=" + home}
+}
+
+// LoggedIn asks the harness whether this home holds a login: the one a run
+// would use, which for a token account is its token.
+func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
+	return loggedIn(ctx, harness, binary, home, Env(harness, home))
+}
+
+// OwnLogin asks the harness whether this home holds a login of its own,
+// whatever token is stored beside it: whether a login just made there took.
+// Claude's check says yes to any token it is handed, so asking with the token
+// in place would call every login beside one a success.
+func OwnLogin(ctx context.Context, harness, binary, home string) (bool, error) {
+	return loggedIn(ctx, harness, binary, home, LoginEnv(harness, home))
+}
+
+// loggedIn is the check itself, with the environment it runs in.
 //
 // Only the answer is kept. `claude auth status` also prints the account's
 // e-mail address, its organisation and its plan; they are decoded into nothing
 // and never logged, printed or reported — the label is the only thing about an
 // account that leaves the machine.
-func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
+func loggedIn(ctx context.Context, harness, binary, home string, env []string) (bool, error) {
 	args, ok := statusArgs[harness]
 	if !ok {
 		return false, fmt.Errorf("yad cannot check %s's login state — `yad account list` shows the home, and %s's own command says whether it is logged in", harness, harness)
@@ -159,7 +187,7 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 	if dir == "" {
 		dir, _ = os.UserHomeDir()
 	}
-	proc, err := supervise.Start(ctx, supervise.Spec{Path: binary, Args: args, Dir: dir, Env: Env(harness, home)})
+	proc, err := supervise.Start(ctx, supervise.Spec{Path: binary, Args: args, Dir: dir, Env: env})
 	if err != nil {
 		return false, fmt.Errorf("could not ask %s whether %s holds a login: %w", harness, home, err)
 	}

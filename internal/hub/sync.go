@@ -206,6 +206,14 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			}
 		}
 
+		// Logins before the early return below: a draining runner still
+		// reports them, and still takes a cancel or a code.
+		logins, err := syncLogins(ctx, q, runner.ID, req.Logins, described && advertises(doc, capability.FeatureLogin), now)
+		if err != nil {
+			return err
+		}
+		out.Controls = append(out.Controls, logins...)
+
 		// Whatever is still offered to this runner was in the last response
 		// and missing from this list: never received. Back in the queue.
 		unlisted, err := q.RunsOfferedTo(ctx, me)
@@ -405,6 +413,9 @@ func (h *Hub) sweep(ctx context.Context, q *db.Queries, now time.Time) error {
 		return err
 	}
 	if _, err := q.LoseLapsedRuns(ctx, store.Ms(now)); err != nil {
+		return err
+	}
+	if err := sweepLogins(ctx, q, now); err != nil {
 		return err
 	}
 	return h.abandonSilent(ctx, q, now)

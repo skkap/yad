@@ -325,7 +325,7 @@ func TestUpdateControlIsReservedAndUnhandled(t *testing.T) {
 	}
 	// Nothing in the hub ever queues one: a control kind reaches a runner
 	// only through the service API, which has no operation for update.
-	if feature, _ := controlFeature(v1.ControlUpdate); feature != "" {
+	if feature, _ := controlFeature(v1.ControlUpdate, "r1"); feature != "" {
 		t.Errorf("update was given a feature gate, which implies something sends it")
 	}
 }

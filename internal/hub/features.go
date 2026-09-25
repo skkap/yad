@@ -53,12 +53,12 @@ func refuseUnadvertised(r db.Runner, kind v1.ControlKind, feature, alternative s
 // the ones every v1 runner acts on: cancel, and report_capabilities. drain and
 // close_session are gated where they are asked for, against the runner or the
 // session named there.
-func controlFeature(kind v1.ControlKind) (feature, alternative string) {
+func controlFeature(kind v1.ControlKind, runID string) (feature, alternative string) {
 	switch kind {
 	case v1.ControlSteer:
 		return capability.FeatureSteer, ", or put the text in the brief of a new run"
 	case v1.ControlInterrupt:
-		return capability.FeatureInterrupt, ", or cancel the run instead: `yad hub cancel`"
+		return capability.FeatureInterrupt, ", or cancel the run instead: `" + serviceCommand("cancel", runID) + "`"
 	}
 	return "", ""
 }

@@ -178,6 +178,38 @@ func (q *Queries) CreateAdminToken(ctx context.Context, arg CreateAdminTokenPara
 	return err
 }
 
+const createLogin = `-- name: CreateLogin :exec
+
+INSERT INTO logins (id, runner_id, harness, account, method, token, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type CreateLoginParams struct {
+	ID        string
+	RunnerID  string
+	Harness   string
+	Account   string
+	Method    string
+	Token     string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
+// Hub logins (decision 0055).
+func (q *Queries) CreateLogin(ctx context.Context, arg CreateLoginParams) error {
+	_, err := q.db.ExecContext(ctx, createLogin,
+		arg.ID,
+		arg.RunnerID,
+		arg.Harness,
+		arg.Account,
+		arg.Method,
+		arg.Token,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const createRegistrationToken = `-- name: CreateRegistrationToken :exec
 INSERT INTO registration_tokens (hash, created_at, expires_at, for_runner) VALUES (?, ?, ?, ?)
 `
@@ -255,6 +287,53 @@ type DeleteSteersThroughParams struct {
 func (q *Queries) DeleteSteersThrough(ctx context.Context, arg DeleteSteersThroughParams) error {
 	_, err := q.db.ExecContext(ctx, deleteSteersThrough, arg.RunID, arg.ID)
 	return err
+}
+
+const endLogin = `-- name: EndLogin :execrows
+UPDATE logins SET state = ?1, error = ?2, url = '', hub_ended = 1, updated_at = ?3
+WHERE id = ?4 AND state IN ('requested', 'starting', 'waiting', 'checking')
+`
+
+type EndLoginParams struct {
+	State string
+	Error string
+	Now   int64
+	ID    string
+}
+
+// The hub ending a login by its own act: only ever one no answer has
+// carried to its runner, or one its runner can no longer report.
+func (q *Queries) EndLogin(ctx context.Context, arg EndLoginParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, endLogin,
+		arg.State,
+		arg.Error,
+		arg.Now,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const endRunnerLogins = `-- name: EndRunnerLogins :execrows
+UPDATE logins SET state = 'failed', error = ?1, url = '', hub_ended = 1, updated_at = ?2
+WHERE runner_id = ?3 AND state IN ('requested', 'starting', 'waiting', 'checking')
+`
+
+type EndRunnerLoginsParams struct {
+	Error    string
+	Now      int64
+	RunnerID string
+}
+
+// A runner that deregisters finishes none of its logins.
+func (q *Queries) EndRunnerLogins(ctx context.Context, arg EndRunnerLoginsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, endRunnerLogins, arg.Error, arg.Now, arg.RunnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const endUnstartedRun = `-- name: EndUnstartedRun :execrows
@@ -401,6 +480,50 @@ func (q *Queries) EventsContiguous(ctx context.Context, arg EventsContiguousPara
 	return items, nil
 }
 
+const expireStaleLogins = `-- name: ExpireStaleLogins :execrows
+UPDATE logins SET state = 'failed', error = ?1, url = '', hub_ended = 1, updated_at = ?2
+WHERE (state IN ('starting', 'waiting', 'checking') OR state = 'requested' AND sent_at IS NOT NULL)
+  AND created_at <= ?3
+`
+
+type ExpireStaleLoginsParams struct {
+	Error  string
+	Now    int64
+	Cutoff int64
+}
+
+// Logins sent to a runner and not finished by the cutoff, which is well past
+// every deadline a runner holds one to: it stopped reporting them.
+func (q *Queries) ExpireStaleLogins(ctx context.Context, arg ExpireStaleLoginsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, expireStaleLogins, arg.Error, arg.Now, arg.Cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const expireUndeliveredLogins = `-- name: ExpireUndeliveredLogins :execrows
+UPDATE logins SET state = 'expired', error = ?1, hub_ended = 1, updated_at = ?2
+WHERE state = 'requested' AND sent_at IS NULL AND created_at <= ?3
+`
+
+type ExpireUndeliveredLoginsParams struct {
+	Error  string
+	Now    int64
+	Cutoff int64
+}
+
+// Logins no answer carried to their runner by the cutoff: it is not syncing,
+// and a token must not wait in this database for it to come back. One an
+// answer did carry is the runner's, and falls to ExpireStaleLogins.
+func (q *Queries) ExpireUndeliveredLogins(ctx context.Context, arg ExpireUndeliveredLoginsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, expireUndeliveredLogins, arg.Error, arg.Now, arg.Cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const finishRun = `-- name: FinishRun :exec
 UPDATE runs SET state = ?, reason = ?, lease_expires_at = NULL, resumes_at = NULL, updated_at = ?
 WHERE id = ?
@@ -455,6 +578,34 @@ func (q *Queries) GetAdminToken(ctx context.Context, hash string) (AdminToken, e
 	row := q.db.QueryRowContext(ctx, getAdminToken, hash)
 	var i AdminToken
 	err := row.Scan(&i.Hash, &i.Name, &i.CreatedAt)
+	return i, err
+}
+
+const getLogin = `-- name: GetLogin :one
+SELECT id, runner_id, harness, account, method, state, url, user_code, error, code, token, cancel_requested_at, sent_at, hub_ended, created_at, updated_at FROM logins WHERE id = ?
+`
+
+func (q *Queries) GetLogin(ctx context.Context, id string) (Login, error) {
+	row := q.db.QueryRowContext(ctx, getLogin, id)
+	var i Login
+	err := row.Scan(
+		&i.ID,
+		&i.RunnerID,
+		&i.Harness,
+		&i.Account,
+		&i.Method,
+		&i.State,
+		&i.Url,
+		&i.UserCode,
+		&i.Error,
+		&i.Code,
+		&i.Token,
+		&i.CancelRequestedAt,
+		&i.SentAt,
+		&i.HubEnded,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -690,6 +841,21 @@ func (q *Queries) LoseRunnerRuns(ctx context.Context, arg LoseRunnerRunsParams) 
 	return result.RowsAffected()
 }
 
+const markLoginSent = `-- name: MarkLoginSent :exec
+UPDATE logins SET sent_at = COALESCE(sent_at, ?1) WHERE id = ?2
+`
+
+type MarkLoginSentParams struct {
+	Now sql.NullInt64
+	ID  string
+}
+
+// A sync's answer carries the login's start: from now the runner may have it.
+func (q *Queries) MarkLoginSent(ctx context.Context, arg MarkLoginSentParams) error {
+	_, err := q.db.ExecContext(ctx, markLoginSent, arg.Now, arg.ID)
+	return err
+}
+
 const noteSessionOffer = `-- name: NoteSessionOffer :exec
 UPDATE sessions SET offered_to = ?1 WHERE id = ?2 AND runner_id IS NULL
 `
@@ -807,6 +973,106 @@ func (q *Queries) OfferRun(ctx context.Context, arg OfferRunParams) error {
 	return err
 }
 
+const openLogins = `-- name: OpenLogins :many
+SELECT id, runner_id, harness, account, method, state, url, user_code, error, code, token, cancel_requested_at, sent_at, hub_ended, created_at, updated_at FROM logins WHERE runner_id = ? AND state IN ('requested', 'starting', 'waiting', 'checking')
+ORDER BY created_at, id
+`
+
+// Every login of this runner not yet over, oldest first.
+func (q *Queries) OpenLogins(ctx context.Context, runnerID string) ([]Login, error) {
+	rows, err := q.db.QueryContext(ctx, openLogins, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Login{}
+	for rows.Next() {
+		var i Login
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunnerID,
+			&i.Harness,
+			&i.Account,
+			&i.Method,
+			&i.State,
+			&i.Url,
+			&i.UserCode,
+			&i.Error,
+			&i.Code,
+			&i.Token,
+			&i.CancelRequestedAt,
+			&i.SentAt,
+			&i.HubEnded,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const openLoginsFor = `-- name: OpenLoginsFor :many
+SELECT id, runner_id, harness, account, method, state, url, user_code, error, code, token, cancel_requested_at, sent_at, hub_ended, created_at, updated_at FROM logins WHERE runner_id = ?1 AND harness = ?2 AND account = ?3
+  AND state IN ('requested', 'starting', 'waiting', 'checking')
+ORDER BY created_at, id
+`
+
+type OpenLoginsForParams struct {
+	RunnerID string
+	Harness  string
+	Account  string
+}
+
+// The open logins of one account on one runner: what a new login for it
+// replaces.
+func (q *Queries) OpenLoginsFor(ctx context.Context, arg OpenLoginsForParams) ([]Login, error) {
+	rows, err := q.db.QueryContext(ctx, openLoginsFor, arg.RunnerID, arg.Harness, arg.Account)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Login{}
+	for rows.Next() {
+		var i Login
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunnerID,
+			&i.Harness,
+			&i.Account,
+			&i.Method,
+			&i.State,
+			&i.Url,
+			&i.UserCode,
+			&i.Error,
+			&i.Code,
+			&i.Token,
+			&i.CancelRequestedAt,
+			&i.SentAt,
+			&i.HubEnded,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const oweSessionClose = `-- name: OweSessionClose :exec
 UPDATE sessions SET close_owed = 1 WHERE id = ?1 AND runner_id IS NOT NULL
 `
@@ -836,6 +1102,48 @@ func (q *Queries) PutResult(ctx context.Context, arg PutResultParams) (int64, er
 		arg.State,
 		arg.Body,
 		arg.ReceivedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const recordLoginReport = `-- name: RecordLoginReport :execrows
+UPDATE logins SET state = ?1, url = ?2, user_code = ?3, error = ?4,
+  hub_ended = 0,
+  updated_at = CASE WHEN state = ?1 THEN updated_at ELSE ?5 END
+WHERE id = ?6 AND runner_id = ?7
+  AND (state IN ('requested', 'starting', 'waiting', 'checking')
+    OR hub_ended = 1 AND CAST(?8 AS INTEGER) = 1)
+`
+
+type RecordLoginReportParams struct {
+	State    string
+	Url      string
+	UserCode string
+	Error    string
+	Now      int64
+	ID       string
+	RunnerID string
+	Terminal int64
+}
+
+// A runner's report of a login this hub started on it. An end the runner
+// reported stands; an end the hub made by its own act gives way to the
+// runner's own report of an end, which knows what happened on the machine.
+// A report about another runner's login changes nothing. updated_at moves
+// only with the state, so it says when the login last did.
+func (q *Queries) RecordLoginReport(ctx context.Context, arg RecordLoginReportParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordLoginReport,
+		arg.State,
+		arg.Url,
+		arg.UserCode,
+		arg.Error,
+		arg.Now,
+		arg.ID,
+		arg.RunnerID,
+		arg.Terminal,
 	)
 	if err != nil {
 		return 0, err
@@ -937,6 +1245,21 @@ type RequestDrainParams struct {
 
 func (q *Queries) RequestDrain(ctx context.Context, arg RequestDrainParams) error {
 	_, err := q.db.ExecContext(ctx, requestDrain, arg.Now, arg.ID)
+	return err
+}
+
+const requestLoginCancel = `-- name: RequestLoginCancel :exec
+UPDATE logins SET cancel_requested_at = COALESCE(cancel_requested_at, ?1)
+WHERE id = ?2 AND state IN ('requested', 'starting', 'waiting', 'checking')
+`
+
+type RequestLoginCancelParams struct {
+	Now sql.NullInt64
+	ID  string
+}
+
+func (q *Queries) RequestLoginCancel(ctx context.Context, arg RequestLoginCancelParams) error {
+	_, err := q.db.ExecContext(ctx, requestLoginCancel, arg.Now, arg.ID)
 	return err
 }
 
@@ -1179,6 +1502,20 @@ type SetEventsThroughParams struct {
 
 func (q *Queries) SetEventsThrough(ctx context.Context, arg SetEventsThroughParams) error {
 	_, err := q.db.ExecContext(ctx, setEventsThrough, arg.EventsThrough, arg.ID)
+	return err
+}
+
+const setLoginCode = `-- name: SetLoginCode :exec
+UPDATE logins SET code = ?1 WHERE id = ?2 AND state = 'waiting'
+`
+
+type SetLoginCodeParams struct {
+	Code string
+	ID   string
+}
+
+func (q *Queries) SetLoginCode(ctx context.Context, arg SetLoginCodeParams) error {
+	_, err := q.db.ExecContext(ctx, setLoginCode, arg.Code, arg.ID)
 	return err
 }
 

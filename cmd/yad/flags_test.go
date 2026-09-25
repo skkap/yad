@@ -112,6 +112,16 @@ func TestEveryCommandTakesItsFlagsAfterItsPositionals(t *testing.T) {
 			args: []string{"hub", "close-session", "s1", "--hub", "https://hub.example"},
 			want: "admin token",
 		},
+		{
+			name: "hub login start",
+			args: []string{"hub", "login", "start", "r1", "claude", "work", "--hub", "https://hub.example", "--code", "-"},
+			want: "admin token",
+		},
+		{
+			name: "hub login status",
+			args: []string{"hub", "login", "status", "r1", "lgn_1", "--hub", "https://hub.example"},
+			want: "admin token",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newProfile(t)

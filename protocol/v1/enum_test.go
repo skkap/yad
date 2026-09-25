@@ -33,7 +33,12 @@ func TestTheV1EnumsAreClosed(t *testing.T) {
 		{ClosedSession{}, "Reason", "hub", []string{"closed", "closed_by_owner", "expired", "disk_pressure"}},
 		{AccountReport{}, "State", "hub", []string{"free", "limited", "needs_login"}},
 		{HarnessReport{}, "Kind", "hub", []string{"first-class", "recognised"}},
-		{Control{}, "Kind", "runner", []string{"cancel", "interrupt", "steer", "close_session", "drain", "report_capabilities", "update"}},
+		// The four login kinds came after v1 shipped, gated on the "login"
+		// feature a runner advertises (decision 0055).
+		{Control{}, "Kind", "runner", []string{"cancel", "interrupt", "steer", "close_session", "drain", "report_capabilities", "update", "start_login", "login_code", "login_token", "cancel_login"}},
+		// New with hub login, and sent only to a hub that asked for a login.
+		{LoginReport{}, "Method", "hub", []string{"link", "token"}},
+		{LoginReport{}, "State", "hub", []string{"starting", "waiting", "checking", "succeeded", "failed", "expired", "cancelled"}},
 		{SessionRef{}, "Mode", "runner", []string{"per_run", "live"}},
 		{Grant{}, "As", "runner", []string{"env", "file"}},
 	} {
@@ -61,6 +66,7 @@ func TestEveryEnumIsPinned(t *testing.T) {
 	pinned := map[string]bool{
 		"Event.Kind": true, "HeldRun.State": true, "Result.State": true, "ClosedSession.Reason": true,
 		"AccountReport.State": true, "HarnessReport.Kind": true, "Control.Kind": true, "SessionRef.Mode": true, "Grant.As": true,
+		"LoginReport.Method": true, "LoginReport.State": true,
 	}
 	seen := map[reflect.Type]bool{}
 	var walk func(reflect.Type)

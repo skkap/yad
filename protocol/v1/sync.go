@@ -23,6 +23,13 @@ type SyncRequest struct {
 	// advertise the "close_session" feature, which also act on the
 	// close_session control.
 	ClosedSessions []ClosedSession `json:"closed_sessions,omitempty" doc:"Sessions this runner has closed, each repeated in every sync until one carrying it is answered with a 2xx. Record them by session id, take a repeat as the same news, stop offering runs in them, and end the runs still queued in them. A runner advertising close_session reports every close here; a close from one that does not is believed all the same."`
+	// Logins are the hub logins this runner has from this hub (decision
+	// 0055), each repeated in every sync until one carrying its terminal
+	// state is answered with a 2xx. A login a runner reported and then leaves
+	// out while it was not over is gone: the runner restarted, and a login in
+	// flight does not survive a restart. Sent by runners that advertise the
+	// "login" feature.
+	Logins []LoginReport `json:"logins,omitempty" doc:"The hub logins this runner has from this hub, each repeated in every sync until one carrying its terminal state is answered with a 2xx. Record them by login_id and take a repeat as the same news. A login the runner reported, not yet terminal, that a later sync leaves out is gone — the runner restarted, and a login in flight does not survive that — so end it failed. A report for a login_id you never started is news you may ignore. Sent by runners advertising the login feature."`
 }
 
 // ClosedSession is one session a runner has closed, and why.
@@ -138,11 +145,19 @@ const (
 	// ControlUpdate is reserved (decision 0018): a runner that does not
 	// implement self-update ignores it and keeps reporting its version.
 	ControlUpdate ControlKind = "update"
+	// The hub-login controls (decision 0055), added within v1 and sent only
+	// to a runner advertising the "login" feature, as every kind added to
+	// the set is.
+	ControlStartLogin  ControlKind = "start_login"
+	ControlLoginCode   ControlKind = "login_code"
+	ControlLoginToken  ControlKind = "login_token"
+	ControlCancelLogin ControlKind = "cancel_login"
 )
 
 // ControlKinds lists the closed set, for validation and the parity test.
 func ControlKinds() []ControlKind {
-	return []ControlKind{ControlCancel, ControlInterrupt, ControlSteer, ControlCloseSession, ControlDrain, ControlReportCapabilities, ControlUpdate}
+	return []ControlKind{ControlCancel, ControlInterrupt, ControlSteer, ControlCloseSession, ControlDrain, ControlReportCapabilities, ControlUpdate,
+		ControlStartLogin, ControlLoginCode, ControlLoginToken, ControlCancelLogin}
 }
 
 // Control is one instruction. Which of the optional fields are set depends on
@@ -160,9 +175,27 @@ func ControlKinds() []ControlKind {
 // is reserved and goes to none. Nothing acknowledges a control, so one sent to
 // a runner that does not act on it is indistinguishable, to whoever asked for
 // it, from one that was obeyed.
+//
+// start_login, login_code, login_token and cancel_login are hub login
+// (decision 0055), and go only to a runner advertising the "login" feature.
+// Each is repeated until the runner's logins answer it: start_login and
+// login_token until the login is reported, login_code while it is reported
+// waiting, cancel_login until it is reported over. A runner takes a repeat as
+// the same instruction.
+//
+// Code and Token are secrets. Neither side logs them, stores them past their
+// use or reports them back; a hub holds a token only until a sync from the
+// runner reports the login it was delivered for, and never shows it again.
 type Control struct {
-	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update" doc:"cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."`
+	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update,start_login,login_code,login_token,cancel_login" doc:"cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins. login_code: the code the owner got at that URL. login_token: store a token as the account's login. cancel_login: end a login. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name; the four login kinds only to one advertising login. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."`
 	RunID     string      `json:"run_id,omitempty" doc:"The run, for cancel, interrupt and steer."`
 	SessionID string      `json:"session_id,omitempty" doc:"The session, for close_session."`
 	Text      string      `json:"text,omitempty" doc:"What to tell the harness, for steer."`
+	LoginID   string      `json:"login_id,omitempty" doc:"The login, for start_login, login_code, login_token and cancel_login: chosen by the hub, unique on it, 1-128 letters, digits, dots, dashes or underscores."`
+	// Harness and Account name what to log in. The account must be one the
+	// owner listed on the machine: a hub never creates one.
+	Harness string `json:"harness,omitempty" doc:"The harness to log in, for start_login and login_token: claude, or codex once a runner supports it."`
+	Account string `json:"account,omitempty" doc:"The account label, for start_login and login_token: one the owner listed on the machine, since a hub never creates an account. Absent in start_login logs in the harness's own default login; login_token needs one."`
+	Code    string `json:"code,omitempty" doc:"For login_code: what the owner got after signing in at the login's url. A secret: never log it or show it again."`
+	Token   string `json:"token,omitempty" doc:"For login_token: a claude setup-token token. A secret that works for a year: never log it, never return it from any API, and hold it only until a sync from the runner reports this login."`
 }

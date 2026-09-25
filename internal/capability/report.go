@@ -30,7 +30,7 @@ import (
 // A hub must not use a feature the runner did not advertise, so "live_sessions"
 // is absent until it is built.
 func Features() []string {
-	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession, FeatureEffort}
+	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession, FeatureEffort, FeatureLogin}
 }
 
 // FeatureStartAt is a runner that holds a run until its start_at rather than
@@ -62,6 +62,13 @@ const FeatureCloseSession = "close_session"
 // would succeed saying nothing of it (decision 0049). Advertised because
 // every first-class adapter applies it — a test holds the two together.
 const FeatureEffort = "effort"
+
+// FeatureLogin is a runner that acts on the hub-login controls —
+// start_login, login_code, login_token and cancel_login — and reports each
+// login in its syncs' logins (decision 0055). Advertised whatever harnesses
+// are installed: a login this runner cannot do ends failed with the reason,
+// which a hub can show, where a control it ignored would say nothing.
+const FeatureLogin = "login"
 
 // Build probes the machine and assembles the document from it and the owner's
 // config.

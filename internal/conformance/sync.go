@@ -308,16 +308,51 @@ const (
 // go to every v1 runner, and update is reserved — a runner that does not
 // implement self-update ignores it (decision 0018), so a hub sending one has
 // broken no rule of HUB.md's.
-var gated = []v1.ControlKind{v1.ControlDrain, v1.ControlCloseSession, v1.ControlSteer, v1.ControlInterrupt}
+var gated = []v1.ControlKind{v1.ControlDrain, v1.ControlCloseSession, v1.ControlSteer, v1.ControlInterrupt,
+	v1.ControlStartLogin, v1.ControlLoginCode, v1.ControlLoginToken, v1.ControlCancelLogin}
 
 func checkControlsAreGated(_ context.Context, s *session) error {
 	for _, seen := range s.syncs {
 		for _, c := range seen.res.Controls {
 			if slices.Contains(gated, c.Kind) {
 				return brokenf("answering %s the hub sent a %q control, which goes only to a runner whose capability document advertises %q; this one advertises no protocol feature at all",
-					seen.call, c.Kind, c.Kind)
+					seen.call, c.Kind, gatedBy(c.Kind))
 			}
 		}
+	}
+	return nil
+}
+
+// gatedBy is the feature a gated control needs: its own name, but for the
+// four hub-login controls, which share the "login" feature (decision 0055).
+func gatedBy(k v1.ControlKind) string {
+	switch k {
+	case v1.ControlStartLogin, v1.ControlLoginCode, v1.ControlLoginToken, v1.ControlCancelLogin:
+		return "login"
+	}
+	return string(k)
+}
+
+// checkLoginsAccepted sends a sync reporting a hub login, as a runner
+// advertising login reports each until a sync carrying its end is answered —
+// here one the hub never started, the answer a runner gives a cancel_login
+// for an id it does not know. A hub may ignore it; refusing the sync would
+// renew no lease, for a field a hub that never starts a login must still take.
+func checkLoginsAccepted(ctx context.Context, s *session) error {
+	req := s.syncRequest(0)
+	raw, err := s.syncBodyWith(0, map[string]any{"logins": []v1.LoginReport{{
+		LoginID: "yad-conformance-login", State: v1.LoginCancelled,
+		Error: "cancelled before this runner had it", UpdatedAt: time.Now().UTC(),
+	}}})
+	if err != nil {
+		return err
+	}
+	_, a, err := s.syncWith(ctx, req, raw)
+	if err != nil {
+		return err
+	}
+	if !a.ok() {
+		return brokenf("a sync reporting a hub login the hub never started was refused; a runner reports each login until a sync carrying its end is answered, and a refused sync renews no lease: %s", a)
 	}
 	return nil
 }

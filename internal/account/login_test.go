@@ -432,3 +432,46 @@ func TestTheSuggestedCommandIsReadBackByARealShell(t *testing.T) {
 		}
 	}
 }
+
+// A token account asked two ways: as its runs run, where claude's check says
+// yes to the token whatever else the home holds; and as its own login, which
+// a login made beside the token is judged by (decision 0054). The login
+// itself is made without the token in its environment.
+func TestALoginBesideATokenIsJudgedWithoutIt(t *testing.T) {
+	bin := self(t, "claude")
+	t.Setenv("ACCOUNT_TEST_TOKEN_IS_LOGIN", "1")
+	ctx := context.Background()
+	home, err := Ensure(t.TempDir(), "claude", "tl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetToken(home, "sk-ant-oat01-stored"); err != nil {
+		t.Fatal(err)
+	}
+	if env := LoginEnv("claude", home); len(env) != 1 || strings.HasPrefix(env[0], tokenVar+"=") {
+		t.Errorf("the login's environment is %v, want the home and no token", env)
+	}
+	for _, tc := range []struct {
+		name       string
+		login      bool
+		asRun, own bool
+	}{
+		{"before any login", false, true, false},
+		{"after a login", true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.login {
+				var out strings.Builder
+				if err := Login(ctx, "claude", bin, home, strings.NewReader(""), &out, &out); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if in, err := LoggedIn(ctx, "claude", bin, home); err != nil || in != tc.asRun {
+				t.Errorf("as a run: in=%v err=%v, want %v", in, err, tc.asRun)
+			}
+			if in, err := OwnLogin(ctx, "claude", bin, home); err != nil || in != tc.own {
+				t.Errorf("its own login: in=%v err=%v, want %v", in, err, tc.own)
+			}
+		})
+	}
+}

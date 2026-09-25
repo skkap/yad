@@ -48,7 +48,7 @@ func TestAHubRefusesARunnerBelowItsMinVersion(t *testing.T) {
 	if !fatal(err) {
 		t.Error("the loop would retry a refusal no retry can change")
 	}
-	for _, want := range []string{"0.4.0", "0.3.9", "yad upgrade"} {
+	for _, want := range []string{"0.4.0", "0.3.9", "yad --profile '<runner profile>' upgrade"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%q is missing from %q", want, err)
 		}

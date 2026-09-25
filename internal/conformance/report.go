@@ -29,6 +29,10 @@ var unchecked = []struct {
 	sections: []section{hubControls, hubVersioning},
 	why:      "each needs a run or a control the protocol gives a runner no way to ask for. What is checked is the other half of the same rule: that a hub sends no control it should have gated.",
 }, {
+	rule:     "Hub logins: start_login and login_token repeated until the runner reports the login, login_code while it reports it waiting, cancel_login until it reports it over; a token held only until the runner reports its login and never shown again; a login ended on the hub's own word only while no answer has carried it; a sent login the runner has not reported an end of within thirty minutes ended failed and its token blanked, a later report from the runner still replacing that end; a login the runner reported and then leaves out, not yet over, ended failed.",
+	sections: []section{hubControls},
+	why:      "only a hub's own API starts a login, which is outside v1, and this runner advertises no login feature to be sent one. What is checked is that none is sent to it, and that its reports are taken.",
+}, {
 	rule:     "Sessions stay put: the first claim in a session binds it to that runner, its later runs are offered to that runner alone, one at a time, and session.new is true for the run that opens a session and false for every later one.",
 	sections: []section{hubSessions},
 	why:      "it needs two runs in one session, which only a hub's own way of queueing runs can arrange.",

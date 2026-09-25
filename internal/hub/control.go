@@ -91,7 +91,7 @@ func (h *Hub) control(ctx context.Context, runID string, kind v1.ControlKind, te
 		case run.State == "queued" || run.State == "offered":
 			return Fail(http.StatusConflict, v1.CodeConflict,
 				fmt.Sprintf("run %s has not started; there is no turn to %s", run.ID, kind),
-				notStartedAction(kind))
+				notStartedAction(kind, run.ID))
 		case kind == v1.ControlCancel && state == v1.RunCancelled:
 			// A retried cancel: the run is already what was asked.
 		case state.IsTerminal():
@@ -99,7 +99,7 @@ func (h *Hub) control(ctx context.Context, runID string, kind v1.ControlKind, te
 				fmt.Sprintf("run %s has already ended %s", run.ID, run.State),
 				"nothing to do: a finished run stays as it ended")
 		default:
-			if feature, alternative := controlFeature(kind); feature != "" && run.RunnerID.Valid {
+			if feature, alternative := controlFeature(kind, run.ID); feature != "" && run.RunnerID.Valid {
 				holder, err := q.GetRunner(ctx, run.RunnerID.String)
 				if err != nil {
 					return err
@@ -122,11 +122,11 @@ func (h *Hub) control(ctx context.Context, runID string, kind v1.ControlKind, te
 	return &runOutput{Body: view}, nil
 }
 
-func notStartedAction(kind v1.ControlKind) string {
+func notStartedAction(kind v1.ControlKind, runID string) string {
 	if kind == v1.ControlSteer {
 		return "put the text in the brief of a new run, or steer once this one is running"
 	}
-	return "cancel it instead: `yad hub cancel`, or POST /runs/{run}/cancel"
+	return "cancel it instead: `" + serviceCommand("cancel", runID) + "`, or POST /runs/{run}/cancel"
 }
 
 // queue adds a control for the runner holding the run. A cancel or an
@@ -166,7 +166,7 @@ func deliver(ctx context.Context, q *db.Queries, runID string, doc v1.Capabiliti
 	var lastSteer int64
 	for _, r := range rows {
 		kind := v1.ControlKind(r.Kind)
-		if feature, _ := controlFeature(kind); feature != "" && !(described && advertises(doc, feature)) {
+		if feature, _ := controlFeature(kind, runID); feature != "" && !(described && advertises(doc, feature)) {
 			continue
 		}
 		out = append(out, v1.Control{Kind: kind, RunID: runID, Text: r.Text})

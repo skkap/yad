@@ -158,6 +158,17 @@ _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
 [0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md),
 [0054](docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md)
 
+**Hub login** — an account's login started from a hub: by **link**, where the
+runner runs the harness's own login and the hub shows its URL and takes the
+code the owner got back, or by **token**, where the owner pastes a
+`claude setup-token` token into the hub and the runner stores it as a token
+account. Either way the credential lives on the machine and yad's own login
+check decides whether it took. Only for an account the owner listed, or a
+harness's own default login.
+_Avoid_: remote login (it says nothing about who drives it), OAuth (one of the
+ways, not the thing)
+_See_: [0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)
+
 **Usage limit** — a subscription window an account has exhausted: Claude's
 five-hour and weekly limits, Codex's primary and secondary windows. Has a reset
 time.

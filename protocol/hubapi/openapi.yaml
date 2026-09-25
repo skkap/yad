@@ -259,6 +259,102 @@ components:
         - spool_depth
         - outbox_depth
       type: object
+    Login:
+      additionalProperties: true
+      properties:
+        account:
+          description: The account label. Absent for the harness's own default login.
+          type: string
+        cancel_requested_at:
+          description: When a cancel was asked for; present until the login ends.
+          format: date-time
+          type: string
+        code_sent:
+          description: A code was sent and the runner has not yet reported taking it.
+          type: boolean
+        created_at:
+          description: When the login was started.
+          format: date-time
+          type: string
+        error:
+          description: Why the login did not take, with what to do, in the runner's words — or the hub's, when it never reached the runner or the runner stopped reporting it.
+          type: string
+        harness:
+          description: The harness being logged in.
+          type: string
+        login_id:
+          description: The login id.
+          type: string
+        method:
+          description: "link: the runner runs the harness's own login and reports its url; send the code with POST .../code. token: the token sent at start is stored as the account's login."
+          enum:
+            - link
+            - token
+          type: string
+        runner_id:
+          description: The runner the login is on.
+          type: string
+        state:
+          description: "requested: the runner hears of it at its next sync. Then the runner's own: starting, waiting (url is ready; send the code), checking, and the four ends — succeeded, failed, expired, cancelled."
+          enum:
+            - requested
+            - starting
+            - waiting
+            - checking
+            - succeeded
+            - failed
+            - expired
+            - cancelled
+          type: string
+        updated_at:
+          description: When its state last changed.
+          format: date-time
+          type: string
+        url:
+          description: "Where to sign in, while waiting: the harness's own authorize link, as the runner reported it."
+          type: string
+        user_code:
+          description: For a device-code login, the code to type at url.
+          type: string
+      required:
+        - login_id
+        - runner_id
+        - harness
+        - method
+        - state
+        - created_at
+        - updated_at
+      type: object
+    LoginCodeRequest:
+      additionalProperties: true
+      properties:
+        code:
+          description: What the provider showed after signing in at the login's url. Delivered at the runner's next sync, and never returned by this API.
+          maxLength: 4096
+          minLength: 1
+          type: string
+      required:
+        - code
+      type: object
+    LoginRequest:
+      additionalProperties: true
+      properties:
+        account:
+          description: "The account label, one the runner's owner listed on that machine: a hub never adds an account. Absent logs in the harness's own default login, by link only."
+          type: string
+        harness:
+          description: "The harness to log in: claude. A runner answers codex, for now, with a failed login naming the command that does it at the machine."
+          minLength: 1
+          type: string
+        login_id:
+          description: Chosen by the caller, 1-128 letters, digits, dots, dashes or underscores; generated when absent. An id the hub already has is refused with 409.
+          type: string
+        token:
+          description: "A claude setup-token token, to log the account in by token instead of by link. A secret: sent to the runner once, blanked in the hub's store as soon as the runner reports the login, and never returned by this API."
+          type: string
+      required:
+        - harness
+      type: object
     Metrics:
       additionalProperties: true
       properties:
@@ -799,6 +895,246 @@ paths:
       security:
         - admin: []
       summary: Drain a runner
+  /runners/{runner}/logins:
+    post:
+      description: "Without a token, the runner runs the harness's own login and reports the link to sign in at: poll the login until it is waiting, show url, and send the code the provider gives with POST .../code. With a token, the runner stores it as the account's login; the token is blanked here as soon as the runner reports the login. Either way the login ends succeeded only when the harness's own check on the machine says so. The account must be one the runner's owner listed; without one, the harness's own default login is logged in, by link only. A newer login for the same account replaces an older one. A runner that does not advertise the login feature is 409."
+      operationId: startLogin
+      parameters:
+        - description: The runner id.
+          in: path
+          name: runner
+          required: true
+          schema:
+            description: The runner id.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Login"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Log an account in on a runner, by link or by token
+  /runners/{runner}/logins/{login}:
+    get:
+      operationId: getLogin
+      parameters:
+        - description: The runner id.
+          in: path
+          name: runner
+          required: true
+          schema:
+            description: The runner id.
+            type: string
+        - description: The login id.
+          in: path
+          name: login
+          required: true
+          schema:
+            description: The login id.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Login"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Read a login's state, and its link while it waits for a code
+  /runners/{runner}/logins/{login}/cancel:
+    post:
+      description: The runner ends it at its next sync, stopping the harness's login, and reports it cancelled; cancel_requested_at is set until then. A login that has ended is answered as it is.
+      operationId: cancelLogin
+      parameters:
+        - description: The runner id.
+          in: path
+          name: runner
+          required: true
+          schema:
+            description: The runner id.
+            type: string
+        - description: The login id.
+          in: path
+          name: login
+          required: true
+          schema:
+            description: The login id.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Login"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Cancel a login
+  /runners/{runner}/logins/{login}/code:
+    post:
+      description: "Delivered at the runner's next sync, which writes it to the harness's login; the login then moves to checking and ends by the harness's own check. Only a login that is waiting takes a code: before its link is out, or once it has ended, it is 409. A second code before the runner has taken the first replaces it."
+      operationId: sendLoginCode
+      parameters:
+        - description: The runner id.
+          in: path
+          name: runner
+          required: true
+          schema:
+            description: The runner id.
+            type: string
+        - description: The login id.
+          in: path
+          name: login
+          required: true
+          schema:
+            description: The login id.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginCodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Login"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+      security:
+        - admin: []
+      summary: Send the code the owner got after signing in
   /runs:
     post:
       description: Answers with the queued run. Submitting a run_id the hub already has gives the same answer, with the run as it is now, when the content is the same — a safe retry — and 409 when it differs.

@@ -84,7 +84,7 @@ func newError(service bool, status int, msg string, errs ...error) *ErrorRespons
 	case http.StatusUnauthorized:
 		code, next = v1.CodeUnauthorized, "register again with a fresh registration token"
 		if service {
-			next = newAdminTokenAction
+			next = adminTokenAction(nil)
 		}
 	case http.StatusNotFound:
 		code, next = v1.CodeNotFound, "check the connection URL"

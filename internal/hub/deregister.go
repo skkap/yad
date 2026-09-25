@@ -70,6 +70,11 @@ func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, 
 		if err := abandon(ctx, q, runner.ID, gone, h.now()); err != nil {
 			return err
 		}
+		if _, err := q.EndRunnerLogins(ctx, db.EndRunnerLoginsParams{
+			Error: fmt.Sprintf("runner %s deregistered before the login ended", runner.ID), Now: store.Ms(h.now()), RunnerID: runner.ID,
+		}); err != nil {
+			return err
+		}
 		return q.RetireRunnerCredential(ctx, db.RetireRunnerCredentialParams{CredentialHash: hashSecret(unheld), ID: runner.ID})
 	})
 	if err != nil {

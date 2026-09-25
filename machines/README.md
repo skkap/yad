@@ -163,6 +163,21 @@ machine's access touches no other. Scripts can skip the prompts:
 `yad-machine shell NAME yad account add claude main --token -` with the token
 on stdin.
 
+**From the hub**, once the machine's runner is connected to one that supports
+it ([0055](../docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)),
+no shell on the machine is needed. A hub shows **Log in** beside an account
+its runner reports as `needs_login`: follow the link and paste the code back,
+or paste a `claude setup-token` token. The runner runs Claude's own login in
+the account's home, or stores the token there, and the account is back in
+service once Claude's own check says so. A hub logs in only accounts listed in
+`config.toml`, never adds one, and Codex still logs in here. With `yad hub` as
+the hub:
+
+```bash
+yad hub login start <runner> claude main    # prints the link, then reads the code
+yad hub login token <runner> claude main < token.txt
+```
+
 ## Rebuilding
 
 A machine is disposable: `destroy`, then `up`, then the logins again. What is

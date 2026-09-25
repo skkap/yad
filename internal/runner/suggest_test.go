@@ -108,3 +108,21 @@ func TestConnectAgainCommandRunsAsPrinted(t *testing.T) {
 		})
 	}
 }
+
+// `yad connect` with no token names the two commands that fix it: the hub's,
+// with what only its operator knows as placeholders, and this one again as it
+// runs here, with the URL and name it was given.
+func TestConnectWithNoTokenNamesCommandsThatRun(t *testing.T) {
+	p := config.Paths{Profile: "work", Config: t.TempDir(), Data: t.TempDir()}
+	const url = "https://hub.example/it's $HOME/v1"
+	_, _, _, err := Connect(context.Background(), p, url, "", "home")
+	if err == nil {
+		t.Fatal("connected with no token")
+	}
+	cmds := shellwordtest.Commands(err.Error(), "yad ")
+	if len(cmds) != 2 {
+		t.Fatalf("want two commands in %q", err)
+	}
+	shellwordtest.Check(t, cmds[0], "yad", "--profile", "<hub profile>", "hub", "token", "create", "--db", "<the database yad hub serve was given>")
+	shellwordtest.Check(t, cmds[1], "yad", "--profile", "work", "connect", url, "--name", "home", "--token", "-")
+}

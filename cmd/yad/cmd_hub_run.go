@@ -70,17 +70,7 @@ func (f hubFlags) client() (*hubapiclient.Client, error) {
 // the query is where a signed URL keeps its signature, and a redacted copy
 // pasted back would ask a different URL.
 func (f hubFlags) watchCommand(runID string) string {
-	args := []string{"hub", "watch"}
-	if u := *f.url; u != f.defURL {
-		if config.RedactURL(u) != u {
-			u = "<the same --hub URL>"
-		}
-		args = append(args, "--hub", u)
-	}
-	if *f.tokenFile != f.defTokenFile {
-		args = append(args, "--token-file", *f.tokenFile)
-	}
-	return f.paths.Command(append(args, runID)...)
+	return f.command([]string{"hub", "watch"}, runID)
 }
 
 const submitUsage = "usage: yad hub submit --harness h --model m [--effort level] [--context text | --context-file f] [--session id | --new-session id] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
