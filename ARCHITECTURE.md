@@ -687,7 +687,28 @@ for `codex`); the suite never runs a real harness.
   `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. `yad account add claude work` runs the
   harness's own login with that home, and adds `work` to `config.toml` only once
   the harness's own login check says the home is logged in; otherwise nothing
-  is added and the home is kept for the next try.
+  is added and the home is kept for the next try. `--device` passes Codex's
+  `--device-auth`, for a machine with no browser.
+- **A token account** ([0054](docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md)):
+  `yad account add claude tl --token -` reads a `claude setup-token` token
+  from stdin — never argv — and needs no terminal. It is kept in the home as
+  `yad-oauth-token` (`0600`; one others can read is not used) and reaches the
+  account's runs and its login check as `CLAUDE_CODE_OAUTH_TOKEN`, after the
+  home variable, so a printed command never carries it. Claude's login check
+  answers yes for any token, so a token is found wanting by the run it fails:
+  a result with `api_error_status` 401 (`adapter.Outcome.AuthRejected`) parks
+  the account in `needs_login` without asking — if the refused token is still
+  the stored one (`account.TurnEnv` hashes the turn's). The login probe skips
+  a token account, whose check would say yes to the refused token; every next
+  action for one is `--token -`, and a plain `yad account add` on it removes
+  the token first. The token's year is counted
+  from when it was stored; the month before, the harness report carries a
+  warning and `yad account list` says so.
+- **Every home shares the machine's config** (0054): each time a home is
+  prepared, `CLAUDE.md`, `settings.json`, `skills/`, `commands/` and `agents/`
+  (Claude) or `AGENTS.md` and `prompts/` (Codex) are linked from the
+  harness's default home when the account has none of its own. Never a
+  credential, never a file the harness keeps state in.
 - **Adding and removing reach a running daemon live**
   ([0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md)).
   The CLI never writes `state.db`: both commands change `config.toml` and send
@@ -931,10 +952,13 @@ yad sessions [--json]              the sessions held: workdir, runs, last use �
 yad sessions close [--connection c] <id>
                                    close a session and reclaim its workdir, via the
                                    daemon; one with a run held closes when it ends
-yad account add <harness> <label>  run the harness's own login in that account's
-                                   home, with the owner there; yad keeps no token.
-                                   Added only once logged in; a running daemon
-                                   takes it up at once, via the socket (0043)
+yad account add <harness> <label> [--token - | --device]
+                                   run the harness's own login in that account's
+                                   home, with the owner there (--device: Codex's
+                                   device code); or, for Claude, store a
+                                   `claude setup-token` token read from stdin
+                                   (0054). Added only once logged in; a running
+                                   daemon takes it up at once, via the socket (0043)
 yad account list [--json]          the accounts held, and each one's state
 yad account remove <harness> <label> [--yes]
                                    delete that account's home and its login; the

@@ -102,12 +102,15 @@ func CanLogIn(harness string) bool {
 // stdin, stdout and stderr are the owner's: the login draws its own prompts and
 // opens its own browser, and YAD captures none of it, because what it prints on
 // the way to a login is the one thing that must not end up in a YAD log.
-func Login(ctx context.Context, harness, binary, home string, in io.Reader, out, errw io.Writer) error {
+//
+// extra goes after the harness's own login arguments: Codex's --device-auth,
+// for a machine with no browser.
+func Login(ctx context.Context, harness, binary, home string, in io.Reader, out, errw io.Writer, extra ...string) error {
 	args, ok := loginArgs[harness]
 	if !ok {
 		return fmt.Errorf("yad does not know how to log %s in — log in with %s's own command inside %s, then run `yad account list` to see it", harness, harness, home)
 	}
-	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd := exec.CommandContext(ctx, binary, append(slices.Clone(args), extra...)...)
 	// Scrubbed as a run's child is (supervise.Scrub), then the home appended
 	// last — os/exec keeps the last of a repeated name, so an owner whose own
 	// shell exports CLAUDE_CONFIG_DIR still logs in to the account's home and

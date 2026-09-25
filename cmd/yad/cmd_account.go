@@ -19,7 +19,7 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
-const accountUsage = "usage: yad account add <harness> <label> | list [--json] | remove <harness> <label> [--yes]"
+const accountUsage = "usage: yad account add <harness> <label> [--token - | --device] | list [--json] | remove <harness> <label> [--yes]"
 
 // Neither command here opens the state database for writing (decision 0043).
 // It is the daemon's: they change config.toml, and tell a running daemon over
@@ -53,9 +53,18 @@ func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error
 // login walked away from, a check that could not answer — leaves config.toml
 // as it was and keeps the home, so running the command again picks up where
 // this one stopped; an account that cannot take runs is never added.
+//
+// --token - is the other way in, for Claude on a machine with no browser
+// (decision 0054): the token `claude setup-token` printed on any machine, read
+// from stdin and never from argv, stored in the account's home and handed to
+// its runs. It needs no terminal, so a provisioning script can do it.
+// --device is Codex's own login by device code: a link and a code to enter on
+// any other machine.
 func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account add", flag.ContinueOnError)
-	pos, err := positional(fs, args, 2, "usage: yad account add <harness> <label>")
+	tokenFlag := fs.String("token", "", "`-`: read a `claude setup-token` token from stdin and run the account on it, with no login here")
+	device := fs.Bool("device", false, "log Codex in with a device code, entered on any other machine")
+	pos, err := positional(fs, args, 2, "usage: yad account add <harness> <label> [--token - | --device]")
 	if err != nil {
 		return err
 	}
@@ -66,11 +75,43 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	if err := config.ValidName(label); err != nil {
 		return fmt.Errorf("account label: %w", err)
 	}
+	useToken := *tokenFlag != ""
+	switch {
+	case useToken && *tokenFlag != "-":
+		// argv is readable by every account on the machine, for as long as
+		// the command runs.
+		return fmt.Errorf("a token is read from stdin, never from the command line — pipe it in: `%s`", g.paths.Command("account", "add", id, label, "--token", "-"))
+	case useToken && !account.CanUseToken(id):
+		return fmt.Errorf("%s does not run on a stored token — `%s` logs it in with a code entered on any other machine", id, g.paths.Command("account", "add", id, label, "--device"))
+	case *device && id != "codex":
+		return fmt.Errorf("--device is Codex's login; on a machine with no browser, run `claude setup-token` on one that has one and pipe what it prints into `%s`", g.paths.Command("account", "add", id, label, "--token", "-"))
+	case useToken && *device:
+		return errors.New("--token and --device are two ways in; choose one")
+	}
 	again := g.paths.Command("account", "add", id, label)
+	if useToken {
+		again = g.paths.Command("account", "add", id, label, "--token", "-")
+	} else if *device {
+		again = g.paths.Command("account", "add", id, label, "--device")
+	}
 	// A login is a person at a terminal: it prints a code, opens a browser and
-	// waits. Run from a script it would hang or fail silently.
-	if !interactive() {
-		return fmt.Errorf("`%s` runs the harness's own login and needs you at the terminal — run it from a shell on this machine (finishing a login from elsewhere is DEV-57, backlog)", again)
+	// waits. Run from a script it would hang or fail silently. A token needs
+	// no one.
+	if !useToken && !interactive() {
+		return fmt.Errorf("`%s` runs the harness's own login and needs you at the terminal — run it from a shell on this machine, or for Claude pipe in a `claude setup-token` token with `%s`", again, g.paths.Command("account", "add", id, label, "--token", "-"))
+	}
+	var tok string
+	if useToken {
+		// Read before anything is made, so a command with nothing piped in
+		// leaves no home behind.
+		b, err := io.ReadAll(io.LimitReader(stdin, 64<<10))
+		if err != nil {
+			return fmt.Errorf("read the token from stdin: %w", err)
+		}
+		tok = string(b)
+		if err := account.CheckToken(tok); err != nil {
+			return fmt.Errorf("%s account %q was not added: %w", id, label, err)
+		}
 	}
 	bin, ok := harness.Locate(id)
 	if !ok {
@@ -98,10 +139,45 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "%s account %q: running %s's own login in %s\n", id, label, id, home)
-	fmt.Fprintln(w, "yad stores no token of its own; whatever the login writes stays in that directory.")
-
-	loginErr := account.Login(ctx, id, bin, home, stdin, w, os.Stderr)
+	var loginErr error
+	// tokenKept says a stored token set aside for this login goes back: true
+	// until the login is confirmed, so any way out before then restores it.
+	tokenKept := true
+	if useToken {
+		if err := account.SetToken(home, tok); err != nil {
+			return fmt.Errorf("%s account %q was not added: %w", id, label, err)
+		}
+		fmt.Fprintf(w, "%s account %q: the token is stored in %s (0600); yad hands it to this account's runs and to nothing else\n", id, label, home)
+	} else {
+		// A token left in place would outrank the login about to be made, in
+		// every run, and be refused in every run (decision 0054). It is set
+		// aside rather than deleted: a login walked away from gives it back.
+		hadToken := account.TokenFileExists(home)
+		restore, drop, err := account.SetTokenAside(home)
+		if err != nil {
+			return fmt.Errorf("%s account %q runs on a stored token, which could not be moved aside to log it in instead: %w", id, label, err)
+		}
+		defer func() {
+			if tokenKept {
+				if err := restore(); err != nil {
+					fmt.Fprintf(os.Stderr, "the account's stored token could not be put back (%v) — store it again with `%s`\n", err, g.paths.Command("account", "add", id, label, "--token", "-"))
+				}
+				return
+			}
+			if hadToken {
+				if err := drop(); err == nil {
+					fmt.Fprintf(w, "%s account %q: its stored token is removed; it logs in %s's own way from now on\n", id, label, id)
+				}
+			}
+		}()
+		fmt.Fprintf(w, "%s account %q: running %s's own login in %s\n", id, label, id, home)
+		fmt.Fprintln(w, "yad keeps no token for this account; whatever the login writes stays in that directory.")
+		var extra []string
+		if *device {
+			extra = []string{"--device-auth"}
+		}
+		loginErr = account.Login(ctx, id, bin, home, stdin, w, os.Stderr, extra...)
+	}
 	in, checkErr := account.LoggedIn(ctx, id, bin, home)
 	if checkErr != nil || !in {
 		// Not added, and said as a failure: a non-zero exit is how a script
@@ -112,6 +188,7 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 		}
 		return errors.Join(loginErr, fmt.Errorf("%s account %q was not added: %s. config.toml is unchanged, and %s is kept for the next try — run `%s` again when you can finish the login", id, label, why, home, again))
 	}
+	tokenKept = false
 
 	// Read again, not the copy from before the login: that took minutes, and
 	// a `yad connect` in another terminal meanwhile must not be written over.
@@ -221,7 +298,7 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "HARNESS\tLABEL\tSTATE\tWINDOWS\tSINCE\tHOME")
+	fmt.Fprintln(tw, "HARNESS\tLABEL\tSTATE\tLOGIN\tWINDOWS\tSINCE\tHOME")
 	for _, a := range accounts {
 		since := "—"
 		if !a.UpdatedAt.IsZero() {
@@ -231,17 +308,40 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 		if a.State == v1.AccountLimited && a.LimitedUntil != nil {
 			state += " until " + a.LimitedUntil.Local().Format(time.RFC3339)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Harness, a.Label, state, windowsColumn(a.Windows), since, a.Home)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Harness, a.Label, state, loginColumn(a), windowsColumn(a.Windows), since, a.Home)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	now := time.Now()
 	for _, a := range accounts {
-		if a.State == v1.AccountNeedsLogin {
+		_, token := account.TokenStored(a.Home)
+		problem := account.TokenProblem(a.Home)
+		switch {
+		case problem != "":
+			fmt.Fprintf(w, "\n%s %q: %s — `%s`\n", a.Harness, a.Label, problem, g.paths.Command("account", "add", a.Harness, a.Label, "--token", "-"))
+		case a.State == v1.AccountNeedsLogin && token:
+			fmt.Fprintf(w, "\n%s %q needs login: its token was refused — make a new one with `claude setup-token` and pipe it into `%s`\n", a.Harness, a.Label, g.paths.Command("account", "add", a.Harness, a.Label, "--token", "-"))
+		case a.State == v1.AccountNeedsLogin:
 			fmt.Fprintf(w, "\n%s %q needs login: `%s`\n", a.Harness, a.Label, g.paths.Command("account", "add", a.Harness, a.Label))
+		case account.TokenWarning(a.Label, a.Home, now) != "":
+			fmt.Fprintf(w, "\n%s %q: %s\n", a.Harness, a.Label, account.TokenWarning(a.Label, a.Home, now))
 		}
 	}
 	return nil
+}
+
+// loginColumn is how the account signs in: the harness's own login, or a
+// token yad stores, with the date it was stored — the one thing that says
+// when it runs out.
+func loginColumn(a account.Account) string {
+	if at, ok := account.TokenStored(a.Home); ok {
+		return "token " + at.Local().Format("2006-01-02")
+	}
+	if account.TokenProblem(a.Home) != "" {
+		return "token ignored"
+	}
+	return "login"
 }
 
 // windowsColumn is each usage window as the owner reads it: the harness's own

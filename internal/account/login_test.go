@@ -69,14 +69,20 @@ func fakeHarness(id string, args []string) int {
 		}
 		// Claude answers in JSON, with the account's e-mail and plan beside
 		// the one field YAD reads.
+		in := loggedIn()
+		// As claude does: any CLAUDE_CODE_OAUTH_TOKEN is a login to its
+		// check, valid or not.
+		if os.Getenv("ACCOUNT_TEST_TOKEN_IS_LOGIN") != "" && os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+			in = true
+		}
 		b, _ := json.Marshal(map[string]any{
-			"loggedIn": loggedIn(), "email": "owner@example.com", "subscriptionType": "max",
+			"loggedIn": in, "email": "owner@example.com", "subscriptionType": "max",
 			"configDirectory": home,
 		})
 		fmt.Println(string(b))
 		// As claude 2.1.281 does: the answer is in the JSON, and a "no"
 		// exits 1 as well.
-		if !loggedIn() {
+		if !in {
 			return 1
 		}
 		return 0

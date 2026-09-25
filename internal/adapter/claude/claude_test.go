@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -551,6 +552,35 @@ func TestUsageLimit(t *testing.T) {
 			}
 			if c.event && !hasStatus(evs, "usage limit reached") {
 				t.Error("no status event for the limit")
+			}
+		})
+	}
+}
+
+// A credential the provider refused — measured on claude 2.1.281 with a
+// revoked setup-token as api_error_status 401 — is said to the runner, which
+// parks the account on it; the class a hub sees stays harness_error. Any
+// other API failure is not a refused credential (decision 0054).
+func TestARefusedCredentialIsSaid(t *testing.T) {
+	for _, c := range []struct {
+		status   any
+		rejected bool
+	}{
+		{401, true},
+		{500, false},
+		{nil, false},
+	} {
+		t.Run(fmt.Sprint(c.status), func(t *testing.T) {
+			path := derive(t, "error", func(lines []string) []string {
+				return editResult(t, lines, map[string]any{"api_error_status": c.status, "result": "Failed to authenticate. API Error: 401 OAuth access token is invalid.", "terminal_reason": "api_error"})
+			})
+			h := &harness{fixture: path}
+			_, out, _ := drive(t, context.Background(), h.spec(t), nil)
+			if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassHarness {
+				t.Fatalf("outcome %+v", out)
+			}
+			if out.AuthRejected != c.rejected {
+				t.Errorf("AuthRejected = %v, want %v", out.AuthRejected, c.rejected)
 			}
 		})
 	}

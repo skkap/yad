@@ -185,6 +185,13 @@ func Harnesses(found []harness.Detected, cfg config.Config, accounts []account.A
 		}
 		if reps := account.Reports(accounts, d.ID); reps != nil {
 			r.Accounts = reps
+			// A setup-token lasts a year and nothing else says when it runs
+			// out, so the month before is said here (decision 0054).
+			for _, a := range account.For(accounts, d.ID) {
+				if w := account.TokenWarning(a.Label, a.Home, time.Now()); w != "" {
+					r.Warnings = append(r.Warnings, w)
+				}
+			}
 		} else {
 			for _, a := range cfg.Harness[d.ID].Accounts {
 				r.Accounts = append(r.Accounts, v1.AccountReport{Label: a, State: v1.AccountFree})

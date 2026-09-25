@@ -87,12 +87,22 @@ func (e *noFreeAccountError) Error() string {
 	}
 	msg := "no free " + e.harness + " account on this runner"
 	if len(needsLogin) > 0 {
-		msg += " — " + list(needsLogin) + " need login: run `" + e.paths.RemoteCommand("account", "add", e.harness, needsLogin[0]) + "` at the machine"
+		msg += " — " + list(needsLogin) + " need login: run `" + e.paths.RemoteCommand(account.AddArgs(e.harness, needsLogin[0], homeOf(e.accounts, needsLogin[0]))...) + "` at the machine"
 	}
 	if len(limited) > 0 {
 		msg += " — " + list(limited)
 	}
 	return msg
+}
+
+// homeOf is the home of the account labelled label among accounts, or "".
+func homeOf(accounts []account.Account, label string) string {
+	for _, a := range accounts {
+		if a.Label == label {
+			return a.Home
+		}
+	}
+	return ""
 }
 
 func list(s []string) string {
@@ -124,20 +134,37 @@ func list(s []string) string {
 // check costs no token and reaches no model, it is the same answer
 // `yad account add` trusts, and it stays right across harness versions that
 // change their wording.
-func (e *Exec) checkLogin(ctx context.Context, a account.Account, binary string, res v1.Result, log *slog.Logger) {
+//
+// One exception needs no question: a harness that said, in its own structure,
+// that the provider refused the credential (adapter.Outcome.AuthRejected). A
+// token account's login check answers "logged in" for any token at all, so
+// for it that refusal is the only way a revoked or expired token is ever
+// found (decision 0054). The refusal is held against the token the turn was
+// handed, tokenID: an owner who stores a new token and then revokes the old
+// one has turns still running on the old one, and their refusals must not
+// park an account whose stored token now works.
+func (e *Exec) checkLogin(ctx context.Context, a account.Account, binary string, res v1.Result, rejected bool, tokenID string, log *slog.Logger) {
 	if res.Error == nil || !maybeAuth(res.Error.Class) || !account.CanLogIn(a.Harness) {
 		return
 	}
-	// No deadline here: account.LoggedIn bounds its own subprocess, and more
-	// tightly than this ever did. A second, looser one around it could never
-	// fire, and the comment that justified it reasoned about a case it had
-	// made impossible. The state write below must not be under a deadline
-	// anyway — a check that answered just before one would leave the account
-	// unparked and the next run would ask all over again.
-	in, err := account.LoggedIn(ctx, a.Harness, binary, a.Home)
-	if err != nil {
-		log.Warn("could not check whether the account is still logged in", "err", err)
+	if rejected && account.TokenID(a.Home) != tokenID {
+		log.Info("the provider refused a token the account has since replaced; the account keeps its state")
 		return
+	}
+	in := false
+	if !rejected {
+		// No deadline here: account.LoggedIn bounds its own subprocess, and
+		// more tightly than this ever did. A second, looser one around it
+		// could never fire, and the comment that justified it reasoned about
+		// a case it had made impossible. The state write below must not be
+		// under a deadline anyway — a check that answered just before one
+		// would leave the account unparked and the next run would ask all
+		// over again.
+		var err error
+		if in, err = account.LoggedIn(ctx, a.Harness, binary, a.Home); err != nil {
+			log.Warn("could not check whether the account is still logged in", "err", err)
+			return
+		}
 	}
 	state := v1.AccountFree
 	if !in {
@@ -152,7 +179,7 @@ func (e *Exec) checkLogin(ctx context.Context, a account.Account, binary string,
 	}
 	if state == v1.AccountNeedsLogin {
 		log.Warn("the account has no working login; it is skipped until the owner logs it in again",
-			"next_action", e.Paths.Command("account", "add", a.Harness, a.Label))
+			"next_action", e.Paths.Command(account.AddArgs(a.Harness, a.Label, a.Home)...))
 		return
 	}
 	log.Info("the account is logged in again")

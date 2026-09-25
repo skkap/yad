@@ -51,6 +51,11 @@ func fakeClaudeAuth(cmd string) {
 			_, err := os.Stat(cred)
 			in = err == nil
 		}
+		// As claude does: any CLAUDE_CODE_OAUTH_TOKEN is a login to its
+		// check, valid or not.
+		if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+			in = true
+		}
 		b, _ := json.Marshal(map[string]any{"loggedIn": in})
 		os.Stdout.Write(append(b, '\n'))
 		// As claude 2.1.281 does: a "no" exits 1 as well.
@@ -351,4 +356,129 @@ func testE2EAccountsChange(t *testing.T, h *e2eHarness) {
 		rows, err := s.ListAllAccounts(ctx)
 		return err == nil && len(rows) == 0
 	})
+}
+
+// A Claude account can be added with a `claude setup-token` token piped in:
+// no terminal, no login in the account's home — a provisioning script can do
+// it — and the token lives in the home, 0600, and reaches no output
+// (decision 0054).
+func TestAccountAddTakesATokenFromStdin(t *testing.T) {
+	p := accountHarness(t, claudeE2E)
+	interactive = func() bool { return false }
+	const tok = "sk-ant-oat01-not-a-real-token"
+	old := stdin
+	stdin = strings.NewReader(tok + "\n")
+	code, out, errs := yadIn(t, "account", "add", "claude", "tl", "--token", "-")
+	stdin = old
+	if code != 0 {
+		t.Fatalf("exit %d: %s\n%s", code, errs, out)
+	}
+	if strings.Contains(out+errs, tok) {
+		t.Errorf("the token was printed:\n%s%s", out, errs)
+	}
+	cfg, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Harness["claude"].Accounts; !slices.Equal(got, []string{"tl"}) {
+		t.Errorf("accounts = %v, want [tl]", got)
+	}
+	home := account.HomeDir(p.Data, "claude", "tl")
+	if got := account.Env("claude", home); len(got) != 2 || got[1] != "CLAUDE_CODE_OAUTH_TOKEN="+tok {
+		t.Errorf("the account's runs would get %q", got)
+	}
+	noStateDB(t, p)
+
+	code, out, _ = yadIn(t, "account", "list")
+	if code != 0 || !strings.Contains(out, "token ") || strings.Contains(out, tok) {
+		t.Errorf("list does not show a token account, or shows the token:\n%s", out)
+	}
+}
+
+// The ways a token must not arrive, and the harnesses it does not fit.
+func TestAccountAddRefusesATokenItCannotUse(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"account", "add", "claude", "tl", "--token", "sk-ant-oat01-x"}, "never from the command line"},
+		{[]string{"account", "add", "codex", "tl", "--token", "-"}, "--device"},
+		{[]string{"account", "add", "claude", "tl", "--device"}, "claude setup-token"},
+	} {
+		p := accountEnv(t)
+		code, out, errs := yadIn(t, c.args...)
+		if code == 0 || !strings.Contains(errs, c.want) {
+			t.Errorf("%q: exit %d, stderr %q, want a refusal naming %q", c.args, code, errs, c.want)
+		}
+		// The argv token must not be repeated back: the refusal is about
+		// where the token came from, and printing it would spread it further.
+		if strings.Contains(out+errs, "sk-ant-oat01-x") {
+			t.Errorf("%q echoed the token:\n%s%s", c.args, out, errs)
+		}
+		if _, err := os.Stat(account.HomeDir(p.Data, c.args[2], "tl")); err == nil {
+			t.Errorf("%q made the account's home before refusing", c.args)
+		}
+	}
+}
+
+// A token that is not one word is refused before the account's home is made,
+// so a bad paste leaves nothing behind.
+func TestAccountAddRefusesABadTokenBeforeMakingItsHome(t *testing.T) {
+	for _, in := range []string{"", "two words\n"} {
+		p := accountHarness(t, claudeE2E)
+		interactive = func() bool { return false }
+		old := stdin
+		stdin = strings.NewReader(in)
+		code, _, errs := yadIn(t, "account", "add", "claude", "tl", "--token", "-")
+		stdin = old
+		if code == 0 {
+			t.Errorf("%q: stored", in)
+		}
+		if _, err := os.Stat(account.HomeDir(p.Data, "claude", "tl")); err == nil {
+			t.Errorf("%q: the account's home was made before the token was refused (%s)", in, errs)
+		}
+	}
+}
+
+// Logging a token account in the harness's own way removes its token: left
+// in place it would outrank the new login in every run (decision 0054).
+func TestAPlainLoginReplacesAStoredToken(t *testing.T) {
+	p := accountHarness(t, claudeE2E)
+	home, err := account.Ensure(p.Data, "claude", "tl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetToken(home, "sk-ant-oat01-refused"); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := yadIn(t, "account", "add", "claude", "tl")
+	if code != 0 {
+		t.Fatalf("exit %d: %s\n%s", code, errs, out)
+	}
+	if account.TokenFileExists(home) {
+		t.Error("the stored token survived a plain login")
+	}
+	if !strings.Contains(out, "its stored token is removed") {
+		t.Errorf("the owner was not told the token went:\n%s", out)
+	}
+}
+
+// A plain login walked away from gives a token account its token back: the
+// token is set aside for the login, not deleted, until the login has taken.
+func TestAnAbandonedPlainLoginKeepsTheStoredToken(t *testing.T) {
+	p := accountHarness(t, claudeE2E)
+	t.Setenv(fakeClaudeLogin, "fails")
+	home, err := account.Ensure(p.Data, "claude", "tl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := account.SetToken(home, "sk-ant-oat01-kept"); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errs := yadIn(t, "account", "add", "claude", "tl"); code == 0 {
+		t.Fatalf("an abandoned login succeeded:\n%s%s", out, errs)
+	}
+	if !account.HasToken(home) {
+		t.Error("the stored token was lost to a login that did not complete")
+	}
 }

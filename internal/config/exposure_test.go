@@ -252,6 +252,7 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 		"internal/runner/executor.go":    "a run's grant files, deleted when the run ends and inside the data directory",
 		"internal/workdir/hook.go":       "a marker file in a workdir, which holds no secret",
 		"internal/workdir/workdir.go":    "a marker file in a checkout, which holds no secret",
+		"internal/account/token.go":      "a token account's token, in its home inside the data directory this checks as a whole — and one others can read is refused rather than used (decision 0054)",
 	}
 	root := filepath.Join("..", "..")
 	sources, err := moduleSources(root)

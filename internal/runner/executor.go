@@ -617,7 +617,8 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		// Built fresh each turn: the home variable belongs to this account,
 		// and appending it to env would carry the last account's home into
 		// the next turn's environment.
-		turnEnv := append(append([]string(nil), env...), account.Env(run.Harness, home)...)
+		acctEnv, tokenID := account.TurnEnv(run.Harness, home)
+		turnEnv := append(append([]string(nil), env...), acctEnv...)
 
 		spec := adapter.Spec{
 			RunID: run.RunID, Model: run.Model, Effort: run.Effort, Workdir: prep.Dir,
@@ -712,7 +713,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		}
 		if hasAccount {
 			e.recordUsage(bg, acct, out, turnLog)
-			e.checkLogin(bg, acct, bin, res, turnLog)
+			e.checkLogin(bg, acct, bin, res, out.AuthRejected, tokenID, turnLog)
 		}
 		if res.State == v1.RunCancelled && w.cancelled {
 			res.Error = runnerStopped(a.stoppedByRunner())

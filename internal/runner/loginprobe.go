@@ -125,6 +125,14 @@ func (p *LoginProbe) probe(ctx context.Context, a account.Account) bool {
 	if _, err := os.Stat(a.Home); err != nil {
 		return false
 	}
+	// A token account's check answers yes for any token, the one the provider
+	// refused included, so a yes here would put it back in service to be
+	// refused again at its next run, every interval. Its way back is a new
+	// token, stored by `yad account add --token -`, which tells the daemon
+	// itself (decision 0054).
+	if account.HasToken(a.Home) {
+		return false
+	}
 	bin, ok := p.Binary(a.Harness)
 	if !ok {
 		return false
