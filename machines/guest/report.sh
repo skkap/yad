@@ -24,9 +24,13 @@ if [[ -d $dir ]]; then
 	for c in "$dir"/*; do
 		[[ -f $c && -x $c ]] || continue
 		# A check is the spec's code and may hang on the network; twenty
-		# seconds is a check that has failed.
-		line=$(timeout 20 "$c" 2>&1 | head -n 1)
-		status=${PIPESTATUS[0]}
+		# seconds is a check that has failed, and one that ignores the TERM
+		# is killed five later. Its whole output is read and the first line
+		# kept: a head in the pipe would kill a check that prints more, and
+		# call a passing check failed.
+		out=$(timeout --kill-after=5 20 "$c" 2>&1)
+		status=$?
+		line=${out%%$'\n'*}
 		checks=$(jq -c --arg n "$(basename "$c")" --arg d "$line" --argjson ok "$([[ $status == 0 ]] && echo true || echo false)" \
 			'. + [{name: $n, ok: $ok, detail: $d}]' <<<"$checks")
 	done

@@ -8,6 +8,7 @@
 #   yad-machine status [NAME] [--json]     every machine, or one: runner, hubs, logins, checks
 #   yad-machine login NAME                 make every login the machine is missing, one by one
 #   yad-machine shell NAME [COMMAND...]    a login shell, or a command, as the runner's user
+#   yad-machine start NAME                 start a machine that is stopped
 #   yad-machine destroy NAME               delete the VM and everything in it
 #
 # Runs on the host — macOS or Linux, with limactl and jq on PATH. `up` is
@@ -46,6 +47,18 @@ cmd() {
 	local out='' w
 	for w in "$@"; do out+="${out:+ }$(sq "$w")"; done
 	printf '%s' "$out"
+}
+
+# me is a command for this kit as its reader will paste it: the kit's own path
+# on the host, or — run over ssh from another computer — the prefix that
+# computer passed in YAD_MACHINE_PRINT, so every command printed runs where it
+# is read and not only where it was written.
+me() {
+	if [[ -n ${YAD_MACHINE_PRINT:-} ]]; then
+		printf '%s %s' "$YAD_MACHINE_PRINT" "$(cmd "$@")"
+	else
+		cmd "$KIT_DIR/yad-machine" "$@"
+	fi
 }
 
 need_lima() {
@@ -171,30 +184,30 @@ cmd_up() {
 	# Autostart brings the VM up at the host user's login; the runner inside is
 	# a systemd user service with lingering on, so it follows the VM.
 	limactl autostart enable "$name" >/dev/null 2>&1 ||
-		printf 'note: could not register %s to start at login — run %s\n' "$name" "$(cmd limactl autostart enable "$name")"
+		echo "note: could not register $name to start at login — on the host that runs it, run \`$(cmd limactl autostart enable "$name")\`"
 	limactl protect "$name" >/dev/null 2>&1 || true
 	mkdir -p "$REGISTRY"
 	printf '%s\n' "$spec" >"$REGISTRY/$name"
 
-	local self
-	self="$KIT_DIR/yad-machine"
 	cat <<EOF
 
 $name is up. What only a person can do, once:
 
-  1. Log the harnesses in: $(cmd "$self" login "$name") asks for each one the
-     machine is missing — a \`claude setup-token\` token pasted, or a link and a code.
+  1. Log the harnesses in — each one the machine is missing, a \`claude setup-token\`
+     token pasted or a link and a code:
+       $(me login "$name")
 
-  2. Give it the machine's own credentials — the ones a spec's secrets.md lists,
-     such as a read-only GitHub token:
-       gh auth login --with-token < token-file && gh auth setup-git
+  2. Give it the machine's own credentials — the ones a spec's CREDENTIALS.md or
+     README lists, such as a read-only GitHub token on stdin:
+       $(me shell "$name" gh auth login --with-token) < token-file
+       $(me shell "$name" gh auth setup-git)
 
-  3. Connect it to its hub, and restart the service so it picks the hub up:
-       yad connect <hub url> --token -
-       yad service install
+  3. Connect it to its hub with the hub's registration token on stdin, and
+     restart the service so it picks the hub up:
+       $(me shell "$name" yad connect '<hub url>' --token -)
+       $(me shell "$name" yad service install)
 
-$(cmd "$self" login "$name") walks through every login it is missing, and
-$(cmd "$self" status) shows where every machine stands.
+$(me status) shows where every machine stands.
 EOF
 }
 
@@ -204,7 +217,7 @@ cmd_shell() {
 	name=$1
 	shift
 	check_name "$name"
-	[[ $(instance_status "$name") == Running ]] || die "$name is not running — $(cmd limactl start "$name") starts it"
+	[[ $(instance_status "$name") == Running ]] || die "$name is not running — \`$(me start "$name")\` starts it"
 	local uid
 	# </dev/null: limactl shell reads stdin, and this lookup would swallow what
 	# was piped in for the command — a key handed to a setup step, say.
@@ -222,45 +235,69 @@ need_jq() {
 		die "jq is not on PATH — install it (\`brew install jq\` on macOS, \`apt install jq\`) and run this again"
 }
 
-# report is what the machine says about itself (guest/report.sh), as JSON, or
-# nothing when it cannot be asked.
+# spec_of is the spec a registered machine was built from, or SPEC_DIR when
+# this host never recorded one.
+spec_of() {
+	local f="$REGISTRY/$1"
+	if [[ -f $f ]]; then head -n 1 "$f"; else echo SPEC_DIR; fi
+}
+
+# report is what the machine says about itself (guest/report.sh), as one JSON
+# object, or nothing — and a failure — when it cannot be asked or what came
+# back is not JSON: something in the runner's login profile that prints, or a
+# report from another kit's version.
 report() {
-	local uid
+	local uid out
 	uid=$(guest id -u "$AGENT_USER" </dev/null 2>/dev/null) || return 1
-	guest sudo -iu "$AGENT_USER" env XDG_RUNTIME_DIR="/run/user/$uid" yad-machine-report </dev/null 2>/dev/null
+	out=$(guest sudo -iu "$AGENT_USER" env XDG_RUNTIME_DIR="/run/user/$uid" yad-machine-report </dev/null 2>/dev/null) || return 1
+	jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out" || return 1
+	printf '%s' "$out"
 }
 
 # summary turns a report into one tab-separated row — runner, hubs, logins,
 # checks — and then one line per thing that needs a person, each with what to
-# do. Reads the report on stdin; $name and $self are the machine and the kit.
+# do. Reads the report on stdin; $name is the machine.
+#
+# A section the machine could not answer is null in the report, and null is
+# "unknown", never "none": a daemon that is down has not lost its hubs, and
+# telling its owner to connect it again would register it twice. Everything
+# printed that came from a hub or a check is stripped of control characters,
+# so no error can move the cursor or forge a row.
 summary() {
-	jq -r --arg name "$name" --arg login "$(cmd "$self" login "$name")" --arg shell "$(cmd "$self" shell "$name")" '
+	jq -r --arg name "$name" --arg login "$(me login "$name")" --arg shell "$(me shell "$name")" '
+	def clean: tostring | gsub("[\u0000-\u001f\u007f]"; " ");
 	def harness_state:
 		if .needs_login then "\(.id) needs login"
 		elif (.error // "") != "" then "\(.id) broken"
 		else "\(.id) ready" end;
-	(.doctor // []) as $doctor
-	| (.accounts // []) as $accounts
-	| ([$doctor[] | select(.present and .kind == "first-class")]) as $harnesses
-	| ([$harnesses[] | .id as $id
+	(.status) as $status
+	| (.doctor) as $doctor
+	| (.accounts) as $accounts
+	| ([($doctor // [])[] | select(.present and .kind == "first-class")]) as $present
+	| (if $doctor == null then null
+	   elif $accounts == null then [$present[] | "\(.id) ?"]
+	   else [$present[] | .id as $id
 		| ([$accounts[] | select(.harness == $id) | .accounts[]]) as $acc
-		| if ($acc | length) > 0 then ($acc[] | "\($id)/\(.label) \(.state)") else harness_state end]) as $logins
-	| ((.status.connections // []) | map("\(.name) \(.state)")) as $hubs
+		| if ($acc | length) > 0 then ($acc[] | "\($id)/\(.label) \(.state)") else harness_state end]
+	   end) as $logins
+	| (if $status == null then null else (($status.connections // []) | map("\(.name) \(.state)")) end) as $hubs
 	| ((.checks // []) | map("\(.name) \(if .ok then "ok" else "FAILING" end)")) as $checks
 	| ([ $name,
 		(if .service == "active" then "running" else "service " + .service end),
-		(if ($hubs | length) > 0 then ($hubs | join(", ")) else "none" end),
-		(if ($logins | length) > 0 then ($logins | join(", ")) else "no harness" end),
+		(if $hubs == null then "unknown" elif ($hubs | length) > 0 then ($hubs | join(", ")) else "none" end),
+		(if $logins == null then "unknown" elif ($logins | length) > 0 then ($logins | join(", ")) else "no harness" end),
 		(if ($checks | length) > 0 then ($checks | join(", ")) else "—" end)
 	  ] | join("\t")),
-	(if .service != "active" then "  \($name): the runner service is \(.service) — `\($shell) yad service install` starts it" else empty end),
-	(if ((.status.connections // []) | length) == 0 then "  \($name): not connected to a hub — inside `\($shell)`, `yad connect <hub url> --token -`, then `yad service install`" else empty end),
-	((.status.connections // [])[] | select(.state != "syncing") | "  \($name): hub \(.name) is \(.state)\(if .last_error then " — " + .last_error else "" end)"),
-	(if ([$harnesses[] | select(.needs_login)] | length) > 0 or ([$accounts[] | .accounts[] | select(.state == "needs_login")] | length) > 0
+	(if .service != "active" then "  \($name): the runner service is \(.service | clean) — `\($shell) yad service install` starts it" else empty end),
+	(if $status == null and .service == "active" then "  \($name): the runner did not answer `yad status` — `\($shell) yad logs` says why" else empty end),
+	(if $status != null and (($status.connections // []) | length) == 0 then "  \($name): not connected to a hub — `\($shell) yad connect '"'"'<hub url>'"'"' --token -` with the hub'"'"'s registration token on stdin, then `\($shell) yad service install`" else empty end),
+	(($status // {}).connections // [] | .[] | select(.state != "syncing") | "  \($name): hub \(.name | clean) is \(.state | clean)\(if .last_error then " — " + (.last_error | clean) else "" end)"),
+	(if $accounts == null and $doctor != null then "  \($name): its account states could not be read — `\($shell) yad account list` says why" else empty end),
+	(if ([$present[] | select(.needs_login)] | length) > 0 or ([($accounts // [])[] | .accounts[] | select(.state == "needs_login")] | length) > 0
 	 then "  \($name): a login is missing — `\($login)`" else empty end),
-	($harnesses[] | select((.error // "") != "" and (.needs_login | not)) | "  \($name): \(.label) — \(.error)"),
-	($harnesses[] | .label as $l | (.warnings // [])[] | "  \($name): \($l) — \(.)"),
-	((.checks // [])[] | select(.ok | not) | "  \($name): check \(.name) — \(.detail)")
+	($present[] | select((.error // "") != "" and (.needs_login | not)) | "  \($name): \(.label) — \(.error | clean)"),
+	((.harnesses // [])[] | .label as $l | (.warnings // [])[] | "  \($name): \($l) — \(. | clean)"),
+	((.checks // [])[] | select(.ok | not) | "  \($name): check \(.name | clean) — \(.detail | clean)")
 	'
 }
 
@@ -277,36 +314,42 @@ cmd_status() {
 	if [[ ${#names[@]} -eq 0 && -d $REGISTRY ]]; then
 		for n in "$REGISTRY"/*; do [[ -f $n ]] && names+=("$(basename "$n")"); done
 	fi
-	[[ ${#names[@]} -gt 0 ]] || { echo "no machines — $(cmd "$KIT_DIR/yad-machine" up SPEC_DIR) builds one"; return 0; }
-	self="$KIT_DIR/yad-machine"
-	local rows='' notes='' out st lines
+	if [[ ${#names[@]} -eq 0 ]]; then
+		if [[ -n $as_json ]]; then echo '[]'; else echo "no machines — $(me up SPEC_DIR) builds one"; fi
+		return 0
+	fi
+	local rows='' notes='' items='' out st lines
 	for name in "${names[@]}"; do
 		st=$(instance_status "$name")
 		if [[ $st != Running ]]; then
 			rows+="$name"$'\t'"${st:-no VM}"$'\t—\t—\t—\n'
 			if [[ -z $st ]]; then
-				notes+="  $name: its VM is gone — $(cmd "$self" up "$(cat "$REGISTRY/$name" 2>/dev/null || echo SPEC_DIR)") builds it again"$'\n'
+				notes+="  $name: its VM is gone — \`$(me up "$(spec_of "$name")")\` builds it again, or \`$(me destroy "$name")\` forgets it"$'\n'
 			else
-				notes+="  $name: its VM is $st — $(cmd limactl start "$name") starts it"$'\n'
+				notes+="  $name: its VM is $st — \`$(me start "$name")\` starts it"$'\n'
 			fi
+			items+=$(jq -nc --arg m "$name" --arg vm "${st:-gone}" '{machine: $m, vm: $vm}')$'\n'
 			continue
 		fi
-		if ! out=$(report) || [[ -z $out ]]; then
+		if ! out=$(report); then
 			rows+="$name"$'\t'"running"$'\t?\t?\t?\n'
-			notes+="  $name: it did not answer — a machine built by an older kit is updated by $(cmd "$self" up SPEC_DIR)"$'\n'
+			notes+="  $name: it did not answer, or not in JSON — a machine built by an older kit is updated by \`$(me up "$(spec_of "$name")")\`"$'\n'
+			items+=$(jq -nc --arg m "$name" '{machine: $m, vm: "Running", report: null}')$'\n'
 			continue
 		fi
-		if [[ -n $as_json ]]; then
-			jq --arg name "$name" '{machine: $name} + .' <<<"$out"
-			continue
-		fi
+		items+=$(jq -c --arg m "$name" '{machine: $m, vm: "Running", report: .}' <<<"$out")$'\n'
 		lines=$(summary <<<"$out")
 		rows+="$(head -n 1 <<<"$lines")"$'\n'
 		if [[ $(wc -l <<<"$lines") -gt 1 ]]; then
 			notes+="$(tail -n +2 <<<"$lines")"$'\n'
 		fi
 	done
-	[[ -n $as_json ]] && return 0
+	if [[ -n $as_json ]]; then
+		# One array, one entry per machine asked about, whatever state it is
+		# in: a script tells stopped from gone from unregistered by it.
+		jq -s . <<<"$items"
+		return 0
+	fi
 	{
 		printf 'MACHINE\tRUNNER\tHUBS\tLOGINS\tCHECKS\n'
 		printf '%s' "$rows"
@@ -326,11 +369,10 @@ cmd_login() {
 	need_jq
 	name=$1
 	check_name "$name"
-	self="$KIT_DIR/yad-machine"
-	[[ $(instance_status "$name") == Running ]] || die "$name is not running — $(cmd limactl start "$name") starts it"
+	[[ $(instance_status "$name") == Running ]] || die "$name is not running — \`$(me start "$name")\` starts it"
 	[[ -t 0 ]] || die "a login needs you at a terminal — run this in one (over ssh, with ssh -t)"
 	local out
-	out=$(report) || die "$name did not answer — a machine built by an older kit is updated by $(cmd "$self" up SPEC_DIR)"
+	out=$(report) || die "$name did not answer — a machine built by an older kit is updated by \`$(me up "$(spec_of "$name")")\`"
 	local did=0 harness label tok check detail
 
 	# Accounts first: each is a login yad tracks by name, and reports to hubs.
@@ -357,7 +399,7 @@ cmd_login() {
 			agent yad account add codex "$label" --device </dev/tty || true
 			;;
 		*)
-			echo "$harness account \"$label\" needs a login, and yad-machine does not know $harness's — log it in inside $(cmd "$self" shell "$name")"
+			echo "$harness account \"$label\" needs a login, and yad-machine does not know $harness's — log it in inside \`$(me shell "$name")\`"
 			;;
 		esac
 	done < <(jq -r '(.accounts // [])[] | .harness as $h | .accounts[] | select(.state == "needs_login") | "\($h) \(.label)"' <<<"$out")
@@ -395,11 +437,20 @@ cmd_login() {
 		did=1
 		echo
 		echo "Check \"$check\" on $name is failing: $detail"
-	done < <(jq -r '(.checks // [])[] | select(.ok | not) | "\(.name)\t\(.detail)"' <<<"$out")
+	done < <(jq -r 'def clean: tostring | gsub("[\u0000-\u001f\u007f]"; " "); (.checks // [])[] | select(.ok | not) | "\(.name | clean)\t\(.detail | clean)"' <<<"$out")
 
 	[[ $did == 1 ]] || echo "$name is missing no login."
 	echo
 	cmd_status "$name"
+}
+
+cmd_start() {
+	[[ $# -eq 1 ]] || die "usage: yad-machine start NAME"
+	need_lima
+	name=$1
+	check_name "$name"
+	[[ -n $(instance_status "$name") ]] || die "there is no machine called $name — \`$(me up "$(spec_of "$name")")\` builds it"
+	limactl start --tty=false "$name"
 }
 
 cmd_destroy() {
@@ -407,7 +458,17 @@ cmd_destroy() {
 	need_lima
 	name=$1
 	check_name "$name"
-	[[ -n $(instance_status "$name") ]] || { echo "there is no machine called $name"; return 0; }
+	if [[ -z $(instance_status "$name") ]]; then
+		# Gone outside the kit — limactl delete, a renamed spec: what is left
+		# is its entry in the registry, which status would list for ever.
+		if [[ -f $REGISTRY/$name ]]; then
+			rm -f -- "${REGISTRY:?}/${name:?}"
+			echo "$name has no VM; it is no longer listed"
+		else
+			echo "there is no machine called $name"
+		fi
+		return 0
+	fi
 	printf 'This deletes %s and everything in it: harness logins, the runner credential,\nits sessions and workdirs. The hub keeps the runner until it is removed there.\nType the name to confirm: ' "$name"
 	local answer
 	read -r answer
@@ -425,11 +486,18 @@ main() {
 		# Run where the machines are. The remote login shell finds limactl on
 		# the PATH its owner set up; -t only when there is a terminal to give,
 		# so a key piped in still arrives as a pipe.
+		# The remote side prints commands with this prefix, so what it says
+		# to run is run from here, through this same kit.
+		local print
+		print=$(cmd env YAD_MACHINE_HOST="$YAD_MACHINE_HOST" ${YAD_MACHINE_REMOTE:+YAD_MACHINE_REMOTE="$YAD_MACHINE_REMOTE"} "$KIT_DIR/yad-machine")
+		print=${print#env }
+		# ${tty[@]+…}: bash 3.2, macOS's own, calls an empty array unbound
+		# under set -u, which is exactly the no-terminal case this is for.
 		local tty=()
 		[[ -t 0 ]] && tty=(-t)
-		exec ssh "${tty[@]}" "$YAD_MACHINE_HOST" "exec \$SHELL -lc $(sq "$(cmd "${YAD_MACHINE_REMOTE:-yad-machine}" "$@")")"
+		exec ssh ${tty[@]+"${tty[@]}"} "$YAD_MACHINE_HOST" "YAD_MACHINE_PRINT=$(sq "$print") exec \$SHELL -lc $(sq "$(cmd "${YAD_MACHINE_REMOTE:-yad-machine}" "$@")")"
 	fi
-	[[ $# -ge 1 ]] || { sed -n '6,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+	[[ $# -ge 1 ]] || { sed -n '6,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 	local sub=$1
 	shift
 	case $sub in
@@ -437,9 +505,10 @@ main() {
 	shell) cmd_shell "$@" ;;
 	status) cmd_status "$@" ;;
 	login) cmd_login "$@" ;;
+	start) cmd_start "$@" ;;
 	destroy) cmd_destroy "$@" ;;
-	-h | --help | help) sed -n '6,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
-	*) die "unknown command $(sq "$sub") — up, status, login, shell or destroy" ;;
+	-h | --help | help) sed -n '6,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+	*) die "unknown command $(sq "$sub") — up, status, login, shell, start or destroy" ;;
 	esac
 }
 

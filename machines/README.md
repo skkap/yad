@@ -72,6 +72,7 @@ machines/yad-machine up SPEC_DIR [--yad PATH]   create or update the machine
 machines/yad-machine status [NAME] [--json]     every machine, or one: runner, hubs, logins, checks
 machines/yad-machine login NAME                 make every login the machine is missing, one by one
 machines/yad-machine shell NAME [COMMAND...]    a login shell, or a command, as agent
+machines/yad-machine start NAME                 start a machine that is stopped
 machines/yad-machine destroy NAME               delete the VM and everything in it
 ```
 
@@ -88,7 +89,9 @@ both after you type the name.
 **From another computer.** With `YAD_MACHINE_HOST=<ssh host>`, every command
 runs on that host through its own `yad-machine` — put the kit on its `PATH`
 (`ln -s …/machines/yad-machine ~/.local/bin/`) — so a laptop can see and log in
-the machines on a server:
+the machines on a server. Every command they print is written for where it is
+read — `YAD_MACHINE_HOST=… <the laptop's yad-machine> …` — so it runs as pasted
+on the laptop:
 
 ```bash
 YAD_MACHINE_HOST=ashikaga machines/yad-machine status
@@ -115,6 +118,12 @@ everything that needs a person, each with what to do:
 MACHINE     RUNNER   HUBS            LOGINS          CHECKS
 tl-general  running  zumino syncing  claude/tl free  github ok
 ```
+
+`--json` prints one array with an entry per machine asked about, whatever state
+it is in — `vm` says `Running`, `Stopped` or `gone`, and `report` is what the
+machine said, or null when it did not answer. A part of a report the machine
+could not answer is null too, and `status` shows it as `unknown` rather than
+guessing.
 
 Every answer is yad's own: the runner service, `yad status` (its hubs and
 whether each is syncing), `yad doctor` and `yad account list` (each harness and
