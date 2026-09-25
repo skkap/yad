@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# A check: exit 0 when the machine has what it needs, and say what it is — or
+# what is missing and how to fix it — on the first line. Never a secret.
+if gh auth status >/dev/null 2>&1; then
+	echo "gh is logged in"
+else
+	echo "gh is not logged in — inside the machine, gh auth login --with-token < token-file"
+	exit 1
+fi

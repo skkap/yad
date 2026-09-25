@@ -69,8 +69,11 @@ instead, and does not read them.
 
 ```
 machines/yad-machine up SPEC_DIR [--yad PATH]   create or update the machine
+machines/yad-machine status [NAME] [--json]     every machine, or one: runner, hubs, logins, checks
+machines/yad-machine login NAME                 make every login the machine is missing, one by one
 machines/yad-machine shell NAME [COMMAND...]    a login shell, or a command, as agent
-machines/yad-machine status NAME                the VM, the runner service and yad doctor
+machines/yad-machine start NAME                 start a machine that is stopped
+machines/yad-machine autostart NAME             start it at the host user's login again
 machines/yad-machine destroy NAME               delete the VM and everything in it
 ```
 
@@ -84,25 +87,81 @@ release, or `YAD_VERSION`'s, and checks it against the release's
 (`limactl autostart`) and protects it from `limactl delete`. `destroy` undoes
 both after you type the name.
 
+**From another computer.** With `YAD_MACHINE_HOST=<ssh host>`, every command
+runs on that host through its own `yad-machine` — put the kit on its `PATH`
+(`ln -s …/machines/yad-machine ~/.local/bin/`) — so a laptop can see and log in
+the machines on a server. Every command they print is written for where it is
+read — `YAD_MACHINE_HOST=… <the laptop's yad-machine> …` — so it runs as pasted
+on the laptop:
+
+```bash
+YAD_MACHINE_HOST=ashikaga machines/yad-machine status
+YAD_MACHINE_HOST=ashikaga machines/yad-machine login tl-general
+```
+
 ## The first time
 
 ```bash
 machines/yad-machine up path/to/spec            # 5–10 minutes the first time
-machines/yad-machine shell tl-general
+machines/yad-machine login tl-general           # each login it is missing
+machines/yad-machine shell tl-general           # then, as agent:
+yad connect <hub url> --token -                 # the hub's registration token, pasted
+yad service install                             # restart the runner so it claims work
+machines/yad-machine status                     # every machine, and what each needs
 ```
 
-Then, inside, as `agent` — the three things only a person can do:
+## Knowing what is logged in
 
-```bash
-claude                                           # /login, then /exit
-codex login --device-auth                        # if the spec installs Codex
-gh auth login --with-token < token-file && gh auth setup-git
-yad connect <hub url> --token -                  # the hub's registration token, pasted
-yad service install                              # restart the runner so it claims work
+`yad-machine status` asks each machine and prints one row per machine, then
+everything that needs a person, each with what to do:
+
+```
+MACHINE     RUNNER   HUBS            LOGINS          CHECKS
+tl-general  running  zumino syncing  claude/tl free  github ok
 ```
 
-`yad-machine status tl-general` then shows the runner connected and its
-harnesses ready.
+`--json` prints one array with an entry per machine asked about, whatever state
+it is in — `vm` says `Running`, `Stopped` or `gone`, and `report` is what the
+machine said, or null when it did not answer. A part of a report the machine
+could not answer is null too, and `status` shows it as `unknown` rather than
+guessing.
+
+Every answer is yad's own: the runner service, `yad status` (its hubs and
+whether each is syncing), `yad doctor` and `yad account list` (each harness and
+account: `free`, `limited`, `needs_login`, or a harness on its own login that
+has none), and the capability warnings a hub also sees, such as a token a month
+from expiring. Hubs see the same states, so a machine that cannot take a run
+also stops being offered one.
+
+A spec adds **checks** for what yad does not know about — a GitHub identity, a
+database: each executable in `home/.config/yad-machine/checks/` is run as
+`agent`, and its exit status and first line are its answer. The first line
+says what is wrong and what to do about it, and never holds a secret.
+
+List the accounts a machine runs on in its `config.toml`
+(`[harness.claude] accounts = ["main"]`). Each is then reported as
+`needs_login` from the first `up`, instead of the machine looking ready and
+failing its first run.
+
+## Logging in
+
+`yad-machine login NAME` goes through every login the machine is missing and
+nothing else:
+
+- **Claude** — paste a token from `claude setup-token`, run on any computer with
+  a browser. It lasts a year, needs no browser on the machine, and yad keeps it
+  in the account's home and hands it to the account's runs
+  ([0054](../docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md)).
+  Or press Enter for Claude's own login: a link to open elsewhere and a code to
+  paste back. yad warns a month before a token's year is up.
+- **Codex** — a link and a code to enter on any computer (`--device-auth`).
+- **A failing check** — what it says is printed, since only the spec knows how
+  to fix it.
+
+Make one token per machine rather than copying one around, so revoking a
+machine's access touches no other. Scripts can skip the prompts:
+`yad-machine shell NAME yad account add claude main --token -` with the token
+on stdin.
 
 ## Rebuilding
 

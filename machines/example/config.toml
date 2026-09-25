@@ -8,6 +8,11 @@ capacity = 2
 
 [harness.claude]
 cap = 2
+# The accounts this machine runs on. Listed here, each is reported as
+# needs_login — to `yad-machine status` and to every hub — until someone logs
+# it in with `yad-machine login`, so a new machine says what it is missing
+# instead of failing its first run.
+accounts = ["main"]
 
 [harness.codex]
 cap = 1
