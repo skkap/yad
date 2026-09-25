@@ -236,7 +236,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   `checking`, then `succeeded`, `failed`, `expired` or `cancelled` — in every
   sync until one carrying its end is answered, as closed sessions are; a hub
   repeats each control until those reports answer it, and ends `failed` a
-  login the runner reported and then leaves out (it restarted). `code` and
+  login the runner reported and then leaves out (it restarted). A hub ends a
+  login on its own word only while no answer has carried it, and must end one
+  sent and unheard for thirty minutes `failed`, blanking its token; a
+  runner's later report of an end replaces the hub's. `code` and
   `token` are secrets: logged by neither side, never reported back, and a
   token held by the hub only until the runner reports its login. `user_code`
   is for a device-code login — Codex's, which a runner answers `failed` for
@@ -728,7 +731,8 @@ for `codex`); the suite never runs a real harness.
   action for one is `--token -`, and a plain `yad account add` on it runs the
   login and its check without the token (`account.LoginEnv`,
   `account.OwnLogin`), leaving it in place for the account's runs, and
-  removes it once the login has taken. The token's year is counted
+  removes it once the login has taken — which needs the login command itself
+  to have succeeded as well as the check. The token's year is counted
   from when it was stored; the month before, the harness report carries a
   warning and `yad account list` says so.
 - **Every home shares the machine's config** (0054): each time a home is
@@ -792,8 +796,10 @@ for `codex`); the suite never runs a real harness.
   none and runs `claude auth login` there over pipes with no terminal
   (measured on 2.1.281: it prints the link and reads the code from stdin) —
   the first `https://…/oauth/authorize…` link in its output is the only thing
-  read from it; the code goes to its stdin; whether it took is the harness's
-  own check, never the wording. A stored token stays in its file for the
+  read from it; the code goes to its stdin; it took only when that login
+  itself exited 0 within a minute of the code and the harness's own check then
+  says logged in — never by the wording, and never by the check alone, which
+  says yes to a credential already in the home from before. A stored token stays in its file for the
   account's runs throughout: the login runs with `account.LoginEnv` and is
   judged by `account.OwnLogin`, both without the token — claude's check says
   yes to any token — and the token is removed only once the login has taken,
@@ -812,7 +818,8 @@ for `codex`); the suite never runs a real harness.
   its own word only while no answer has carried it (`sent_at`); once one has,
   a newer login or a cancel sends `cancel_login` and waits for the runner's
   report, and an end the hub did write gives way to the runner's report of
-  one.
+  one. A sent login unheard for thirty minutes (`loginFinishWithin`) ends
+  `failed`, which blanks its token.
 - **Detection**: Codex publishes `account/rateLimits/updated` with each window's
   use and reset; Claude reports a limit in its result with a reset time, and
   carries every window's use and reset in each `rate_limit_event`

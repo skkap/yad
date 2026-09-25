@@ -327,6 +327,11 @@ func TestALoginSentToTheRunnerIsEndedByTheRunner(t *testing.T) {
 			if v.State != hubapi.LoginState(v1.LoginFailed) {
 				t.Fatalf("a login sent and silent past the half hour: %+v", v)
 			}
+			// A runner that took the answer and never came back must not
+			// leave the token held for ever.
+			if _, stored := f.loginRow(t, "a"); stored != "" {
+				t.Error("a login sent and silent past the half hour kept its token")
+			}
 		}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

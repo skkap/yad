@@ -84,7 +84,12 @@ has the hub hold a token only until one delivery.
 The runner reads one thing from the harness's login output — the first link
 whose path is an OAuth authorize page — and gives it thirty seconds to
 appear; ten minutes for the code after it; a minute to exit once it has the
-code. A link login on a token account leaves the token in its file for the
+code. A link login takes only when claude's own login exits 0 within that
+minute and the check then says logged in: the exit is a condition, never its
+wording, and the check alone would say yes to a credential already in the
+home — an account's own login from before it ran on a token — so a mistyped
+code would end succeeded and remove the token. A plain `yad account add`
+counts the same way. A link login on a token account leaves the token in its file for the
 runs still on the account, runs and judges the login without it — claude's
 check says yes to any token — and removes it only once the login has taken;
 a plain `yad account add` does the same. A login holds its account as a run
@@ -99,6 +104,9 @@ an answer first carried a login and ends one on its own word only while none
 has: a login never sent is ended at once by a cancel or a newer login, and
 expires after ten minutes, token and all. Once one has gone out, the runner
 may have stored its token or taken it, so a cancel or a newer login sends
-`cancel_login` and waits for the runner's report, and only the half-hour rule
-ends it unheard. Should a hub-written end still meet a runner's report of
+`cancel_login` and waits for the runner's report. One unheard for half an hour
+from its start — past every deadline a runner holds a login to — ends
+`failed` and loses its token, so a runner that took the answer and never
+synced again cannot leave a token held for ever; this is a MUST for any hub
+(HUB.md §7). Should a hub-written end still meet a runner's report of
 one, the runner's report wins: it knows what happened on the machine.

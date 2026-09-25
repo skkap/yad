@@ -1022,12 +1022,13 @@ runner reports `cancelled`. yad's runner gives a code ten minutes (`expired`
 after) and answers Codex with `failed` until its side is built; `user_code` is
 for that device-code login.
 
-**Three rules the reports cannot enforce for you.** The `code` and the `token`
+**The rules the reports cannot enforce for you.** The `code` and the `token`
 are secrets: never log them, never show them again, never return them from an
 API. Hold a token **only until a sync reports the login it was delivered for**
 — the runner's answer to the sync that carried it — and blank it then (`yad
 hub` does it in a trigger, and opens its database with `secure_delete`); a
 login that never reaches its runner should expire and lose its token too.
+Both deadlines below end a login holding a token, so none is held for ever.
 
 **End a login on your own word only while you have never sent it.** Record
 when an answer first carries its `start_login` or `login_token`. Until then a
@@ -1036,6 +1037,15 @@ spot. After that, no report yet does not mean the runner has not got it: it
 may already have stored the token, or the login may have taken. Send
 `cancel_login` instead and wait for the runner to say how it ended; if an end
 you wrote yourself still meets a runner's report of one, the runner's wins.
+
+**A sent login unheard for thirty minutes MUST end.** A runner that took the
+answer and then never syncs again — the machine gone, crashed and never
+deregistered — would otherwise leave the login open and its token held for
+ever. Thirty minutes from the start is past every deadline a runner holds a
+login to (ten for the code, a minute for the rest) with room for syncs: end
+it `failed` then, and blank its token and its code. `yad hub` does it in its
+sweep (`loginFinishWithin`). If the runner does report an end afterwards,
+its report replaces yours, as above.
 
 And a login the runner reported and then **leaves out** of a sync while it
 was not over is gone — the runner restarted, and a login in flight does not
@@ -1354,7 +1364,7 @@ is something **your hub still has to get right** with nothing to catch you:
 | `POST /runners/{runner}/deregister` — held runs lost, offers requeued, the runner's sessions closed and their queued runs ended | deregistering retires the runner every other check is made as; the second runner `--second-token` registers could carry it, and does not yet. `yad hub` implements it; implement it in yours |
 | The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
 | `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, `effort`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
-| Hub logins — `start_login` and `login_token` repeated until the runner reports the login, `login_code` while it reports it `waiting`, `cancel_login` until it reports it over; a token held only until the runner reports its login; a login the runner reported and then leaves out ended `failed` | only your own API starts a login, outside v1, and the suite advertises no `login` feature to be sent one. What is checked: that no login control reaches it, and that a sync carrying `logins` is taken |
+| Hub logins — `start_login` and `login_token` repeated until the runner reports the login, `login_code` while it reports it `waiting`, `cancel_login` until it reports it over; a token held only until the runner reports its login; a login the runner reported and then leaves out ended `failed`; a login ended on the hub's word only while never sent, and a sent one unheard for thirty minutes ended `failed` with its token blanked, a runner's later report still replacing that end | only your own API starts a login, outside v1, and the suite advertises no `login` feature to be sent one. What is checked: that no login control reaches it, and that a sync carrying `logins` is taken |
 | Sessions staying put — first claim binds the session to that runner, later runs to that runner alone, one at a time — and `session.new` set right | needs two runs in one session, which only your own queueing can arrange |
 | Closes in `closed_sessions` believed from the holder or the last-offered runner, whatever features it advertises, a repeat taken as the same news, and the runs queued in a closed session ended; nothing offered in a session you have sent `close_session` for until the close is reported | the suite advertises no feature, so no hub asks it to close a session, and the only sessions it has hold its runs, which no runner closes; the queued runs need a second run in the session |
 | Offers only for a harness the runner can drive — first-class, present, no `error` — and preferably one whose health says `ready` | the suite is offered only what you queued for the one harness it advertises; seeing another offered needs a run queued for it |
@@ -1436,7 +1446,7 @@ checks; the rest is yours to get right.
 **Controls, sessions, grants, versions**
 
 - [ ] `cancel` and `interrupt` repeated until the run ends; `steer` sent once; `drain` and `close_session` repeated until answered — [§7](#7-controls-and-features)
-- [ ] Login controls only to a runner advertising `login`, each repeated until `logins` answers it; a sync carrying `logins` taken; a token held only until the runner reports its login; a login reported and then left out ended `failed` — [§7](#7-controls-and-features) (C, as far as the gate and taking the reports)
+- [ ] Login controls only to a runner advertising `login`, each repeated until `logins` answers it; a sync carrying `logins` taken; a token held only until the runner reports its login; a login ended on your word only while never sent; a sent login unheard for thirty minutes ended `failed` and its token blanked; a login reported and then left out ended `failed` — [§7](#7-controls-and-features) (C, as far as the gate and taking the reports)
 - [ ] No gated control to a runner that does not advertise its feature — [§7](#7-controls-and-features) (C, as far as a runner advertising none)
 - [ ] Sessions bound by their first claim, later runs to that runner only, one at a time; `session.new` set right — [§8](#8-sessions)
 - [ ] Nothing offered in a session you have sent `close_session` for until its close is reported — [§8](#8-sessions)
