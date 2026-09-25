@@ -1022,15 +1022,24 @@ runner reports `cancelled`. yad's runner gives a code ten minutes (`expired`
 after) and answers Codex with `failed` until its side is built; `user_code` is
 for that device-code login.
 
-**Two rules the reports cannot enforce for you.** The `code` and the `token`
+**Three rules the reports cannot enforce for you.** The `code` and the `token`
 are secrets: never log them, never show them again, never return them from an
 API. Hold a token **only until a sync reports the login it was delivered for**
 — the runner's answer to the sync that carried it — and blank it then (`yad
 hub` does it in a trigger, and opens its database with `secure_delete`); a
-login that never reaches its runner should expire and lose its token too. And
-a login the runner reported and then **leaves out** of a sync while it was not
-over is gone — the runner restarted, and a login in flight does not survive
-that — so end it `failed` rather than show it waiting for ever.
+login that never reaches its runner should expire and lose its token too.
+
+**End a login on your own word only while you have never sent it.** Record
+when an answer first carries its `start_login` or `login_token`. Until then a
+cancel, a newer login for the account, or your own deadline may end it on the
+spot. After that, no report yet does not mean the runner has not got it: it
+may already have stored the token, or the login may have taken. Send
+`cancel_login` instead and wait for the runner to say how it ended; if an end
+you wrote yourself still meets a runner's report of one, the runner's wins.
+
+And a login the runner reported and then **leaves out** of a sync while it
+was not over is gone — the runner restarted, and a login in flight does not
+survive that — so end it `failed` rather than show it waiting for ever.
 
 **A draining runner is offered nothing.** Stop offering to a runner as soon as
 you have decided to drain it, not only once its health says `draining` — an

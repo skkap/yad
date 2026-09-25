@@ -84,8 +84,21 @@ has the hub hold a token only until one delivery.
 The runner reads one thing from the harness's login output — the first link
 whose path is an OAuth authorize page — and gives it thirty seconds to
 appear; ten minutes for the code after it; a minute to exit once it has the
-code. A link login on a token account sets the token aside, as
-`yad account add` does, and puts it back unless the login takes. `yad hub`
-keeps a token as it keeps a grant (0041): in `hub.db`, blanked by a trigger
-the moment the runner reports the login and never returned by its API, and it
-expires a login that has not reached its runner in ten minutes, token and all.
+code. A link login on a token account leaves the token in its file for the
+runs still on the account, runs and judges the login without it — claude's
+check says yes to any token — and removes it only once the login has taken;
+a plain `yad account add` does the same. A login holds its account as a run
+does, so removing the account keeps the home until the login has stopped and
+then deletes it with whatever the login wrote; the removal ends the login
+`cancelled`.
+
+`yad hub` keeps a token as it keeps a grant (0041): in `hub.db`, blanked by a
+trigger the moment the runner reports the login and never returned by its
+API. `requested` means only that no report has come, so the hub records when
+an answer first carried a login and ends one on its own word only while none
+has: a login never sent is ended at once by a cancel or a newer login, and
+expires after ten minutes, token and all. Once one has gone out, the runner
+may have stored its token or taken it, so a cancel or a newer login sends
+`cancel_login` and waits for the runner's report, and only the half-hour rule
+ends it unheard. Should a hub-written end still meet a runner's report of
+one, the runner's report wins: it knows what happened on the machine.

@@ -725,8 +725,10 @@ for `codex`); the suite never runs a real harness.
   the account in `needs_login` without asking — if the refused token is still
   the stored one (`account.TurnEnv` hashes the turn's). The login probe skips
   a token account, whose check would say yes to the refused token; every next
-  action for one is `--token -`, and a plain `yad account add` on it removes
-  the token first. The token's year is counted
+  action for one is `--token -`, and a plain `yad account add` on it runs the
+  login and its check without the token (`account.LoginEnv`,
+  `account.OwnLogin`), leaving it in place for the account's runs, and
+  removes it once the login has taken. The token's year is counted
   from when it was stored; the month before, the harness report carries a
   warning and `yad account list` says so.
 - **Every home shares the machine's config** (0054): each time a home is
@@ -781,14 +783,22 @@ for `codex`); the suite never runs a real harness.
 - **Hub login** ([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)):
   any connected hub may log in an account `config.toml` lists, or a harness's
   own default login, and never adds an account. `internal/runner.Logins`,
-  owned by the daemon and bound to `Serve`, drives it. By link it makes the
-  home if a hand-listed label has none, sets a stored token aside as
-  `yad account add` does, and runs `claude auth login` there over pipes with
-  no terminal (measured on 2.1.281: it prints the link and reads the code from
-  stdin) — the first `https://…/oauth/authorize…` link in its output is the
-  only thing read from it; the code goes to its stdin; whether it took is
-  `account.LoggedIn`'s answer, never the wording. By token it is
-  `account.SetToken` and the same check. On a yes the account goes free
+  owned by the daemon and bound to `Serve`, drives it. A login holds its
+  account as a run does (`Accounts.takeForLogin`): taking the hold is the
+  check that the label is still listed, made after any login it replaced has
+  let go, and a removal meanwhile keeps the home until the login has stopped,
+  then deletes it with whatever the login wrote there; the removal also ends
+  the login `cancelled`. By link it makes the home if a hand-listed label has
+  none and runs `claude auth login` there over pipes with no terminal
+  (measured on 2.1.281: it prints the link and reads the code from stdin) —
+  the first `https://…/oauth/authorize…` link in its output is the only thing
+  read from it; the code goes to its stdin; whether it took is the harness's
+  own check, never the wording. A stored token stays in its file for the
+  account's runs throughout: the login runs with `account.LoginEnv` and is
+  judged by `account.OwnLogin`, both without the token — claude's check says
+  yes to any token — and the token is removed only once the login has taken,
+  as a plain `yad account add` on a token account does. By token it is
+  `account.SetToken` and `account.LoggedIn`. On a yes the account goes free
   through `Accounts.LoggedInAgain`, the half of an `accounts_changed` reload
   that checks an added account, and the capability document is rebuilt at
   once; a default login drops the minute-long cached answer instead. Thirty
@@ -798,7 +808,11 @@ for `codex`); the suite never runs a real harness.
   at the machine. Logins are memory only — nothing in `state.db`, the code and
   the token in no log, report or error — so a restart forgets those in flight.
   `yad hub` keeps them in `hub.db` and blanks the token once the runner has
-  reported its login, and the code once it has taken it.
+  reported its login, and the code once it has taken it. It ends a login on
+  its own word only while no answer has carried it (`sent_at`); once one has,
+  a newer login or a cancel sends `cancel_login` and waits for the runner's
+  report, and an end the hub did write gives way to the runner's report of
+  one.
 - **Detection**: Codex publishes `account/rateLimits/updated` with each window's
   use and reset; Claude reports a limit in its result with a reset time, and
   carries every window's use and reset in each `rate_limit_event`
@@ -977,7 +991,9 @@ A run's spec holds its grants' values only until the run reaches a terminal
 state: the `runs_forget_grants` trigger blanks them then and keeps their names
 ([0041](docs/decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md)).
 `logins` holds each hub login ([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)),
-`requested` until its runner first reports it; the `logins_forget_token` and
+`requested` until its runner first reports it, with `sent_at` once an answer
+has carried it and `hub_ended` for an end the hub wrote itself; the
+`logins_forget_token` and
 `logins_forget_code` triggers blank a token once the runner has reported its
 login and a code once the login has moved past `waiting`, whoever moves it.
 Both databases are opened with `secure_delete`, so freed bytes are zeroed
