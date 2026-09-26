@@ -50,6 +50,12 @@ if [[ $(node --version 2>/dev/null | sed 's/^v\([0-9]*\).*/\1/') != "$node_major
 	[[ -n $file ]] || { echo "no node $node_major build for linux-$arch at $base" >&2; exit 1; }
 	curl -fsSL -o "$tmp/$file" "$base/$file"
 	(cd "$tmp" && grep " $file\$" SHASUMS256.txt | sha256sum -c -)
+	# The npm and corepack a Node release bundles are unpacked over the ones
+	# already there, and files the new release no longer has are left behind:
+	# Node 24 over 22 left an npm that failed on every command ("Class extends
+	# value undefined"). Removing the bundled two first makes the upgrade clean;
+	# packages installed globally beside them are left alone.
+	rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
 	tar -C /usr/local --strip-components=1 --no-same-owner -xJf "$tmp/$file" \
 		--exclude='*/CHANGELOG.md' --exclude='*/LICENSE' --exclude='*/README.md'
 	rm -rf "$tmp"
