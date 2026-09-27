@@ -4,6 +4,10 @@ on:
   push:
     branches: [master]
   pull_request:
+  # A vulnerability published against a dependency changes the answer of
+  # govulncheck without any commit here, so it is asked weekly as well.
+  schedule:
+    - cron: '17 3 * * 1'
 
 # CI is deliberately a subset. Its one advantage over the machine this is
 # written on is that it is a clean Linux box, so it runs what can answer
@@ -54,3 +58,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make ci
+      # Known vulnerabilities in code yad actually calls, dependencies and the
+      # Go standard library alike. Pinned, and run rather than added to go.mod,
+      # so it links nothing into yad (ARCHITECTURE.md §6).
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

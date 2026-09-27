@@ -679,7 +679,7 @@ for `codex`); the suite never runs a real harness.
   `setup_failed`.
 - **Setup hook**: if the worktree has an executable `.worktree/setup`, it runs
   with `WT_ROOT`, `WT_MAIN` (the bare cache), `WT_BRANCH`, `WT_SLUG`, `WT_REPO`
-  and `WT_SLOT` — the contract in `~/my/gpi-tools/docs/worktrees/README.md` —
+  and `WT_SLOT` — the contract in [docs/setup-hooks.md](docs/setup-hooks.md) —
   under `[workdirs] setup_timeout`, its output a `tool_call`/`tool_result` pair
   capped at 8 KiB. It runs until it has succeeded once in a worktree; a hook
   that fails fails the run with `setup_failed`
@@ -1115,6 +1115,7 @@ line here is a reviewed change.
 | `sqlc` (tool, not linked) | typed queries from SQL |
 | `staticcheck` (tool, not linked) | the lint bar in `CHECKS.md` |
 | `oasdiff` (tool, not linked) | the breaking-change check on both OpenAPI documents ([0017](docs/decisions/0017-protocol-types-are-the-source.md), [0022](docs/decisions/0022-hub-service-api-beside-the-protocol.md)). Pinned rather than installed per machine because a gate is worth only as much as its verdict is reproducible, and two boxes answering differently is the failure. v1.32.1 brings roughly thirty indirect modules — cobra, viper, afero and the rest of a CLI's furniture — into `go.sum`; none is linked into `yad`, and that price is named here rather than glossed |
+| `govulncheck` (tool, not linked, not in `go.mod`) | CI's check for known vulnerabilities in the code `yad` actually calls, on every push and weekly. Run as `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0` so it adds nothing to `go.sum`: it is the one check whose answer changes without a commit, and it runs where the vulnerability database is fetched |
 
 ## §7 Testing
 

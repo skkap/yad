@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 924 382" width="924" height="382" role="img" aria-labelledby="t d">
+  <title id="t">The life of a run</title>
+  <desc id="d">A run is queued by a hub, offered in the answer to a runner's sync, and claimed when the runner lists it back. The runner prepares a workdir, runs the harness while streaming every event, may wait on a usage limit, and reports how it ended. The session stays for the next run to resume.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; fill: #1F2328; }
+    .title { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12.5px; fill: #59636E; }
+    .label { font-size: 12px; fill: #59636E; }
+    .section { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; fill: #59636E; }
+    .state { font-size: 14px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .card { fill: #F6F8FA; stroke: #D0D7DE; stroke-width: 1.25; }
+    .accent { fill: #FDEEE9; stroke: #E8522F; stroke-width: 1.5; }
+    .machine { fill: none; stroke: #8C959F; stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .wire { fill: none; stroke: #8C959F; stroke-width: 1.75; }
+    .wire-accent { fill: none; stroke: #E8522F; stroke-width: 2; }
+    .head { fill: #8C959F; }
+    .head-accent { fill: #E8522F; }
+    .no { fill: none; stroke: #CF222E; stroke-width: 2; stroke-linecap: round; }
+    .no-text { font-size: 12px; font-weight: 600; fill: #CF222E; }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #E6EDF3; }
+      .sub, .label, .section { fill: #9198A1; }
+      .card { fill: #161B22; stroke: #3D444D; }
+      .accent { fill: #3B1E16; stroke: #F0714F; }
+      .machine { stroke: #6E7681; }
+      .wire { stroke: #6E7681; }
+      .head { fill: #6E7681; }
+      .wire-accent { stroke: #F0714F; }
+      .head-accent { fill: #F0714F; }
+      .no { stroke: #F85149; }
+      .no-text { fill: #F85149; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-accent" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <text x="24" y="30" class="section" text-anchor="start">THE LIFE OF A RUN</text>
+  <rect x="24" y="354" width="14" height="14" rx="3" class="card"/>
+  <text x="46" y="366" class="label" text-anchor="start">the hub's state</text>
+  <rect x="170" y="354" width="14" height="14" rx="3" class="accent"/>
+  <text x="192" y="366" class="label" text-anchor="start">the runner's state, reported in every sync</text>
+  <rect x="24" y="56" width="128" height="44" rx="22" class="card"/>
+  <text x="88.0" y="83" class="state" text-anchor="middle">queued</text>
+  <text x="88.0" y="128" class="sub" text-anchor="middle">a hub has work</text>
+  <text x="88.0" y="145" class="sub" text-anchor="middle">for a runner</text>
+  <line x1="155" y1="78" x2="173" y2="78" class="wire" marker-end="url(#arrow)"/>
+  <rect x="176" y="56" width="128" height="44" rx="22" class="card"/>
+  <text x="240.0" y="83" class="state" text-anchor="middle">offered</text>
+  <text x="240.0" y="128" class="sub" text-anchor="middle">sent in the answer</text>
+  <text x="240.0" y="145" class="sub" text-anchor="middle">to the runner's sync</text>
+  <line x1="307" y1="78" x2="325" y2="78" class="wire-accent" marker-end="url(#arrow-accent)"/>
+  <rect x="328" y="56" width="128" height="44" rx="22" class="accent"/>
+  <text x="392.0" y="83" class="state" text-anchor="middle">claimed</text>
+  <text x="392.0" y="128" class="sub" text-anchor="middle">listed back in its</text>
+  <text x="392.0" y="145" class="sub" text-anchor="middle">next sync: the claim</text>
+  <line x1="459" y1="78" x2="477" y2="78" class="wire-accent" marker-end="url(#arrow-accent)"/>
+  <rect x="480" y="56" width="128" height="44" rx="22" class="accent"/>
+  <text x="544.0" y="83" class="state" text-anchor="middle">preparing</text>
+  <text x="544.0" y="128" class="sub" text-anchor="middle">builds the workdir,</text>
+  <text x="544.0" y="145" class="sub" text-anchor="middle">runs the setup hook,</text>
+  <text x="544.0" y="162" class="sub" text-anchor="middle">picks an account</text>
+  <line x1="611" y1="78" x2="629" y2="78" class="wire-accent" marker-end="url(#arrow-accent)"/>
+  <rect x="632" y="56" width="128" height="44" rx="22" class="accent"/>
+  <text x="696.0" y="83" class="state" text-anchor="middle">running</text>
+  <text x="696.0" y="128" class="sub" text-anchor="middle">the harness works;</text>
+  <text x="696.0" y="145" class="sub" text-anchor="middle">every event streams</text>
+  <text x="696.0" y="162" class="sub" text-anchor="middle">to the hub</text>
+  <line x1="763" y1="78" x2="781" y2="78" class="wire-accent" marker-end="url(#arrow-accent)"/>
+  <rect x="784" y="56" width="128" height="44" rx="22" class="accent"/>
+  <text x="848.0" y="83" class="state" text-anchor="middle">ended</text>
+  <text x="848.0" y="128" class="sub" text-anchor="middle">succeeded, failed,</text>
+  <text x="848.0" y="145" class="sub" text-anchor="middle">cancelled, timed_out:</text>
+  <text x="848.0" y="162" class="sub" text-anchor="middle">the result is sent</text>
+  <rect x="632" y="200" width="128" height="44" rx="22" class="accent"/>
+  <text x="696.0" y="227" class="state" text-anchor="middle">waiting</text>
+  <line x1="682.0" y1="172" x2="682.0" y2="197" class="wire-accent" marker-end="url(#arrow-accent)"/>
+  <line x1="710.0" y1="197" x2="710.0" y2="172" class="wire-accent" marker-end="url(#arrow-accent)"/>
+  <text x="696.0" y="264" class="sub" text-anchor="middle">a usage limit: another</text>
+  <text x="696.0" y="281" class="sub" text-anchor="middle">account, or wait for</text>
+  <text x="696.0" y="298" class="sub" text-anchor="middle">the reset</text>
+  <path d="M 848.0 172 L 848.0 328 L 88.0 328 L 88.0 174" class="wire" marker-end="url(#arrow)"/>
+  <text x="528.0" y="320" class="label" text-anchor="middle">the session and its workdir stay: the hub's next run in it resumes the conversation</text>
+</svg>

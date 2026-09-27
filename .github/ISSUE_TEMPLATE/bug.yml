@@ -1,0 +1,37 @@
+name: Bug
+description: yad did something it should not, or did not do something it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead — the exact error text if there was one.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce it
+      description: The smallest set of steps. `yad hub serve` on loopback is the easiest hub to reproduce against.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: yad version and yad doctor
+      description: The output of `yad version` and `yad doctor`. Check it first — it names paths under your home, and you may want to shorten them.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: hub
+    attributes:
+      label: Which hub
+      options:
+        - yad hub
+        - Zumino
+        - my own hub
+        - not relevant
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a token**: a registration token, a runner credential, a grant, or a harness login. yad never prints one, so nothing it prints needs one added.

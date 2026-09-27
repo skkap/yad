@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 472" width="900" height="472" role="img" aria-labelledby="t d">
+  <title id="t">How YAD works</title>
+  <desc id="d">Hubs such as Zumino, yad hub or your own decide what work exists. On your machine, one yad runner connects out to every hub over HTTPS, claims runs, and drives Claude Code or Codex in a session's workdir using the harnesses' own logins. Nothing connects in: the runner opens no port.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; fill: #1F2328; }
+    .title { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12.5px; fill: #59636E; }
+    .label { font-size: 12px; fill: #59636E; }
+    .section { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; fill: #59636E; }
+    .state { font-size: 14px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .card { fill: #F6F8FA; stroke: #D0D7DE; stroke-width: 1.25; }
+    .accent { fill: #FDEEE9; stroke: #E8522F; stroke-width: 1.5; }
+    .machine { fill: none; stroke: #8C959F; stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .wire { fill: none; stroke: #8C959F; stroke-width: 1.75; }
+    .wire-accent { fill: none; stroke: #E8522F; stroke-width: 2; }
+    .head { fill: #8C959F; }
+    .head-accent { fill: #E8522F; }
+    .no { fill: none; stroke: #CF222E; stroke-width: 2; stroke-linecap: round; }
+    .no-text { font-size: 12px; font-weight: 600; fill: #CF222E; }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #E6EDF3; }
+      .sub, .label, .section { fill: #9198A1; }
+      .card { fill: #161B22; stroke: #3D444D; }
+      .accent { fill: #3B1E16; stroke: #F0714F; }
+      .machine { stroke: #6E7681; }
+      .wire { stroke: #6E7681; }
+      .head { fill: #6E7681; }
+      .wire-accent { stroke: #F0714F; }
+      .head-accent { fill: #F0714F; }
+      .no { stroke: #F85149; }
+      .no-text { fill: #F85149; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-accent" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <text x="24" y="34" class="section" text-anchor="start">HUBS — they decide what work exists</text>
+  <rect x="24" y="52" width="250" height="84" rx="10" class="card"/>
+  <text x="40" y="78" class="title" text-anchor="start">Zumino</text>
+  <text x="40" y="98" class="sub" text-anchor="start">the task tracker, with runners</text>
+  <text x="40" y="115" class="sub" text-anchor="start">on its customers' machines</text>
+  <rect x="24" y="156" width="250" height="84" rx="10" class="card"/>
+  <text x="40" y="182" class="title" text-anchor="start">yad hub</text>
+  <text x="40" y="202" class="sub" text-anchor="start">the same binary in server mode,</text>
+  <text x="40" y="219" class="sub" text-anchor="start">for scripts and tools</text>
+  <rect x="24" y="260" width="250" height="84" rx="10" class="card"/>
+  <text x="40" y="286" class="title" text-anchor="start">Your own hub</text>
+  <text x="40" y="306" class="sub" text-anchor="start">anything that speaks the v1</text>
+  <text x="40" y="323" class="sub" text-anchor="start">protocol — see HUB.md</text>
+  <rect x="404" y="52" width="472" height="396" rx="16" class="machine"/>
+  <text x="404" y="34" class="section" text-anchor="start">YOUR MACHINE — a Mac, a Linux box, a VM</text>
+  <rect x="428" y="76" width="424" height="104" rx="10" class="accent"/>
+  <text x="444" y="102" class="title" text-anchor="start">yad runner</text>
+  <text x="444" y="122" class="sub" text-anchor="start">one process per OS user · claims runs from every hub</text>
+  <text x="444" y="139" class="sub" text-anchor="start">shares its capacity between them · survives restarts</text>
+  <text x="444" y="156" class="sub" text-anchor="start">waits out usage limits · fails over between accounts</text>
+  <rect x="428" y="228" width="202.0" height="76" rx="10" class="card"/>
+  <text x="444" y="254" class="title" text-anchor="start">Claude Code</text>
+  <text x="444" y="274" class="sub" text-anchor="start">driven headless, streamed</text>
+  <text x="444" y="291" class="sub" text-anchor="start">event by event</text>
+  <rect x="650.0" y="228" width="202.0" height="76" rx="10" class="card"/>
+  <text x="666.0" y="254" class="title" text-anchor="start">Codex</text>
+  <text x="666.0" y="274" class="sub" text-anchor="start">driven headless, streamed</text>
+  <text x="666.0" y="291" class="sub" text-anchor="start">event by event</text>
+  <line x1="529.0" y1="180" x2="529.0" y2="226" class="wire" marker-end="url(#arrow)"/>
+  <line x1="751.0" y1="180" x2="751.0" y2="226" class="wire" marker-end="url(#arrow)"/>
+  <text x="640.0" y="209" class="label" text-anchor="middle">runs one harness per run</text>
+  <rect x="428" y="324" width="202.0" height="76" rx="10" class="card"/>
+  <text x="444" y="350" class="title" text-anchor="start">Sessions &amp; workdirs</text>
+  <text x="444" y="370" class="sub" text-anchor="start">a git worktree or a folder,</text>
+  <text x="444" y="387" class="sub" text-anchor="start">kept between a session's runs</text>
+  <rect x="650.0" y="324" width="202.0" height="76" rx="10" class="card"/>
+  <text x="666.0" y="350" class="title" text-anchor="start">Your accounts</text>
+  <text x="666.0" y="370" class="sub" text-anchor="start">the harnesses' own logins</text>
+  <text x="666.0" y="387" class="sub" text-anchor="start">on this machine</text>
+  <path d="M 428 128 C 358 128, 344 94, 276 94" class="wire-accent" marker-end="url(#arrow-accent)"/>
+  <path d="M 428 128 C 358 128, 344 198, 276 198" class="wire-accent" marker-end="url(#arrow-accent)"/>
+  <path d="M 428 128 C 358 128, 344 302, 276 302" class="wire-accent" marker-end="url(#arrow-accent)"/>
+  <text x="340" y="340" class="label" text-anchor="middle">outbound HTTPS:</text>
+  <text x="340" y="357" class="label" text-anchor="middle">the runner asks,</text>
+  <text x="340" y="374" class="label" text-anchor="middle">work comes back</text>
+  <text x="340" y="391" class="label" text-anchor="middle">in the answer</text>
+  <line x1="292" y1="420" x2="400" y2="420" class="wire" marker-end="url(#arrow)"/>
+  <line x1="338" y1="410" x2="354" y2="430" class="no"/>
+  <line x1="354" y1="410" x2="338" y2="430" class="no"/>
+  <text x="428" y="424" class="no-text" text-anchor="start">no open port — nothing can connect in</text>
+</svg>

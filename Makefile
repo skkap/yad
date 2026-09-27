@@ -136,10 +136,13 @@ smoke-codex: build
 install: build
 	install -m 0755 bin/yad $(HOME)/.local/bin/yad
 
+# The notices go beside the binaries because MIT and BSD require them in a
+# binary distribution; scripts/notices.sh says what they cover.
 dist:
 	@for t in $(TARGETS); do \
-	  GOOS=$${t%/*} GOARCH=$${t#*/} go build -ldflags '$(LDFLAGS)' -o dist/yad-$${t%/*}-$${t#*/} ./cmd/yad || exit 1; \
+	  GOOS=$${t%/*} GOARCH=$${t#*/} go build -trimpath -ldflags '$(LDFLAGS)' -o dist/yad-$${t%/*}-$${t#*/} ./cmd/yad || exit 1; \
 	done
+	./scripts/notices.sh > dist/THIRD_PARTY_LICENSES.txt
 
 clean:
 	rm -rf bin dist
