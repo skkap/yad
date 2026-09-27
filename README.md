@@ -82,7 +82,6 @@ Cursor Agent        no adapter  2025.09.12-4852336     /Users/me/.local/bin/curs
 profile default — config /Users/me/.config/yad
 2 harness(es) this runner can be given work for.
 ```
-```
 
 ## What it is not
 
