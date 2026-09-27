@@ -21,7 +21,8 @@ func TestUnbuiltCommandsSayWhereTheWorkIs(t *testing.T) {
 	}{{
 		name:     "disconnect",
 		args:     []string{"disconnect", "work"},
-		want:     []string{"DEV-81"},
+		want:     []string{"still being designed"},
+		not:      []string{"DEV-", "Zumino"},
 		commands: [][]string{{"daemon", "stop"}},
 	}, {
 		// Which account a run takes is the soonest refill (0039), so the

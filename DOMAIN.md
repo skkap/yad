@@ -255,11 +255,11 @@ _Avoid_: workspace — the tenant in Zumino and in Multica
 _See_: [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md), [0032](docs/decisions/0032-a-workdir-belongs-to-its-session.md), [0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md), `internal/workdir`, `internal/runner/collect.go`
 
 **Setup hook** — a repository's own `.worktree/setup`, which YAD runs in a new
-workdir with the `WT_*` variables, exactly as `gpiwt` does. Optional; a repo
+workdir with the `WT_*` variables. Optional; a repo
 without one still runs, and the run's events say so.
 _Rules_: A hook that fails fails the run while it is preparing; the session's
 next run tries it again.
-_See_: `~/my/gpi-tools/docs/worktrees/README.md`, [0034](docs/decisions/0034-a-failing-setup-hook-fails-the-run.md)
+_See_: [docs/setup-hooks.md](docs/setup-hooks.md), [0034](docs/decisions/0034-a-failing-setup-hook-fails-the-run.md)
 
 **Slot** — `WT_SLOT`: a small integer unique among one repository's live
 worktrees on a machine, from which the setup hook derives ports and container

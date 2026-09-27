@@ -49,8 +49,8 @@ jobs:
       # sha256sum's own output, so one line of it verifies one download by
       # hand exactly as yad upgrade and scripts/install.sh do — each of those
       # matches the single asset it took, because the file names all four.
-      - run: cd dist && sha256sum yad-* > checksums.txt
-      - run: gh release create "$GITHUB_REF_NAME" dist/yad-* dist/checksums.txt --verify-tag --generate-notes
+      - run: cd dist && sha256sum yad-* THIRD_PARTY_LICENSES.txt > checksums.txt
+      - run: gh release create "$GITHUB_REF_NAME" dist/yad-* dist/THIRD_PARTY_LICENSES.txt dist/checksums.txt --verify-tag --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

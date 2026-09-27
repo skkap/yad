@@ -1,0 +1,20 @@
+# Updates to what is already here, never new dependencies: each Go module is in
+# ARCHITECTURE.md §6 with its reason, and a bump is reviewed like any change to
+# a binary that runs beside people's tokens. Grouped so a week is one pull
+# request per ecosystem rather than one per module.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ['*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']

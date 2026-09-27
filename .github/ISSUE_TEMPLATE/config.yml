@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/skkap/yad/security/advisories/new
+    about: Privately, never in a public issue. SECURITY.md says what counts.
+  - name: Building a hub
+    url: https://github.com/skkap/yad/blob/master/HUB.md
+    about: The v1 protocol, every call and the run state machine, with yad conformance to check yours.

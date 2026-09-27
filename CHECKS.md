@@ -83,7 +83,9 @@ go test ./...           # no -race
 make check-breaking     # oasdiff, against the documents check-openapi has just proved current
 ```
 
-That is the part whose answer can differ on Linux, plus three deliberate
+and then `govulncheck ./...`, pinned in `ci.yml`.
+
+That is the part whose answer can differ on Linux, plus four deliberate
 exceptions. `vet` is kept despite being machine-independent because it
 type-checks test files — twice a merge here has been textually clean and failed
 to compile, and only `vet` saw it.
@@ -112,6 +114,13 @@ which is what keeps it out of the dependency that took `check-generated` out of
 CI. The suite's `TestOpenAPIIsCurrent` and `TestServiceOpenAPIIsCurrent` catch
 the same drift in `go test ./...`; the make target is the gate named for it,
 runs first, and does not depend on a test file surviving a refactor.
+
+`govulncheck` is the fourth, and the only check whose answer changes without
+a commit: a vulnerability published against a module already here, or against
+the Go standard library, turns a green tree red overnight. So it runs in CI on
+every push and again every Monday on a schedule, where the vulnerability
+database is fetched fresh. It is not in `make check`, because it needs the
+network and its answer is a fact about today rather than about the branch.
 
 **CI does not run** `gofmt`, `staticcheck`, `check-generated`'s sqlc half, the
 cross-compile matrix, or the race detector. Not because they do not matter —

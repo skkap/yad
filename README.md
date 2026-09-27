@@ -1,23 +1,73 @@
-# YAD
+<p align="center">
+  <img src="docs/images/logo.svg" width="280" alt="YAD">
+</p>
 
-**One small binary that runs coding-agent harnesses on machines you own, for
-whatever asks.**
+<p align="center">
+  <b>Run coding-agent harnesses on machines you own — for any hub.</b>
+</p>
 
-YAD sits on a Mac or a Linux box, notices which harnesses are installed —
-Claude Code, Codex — and connects outbound to one or more **hubs**. When a hub
-has work, YAD claims a run, prepares a workdir, drives the harness against a
-durable session, streams what happened, and reports how it ended. It survives
-restarts and usage limits, fails over between accounts, and never opens a port.
+<p align="center">
+  <a href="https://github.com/skkap/yad/actions/workflows/ci.yml"><img src="https://github.com/skkap/yad/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/skkap/yad/releases"><img src="https://img.shields.io/github/v/release/skkap/yad?sort=semver" alt="Release"></a>
+  <a href="https://pkg.go.dev/github.com/skkap/yad"><img src="https://pkg.go.dev/badge/github.com/skkap/yad.svg" alt="Go Reference"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+</p>
 
-A hub is anything that hosts the server half of the runner protocol:
+YAD is one small binary for a Mac or a Linux box. It notices which coding-agent
+harnesses are installed — Claude Code, Codex — and connects **out** to one or
+more **hubs**: the systems that decide what work exists. When a hub has work,
+YAD claims a run, prepares a working directory, drives the harness in a session
+it keeps on disk, streams everything that happens, and reports how it ended.
 
-- **[Zumino](https://zumino.cc)** — the task tracker. Its customers can attach
-  their own runners and have Zumino's work run on their own machines and
-  subscriptions.
-- **yashiki** — the resident assistant, which today runs everything on one Mac
-  mini.
-- **`yad hub`** — the same binary in server mode, for anything that would rather
-  not embed the protocol.
+It survives restarts and usage limits, fails over between your accounts, and
+never opens a port.
+
+## How it works
+
+<p align="center">
+  <img src="docs/images/how-it-works.svg" alt="Hubs such as Zumino, yad hub or your own decide what work exists. On your machine, one yad runner connects out to every hub over HTTPS, claims runs, and drives Claude Code or Codex in a session's workdir with the harnesses' own logins. Nothing connects in.">
+</p>
+
+- **A hub** is anything that serves the runner protocol: [Zumino](https://zumino.cc),
+  the task tracker; `yad hub`, the same binary in server mode; or your own —
+  [HUB.md](HUB.md) is the whole contract.
+- **The runner** is `yad`, running as you. Every 5 to 60 seconds, as each hub
+  asks, it tells the hub what it holds, and the hub's answer carries the runs it
+  offers. It serves any number of hubs at once and shares its capacity fairly
+  between them. Nothing ever connects to it.
+- **A harness** is the coding agent itself. YAD drives it headless with the
+  logins already on the machine — it keeps no harness token of its own — in a
+  **session** whose workdir, a git worktree or a folder, is kept between runs.
+  The hub's next run in that session continues the same conversation.
+
+## The life of a run
+
+<p align="center">
+  <img src="docs/images/run-lifecycle.svg" alt="A run is queued by a hub, offered in the answer to a runner's sync, and claimed when the runner lists it back. The runner prepares a workdir, runs the harness while streaming every event, may wait on a usage limit, and reports how it ended. The session stays for the next run.">
+</p>
+
+A hub queues a run and offers it in its answer to the runner's next sync. The
+runner claims it by listing it back, builds the workdir, runs the repository's
+own [setup hook](docs/setup-hooks.md), starts the harness and streams every
+event as it happens. When an account hits its usage limit the run waits — for
+another of your accounts, or for the reset — rather than failing. How it ended,
+and the tokens it used, go back in the result.
+
+## What you get
+
+- **Many hubs, one runner.** Fair shares of the machine's capacity between
+  hubs, with a cap per harness.
+- **Nothing lost to a restart.** Sessions, events not yet delivered and results
+  not yet acknowledged live in SQLite. A restarted runner delivers them first
+  and reports the runs it was holding when it died.
+- **Your accounts, used well.** Several logins per harness: a run takes the one
+  whose usage window refills soonest, and moves to another when it runs out.
+- **Secrets that do not linger.** A hub can hand one run a short-lived secret.
+  It reaches that harness process alone and is deleted when the run ends.
+- **A plain report of the machine.** `yad doctor` lists every harness it knows,
+  installed or not, and says which it can drive.
+- **A protocol you can check.** The OpenAPI documents are generated from the Go
+  types, and `yad conformance` tests any hub against them.
 
 ```
 $ yad doctor
@@ -32,145 +82,48 @@ Cursor Agent        no adapter  2025.09.12-4852336     /Users/me/.local/bin/curs
 profile default — config /Users/me/.config/yad
 2 harness(es) this runner can be given work for.
 ```
+```
 
-Every harness in the catalog gets a row, whether or not it is here. Claude Code
-and Codex are `ready`: each has an adapter. `no adapter` is installed and
-recognised — reported so the gap is visible, and refused as the target of a run.
-`—` is simply not installed on this machine, which is a fact worth printing
-rather than a row worth hiding. A Codex whose app-server protocol differs from
-the one this yad was built against is still `ready`, with a `warning:` line
-under the table saying so — as are the things about the machine itself that
-[docs/run-it-safely.md](docs/run-it-safely.md) covers.
+## What it is not
 
-## What it is, and what it is not
+YAD is not a tracker, a UI, an orchestrator or a scheduler: a hub decides what
+work exists and when, and YAD runs what it is given.
 
-**It is** a runner: one process per identity, which advertises what the
-machine has, pulls work from any number of hubs over outbound HTTPS, runs one
-harness per run against a session it keeps on disk, and reports every event
-and every ending. It shares its capacity fairly between the hubs it serves,
-waits out a usage limit rather than failing, and moves a run to another of the
-owner's accounts when one runs out. `yad hub` is a small standalone hub beside
-it, and `yad conformance` checks anyone else's.
+**And it is not a sandbox.** It runs the harness as you, with whatever you can
+reach, and turns the harness's own permission prompts off, because nobody is
+there to answer them. Whoever sets YAD up decides what access its harnesses get:
 
-**It is not** a tracker, a UI, an orchestrator or a scheduler: a hub decides
-what work exists and when, and YAD runs what it is given. **And it is not a
-sandbox.** It runs the harness as you, with whatever you can reach, and turns
-the harness's own permission prompts off, because nobody is there to answer
-them.
+- Give it a machine, VM or container you would let an unknown repository run
+  code on — never a laptop holding credentials you care about.
+- Run one runner per trust domain: personal and work are two runners, ideally
+  two OS users. [`machines/`](machines/README.md) builds one Lima VM per runner
+  from a spec you keep in a repository.
+- Connect only hubs you trust. A hub writes the brief, and a brief can ask the
+  harness for anything the machine allows
+  ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)).
+- What a harness may do — Claude's permission mode, Codex's sandbox — is your
+  configuration in `config.toml`, and no hub can change it.
 
-## Your responsibility
-
-**Whoever sets YAD up decides what access its harnesses get.** A run can do
-anything the user it runs as can do on that machine: read its files, use its
-credentials, reach its network. The hubs you connect write the instructions.
-So choose the machine, the OS user, the accounts it is logged into and the
-hubs it connects to as deliberately as you would choose who gets a shell on
-it. If you need a run confined — to a directory, away from the network, away
-from your credentials — **sandbox YAD and its harnesses yourself**: a VM, a
-container, a dedicated OS user. YAD does not do it for you, and nothing a hub
-sends can widen or narrow what you set up. [Run it safely](#run-it-safely),
-below, is the short version of how; [docs/run-it-safely.md](docs/run-it-safely.md)
-is the long one.
-
-## Status
-
-**Epics E1–E8 are done; nothing is released yet.** Detection and the
-capability document, the v1 protocol and its generated OpenAPI documents,
-`yad hub` with its service API, the Claude Code and Codex adapters, the
-daemon, the control socket and the per-user service, sessions with git and
-folder sources and setup hooks, accounts with failover and waiting out usage
-limits, capacity shared across many hubs with per-harness caps, grants, host
-tools, health in every sync, run metrics, versioning, the conformance suite,
-drain, and `yad upgrade`. The build order is `ARCHITECTURE.md §9`; the epics
-and the backlog are in Zumino, project `yad/dev`.
-
-Not there yet: no release has been tagged, so the install script and `yad
-upgrade` have nothing to fetch — install from source, below. `yad disconnect`
-— and so a runner that deregisters from a hub — is still being designed.
-Live sessions, which keep one harness process across runs, are reserved in
-the protocol and not built. Gemini CLI, GitHub Copilot CLI, OpenCode and
-Cursor Agent are recognised but have no adapter.
+**[docs/run-it-safely.md](docs/run-it-safely.md)** is the full guide.
 
 ## Install
-
-### From a release
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/skkap/yad/master/scripts/install.sh -o yad-install.sh &&
   sh yad-install.sh
-```
-
-The `&&` is the point, not the two steps. A pipeline reports only its last
-command's status, so `curl … | sh` with a `curl` that cannot fetch the script
-hands `sh` an empty stream and exits 0 having installed nothing. Joined with
-`&&`, a failed fetch fails the whole command. To read the script before it
-runs, run the two halves separately.
-
-It needs no login and no token: it reads the newest release from GitHub, puts
-`yad` in `~/.local/bin`, checks the release's SHA-256 before writing anything,
-and tells you if that directory is not on your `PATH`. Then `yad doctor`, which
-shows which harnesses it can drive. A harness has to be installed and logged in
-on its own first — `claude`, `codex` — because YAD uses the harness's own login
-and keeps no token of its own.
-
-### From source
-
-You need Go 1.27.
-
-```bash
-git clone https://github.com/skkap/yad && cd yad
-mkdir -p ~/.local/bin
-make install        # builds ./bin/yad and copies it to ~/.local/bin/yad
 yad doctor
 ```
 
-If `yad` is not found afterwards, `~/.local/bin` is not on your `PATH`.
+The script needs no login. It puts `yad` in `~/.local/bin` and checks the
+release's SHA-256 before writing anything. Each harness is installed and logged
+in on its own first — `claude`, `codex` — because YAD uses their logins.
 
-### Pinning, upgrading, forks
+Or build it from source with Go 1.27: `git clone https://github.com/skkap/yad &&
+cd yad && make install`. Pinning a version, upgrading with `yad upgrade`,
+forks, and checking a download by hand are in
+**[docs/install.md](docs/install.md)**.
 
-`YAD_VERSION` pins a release and `YAD_INSTALL_DIR` moves where it lands:
-
-```bash
-YAD_VERSION=v0.3.1 sh yad-install.sh   # the file the command above left behind
-```
-
-Later, on your command and never on its own:
-
-```bash
-yad upgrade --check       # what the newest release is; changes nothing
-yad upgrade               # fetch it, verify its checksum, then replace this binary
-yad upgrade --tag v0.3.1  # that release, newer or older — how a bad one is rolled back
-```
-
-If you installed from a fork, set `YAD_REPO` for the upgrade too — nothing
-records where the binary came from, so an upgrade without it would replace your
-fork's build with upstream's.
-
-`yad upgrade` downloads to a temporary directory beside the installed binary,
-checks its SHA-256 against the release's `checksums.txt`, and only then renames
-it into place — so an upgrade that fails at any step leaves a working `yad`. It
-restarts nothing: a runner already running holds the binary it started from
-until you restart it, and `yad upgrade` says so — naming the profile, and
-carrying it in the commands it offers. If that runner is a service, re-run
-`yad service install [--profile name]` rather than `yad daemon restart`:
-install replaces the unit and starts it again, where a restart would leave an
-unsupervised process the service manager is no longer watching
-([0028](docs/decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)).
-The profile goes after `service install` but *before* `daemon` —
-`yad --profile work daemon restart` — because `daemon` has no flag of its own. Nothing in
-YAD updates itself on a schedule or on a hub's say-so
-([0018](docs/decisions/0018-no-self-update-in-v1.md)).
-
-Releases are built by CI on a `v*` tag: linux and darwin × amd64 and arm64,
-`CGO_ENABLED=0`, with a `checksums.txt` covering all four. To check a download
-by hand, pull out the one line for the binary you took — a checker given the
-whole file reports the three you did not download as failures:
-
-```bash
-grep " yad-linux-amd64$" checksums.txt | sha256sum -c -   # or: shasum -a 256 -c -
-```
-
-## Quickstart: a hub, a runner and one run
+## Try it: a hub, a runner and one run
 
 Everything on one machine, on loopback. It uses your `default` profile and
 spends one short Claude Code turn on the cheapest model, so `claude` must be
@@ -205,109 +158,46 @@ credential for this hub, the hub's database. To run YAD for real on one
 machine — as a service, in a profile of its own, and removed cleanly
 afterwards — follow [docs/trial.md](docs/trial.md).
 
-## Where to read next
-
-| | |
-|---|---|
-| **[HUB.md](HUB.md)** | building a hub: every call, the run state machine, leases, controls, sessions, grants, errors, versioning, and `yad conformance` — the contract, with `protocol/v1/openapi.yaml` |
-| **[DOMAIN.md](DOMAIN.md)** | the vocabulary: runner, hub, harness, session, run, account, grant, sync, and the words each one replaces |
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | the shape: packages, the protocol and why it is so, how each harness is driven, local state, build order |
-| **[docs/run-it-safely.md](docs/run-it-safely.md)** | what a run can do on the machine you give it, and how to limit that |
-| **[docs/trial.md](docs/trial.md)** | running YAD for real on one machine, and removing it |
-| **[docs/decisions/](docs/decisions/)** | why each hard-to-reverse choice was made |
-| **[CHECKS.md](CHECKS.md)** | what `make check` runs before anything is pushed |
-
-## Run it safely
-
-A runner auto-approves everything its harness does — nobody is there to answer a
-prompt. Run it on a machine, VM or container you would let an unknown repository
-execute code on, never on a laptop holding credentials you care about, and one
-runner per trust domain: personal and work are two runners.
-
-The rest of this section is the short version. The guide is
-**[docs/run-it-safely.md](docs/run-it-safely.md)** — what a run can actually do
-on the machine you give it, why a profile separates YAD's state but not the
-machine (so each profile wants its own OS user), what turning a harness's own
-guardrails back on costs, and the three things `yad doctor` now warns about.
-
-To build such a machine, **[machines/](machines/README.md)** makes one Lima VM
-per runner from a directory you keep in a repository: the tools, the harnesses,
-the files in the runner's home and its configuration, with the runner's user
-shut out of the host, its LAN and its tailnet. One command builds it; the
-logins are made once — at the machine, or from a hub that supports logging a
-runner's accounts in: by a link and a code, or a pasted `claude setup-token`
-token, the credential ending up on the machine either way
-([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)).
-
-You trust the hubs you connect, and YAD does not police what they send
-([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A hub
-writes the brief, and a brief can tell the harness to read any file or send any
-secret anywhere — so a hub that can queue a run here reaches whatever this
-machine reaches, and filtering the names it uses would never have changed that.
-Connect the hubs you would hand that much to, and nothing else.
-
-What that means in practice. A run's grants may be named anything a shell
-accepts as a variable, except `PATH`, `HOME` and the loader variables `LD_*` and
-`DYLD_*` — refused whatever their case, and only because a hub's mistake there
-would make every run fail for no visible reason. Nor may a grant name the
-variables that choose which login a harness uses — `ANTHROPIC_API_KEY`,
-`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENAI_API_KEY` and a few more
-(`protocol/v1/grant.go`): the accounts you configured decide what a run spends,
-and a hub's key must not quietly replace them while `yad account list` still
-names yours ([0040](docs/decisions/0040-a-grant-may-not-move-a-run-off-its-account.md)).
-`IS_SANDBOX` is accepted as a
-name and then dropped before Claude starts: only you declare that, in the
-runner's own environment. A grant reaches the harness process alone, never the
-prompt, the logs or the events, as `NAME=value` or a `0600` file under the
-runner's data directory rather than in the checkout, and it is deleted when the
-run ends — or at the next start, if the runner was killed before it could. A
-folder source is taken only inside `[workdirs] roots` in `config.toml`; with
-none listed that is your home directory. List the directories a hub may have
-checked out if you want it to name fewer — `roots` chooses the material a
-workdir is built from, and does not confine the harness once the run starts.
-
-Claude Code runs with `--permission-mode bypassPermissions` unless
-`permission_mode` under `[harness.claude]` in `config.toml` says otherwise.
-Claude refuses that mode as root; run the runner as an ordinary user.
-
-Codex runs with approval policy `never` and sandbox `danger-full-access` unless
-`approval` and `sandbox` under `[harness.codex]` say otherwise
-([0036](docs/decisions/0036-codex-runs-unsandboxed-and-never-asks-unless-the-owner-says.md)).
-`sandbox = "workspace-write"` keeps Codex off the network, so a run cannot push
-or install. It narrows what Codex may write but does not confine it to the
-workdir — `/tmp` and `$TMPDIR` stay writable by default
-([docs/run-it-safely.md](docs/run-it-safely.md)). A policy that asks for
-approval is answered no: nobody is there to say yes.
-
 ## Run it as a service
 
 ```bash
-yad service install [--profile name]     # launchd agent on macOS, systemd user unit on Linux
-yad service status  [--profile name]
-yad service uninstall [--profile name]   # stops it and removes the unit; safe to repeat
+yad service install     # launchd agent on macOS, systemd user unit on Linux
+yad service status
+yad service uninstall
 ```
 
-The service runs `yad daemon start --foreground` as you, never as root, and
-restarts it after a crash. It uses the PATH your login shell had when you ran
-`install`, so run `install` again after changing PATH, upgrading or moving the
-binary; a re-install replaces the unit. Stopping the service drains the
-runner — no new runs, the ones it holds finish for up to `[drain] wait`
-(default 30m), then are cancelled — and the unit's stop timeout is derived
-from that wait when you install, so run `install` again after changing it. On Linux a user unit stops when you log
-out unless lingering is on — `install` tells you, and `loginctl enable-linger`
-is yours to run. Why it is shaped this way: [0028](docs/decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md).
+It runs as you, never as root, restarts after a crash, and drains on stop: no
+new runs, and the ones it holds get time to finish. Details, and what to re-run
+after an upgrade, are in [docs/install.md](docs/install.md#run-it-as-a-service).
 
-## Build
+## Status
 
-```bash
-make check      # lint, test, build, generated-file drift, cross-compile — see CHECKS.md
-make build      # ./bin/yad
-make install    # ~/.local/bin/yad, from this checkout rather than a release
-make generate   # sqlc and the OpenAPI document
-```
+Everything above works today. **No release has been tagged yet**, so until the
+first one the install script has nothing to fetch — build from source.
 
-Go 1.27 and `sqlc` 1.31. Dependencies are a curated list with a reason for each,
-in `ARCHITECTURE.md §6`.
+Not built yet: `yad disconnect`, so a runner cannot yet leave a hub on its own;
+live sessions, which would keep one harness process across runs (reserved in
+the protocol); and adapters for Gemini CLI, GitHub Copilot CLI, OpenCode and
+Cursor Agent, which `yad doctor` recognises but will not run.
+
+## Documentation
+
+| | |
+|---|---|
+| **[docs/install.md](docs/install.md)** | installing, pinning, upgrading, forks, and running as a service |
+| **[docs/run-it-safely.md](docs/run-it-safely.md)** | what a run can do on the machine you give it, and how to limit that |
+| **[docs/trial.md](docs/trial.md)** | running YAD for real on one machine, and removing it cleanly |
+| **[docs/setup-hooks.md](docs/setup-hooks.md)** | making a repository ready for a run: `.worktree/setup` and the `WT_*` variables |
+| **[HUB.md](HUB.md)** | building a hub: every call, the run state machine, leases, sessions, grants, errors, and `yad conformance` |
+| **[DOMAIN.md](DOMAIN.md)** | the vocabulary: runner, hub, harness, session, run, account, grant, sync |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | the shape: packages, the protocol, how each harness is driven, local state |
+| **[docs/decisions/](docs/decisions/)** | why each hard-to-reverse choice was made |
+
+## Contributing
+
+Issues and pull requests are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) says
+how the code is written and what `make check` runs. Report a vulnerability
+privately, as [SECURITY.md](SECURITY.md) describes, never in an issue.
 
 ## Prior art
 
@@ -321,6 +211,11 @@ Read before adding anything; most of this problem is solved somewhere.
 | **Paseo, vibe-kanban, happy** | The adapter split this repo follows: Claude by stream-json, Codex by app-server, ACP for the long tail |
 | **ACP** (Agent Client Protocol) | The likely answer for the recognised harnesses; not for Claude or Codex, which speak it only through Node adapters |
 | **Coder agentapi** | TUI scraping behind HTTP; archived in September 2026. The approach this repo does not take |
+
+## License
+
+[MIT](LICENSE). Release binaries carry the notices of everything compiled into
+them in `THIRD_PARTY_LICENSES.txt`.
 
 ## The name
 

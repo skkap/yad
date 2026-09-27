@@ -30,7 +30,8 @@ const hookPath = ".worktree/setup"
 // stays clean.
 const setupDone = "yad-setup-done"
 
-// hookEnv is the WT_* contract (~/my/gpi-tools/docs/worktrees/README.md).
+// hookEnv is the WT_* contract, documented for repository authors in
+// docs/setup-hooks.md.
 type hookEnv struct {
 	root, main, branch, repo string
 	slot                     int64

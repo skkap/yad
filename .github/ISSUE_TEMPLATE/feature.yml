@@ -1,0 +1,16 @@
+name: Idea
+description: Something yad should do, or do differently.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do and what stops you. The problem matters more than a proposed fix.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: Optional. Check docs/decisions/ first — the idea may already have been weighed, and the record says why it went the way it did.

@@ -20,6 +20,8 @@ UI, an orchestrator or a sandbox.
 - **[`CHECKS.md`](CHECKS.md) is the bar** before pushing. `make check`.
 - **The plan is in Zumino**, project `yad/dev`: epics E1–E8 in build order
   (`ARCHITECTURE.md §9`), and E9, the backlog. `zumino queue --project dev --workspace yad`.
+  Only the maintainer can read it; an outside contributor agrees a change in a
+  GitHub issue instead ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Stack
 
