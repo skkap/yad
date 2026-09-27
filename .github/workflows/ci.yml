@@ -45,7 +45,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # The breaking-change check compares each document against itself at
           # the last release tag, and checkout fetches no tags by default. With
@@ -54,7 +54,7 @@ jobs:
           # line is what makes the step above a real check; release.yml sets it
           # for the same family of reason.
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: make ci
