@@ -93,55 +93,40 @@ Cursor Agent are recognised but have no adapter.
 
 ## Install
 
-### From source, today
-
-You need Go 1.27 and access to the repository.
+### From a release
 
 ```bash
-gh repo clone skkap/yad && cd yad
+curl -fsSL https://raw.githubusercontent.com/skkap/yad/master/scripts/install.sh -o yad-install.sh &&
+  sh yad-install.sh
+```
+
+The `&&` is the point, not the two steps. A pipeline reports only its last
+command's status, so `curl … | sh` with a `curl` that cannot fetch the script
+hands `sh` an empty stream and exits 0 having installed nothing. Joined with
+`&&`, a failed fetch fails the whole command. To read the script before it
+runs, run the two halves separately.
+
+It needs no login and no token: it reads the newest release from GitHub, puts
+`yad` in `~/.local/bin`, checks the release's SHA-256 before writing anything,
+and tells you if that directory is not on your `PATH`. Then `yad doctor`, which
+shows which harnesses it can drive. A harness has to be installed and logged in
+on its own first — `claude`, `codex` — because YAD uses the harness's own login
+and keeps no token of its own.
+
+### From source
+
+You need Go 1.27.
+
+```bash
+git clone https://github.com/skkap/yad && cd yad
 mkdir -p ~/.local/bin
 make install        # builds ./bin/yad and copies it to ~/.local/bin/yad
 yad doctor
 ```
 
-If `yad` is not found afterwards, `~/.local/bin` is not on your `PATH`. `yad
-doctor` then shows which harnesses it can drive; a harness has to be installed
-and logged in on its own first — `claude`, `codex` — because YAD uses the
-harness's own login and keeps no token of its own.
+If `yad` is not found afterwards, `~/.local/bin` is not on your `PATH`.
 
-### From a release, once there is one
-
-The repository is private, so there is no URL to download from without a token
-— for the binaries or for the install script. `gh` does the fetching, and the
-GitHub login you already have is what grants access:
-
-```bash
-gh api -H "Accept: application/vnd.github.raw" \
-  repos/skkap/yad/contents/scripts/install.sh > yad-install.sh &&
-  sh yad-install.sh
-```
-
-The `&&` is the point, not the two steps. A pipeline reports only its last
-command's status, so `gh api … | sh` hands `sh` an empty stream and exits 0
-having installed nothing — and so does `gh api … > f` followed by a separate
-`sh f`, because the redirection creates the file whether `gh` succeeds or not
-and `sh` on an empty file exits 0. Joined with `&&`, a `gh` that cannot fetch
-the script fails the whole command.
-
-The file is kept because the pinning example below re-runs it — not so you can
-read it first: the `&&` runs it as soon as the fetch succeeds. To read it
-before it runs, fetch and run as two separate commands, and check `gh`'s exit
-status yourself, because the redirection creates the file whether `gh`
-succeeded or not.
-
-It puts `yad` in `~/.local/bin`, checks the release's SHA-256 before writing
-anything, and tells you if that directory is not on your `PATH`. Then
-`yad doctor`.
-
-Fetch it with `gh` rather than `curl`: a `curl` carrying
-`Authorization: Bearer $(gh auth token)` puts the live token in `curl`'s argv,
-where `/proc` and `ps` hand it to every local account for the length of the
-request.
+### Pinning, upgrading, forks
 
 `YAD_VERSION` pins a release and `YAD_INSTALL_DIR` moves where it lands:
 

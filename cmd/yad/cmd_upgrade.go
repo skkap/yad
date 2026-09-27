@@ -102,9 +102,13 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 // fork's binary with upstream's — the install source silently lost at the one
 // moment the binary changes. Nothing records the repository at install time,
 // so the operator sets it the same way both times.
-func releaseSource() upgrade.GH {
-	return upgrade.GH{Repo: os.Getenv(upgrade.RepoEnv)}
+func releaseSource() upgrade.GitHub {
+	return upgrade.GitHub{Repo: os.Getenv(upgrade.RepoEnv), BaseURL: releasesURL}
 }
+
+// releasesURL is where releases are fetched from; tests point it at a server
+// in process.
+var releasesURL = upgrade.DefaultBaseURL
 
 // restartNote says what the upgrade means for any runner already running.
 //
