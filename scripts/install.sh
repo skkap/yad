@@ -1,30 +1,19 @@
 #!/bin/sh
 # Installs yad into ~/.local/bin from the newest tagged release.
 #
-# The repository is private (decided 2026-09-19), so there is no URL to curl
-# without a token — for the binaries or for this script. `gh` does the
-# fetching, and the login you already have is what grants access:
-#
-#   gh api -H "Accept: application/vnd.github.raw" \
-#     repos/skkap/yad/contents/scripts/install.sh > yad-install.sh &&
+#   curl -fsSL https://raw.githubusercontent.com/skkap/yad/master/scripts/install.sh -o yad-install.sh &&
 #     sh yad-install.sh
 #
 # The && is the point. A pipeline reports only the status of its last command,
-# so a gh that cannot fetch this file — not installed, not logged in, no
-# network — hands sh an empty stream and sh exits 0 having installed nothing;
-# a bare redirection followed by a separate `sh` does the same, because the
-# file is created whether gh ran or not. That is the one failure a chained
-# provisioning script reads as success, and it is the case this file's own
-# "gh is not on PATH" refusal can never reach, since gh is what fetched it.
-# The file is kept because the YAD_VERSION example below re-runs it, not as an
-# inspection point — the && runs it the moment the fetch succeeds. To read it
-# first, fetch and run separately and check gh's own exit status, since the
-# redirection creates the file either way.
+# so `curl … | sh` with a curl that cannot fetch this file — no network, a
+# proxy in the way — hands sh an empty stream and sh exits 0 having installed
+# nothing. That is the one failure a chained provisioning script reads as
+# success. Joined with &&, a failed fetch fails the whole command. To read the
+# script before it runs, run the two halves separately.
 #
-# Fetch it with gh rather than curl: a curl carrying `Authorization: Bearer
-# $(gh auth token)` puts the live token in curl's argv, where /proc and ps
-# hand it to every local account for the length of the request. gh reads the
-# same token from its own keyring and never passes it as an argument.
+# Releases are public, so nothing here needs a login or a token: the newest tag
+# is read from the redirect on /releases/latest, and each asset is a plain
+# HTTPS download checked against the release's checksums.txt.
 #
 # YAD_VERSION pins a release, YAD_INSTALL_DIR moves where it lands, and
 # YAD_REPO points at a fork — set the same YAD_REPO for `yad upgrade` later,
@@ -53,11 +42,8 @@ case "$(uname -m)" in
 esac
 asset="yad-$os-$arch"
 
-command -v gh >/dev/null 2>&1 ||
-  die "the GitHub CLI \`gh\` is not on PATH, and $REPO is private — install gh (https://cli.github.com) and run \`gh auth login\`"
-# No `gh auth status` gate: it exits non-zero when an account on *any* host has
-# a problem, so a stale GitHub Enterprise entry refuses an install that would
-# have worked. The calls below fail on their own and say why.
+command -v curl >/dev/null 2>&1 ||
+  die "curl is not on PATH — install it with this machine's package manager, or download the release by hand from https://github.com/$REPO/releases"
 
 # One of these two exists on every Linux distribution and every macOS; without
 # one there is no way to check what was downloaded, and an unchecked binary is
@@ -91,27 +77,55 @@ mkdir -p "$DIR" || die "cannot create $DIR — install yad somewhere you own, su
 [ -d "$DIR/yad" ] &&
   die "$DIR/yad is a directory — move it aside, or set YAD_INSTALL_DIR to install somewhere else"
 
+# Every request is HTTPS only, redirects included: an asset is served from a
+# GitHub storage host after a redirect, and nothing on the way may downgrade it.
+fetch() { curl --proto '=https' --proto-redir '=https' --tlsv1.2 -sS "$@" 2>>"$tmp/curl.err"; }
+unreachable() { die "could not reach github.com ($(cat "$tmp/curl.err")) — check this machine's network, or its HTTPS_PROXY"; }
+releases="https://github.com/$REPO/releases"
+
 tag="${YAD_VERSION:-}"
 if [ -z "$tag" ]; then
-  # gh fails the same way for a repository with no releases as for a login
-  # problem, and only one of those is fixed by logging in again.
-  tag=$(gh release view --repo "$REPO" --json tagName --jq .tagName 2>"$tmp/gh.err") || {
-    grep -q "release not found" "$tmp/gh.err" &&
-      die "$REPO has published no release yet — build yad from source with \`make install\`"
-    die "could not ask $REPO for its newest release — it is private, so \`gh auth status\` is the first thing to check"
-  }
+  # The redirect is the answer: a repository with releases sends
+  # /releases/latest to /releases/tag/<tag>, one with none to /releases.
+  # api.github.com would say the same, under an unauthenticated limit of 60
+  # requests an hour shared by every machine behind one address.
+  answer=$(fetch -o /dev/null -w '%{http_code} %{redirect_url}' "$releases/latest") || unreachable
+  case "${answer%% *}" in
+    3??) ;;
+    404) die "github.com/$REPO does not exist or is private — releases are downloaded without a login, so YAD_REPO has to name a public repository" ;;
+    *)   die "github.com answered ${answer%% *} for $releases/latest" ;;
+  esac
+  case "$answer" in
+    */releases/tag/?*) tag=${answer##*/releases/tag/} ;;
+    *) die "$REPO has published no release yet — build yad from source with \`make install\`" ;;
+  esac
 fi
-[ -n "$tag" ] || die "$REPO has published no release yet — build yad from source with \`make install\`"
+# The tag goes into URLs as it is, so it is held to the characters a tag this
+# repository publishes can contain.
+case "$tag" in
+  *[!A-Za-z0-9._+-]*) die "$tag is not a release tag this script can fetch — set YAD_VERSION to one listed at $releases" ;;
+esac
 
-gh release download "$tag" --repo "$REPO" --pattern "$asset" --pattern checksums.txt --dir "$tmp" 2>"$tmp/gh.err" >/dev/null || {
-  grep -q "release not found" "$tmp/gh.err" &&
-    die "$REPO has no release $tag — leave YAD_VERSION unset to take the newest"
-  die "could not download $asset from $tag — $REPO is private, so \`gh auth status\` is the first thing to check"
-}
+# Checked before the assets, because every asset of a tag that does not exist
+# is missing too, and that reads as an incomplete release.
+code=$(fetch -I -L -o /dev/null -w '%{http_code}' "$releases/tag/$tag") || unreachable
+case "$code" in
+  200) ;;
+  404) die "$REPO has no release $tag — leave YAD_VERSION unset to take the newest" ;;
+  *)   die "github.com answered $code for $releases/tag/$tag" ;;
+esac
 
-# gh takes the two --pattern flags as alternatives: it fails only when *all* of
-# them match nothing, so a release carrying the binary and no checksums.txt
-# exits 0 here. Reading a file that is not there dies in awk's words rather
+for f in "$asset" checksums.txt; do
+  code=$(fetch -L -o "$tmp/$f" -w '%{http_code}' "$releases/download/$tag/$f") || unreachable
+  case "$code" in
+    200) ;;
+    404) rm -f "$tmp/$f" ;;  # curl wrote the error page; the checks below name what is missing
+    *)   die "github.com answered $code for $releases/download/$tag/$f — nothing was installed" ;;
+  esac
+done
+
+# A release carrying the binary and no checksums.txt, or the other way about,
+# gets this far. Reading a file that is not there dies in awk's words rather
 # than ours, and a missing binary hashes to nothing and reads as a checksum
 # mismatch — sending the operator after tampering that did not happen.
 [ -f "$tmp/$asset" ] ||

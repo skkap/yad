@@ -14,65 +14,66 @@ import (
 
 // scripts/install.sh is the other half of this package — the same release, the
 // same checksums.txt, the same refusal when a download does not match — so it
-// is tested beside it. `gh` is a shell stub on PATH: no test here touches the
+// is tested beside it. `curl` is a shell stub on PATH: no test here touches the
 // network (ARCHITECTURE.md §7).
 //
 // What this proves is local. It proves the script picks the right asset for
 // this machine, refuses a download whose checksum does not match, leaves an
 // installed yad alone when it refuses, and places the binary 0755 in
-// ~/.local/bin. It proves nothing about a fresh Linux VM, a real `gh` login or
-// a real GitHub release.
+// ~/.local/bin. It proves nothing about a fresh Linux VM or a real GitHub
+// release.
 
-// ghStub answers the calls the install script makes and records its argv. It
-// *acts* on that argv rather than copying the whole fixture directory: a stub
-// that hands over the right files whatever it was asked for would stay green
-// if the script requested another machine's binary or dropped --repo, which is
-// the failure it exists to catch. It deliberately does not answer
-// `auth status` — the script must not gate on it, and a stub that answered
-// would hide the day someone puts the gate back.
-const ghStub = `#!/bin/sh
-echo "$@" >>"$GH_LOG"
-if [ -n "$GH_FAIL" ]; then echo "$GH_FAIL" >&2; exit 1; fi
-repo=
-for a in "$@"; do
-  if [ "$prev" = "--repo" ]; then repo=$a; fi
-  prev=$a
+// curlStub answers the URLs the install script asks for the way github.com
+// answers them without a login, and records each one. It *acts* on the URL
+// rather than handing over fixtures whatever it was asked: a stub that did
+// would stay green if the script requested another machine's binary or
+// another repository, which is the failure it exists to catch. It refuses a
+// request that does not pin HTTPS, redirects included.
+const curlStub = `#!/bin/sh
+out= ; fmt= ; url= ; proto= ; redir=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift ;;
+    -w) fmt=$2; shift ;;
+    --proto) proto=$2; shift ;;
+    --proto-redir) redir=$2; shift ;;
+    -*) ;;
+    *) url=$1 ;;
+  esac
+  shift
 done
-[ -n "$repo" ] || { echo "fake gh: $1 $2 without --repo" >&2; exit 1; }
-case "$1 $2" in
-  "release view") echo "$FAKE_TAG" ;;
-  "release download")
-    dir= ; patterns= ; matched=0
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --dir) dir=$2 ;;
-        --pattern) patterns="$patterns $2" ;;
-      esac
-      shift
-    done
-    [ -n "$dir" ] || { echo "fake gh: release download without --dir" >&2; exit 1; }
-    for p in $patterns; do
-      if [ -f "$FAKE_RELEASE/$p" ]; then
-        cp "$FAKE_RELEASE/$p" "$dir"/
-        matched=$((matched+1))
-      fi
-    done
-    # gh fails only when none of the patterns match anything.
-    [ "$matched" -gt 0 ] || { echo "release not found: no assets match the file pattern" >&2; exit 1; }
-    ;;
-  *) echo "fake gh: unexpected: $*" >&2; exit 1 ;;
+echo "$url" >>"$CURL_LOG"
+[ "$proto" = "=https" ] && [ "$redir" = "=https" ] || { echo "fake curl: $url without HTTPS pinned" >&2; exit 2; }
+if [ -n "$CURL_FAIL" ]; then echo "curl: (6) Could not resolve host: github.com" >&2; exit 6; fi
+code=404 ; location= ; file=
+releases="https://github.com/$FAKE_REPO/releases"
+exists() { for t in $FAKE_TAGS; do [ "$t" = "$1" ] && return 0; done; return 1; }
+case "$url" in
+  "$releases/latest")
+    code=302
+    if [ -n "$FAKE_TAGS" ]; then location="$releases/tag/${FAKE_TAGS%% *}"; else location=$releases; fi ;;
+  "$releases/tag/"*)
+    exists "${url#"$releases/tag/"}" && code=200 ;;
+  "$releases/download/"*)
+    rest=${url#"$releases/download/"}
+    if exists "${rest%%/*}" && [ -f "$FAKE_RELEASE/${rest#*/}" ]; then code=200; file="$FAKE_RELEASE/${rest#*/}"; fi ;;
 esac
+if [ -n "$out" ] && [ "$out" != /dev/null ]; then
+  if [ -n "$file" ]; then cp "$file" "$out"; else echo "Not Found" >"$out"; fi
+fi
+printf '%s' "$fmt" | sed -e "s|%{http_code}|$code|" -e "s|%{redirect_url}|$location|"
 `
 
 type install struct {
 	t          *testing.T
 	home       string
 	releaseDir string
-	tag        string
-	ghLog      string
+	curlLog    string
 	env        []string
 }
 
+// newInstall serves one release of skkap/yad under tag; an empty tag is a
+// repository that has published nothing.
 func newInstall(t *testing.T, tag string, assets map[string]string) *install {
 	t.Helper()
 	if _, err := exec.LookPath("sh"); err != nil {
@@ -83,8 +84,8 @@ func newInstall(t *testing.T, tag string, assets map[string]string) *install {
 			t.Skip("neither sha256sum nor shasum on this machine")
 		}
 	}
-	i := &install{t: t, home: t.TempDir(), releaseDir: t.TempDir(), tag: tag}
-	i.ghLog = filepath.Join(t.TempDir(), "gh.log")
+	i := &install{t: t, home: t.TempDir(), releaseDir: t.TempDir()}
+	i.curlLog = filepath.Join(t.TempDir(), "curl.log")
 
 	for name, body := range assets {
 		if err := os.WriteFile(filepath.Join(i.releaseDir, name), []byte(body), 0o644); err != nil {
@@ -92,15 +93,16 @@ func newInstall(t *testing.T, tag string, assets map[string]string) *install {
 		}
 	}
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(ghStub), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(curlStub), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	i.env = []string{
 		"HOME=" + i.home,
 		"PATH=" + bin + ":" + os.Getenv("PATH"),
-		"GH_LOG=" + i.ghLog,
+		"CURL_LOG=" + i.curlLog,
+		"FAKE_REPO=" + DefaultRepo,
 		"FAKE_RELEASE=" + i.releaseDir,
-		"FAKE_TAG=" + tag,
+		"FAKE_TAGS=" + tag,
 	}
 	return i
 }
@@ -119,7 +121,7 @@ func (i *install) installed() string { return filepath.Join(i.home, ".local", "b
 
 func (i *install) calls() string {
 	i.t.Helper()
-	b, err := os.ReadFile(i.ghLog)
+	b, err := os.ReadFile(i.curlLog)
 	if err != nil {
 		return ""
 	}
@@ -173,11 +175,10 @@ func TestInstallScriptPlacesTheBinary(t *testing.T) {
 	if !strings.Contains(stdout, "not on PATH") {
 		t.Errorf("stdout %q does not warn that the directory is not on PATH", stdout)
 	}
-	// `gh auth status` reports a problem with an account on *any* host, so a
-	// stale GitHub Enterprise entry would refuse an install that works. The
-	// real calls say what is wrong in gh's own words instead.
-	if strings.Contains(i.calls(), "auth status") {
-		t.Errorf("gh calls were %q — the install is gated on the login state of every host", i.calls())
+	for _, want := range []string{"/releases/latest", "/releases/download/v0.4.0/" + name, "/releases/download/v0.4.0/" + ChecksumsName} {
+		if !strings.Contains(i.calls(), "https://github.com/"+DefaultRepo+want) {
+			t.Errorf("requests were %q, want %s", i.calls(), want)
+		}
 	}
 	// Nothing is staged in ~/.local/bin but the binary itself.
 	entries, err := os.ReadDir(filepath.Dir(i.installed()))
@@ -228,9 +229,8 @@ func TestInstallScriptRefusesABadChecksum(t *testing.T) {
 	}
 }
 
-// gh takes several --pattern flags as alternatives and fails only when all of
-// them match nothing, so a release missing one asset is a success it has to
-// notice itself. Before it did, a missing checksums.txt died in awk's words
+// A release missing one asset downloads the other, so the script has to notice
+// the gap itself. Before it did, a missing checksums.txt died in awk's words
 // and a missing binary hashed to nothing and read as a checksum mismatch.
 func TestInstallScriptRefusesAnIncompleteRelease(t *testing.T) {
 	name := hostAsset(t)
@@ -271,15 +271,34 @@ func TestInstallScriptPinsAVersion(t *testing.T) {
 	bodies := map[string]string{name: "the pinned binary"}
 	i := newInstall(t, "v0.4.0", map[string]string{name: bodies[name], ChecksumsName: checksums(bodies)})
 
-	if _, stderr, err := i.run("YAD_VERSION=v0.3.1"); err != nil {
+	if _, stderr, err := i.run("YAD_VERSION=v0.3.1", "FAKE_TAGS=v0.4.0 v0.3.1"); err != nil {
 		t.Fatalf("install.sh: %v\n%s", err, stderr)
 	}
 	calls := i.calls()
-	if strings.Contains(calls, "release view") {
-		t.Errorf("gh calls were %q — a pinned version asks for no newest release", calls)
+	if strings.Contains(calls, "/releases/latest") {
+		t.Errorf("requests were %q — a pinned version asks for no newest release", calls)
 	}
-	if !strings.Contains(calls, "release download v0.3.1") {
-		t.Errorf("gh calls were %q, want the pinned tag downloaded", calls)
+	if !strings.Contains(calls, "/releases/download/v0.3.1/"+name) {
+		t.Errorf("requests were %q, want the pinned tag downloaded", calls)
+	}
+}
+
+// Every asset of a tag that does not exist is missing too, and naming them as
+// an incomplete release would send the operator after the wrong problem.
+func TestInstallScriptSaysWhenAPinnedVersionIsMissing(t *testing.T) {
+	name := hostAsset(t)
+	bodies := map[string]string{name: "the release binary"}
+	i := newInstall(t, "v0.4.0", map[string]string{name: bodies[name], ChecksumsName: checksums(bodies)})
+
+	_, stderr, err := i.run("YAD_VERSION=v9.9.9")
+	if err == nil {
+		t.Fatal("install.sh installed a release that does not exist")
+	}
+	if !strings.Contains(stderr, "has no release v9.9.9") {
+		t.Errorf("stderr %q, want it to name the tag as the problem", stderr)
+	}
+	if strings.Contains(i.calls(), "/download/") {
+		t.Errorf("requests were %q — it asked for assets of a release that does not exist", i.calls())
 	}
 }
 
@@ -329,17 +348,15 @@ func TestInstallScriptRefusesAnUnwritableDirectory(t *testing.T) {
 	if !strings.Contains(stderr, "install:") || !strings.Contains(stderr, dir) {
 		t.Errorf("stderr %q is not the script's own refusal naming the directory", stderr)
 	}
-	if strings.Contains(i.calls(), "release download") {
-		t.Errorf("gh calls were %q — it fetched a release it had nowhere to put", i.calls())
+	if i.calls() != "" {
+		t.Errorf("requests were %q — it fetched a release it had nowhere to put", i.calls())
 	}
 }
 
-// gh fails the same way for a repository that has published nothing as for a
-// login problem, and an operator sent to `gh auth login` here debugs a login
-// that works. This is the state skkap/yad is in today.
+// GitHub redirects /releases/latest of a repository with no releases to its
+// releases page, and that is a state to name rather than a failure.
 func TestInstallScriptSaysWhenThereAreNoReleases(t *testing.T) {
-	i := newInstall(t, "v0.4.0", map[string]string{})
-	i.env = append(i.env, "GH_FAIL=release not found")
+	i := newInstall(t, "", map[string]string{})
 
 	_, stderr, err := i.run()
 	if err == nil {
@@ -348,30 +365,50 @@ func TestInstallScriptSaysWhenThereAreNoReleases(t *testing.T) {
 	if !strings.Contains(stderr, "published no release yet") {
 		t.Errorf("stderr %q, want it to say the repository has no releases", stderr)
 	}
-	if strings.Contains(stderr, "gh auth status") {
-		t.Errorf("stderr %q sends the operator to check a login that is fine", stderr)
+}
+
+// A private fork answers 404 without a login, exactly as a mistyped one does.
+func TestInstallScriptSaysWhenTheRepositoryIsNotThere(t *testing.T) {
+	i := newInstall(t, "v0.4.0", map[string]string{})
+
+	_, stderr, err := i.run("YAD_REPO=someone/private-fork")
+	if err == nil {
+		t.Fatal("install.sh reported success from a repository that is not there")
+	}
+	if !strings.Contains(stderr, "someone/private-fork does not exist or is private") {
+		t.Errorf("stderr %q, want it to name the repository and why it may be missing", stderr)
 	}
 }
 
-func TestInstallScriptRefusesWithoutGH(t *testing.T) {
-	name := hostAsset(t)
-	bodies := map[string]string{name: "the release binary"}
-	i := newInstall(t, "v0.4.0", map[string]string{name: bodies[name], ChecksumsName: checksums(bodies)})
+func TestInstallScriptSaysWhenItCannotConnect(t *testing.T) {
+	i := newInstall(t, "v0.4.0", map[string]string{})
+
+	_, stderr, err := i.run("CURL_FAIL=1")
+	if err == nil {
+		t.Fatal("install.sh reported success with no network")
+	}
+	if !strings.Contains(stderr, "could not reach github.com") || !strings.Contains(stderr, "Could not resolve host") {
+		t.Errorf("stderr %q, want its own refusal carrying curl's words", stderr)
+	}
+}
+
+func TestInstallScriptRefusesWithoutCurl(t *testing.T) {
+	i := newInstall(t, "v0.4.0", map[string]string{})
 	// An empty PATH but for the directories the script's own tools live in,
-	// with no gh: the first thing a fresh box gets wrong.
+	// with no curl: the first thing a minimal container gets wrong.
 	bare := t.TempDir()
 	for _, tool := range []string{"uname", "mktemp", "awk", "cp", "mv", "chmod", "mkdir", "rm", "cut", "sha256sum", "shasum"} {
 		if p, err := exec.LookPath(tool); err == nil {
 			os.Symlink(p, filepath.Join(bare, tool))
 		}
 	}
-	i.env = []string{"HOME=" + i.home, "PATH=" + bare, "GH_LOG=" + i.ghLog}
+	i.env = []string{"HOME=" + i.home, "PATH=" + bare}
 
 	_, stderr, err := i.run()
 	if err == nil {
-		t.Fatal("install.sh carried on without gh")
+		t.Fatal("install.sh carried on without curl")
 	}
-	if !strings.Contains(stderr, "gh auth login") {
-		t.Errorf("stderr %q does not say how to fix it", stderr)
+	if !strings.Contains(stderr, "curl is not on PATH") {
+		t.Errorf("stderr %q does not say what is missing", stderr)
 	}
 }

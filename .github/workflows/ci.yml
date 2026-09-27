@@ -31,12 +31,15 @@ on:
 # There is no sqlc step any more: it existed only for check-generated, whose
 # sqlc half is now local. If sqlc output is stale, `make check` says so before
 # the branch is ever pushed.
+# A pull request from a fork runs this workflow with its own code, so the job
+# gets a read-only token and a GitHub-hosted machine that is thrown away after
+# it — never a self-hosted runner, which a fork's code could persist on.
+permissions:
+  contents: read
+
 jobs:
   ci:
-    # The self-hosted runner on the Mac mini `ashikaga`: Linux arm64 in a Colima
-    # VM, one ephemeral runner per job with its own Docker daemon (gpi-tools
-    # ci-runners/). GitHub-hosted minutes on this account are budget-capped.
-    runs-on: [self-hosted, ashikaga]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:

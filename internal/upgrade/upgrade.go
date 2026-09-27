@@ -10,8 +10,8 @@
 // installed binary, its SHA-256 is checked against the release's checksums
 // file, and only then does one rename(2) put it in place. Nothing truncates
 // the binary it is replacing, so an upgrade that fails at any step — no
-// network, no `gh`, a corrupted asset, a checksum that does not match — leaves
-// a working yad behind.
+// network, a missing release, a corrupted asset, a checksum that does not
+// match — leaves a working yad behind.
 package upgrade
 
 import (
@@ -27,9 +27,7 @@ import (
 	"github.com/skkap/yad/internal/buildinfo"
 )
 
-// DefaultRepo is where yad's releases live. It is private (decided
-// 2026-09-19), which is why every fetch goes through `gh`: there is no
-// unauthenticated URL to download from.
+// DefaultRepo is where yad's releases live.
 const DefaultRepo = "skkap/yad"
 
 // ChecksumsName is the asset holding one `sha256sum` line per binary. The
@@ -42,12 +40,13 @@ const ChecksumsName = "checksums.txt"
 const binaryMode = 0o755
 
 // A Source hands out the releases of one repository. The only implementation
-// that talks to GitHub is GH; tests supply one that copies prepared files,
+// that talks to GitHub is GitHub; tests supply one that copies prepared files,
 // because no test here touches the network (ARCHITECTURE.md §7).
 type Source interface {
 	// Latest names the newest release.
 	Latest(ctx context.Context) (tag string, err error)
-	// Download places the named assets of one release into dir.
+	// Download places the named assets of one release into dir, leaving out
+	// any the release does not carry.
 	Download(ctx context.Context, tag string, assets []string, dir string) error
 }
 
@@ -172,11 +171,10 @@ func Apply(ctx context.Context, o Options) (Result, error) {
 	if err := o.Source.Download(ctx, tag, []string{asset, ChecksumsName}, dir); err != nil {
 		return Result{}, err
 	}
-	// gh takes the asset names as alternatives and succeeds when any of them
-	// matches, so a release that published the binaries and no checksums — or
-	// the other way about — arrives here as a successful download. Both are
-	// named as an incomplete release: read as a checksum failure, either one
-	// sends the operator after tampering that never happened.
+	// A release that published the binaries and no checksums — or the other
+	// way about — arrives here as a successful download. Both are named as an
+	// incomplete release: read as a checksum failure, either one sends the
+	// operator after tampering that never happened.
 	staged := filepath.Join(dir, asset)
 	if _, err := os.Stat(staged); err != nil {
 		return Result{}, fmt.Errorf("release %s did not produce %s — nothing was replaced", tag, asset)

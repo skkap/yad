@@ -44,23 +44,18 @@ func (f *fakeSource) Download(_ context.Context, tag string, assets []string, di
 	if tag != f.tag {
 		return fmt.Errorf("no release %s", tag)
 	}
-	// gh takes the --pattern flags as alternatives: it writes whichever assets
-	// match and fails only when none of them do. A fake that refuses the
-	// moment one is missing would never let Apply reach its own guards, which
-	// is the case a release published without its checksums lands in.
-	matched := 0
+	// A Source leaves out an asset the release does not carry rather than
+	// failing on it. A fake that refused the moment one is missing would never
+	// let Apply reach its own guards, which is the case a release published
+	// without its checksums lands in.
 	for _, a := range assets {
 		b, ok := f.files[a]
 		if !ok {
 			continue
 		}
-		matched++
 		if err := os.WriteFile(filepath.Join(dir, a), b, 0o644); err != nil {
 			return err
 		}
-	}
-	if matched == 0 {
-		return fmt.Errorf("release %s: no assets match the file pattern", tag)
 	}
 	return nil
 }
@@ -207,8 +202,8 @@ func TestApplyLeavesTheBinaryWhenTheFetchFails(t *testing.T) {
 		name string
 		with func(*fakeSource)
 	}{
-		{"no newest release", func(s *fakeSource) { s.latestErr = errors.New("gh: not logged in") }},
-		{"download refused", func(s *fakeSource) { s.downErr = errors.New("gh: release not found") }},
+		{"no newest release", func(s *fakeSource) { s.latestErr = errors.New("could not reach github.com") }},
+		{"download refused", func(s *fakeSource) { s.downErr = errors.New("skkap/yad has no release v0.4.0") }},
 		{"nothing in the release matches at all", func(s *fakeSource) { s.files = map[string][]byte{} }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -230,9 +225,8 @@ func TestApplyLeavesTheBinaryWhenTheFetchFails(t *testing.T) {
 }
 
 // TestApplyRefusesAnIncompleteRelease is the Go half of what round 1 found in
-// the install script: gh treats several --pattern flags as alternatives and
-// exits 0 when only some of them match, so a release that published the
-// binaries and no checksums.txt arrives here as a successful download. The
+// the install script: a release that published the binaries and no
+// checksums.txt arrives here as a successful download. The
 // refusal has to name the release as incomplete — read as a checksum failure
 // it sends the operator after tampering that never happened.
 func TestApplyRefusesAnIncompleteRelease(t *testing.T) {

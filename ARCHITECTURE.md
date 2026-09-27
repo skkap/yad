@@ -83,7 +83,7 @@ internal/hubclient       the runner side of the protocol
 internal/hubapiclient    the caller side of yad hub's service API
 internal/hub             `yad hub`: huma server, store, submit/watch API
 internal/control         the Unix control socket, server and client
-internal/upgrade         `yad upgrade`: releases fetched with gh, checksum, atomic replace
+internal/upgrade         `yad upgrade`: releases fetched over HTTPS, checksum, atomic replace
 internal/conformance     the protocol conformance suite, run against any hub
 internal/shellword       every command yad prints for pasting, built from argv
                          and POSIX-quoted; shellwordtest runs one through sh

@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -14,8 +16,15 @@ func bareUpgrade(args ...string) string { return upgrade.Command("", nil, args..
 
 // `yad upgrade` is the next action the hub's version_too_old refusal names, so
 // it has to be the command rather than the placeholder that named epic E9.
-// With no gh on PATH — what yad() gives every test — it fails on gh.
+// Against a repository with no releases, it says so.
 func TestUpgradeIsBuilt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/"+upgrade.DefaultRepo+"/releases", http.StatusFound)
+	}))
+	defer srv.Close()
+	defer func(was string) { releasesURL = was }(releasesURL)
+	releasesURL = srv.URL
+
 	code, _, errs := yad(t, "upgrade", "--check")
 	if code != 1 {
 		t.Fatalf("exit %d, want 1: %q", code, errs)
@@ -23,8 +32,8 @@ func TestUpgradeIsBuilt(t *testing.T) {
 	if strings.Contains(errs, "arrives in epic") {
 		t.Errorf("yad upgrade still refers itself to a later epic: %q", errs)
 	}
-	if !strings.Contains(errs, "gh auth login") {
-		t.Errorf("yad upgrade = %q, want it to name the tool it needs", errs)
+	if !strings.Contains(errs, "published no release yet") {
+		t.Errorf("yad upgrade = %q, want it to say there is nothing to install", errs)
 	}
 }
 
@@ -74,7 +83,7 @@ func TestUpgradeFollowsTheRepositoryItWasInstalledFrom(t *testing.T) {
 	}
 	t.Setenv("YAD_REPO", "")
 	if got := releaseSource().Repo; got != "" {
-		t.Errorf("releaseSource().Repo = %q, want empty so upgrade.GH falls back to its default", got)
+		t.Errorf("releaseSource().Repo = %q, want empty so upgrade.GitHub falls back to its default", got)
 	}
 }
 
