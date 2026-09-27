@@ -14,13 +14,13 @@
   <polyline class="glyph" points="24,50 44,70 24,90"/>
   <line class="glyph" x1="44" y1="70" x2="70" y2="44"/>
   <polyline class="glyph" points="54,42 70,44 72,60"/>
-  <!-- yad, drawn as strokes so it renders the same without any font. -->
+  <!-- YAD, drawn as strokes so it renders the same without any font. The
+       capitals sit 30 to 98, centred on the mark. -->
   <g class="word" transform="translate(120 0)">
-    <line x1="0" y1="42" x2="22" y2="86"/>
-    <line x1="44" y1="42" x2="11" y2="108"/>
-    <circle cx="90" cy="64" r="22"/>
-    <line x1="112" y1="42" x2="112" y2="86"/>
-    <circle cx="158" cy="64" r="22"/>
-    <line x1="180" y1="18" x2="180" y2="86"/>
+    <polyline points="0,30 26,64 52,30"/>
+    <line x1="26" y1="64" x2="26" y2="98"/>
+    <polyline points="64,98 92,30 120,98"/>
+    <line x1="74" y1="74" x2="110" y2="74"/>
+    <path d="M136 30 V98 H150 A34 34 0 0 0 150 30 Z"/>
   </g>
 </svg>
