@@ -22,6 +22,31 @@ it keeps on disk, streams everything that happens, and reports how it ended.
 It survives restarts and usage limits, fails over between your accounts, and
 never opens a port.
 
+## Why YAD
+
+Coding agents are becoming interchangeable, and so are the subscriptions that
+pay for them. What does not change is the work you want done without watching
+it, and where that work is allowed to happen. YAD keeps those apart, so each
+part can be swapped without touching the others.
+
+- **Work comes from your own projects.** Add the hub side of the protocol to
+  anything that needs tasks run — a tracker, a bot, a pipeline, an internal
+  service — and it can hand work to runners. [HUB.md](HUB.md) is the whole
+  contract, and `yad hub` is a ready-made hub if you would rather not build one.
+- **It runs in an environment you prepared.** A runner lives on a machine you
+  set up for the job: a VM or a remote box with the tools, repositories, data
+  access and credentials that work needs, and nothing it does not.
+  [`machines/`](machines/README.md) builds such a machine from a spec you keep
+  in a repository.
+- **The harness and the account are replaceable.** A run names its harness in
+  one field — Claude Code today, whichever does the job better tomorrow — and
+  the accounts that pay for it are the runner's own configuration, used in
+  turn as each one's limit runs out. Changing either is configuration, not a
+  rewrite.
+- **Control stays with the machine's owner.** Runners connect out and never
+  listen, and what a harness may do on a machine is decided there, never by a
+  hub. [docs/run-it-safely.md](docs/run-it-safely.md) says where the edges are.
+
 ## How it works
 
 <p align="center">
