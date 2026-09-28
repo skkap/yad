@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -140,8 +141,19 @@ func (s seen) flag(name string) (string, bool) {
 	return "", true
 }
 
+// stuckAfter is how long a turn may go without moving before drive calls it
+// stuck. It used to bound the whole turn, so every quiet stretch a test waits
+// through — a fake holding for its input, a stop's grace — fits inside it;
+// only a broken build stands still this long, however slow the machine.
+const stuckAfter = 20 * time.Second
+
 // drive starts a turn, collects every event, lets act steer or interrupt, and
 // returns the events and outcome — failing the test rather than hanging.
+//
+// A turn is failed for standing still, not for taking long: every event, and
+// every line the fake claude logs, counts as movement. A bound on the whole
+// turn is a budget a loaded machine overruns; a 32 MiB line took one past
+// twenty seconds while it was still moving (DEV-140).
 func drive(t *testing.T, ctx context.Context, spec adapter.Spec, act func(adapter.Turn, v1.Event) bool) ([]v1.Event, adapter.Outcome, adapter.Turn) {
 	t.Helper()
 	tr, err := Adapter{}.Start(ctx, spec)
@@ -153,10 +165,12 @@ func drive(t *testing.T, ctx context.Context, spec adapter.Spec, act func(adapte
 		out    adapter.Outcome
 	}
 	done := make(chan result, 1)
+	var events atomic.Int64
 	go func() {
 		var evs []v1.Event
 		acted := act == nil
 		for e := range tr.Events() {
+			events.Add(1)
 			evs = append(evs, e)
 			if !acted {
 				acted = act(tr, e)
@@ -164,12 +178,41 @@ func drive(t *testing.T, ctx context.Context, spec adapter.Spec, act func(adapte
 		}
 		done <- result{evs, tr.Wait()}
 	}()
-	select {
-	case r := <-done:
-		return r.events, r.out, tr
-	case <-time.After(20 * time.Second):
-		t.Fatal("the turn did not end")
-		return nil, adapter.Outcome{}, nil
+	logged := fakeLog(spec)
+	moved := func() [2]int64 { return [2]int64{events.Load(), logged()} }
+	last, since := moved(), time.Now()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case r := <-done:
+			return r.events, r.out, tr
+		case <-tick.C:
+			if now := moved(); now != last {
+				last, since = now, time.Now()
+			} else if time.Since(since) > stuckAfter {
+				t.Fatalf("the turn did not end: nothing moved for %s", stuckAfter)
+				return nil, adapter.Outcome{}, nil
+			}
+		}
+	}
+}
+
+// fakeLog reports how much the fake claude of spec has logged, which grows
+// with everything it does: argv, stdin, each frame it plays.
+func fakeLog(spec adapter.Spec) func() int64 {
+	var path string
+	for _, kv := range spec.Env {
+		if p, ok := strings.CutPrefix(kv, "CLAUDE_TEST_LOG="); ok {
+			path = p
+		}
+	}
+	return func() int64 {
+		fi, err := os.Stat(path)
+		if err != nil {
+			return 0
+		}
+		return fi.Size()
 	}
 }
 
