@@ -55,6 +55,19 @@ func running(t *testing.T, e *env, l *Loop, x *Exec, id string) {
 	})
 }
 
+// taken waits until run id's own goroutine has taken every control handed
+// to it. It acts on one before it looks at the turn again, so a repeat taken
+// has been acted on, or ignored, before a turn let go after this can end.
+func taken(t *testing.T, x *Exec, id string) {
+	t.Helper()
+	eventually(t, "run "+id+" takes its controls", func() bool {
+		x.mu.Lock()
+		a, ok := x.active[runKey{"hub", id}]
+		x.mu.Unlock()
+		return ok && len(a.controls) == 0
+	})
+}
+
 // ended waits for every run on x, failing rather than hanging.
 func ended(t *testing.T, x *Exec) {
 	t.Helper()
@@ -304,20 +317,24 @@ func TestSteerInTheAnswerThatAcknowledgesTheClaim(t *testing.T) {
 }
 
 // An interrupt ends the turn and nothing more: no SIGTERM follows it. A
-// harness that ignores it keeps going and ends as it would have. That harness
-// waits for the interrupt before it ends: one that could finish first would
-// test nothing, and under load a scripted duration did finish first (DEV-147).
+// harness that ignores it keeps going and ends as it would have, and the
+// hub's repeat of the interrupt does not reach it a second time. That harness
+// is held by the test, not by a clock, until the interrupt and its repeat
+// have both been acted on: one that could finish first would test nothing,
+// and under load a scripted duration did finish first (DEV-147).
 func TestInterruptEndsTheTurn(t *testing.T) {
+	release := make(chan struct{})
 	for _, tc := range []struct {
-		name   string
-		script fake.Script
-		state  v1.RunState
+		name    string
+		script  fake.Script
+		state   v1.RunState
+		release chan struct{}
 	}{
-		{"the harness stops", fake.Script{Hang: true}, v1.RunCancelled},
+		{"the harness stops", fake.Script{Hang: true}, v1.RunCancelled, nil},
 		{"the harness carries on", fake.Script{
-			AwaitInterrupt: true, IgnoreInterrupt: true,
+			AwaitInterrupt: true, IgnoreInterrupt: true, Release: release,
 			Outcome: adapter.Outcome{State: v1.RunSucceeded, FinalText: "done anyway"},
-		}, v1.RunSucceeded},
+		}, v1.RunSucceeded, release},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -330,7 +347,16 @@ func TestInterruptEndsTheTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			mustSync(t, l)
-			mustSync(t, l) // delivered again; acted on once
+			again := mustSync(t, l) // delivered again; acted on once
+			if tc.release != nil {
+				if !slices.ContainsFunc(again.Controls, func(c v1.Control) bool {
+					return c.Kind == v1.ControlInterrupt && c.RunID == "a"
+				}) {
+					t.Fatalf("the second sync did not repeat the interrupt: %+v", again.Controls)
+				}
+				taken(t, x, "a")
+				close(tc.release)
+			}
 			ended(t, x)
 			res, _ := outboxResult(t, e, "a")
 			if res.State != tc.state || res.Metrics.CancelLatencyMS == nil {
