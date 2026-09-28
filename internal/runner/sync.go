@@ -504,11 +504,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 // and remove accounts, and only beside login (decision 0057). So the
 // fingerprint is this hub's own, and turning manage_accounts off moves it.
 func (l *Loop) document() v1.Capabilities {
-	doc := l.Capabilities()
-	if l.ManageAccounts && slices.Contains(doc.ProtocolFeatures, capability.FeatureLogin) {
-		doc.ProtocolFeatures = append(slices.Clone(doc.ProtocolFeatures), capability.FeatureAccounts)
-	}
-	return doc
+	return capability.ForConnection(l.Capabilities(), l.ManageAccounts)
 }
 
 // removeAccount is a hub's remove_account (decision 0057): `yad account

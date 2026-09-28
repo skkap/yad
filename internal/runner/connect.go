@@ -119,7 +119,10 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		notes = append(notes, "account states could not be read, so every configured account is registered as free: "+err.Error())
 		accounts = nil
 	}
-	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: capability.Build(ctx, id, cfg, accounts)})
+	// As this connection's syncs will send it, so the hub knows from the
+	// start what it may ask (decision 0057).
+	doc := capability.ForConnection(capability.Build(ctx, id, cfg, accounts), conn.MayManageAccounts())
+	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: doc})
 	if err != nil {
 		return conn, none, notes, fmt.Errorf("register with %s: %w", shown, err)
 	}
