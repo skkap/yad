@@ -20,7 +20,7 @@ func forkRun(id, session, from string) v1.Run {
 
 // A fork goes to the runner holding the session it forks and to no other,
 // and only while that runner advertises fork — for as long as that takes,
-// since it can go nowhere else (decision 0064). The offer opens the session
+// since it can go nowhere else (decision 0065). The offer opens the session
 // and names the one forked. (That the fork's next run continues it naming
 // none is TestE2EForkedSessionDiverges's.)
 func TestAForkIsOfferedOnlyToItsSessionsRunnerAdvertisingFork(t *testing.T) {

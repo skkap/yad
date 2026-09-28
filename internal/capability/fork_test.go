@@ -13,7 +13,7 @@ import (
 // fork is advertised by every build, so it is true only while every
 // first-class harness's adapter can open a session as a fork. A harness made
 // first-class without it would take forks from hubs and refuse each one
-// (decision 0064).
+// (decision 0065).
 func TestForkIsAdvertisedOnlyWhileEveryAdapterForks(t *testing.T) {
 	if !slices.Contains(Features(), FeatureFork) {
 		t.Fatalf("features %v do not advertise %q", Features(), FeatureFork)

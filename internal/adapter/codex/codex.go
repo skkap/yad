@@ -47,7 +47,7 @@ func (Adapter) AppliesEffort() bool { return true }
 
 // Forks: a fork is thread/fork of the thread forked, which Codex copies into
 // a new thread and leaves as it was; the new thread is the session's
-// (decision 0064).
+// (decision 0065).
 func (Adapter) Forks() bool { return true }
 
 // Timings a test may shorten.

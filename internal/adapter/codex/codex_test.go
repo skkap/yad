@@ -569,7 +569,7 @@ func TestResumeMismatch(t *testing.T) {
 	}
 }
 
-// A fork, recorded from 0.157.1 (decision 0064): thread/fork of the thread
+// A fork, recorded from 0.157.1 (decision 0065): thread/fork of the thread
 // forked, then the run's turn in the new thread Codex answered with, which
 // becomes the session's; the answer ("plum") comes from the forked thread's
 // history. The context is injected as on a resume. The recorder checked the

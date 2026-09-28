@@ -75,7 +75,7 @@ var scenarios = []scenario{
 		prompt:  "What is the codeword? Reply with the word only."},
 	// A fork: the second turn runs in a new thread copied from the first's,
 	// and the recorder checks the first's rollout was not written to
-	// (decision 0064). With a context, which the adapter injects as it does
+	// (decision 0065). With a context, which the adapter injects as it does
 	// on a resume.
 	{name: "fork", before: "Remember this word: plum. Reply with exactly: ok",
 		context: "You are terse.",

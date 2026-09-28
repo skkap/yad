@@ -21,7 +21,7 @@ func forkOf(id, session, from string) v1.Run {
 	return r
 }
 
-// A fork, through the hub in process (decision 0064): the run opening it is
+// A fork, through the hub in process (decision 0065): the run opening it is
 // handed the forked session's native id to fork and none of its own, in a
 // workdir of its own; the fork then pins its own id and its next run resumes
 // that; and the forked session's next run resumes its own conversation, as

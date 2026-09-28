@@ -1040,7 +1040,7 @@ type OfferCandidatesParams struct {
 // for: the runner acts on close_session before the offers beside it and would
 // refuse the run, which instead ends with the close once reported (DEV-120).
 // A session opened as a fork and not yet bound goes only to the runner that
-// holds the session it forks, where the conversation is (decision 0064).
+// holds the session it forks, where the conversation is (decision 0065).
 // Filtering here rather than in Go is what keeps runs it must skip from
 // filling the page ahead of runs it could take.
 func (q *Queries) OfferCandidates(ctx context.Context, arg OfferCandidatesParams) ([]Run, error) {
@@ -1622,7 +1622,7 @@ ORDER BY s.id
 // closed one holds no waiting run, because every close ends those. With them,
 // the open forks of its sessions that no claim has bound: only this runner
 // could open one, and a run queued in it would otherwise wait for ever
-// (decision 0064).
+// (decision 0065).
 func (q *Queries) SessionsToSettle(ctx context.Context, runnerID sql.NullString) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, sessionsToSettle, runnerID)
 	if err != nil {
@@ -1775,7 +1775,7 @@ type SoonCandidatesParams struct {
 // when anything the runner is executing does. An unbound session with a run
 // out is left out: that run may be on its way to another runner, whose claim
 // would bind the session there. An unbound fork counts only here, where the
-// session it forks is (decision 0064).
+// session it forks is (decision 0065).
 func (q *Queries) SoonCandidates(ctx context.Context, arg SoonCandidatesParams) ([]Run, error) {
 	rows, err := q.db.QueryContext(ctx, soonCandidates,
 		arg.HarnessesJson,

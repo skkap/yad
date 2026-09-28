@@ -1,5 +1,5 @@
 -- The session this one was opened as a fork of, by its id on the same
--- connection (decision 0064). NULL for a session that started its own
+-- connection (decision 0065). NULL for a session that started its own
 -- conversation, which is every session before this column.
 --
 -- Kept on the session and not only in the run that opened it: until the

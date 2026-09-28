@@ -24,7 +24,7 @@ Under `claude-2.1.280/`:
 |---|---|
 | `tool-outcomes` | a Bash command that exits 3, one that succeeds, and a `Read` of no file: each result's `is_error` as Claude reports it |
 
-Under `claude-2.1.284/`, recorded for forks (DEV-48, decision 0064):
+Under `claude-2.1.284/`, recorded for forks (DEV-48, decision 0065):
 
 | Fixture | The turn |
 |---|---|

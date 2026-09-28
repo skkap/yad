@@ -342,7 +342,7 @@ Contract: [HUB.md §4](HUB.md#4-runs), and [§9](HUB.md#9-grants) for grants.
 `session.fork_from`, only beside `new: true`, opens the session as a fork of
 another the runner holds for the same connection: a new session, with its own
 workdir from its own sources, whose conversation starts as the harness's copy
-of that one's, which goes on untouched [0064](docs/decisions/0064-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md).
+of that one's, which goes on untouched [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md).
 `effort` is how hard the harness thinks, in its own terms, as `model` is — a
 string and never an enum; the runner passes it through unchecked and the
 harness refuses a level it does not take
@@ -446,7 +446,7 @@ as that takes: any other would run the harness at its default and say nothing. A
 carrying `session.fork_from` goes only to the runner holding the session it
 forks, and only while that runner advertises `fork` — it can go nowhere else,
 so it waits; one without the feature would open the session empty
-[0064](docs/decisions/0064-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md). A run
+[0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md). A run
 opening a session with a source on the machine does not go to a runner whose
 document says `path_sources: false`, which would refuse it
 ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)). A runner
@@ -698,7 +698,7 @@ for `codex`); the suite never runs a real harness.
   in a session with a native id resumes it; one without starts the harness's
   conversation fresh — or, in a session opened as a fork, from the harness's
   copy of the forked session's conversation, read by its native id when the
-  harness starts [0064](docs/decisions/0064-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md). The fork's own id is pinned as any
+  harness starts [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md). The fork's own id is pinned as any
   new session's is, and from then on it resumes that. Last used is the end of
   the session's last run.
 - **A failed resume** ends the run `failed`: `resume_rejected` when the harness

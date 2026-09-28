@@ -193,7 +193,7 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 // does not advertise fork. That runner is the only one the fork can go to,
 // and it would never be offered it, so the run would wait queued for ever —
 // refused here instead, while the submitter can still act on it (decision
-// 0064). A session the hub has not bound, or does not have, is left to
+// 0065). A session the hub has not bound, or does not have, is left to
 // EnqueueRun, which says which.
 func (h *Hub) refuseUnforkable(ctx context.Context, forkFrom string) error {
 	src, err := h.store.GetSession(ctx, forkFrom)

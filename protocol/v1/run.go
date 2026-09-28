@@ -60,7 +60,7 @@ type SessionRef struct {
 	New  bool        `json:"new" doc:"true for the run that opens the session, false for every later run. A runner refuses new true for a session id it already has, and new false for one it does not hold."`
 	Mode SessionMode `json:"mode,omitempty" enum:"per_run,live" doc:"per_run, the default: a fresh harness process for each run, resuming the session's conversation. live is reserved: offer it only to a runner advertising live_sessions, which none does yet."`
 	// ForkFrom opens a session whose conversation starts as a copy of
-	// another's, which goes on untouched (decision 0064). It rides on the
+	// another's, which goes on untouched (decision 0065). It rides on the
 	// run that opens the session and on no later one: from then on the fork
 	// is a session like any other, resuming its own conversation. A hub
 	// offers it only to the runner holding the session it names, and only

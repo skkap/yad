@@ -50,7 +50,7 @@ type Spec struct {
 	// ForkFrom is the native id of another session's conversation, set only
 	// while NativeSessionID is empty: the run opens its session as a fork of
 	// that conversation, which the harness copies and leaves as it was
-	// (decision 0064). Only an adapter that is a Forker is ever given one.
+	// (decision 0065). Only an adapter that is a Forker is ever given one.
 	ForkFrom string
 	Brief    v1.Brief
 	// Home is the account's harness home (CLAUDE_CONFIG_DIR, CODEX_HOME), for
@@ -106,7 +106,7 @@ func AppliesEffort(a Adapter) bool {
 // while every first-class adapter is one, and refuses a fork for a harness
 // whose adapter is not, rather than start the conversation empty: the hub
 // asked for the fork's history, and a run without it would answer as if it
-// had it (decision 0064).
+// had it (decision 0065).
 type Forker interface {
 	Forks() bool
 }

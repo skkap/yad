@@ -71,14 +71,14 @@ var (
 	ErrSessionClosed  = errors.New("the session is closed")
 	// The session a fork names: one the hub does not have, or one no claim
 	// has bound to a runner yet, so there is no conversation anywhere to
-	// copy (decision 0064). The other refusals of a fork's source are the
+	// copy (decision 0065). The other refusals of a fork's source are the
 	// errors above, naming it.
 	ErrNoForkSource = errors.New("the hub has no session to fork by that id")
 	ErrForkUnbound  = errors.New("the session to fork is on no runner yet")
 )
 
 // forkable checks the session a run opening a fork names, as the runner will
-// when it claims the run (decision 0064): the hub's, bound to a runner — the
+// when it claims the run (decision 0065): the hub's, bound to a runner — the
 // one the fork is offered to — of the run's harness, and open.
 func forkable(ctx context.Context, q *db.Queries, run v1.Run) error {
 	src, err := q.GetSession(ctx, run.Session.ForkFrom)

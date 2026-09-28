@@ -39,7 +39,7 @@ type session struct {
 	Reclaimed bool `json:"reclaimed,omitempty"`
 	HubTold   bool `json:"hub_told,omitempty"`
 	// ForkFrom is the session this one was opened as a fork of (decision
-	// 0064).
+	// 0065).
 	ForkFrom string `json:"fork_from,omitempty"`
 }
 

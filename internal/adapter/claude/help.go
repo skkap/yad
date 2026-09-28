@@ -22,7 +22,7 @@ import (
 // requiredFlags are the flags argv passes that Claude Code has not always
 // had, each with the runs that pass it. --fork-session is passed only by a
 // run opening a fork, and is required all the same: the runner advertises
-// fork for every Claude it will drive (decision 0064), so a Claude without it
+// fork for every Claude it will drive (decision 0065), so a Claude without it
 // would claim forks and fail each at its arguments. It costs no Claude that
 // could otherwise run: every release with --system-prompt-snapshot has it.
 var requiredFlags = []struct{ flag, passedBy string }{

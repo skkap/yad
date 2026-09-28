@@ -67,7 +67,7 @@ const FeatureEffort = "effort"
 // FeatureFork is a runner that opens a session as a fork of another it holds
 // (session.fork_from): the fork's conversation starts from a copy of the
 // other's, which goes on untouched — Claude's --fork-session, Codex's
-// thread/fork (decision 0064). A hub offers a run carrying fork_from only to
+// thread/fork (decision 0065). A hub offers a run carrying fork_from only to
 // such a runner, and it is always the one holding the session forked, so a
 // fork waits on that runner rather than going elsewhere. Advertised because
 // every first-class adapter forks, on every harness version the runner will

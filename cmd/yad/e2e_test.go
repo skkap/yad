@@ -955,7 +955,7 @@ func testE2ESessionContinues(t *testing.T, h *e2eHarness) {
 	}
 }
 
-// A fork, end to end (decision 0064): `yad hub submit --fork` opens a new
+// A fork, end to end (decision 0065): `yad hub submit --fork` opens a new
 // session whose first run has the forked session's conversation, the forked
 // session's next run has its own conversation and nothing of the fork's, and
 // each goes on as its own session afterwards — in two workdirs.

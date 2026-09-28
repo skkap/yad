@@ -438,7 +438,7 @@ func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) 
 	// A run opening a fork goes only to the runner holding the session it
 	// forks — OfferCandidates sees to that — and only while that runner
 	// advertises fork: one without it would open the session with an empty
-	// conversation and answer as if it had the history (decision 0064). The
+	// conversation and answer as if it had the history (decision 0065). The
 	// run waits, as it can go nowhere else. An undescribed runner is offered
 	// none, for the reason above.
 	forks := described && advertises(doc, capability.FeatureFork)
@@ -532,7 +532,7 @@ func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
 	// A fork is opened from its source by whichever of its runs opens it —
 	// the first one submitted, or a later one if that never bound it — and a
 	// run continuing it names no fork: the runner has the session by then,
-	// and its own conversation (decision 0064).
+	// and its own conversation (decision 0065).
 	run.Session.ForkFrom = ""
 	if run.Session.New {
 		run.Session.ForkFrom = sess.ForkFrom.String

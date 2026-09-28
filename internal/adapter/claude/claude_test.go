@@ -642,7 +642,7 @@ func TestRejectedLimitThenSuccessSucceeds(t *testing.T) {
 	}
 }
 
-// A fork, recorded from claude 2.1.284 (decision 0064): the run resumes the
+// A fork, recorded from claude 2.1.284 (decision 0065): the run resumes the
 // conversation forked with --fork-session, under a new --session-id YAD
 // chose, and answers from the forked conversation ("plum") in the new
 // session. The recorder checked the forked transcript was left as it was.

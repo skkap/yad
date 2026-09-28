@@ -26,7 +26,7 @@ agent no longer names the terminal it ran in.
 | `approval` | `approval = "untrusted"`, `sandbox = "read-only"`: a command approval, declined |
 
 Recorded on 0.157.1 only, the one release installed when forks arrived
-(DEV-48, decision 0064); 0.147.0's schema has the same `thread/fork`, and its
+(DEV-48, decision 0065); 0.147.0's schema has the same `thread/fork`, and its
 surface hash covers it, but no conversation of it was recorded:
 
 | Fixture | The run |

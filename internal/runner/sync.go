@@ -737,7 +737,7 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 	return newSession, err
 }
 
-// forkable checks the session a run opening a fork names (decision 0064). It
+// forkable checks the session a run opening a fork names (decision 0065). It
 // must be one this runner holds for the same hub — a fork happens where the
 // transcript is, and a hub names only its own sessions — of the same harness,
 // and open: a closed session's hub has said it is done with it, and one

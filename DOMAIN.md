@@ -235,7 +235,7 @@ _States_: open | closed (its hub or its owner closed it) | expired (the idle TTL
 or disk pressure did)
 _Avoid_: thread, conversation, chat — as names for this; Codex's "thread" is the
 native id underneath
-_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), [0064](docs/decisions/0064-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md), `internal/store`
+_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md), `internal/store`
 
 **Run** — one turn executed against one session, by one harness, on one model:
 one prompt in, one terminal state out. The unit of work claimed, streamed and

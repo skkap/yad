@@ -1263,7 +1263,7 @@ and a session is closed only by the one whose disk it would be on. Nor does a
 close of a session you never heard of: `yad hub` ignores both, and answers the
 sync that carried them as it would any other.
 
-**Forks** ([0064](docs/decisions/0064-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md)). A run with `session.new: true` may name
+**Forks** ([0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md)). A run with `session.new: true` may name
 another session in `session.fork_from`: the new session's conversation starts
 as the harness's copy of that one's, as far as the harness has written it,
 and the two diverge from there — the session forked goes on resuming its own

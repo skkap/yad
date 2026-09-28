@@ -56,7 +56,7 @@ type SubmitRequest struct {
 type SessionChoice struct {
 	ID  string `json:"id" minLength:"1" doc:"The session id."`
 	New bool   `json:"new" doc:"true starts a session with this id, and is refused with 409 if the hub has one. false continues a session the hub has, and is refused with 404 if it has none."`
-	// ForkFrom opens the session as a fork of another (decision 0064). It is
+	// ForkFrom opens the session as a fork of another (decision 0065). It is
 	// checked at submit against everything the hub can see then, so a fork
 	// that could never be offered is refused rather than left queued.
 	ForkFrom string `json:"fork_from,omitempty" doc:"With new true: start the session as a fork of this one — its conversation begins as a copy of that session's, which goes on unchanged. Refused with 404 if the hub has no such session, and with 409 if it is closed or closing, of another harness, not yet claimed by any runner (fork it once one of its runs has started), or on a runner that does not advertise the fork feature. The fork runs on that session's runner, in a workdir of its own built from this run's sources."`

@@ -73,7 +73,7 @@ var scenarios = []scenario{
 		prompt: "Which word did I ask you to remember? Reply with the word only."},
 	// A fork: the second turn is a new session opened from a copy of the
 	// first's conversation, and the recorder checks the first's transcript
-	// was not written to (decision 0064).
+	// was not written to (decision 0065).
 	{name: "fork", before: "Remember this word: plum. Reply with exactly: ok",
 		prompt: "Which word did I ask you to remember? Reply with the word only.", fork: true},
 	{name: "fork-missing", prompt: "Reply: hi", fork: true},

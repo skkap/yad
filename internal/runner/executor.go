@@ -522,7 +522,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	}
 	// A session opened as a fork starts from the forked session's
 	// conversation until the harness has given it one of its own (decision
-	// 0064). Settled before the workdir is prepared, which may clone.
+	// 0065). Settled before the workdir is prepared, which may clone.
 	var fork string
 	if forkOf != "" {
 		// Refused rather than started empty: the hub asked for the fork's

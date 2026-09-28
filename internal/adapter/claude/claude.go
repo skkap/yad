@@ -41,7 +41,7 @@ func (Adapter) Harness() string { return "claude" }
 func (Adapter) AppliesEffort() bool { return true }
 
 // Forks: a fork is --resume of the conversation forked with --fork-session,
-// under a --session-id YAD chooses for the fork (decision 0064).
+// under a --session-id YAD chooses for the fork (decision 0065).
 func (Adapter) Forks() bool { return true }
 
 // Timings a test may shorten.
@@ -192,7 +192,7 @@ func argv(spec adapter.Spec, session, contextFile string) ([]string, error) {
 		// beside --resume only with --fork-session, and with it YAD chooses
 		// the fork's id as it does a new session's, so the echoed id is
 		// checked the same way — an echo of the forked id is a fork that did
-		// not take, and would have written into the original (decision 0064).
+		// not take, and would have written into the original (decision 0065).
 		args = append(args, "--resume", spec.ForkFrom, "--fork-session", "--session-id", session)
 	default:
 		args = append(args, "--session-id", session)
