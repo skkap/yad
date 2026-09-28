@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -21,6 +25,7 @@ import (
 	hubdb "github.com/skkap/yad/internal/hub/store/db"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/store/db"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // fakeHarness plays script for every run, as the harness "claude" the test
@@ -347,14 +352,19 @@ func (a startErr) Start(context.Context, adapter.Spec) (adapter.Turn, error) {
 
 // A failure that is the runner's own — a harness that will not exec, a
 // directory under its data or an account home that cannot be made — reaches
-// the hub as what failed, never as the error behind it: that names paths under
-// the owner's home and, for a start, the exec error (DEV-67). The cause goes
-// to the log the message sends the owner to. A start error whose next action
-// is the hub's travels as it is, or the hub could not tell its own input was
-// the problem.
-func TestRunnerFailuresNameNoPathOnTheMachine(t *testing.T) {
+// the hub that sent the run with its cause when the cause is the operating
+// system's: the path, under the owner's home, and the errno (decision 0062,
+// reversing what DEV-67 hid). Any other cause stays in the log the message
+// sends the owner to, since it could carry what a child printed. A start
+// error whose next action is the hub's travels as it is, or the hub could not
+// tell its own input was the problem.
+func TestRunnerFailuresNameTheirCauseOnTheMachine(t *testing.T) {
 	const bin = "/Users/someone/bin/claude"
-	execErr := errors.New("start " + bin + ": fork/exec " + bin + ": permission denied")
+	// Wrapped as supervise.Start wraps exec's own error.
+	execErr := fmt.Errorf("start %s: %w", bin, &fs.PathError{Op: "fork/exec", Path: bin, Err: syscall.EACCES})
+	// A cause that is not the operating system's, carrying what a harness
+	// printed — here a credential — as an error an adapter could build.
+	childErr := errors.New("claude printed: ANTHROPIC_API_KEY=sk-ant-child-secret is not valid")
 	const hubsFault = `model "-x" is not a model name — ask the hub to send an alias such as sonnet`
 	for _, tc := range []struct {
 		name string
@@ -365,20 +375,26 @@ func TestRunnerFailuresNameNoPathOnTheMachine(t *testing.T) {
 		ad       adapter.Adapter
 		grants   []v1.Grant
 		class    string
-		// want is the whole message when the error is the hub's to act on;
-		// empty for a runner failure, which must name no path and send the
-		// owner to the log.
+		// want is the whole message when the error is the hub's to act on.
 		want string
+		// cause is what the message must name: the path, beside the errno.
+		// Empty for a cause that stays in the log, where the message must
+		// send the owner instead.
+		cause, errno string
 	}{
-		{name: "the harness will not exec", class: ClassStart,
+		{name: "the harness will not exec", class: ClassStart, cause: bin, errno: "permission denied",
 			ad: startErr{&adapter.LocalError{Msg: "claude would not start on this runner", Err: execErr}}},
+		{name: "a local cause that is not the OS's", class: ClassStart,
+			ad: startErr{&adapter.LocalError{Msg: "claude would not start on this runner", Err: childErr}}},
 		{name: "a start error the hub acts on", class: ClassStart, want: hubsFault,
 			ad: startErr{errors.New(hubsFault)}},
-		{name: "the workdir cannot be made", class: ClassPrepare, block: "workdirs"},
+		{name: "the workdir cannot be made", class: ClassPrepare, block: "workdirs",
+			cause: "workdirs", errno: "not a directory"},
 		{name: "a grant cannot be delivered", class: ClassPrepare, block: "grants",
+			cause: "grants", errno: "not a directory",
 			grants: []v1.Grant{{Name: "DATABASE_URL", Value: "file-secret", As: v1.GrantFile}}},
 		{name: "the account's home cannot be made", class: ClassPrepare, accounts: true,
-			block: filepath.Join("transcripts", "claude")},
+			block: filepath.Join("transcripts", "claude"), cause: filepath.Join("transcripts", "claude"), errno: "not a directory"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -417,16 +433,60 @@ func TestRunnerFailuresNameNoPathOnTheMachine(t *testing.T) {
 				}
 				return
 			}
-			for _, leak := range []string{bin, "/Users/", e.paths.Data, "fork/exec", "permission denied", "not a directory", "file-secret"} {
+			for _, leak := range []string{"file-secret", "sk-ant-child-secret", "ANTHROPIC_API_KEY"} {
 				if strings.Contains(msg, leak) {
 					t.Errorf("message carries %q: %q", leak, msg)
 				}
 			}
-			if !strings.Contains(msg, "`yad --profile default daemon logs`") {
-				t.Errorf("message = %q, want it to send the owner to the log", msg)
+			// Logged as before, whichever way the message went.
+			if !strings.Contains(logged.String(), tc.errno) || (tc.errno == "" && !strings.Contains(logged.String(), "claude printed")) {
+				t.Errorf("the cause is not in the log:\n%s", logged)
 			}
-			if !strings.Contains(logged.String(), "permission denied") && !strings.Contains(logged.String(), "not a directory") {
-				t.Errorf("the cause is not in the log the message points at:\n%s", logged)
+			if tc.cause == "" {
+				if !strings.Contains(msg, "`yad --profile default daemon logs`") {
+					t.Errorf("message = %q, want it to send the owner to the log", msg)
+				}
+				return
+			}
+			if !strings.Contains(msg, tc.cause) || !strings.Contains(msg, tc.errno) {
+				t.Errorf("message = %q, want it to name %q and %q", msg, tc.cause, tc.errno)
+			}
+			if strings.Contains(msg, "daemon logs") {
+				t.Errorf("message = %q names its cause and still sends the owner to the log", msg)
+			}
+		})
+	}
+}
+
+// osCause quotes an operating-system error only when its text is Go's own
+// operation, path and errno. The same types built around any other error could
+// carry anything, and are left to the log.
+func TestOSCauseQuotesOnlyAPathAndAnErrno(t *testing.T) {
+	// A real exec failure, as the adapters' LocalError wraps it.
+	_, startErr := supervise.Start(context.Background(), supervise.Spec{Path: filepath.Join(t.TempDir(), "claude")})
+	secret := errors.New("stderr: token=sk-ant-secret")
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string // a substring; "" when nothing may be quoted
+	}{
+		{"a harness that will not exec", fmt.Errorf("wrapped: %w", startErr), "no such file or directory"},
+		{"a mkdir", &fs.PathError{Op: "mkdir", Path: "/data/workdirs", Err: syscall.ENOTDIR}, "mkdir /data/workdirs: not a directory"},
+		{"a rename", &os.LinkError{Op: "rename", Old: "/a", New: "/b", Err: syscall.EXDEV}, "rename /a /b"},
+		{"a pipe", os.NewSyscallError("pipe", syscall.EMFILE), "pipe: too many open files"},
+		{"a program not on PATH", &exec.Error{Name: "git", Err: exec.ErrNotFound}, `exec: "git"`},
+		{"a path error around other text", &fs.PathError{Op: "read", Path: "/x", Err: secret}, ""},
+		{"a link error around other text", &os.LinkError{Op: "symlink", Old: "/a", New: "/b", Err: secret}, ""},
+		{"an exec error around other text", &exec.Error{Name: "git", Err: secret}, ""},
+		{"no OS error at all", secret, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := osCause(tc.err)
+			if tc.want == "" && got != "" || !strings.Contains(got, tc.want) {
+				t.Errorf("osCause = %q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, "sk-ant-secret") {
+				t.Errorf("osCause quoted the text around it: %q", got)
 			}
 		})
 	}
