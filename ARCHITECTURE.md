@@ -217,6 +217,9 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   ends it `cancelled` — at that sync, or when its lease lapses — rather than
   `lost`: a lost answer can put a claim the hub counts as held in that state
   ([0061](docs/decisions/0061-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
+  At that sync it also unbinds the session, when that claim is the one that
+  bound it: the runner deleted the session with the claim, and the next run
+  must open it again (DEV-143).
 - **Drain** — [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md).
   A hub sends `drain` only to a runner advertising the `drain` feature, and
   repeats it until a sync's health says `draining`. A draining runner declares
