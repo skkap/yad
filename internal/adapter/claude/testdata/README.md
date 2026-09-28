@@ -31,6 +31,13 @@ Under `claude-2.1.284/`, recorded for forks (DEV-48, decision 0065):
 | `fork` | `--resume` of a session asked to remember a word, `--fork-session` and a new `--session-id`: the answer is the word, in the new session; the recorder checked the forked session's transcript was not written to |
 | `fork-missing` | the same flags naming a session that does not exist: `No conversation found` for the forked id, under the new one |
 
+Under `claude-2.1.284/`, recorded by `TestRecordModels` and spending nothing —
+no user message is sent, so no turn runs (DEV-50):
+
+| Fixture | What Claude said |
+|---|---|
+| `list-models` | its answer to the `list_models` control request, on a subscription login |
+
 A dead process, a truncated or garbled stream, an oversized line and a
 mismatched session are not recordable on demand; the tests derive them from
 these files (`derive` in `claude_test.go`).

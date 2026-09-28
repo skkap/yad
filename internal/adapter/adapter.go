@@ -17,12 +17,12 @@ import (
 
 // LocalError is a failure whose cause belongs to this machine, not to the run:
 // a harness binary that will not exec, a temp file that cannot be written.
-// Its cause names paths under the owner's home and carries the exec error, and
-// a run's error goes to a hub, so the two are kept apart (DEV-67). Error is
-// Msg alone, in the runner's words; Err is the cause, for the runner's own
-// log. Every other error an adapter returns is a sentence whose next action
-// may be the hub's — a model name it sent that is not one — and travels as it
-// is.
+// Error is Msg alone, in the runner's words; Err is the cause, which the
+// runner logs, and adds to the run's error only when it is the operating
+// system's own — a path and an errno (decision 0064). Kept apart so that no
+// other cause, which could carry anything a child printed, reaches the hub.
+// Every other error an adapter returns is a sentence whose next action may be
+// the hub's — a model name it sent that is not one — and travels as it is.
 type LocalError struct {
 	Msg string
 	Err error

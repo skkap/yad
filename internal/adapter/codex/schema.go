@@ -33,8 +33,8 @@ import (
 // pinned maps each known surface hash to the Codex version it was recorded
 // from, in testdata/codex-<version>/codex_app_server_protocol.schemas.json.
 var pinned = map[string]string{
-	"6f726541c3b3ff1accad22c18d99b44615fe2eb936150e8890686df446d18f6a": "0.147.0",
-	"f6829dfbeca64544f4a2f1de73c436722e440dbb0aa6228660ee12bdf4c7cc0c": "0.157.1",
+	"ba72688c25317e21f6c09305957e982a080236247a21be597e12b80117c14ba5": "0.147.0",
+	"12304d548db40115a52970f347f208559bc933dcf4743770bc2182140dfa7586": "0.157.1",
 }
 
 // schemaFile is the bundle generate-json-schema writes, holding every
@@ -53,7 +53,7 @@ var surface = struct {
 }{
 	methods: map[string][]string{
 		"ClientRequest": {"initialize", "thread/start", "thread/resume", "thread/fork", "thread/inject_items", "turn/start", "turn/steer",
-			"turn/interrupt", "account/rateLimits/read", "account/login/start", "account/login/cancel"},
+			"turn/interrupt", "account/rateLimits/read", "account/login/start", "account/login/cancel", "model/list"},
 		"ClientNotification": {"initialized"},
 		"ServerNotification": {"turn/started", "turn/completed", "item/started", "item/completed",
 			"item/agentMessage/delta", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta",
@@ -67,7 +67,8 @@ var surface = struct {
 		"TurnStartResponse", "TurnSteerResponse", "GetAccountRateLimitsResponse",
 		"CommandExecutionRequestApprovalResponse", "FileChangeRequestApprovalResponse",
 		"PermissionsRequestApprovalResponse", "McpServerElicitationRequestResponse",
-		"ExecCommandApprovalResponse", "ApplyPatchApprovalResponse", "LoginAccountResponse", "CancelLoginAccountResponse"},
+		"ExecCommandApprovalResponse", "ApplyPatchApprovalResponse", "LoginAccountResponse", "CancelLoginAccountResponse",
+		"ModelListResponse"},
 }
 
 // SchemaHash hashes the adapter's surface of a generated schema bundle. What

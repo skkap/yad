@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,7 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/adapter/codex/codextest"
+	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/hostool"
 	"github.com/skkap/yad/internal/hub"
@@ -63,6 +65,14 @@ func TestMain(m *testing.M) {
 	// a harness reported as not answering is one the runner refuses work for
 	// (DEV-100). A child re-executed as yad probes too, so this comes first.
 	harness.VersionTimeoutForTests = probeBudget
+	// The fakes play a run whatever they are started for, so the document's
+	// model probe would start one per login and per rebuild: they are not
+	// asked, and the document reports the catalog's list, as for a harness
+	// that does not answer. The probe is tested against recorded answers in
+	// the adapters, and its use in internal/capability.
+	capability.ListModelsForTests = func(context.Context, string, string, string, []string) ([]string, error) {
+		return nil, errors.New("the end-to-end fakes are not asked for models")
+	}
 	hostool.VersionTimeoutForTests, hostool.StatusTimeoutForTests = probeBudget, probeBudget
 	if os.Getenv(childYad) != "" {
 		// The test binary as yad itself, for tests that signal a runner as a

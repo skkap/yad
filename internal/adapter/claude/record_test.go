@@ -284,6 +284,43 @@ func transcript(t *testing.T, home, id string) []byte {
 	return b
 }
 
+// TestRecordModels keeps what list_models answers for the recording login, as
+// testdata/claude-<version>/list-models.jsonl. No user message is sent, so it
+// runs no turn and spends no token (DEV-50):
+//
+//	YAD_REAL_HARNESS=1 go test -tags realharness -run TestRecordModels -v ./internal/adapter/claude/
+func TestRecordModels(t *testing.T) {
+	if os.Getenv("YAD_REAL_HARNESS") != "1" {
+		t.Skip("set YAD_REAL_HARNESS=1 to record the model list")
+	}
+	bin, err := exec.LookPath("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(bin, "--version").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join("testdata", "claude-"+strings.Fields(string(out))[0])
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	work := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	var raw bytes.Buffer
+	models, err := listModels(ctx, bin, work, nil, &raw)
+	t.Logf("models %v, err %v", models, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scrubbed := scrub(raw.Bytes(), [][2]string{{resolved(work), "/work"}, {work, "/work"}, {home, "/home/user"}})
+	if err := os.WriteFile(filepath.Join(dir, "list-models.jsonl"), scrubbed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func firstNonEmpty(a, b string) string {
 	if a != "" {
 		return a

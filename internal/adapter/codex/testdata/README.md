@@ -34,6 +34,13 @@ surface hash covers it, but no conversation of it was recorded:
 | `fork` | `thread/fork` of a thread asked to remember a word, with a context injected as on a resume, then a turn in the new thread answering with the word; the recorder checked the forked thread's rollout was not written to |
 | `fork-missing` | `thread/fork` of a thread Codex has no rollout for: the same `no rollout found` as a resume |
 
+Recorded by `TestRecordModels` the same way, with no thread, so spending
+nothing (DEV-50):
+
+| Fixture | The conversation |
+|---|---|
+| `list-models` | `initialize`, then `model/list`: the recording login's models |
+
 Written by hand from `plain`, because they cannot be recorded without
 exhausting an account or a context window:
 

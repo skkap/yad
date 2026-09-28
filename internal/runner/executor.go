@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -384,14 +387,48 @@ func (e *Exec) hand(a *activeRun, connection string, c v1.Control, now time.Time
 	}
 }
 
-// seeLogs ends a run error whose cause stays on the machine. The failures it
-// ends — a harness that will not start, a directory under the runner's data
-// that cannot be made — are the runner's, not the run's, and their errors name
-// absolute paths under the owner's home and, for a start, the exec error
-// (DEV-67, as DEV-60 found for the capability document). The hub is told what
-// failed; the owner reads why in the log line written beside it.
-func (e *Exec) seeLogs() string {
-	return " — its owner can see why with `" + e.Paths.RemoteCommand("daemon", "logs") + "` on the machine"
+// localFailure is a run error for a failure that is the runner's own — a
+// harness that will not exec, a directory under its data that cannot be made,
+// a temp file that cannot be written — rather than the run's.
+//
+// It names the cause when the cause is the operating system's: an operation,
+// the path it was on and an errno, as Go writes them. That path is on this
+// machine, perhaps under the owner's home, and it goes only to the hub that
+// sent the run, which is the one debugging it (decision 0064). Any other cause
+// — a database error, a sentence joined from several, anything that could
+// carry what a child printed — stays in the log line written beside it, and
+// the message sends the owner there.
+func (e *Exec) localFailure(what string, err error) string {
+	if cause := osCause(err); cause != "" {
+		return what + ": " + cause
+	}
+	return what + " — its owner can see why with `" + e.Paths.RemoteCommand("daemon", "logs") + "` on the machine"
+}
+
+// osCause is the first operating-system error in err's chain, in Go's own
+// words, or "" when it holds none. Each of these types writes an operation, a
+// path or a program name, and its Err; that Err must be an errno, or exec's
+// not-found, so one built around any other error — whose text could be
+// anything — is never quoted.
+func osCause(err error) string {
+	if pe, ok := errors.AsType[*fs.PathError](err); ok && isErrno(pe.Err) {
+		return pe.Error()
+	}
+	if le, ok := errors.AsType[*os.LinkError](err); ok && isErrno(le.Err) {
+		return le.Error()
+	}
+	if se, ok := errors.AsType[*os.SyscallError](err); ok && isErrno(se.Err) {
+		return se.Error()
+	}
+	if ee, ok := errors.AsType[*exec.Error](err); ok && (ee.Err == exec.ErrNotFound || isErrno(ee.Err)) {
+		return ee.Error()
+	}
+	return ""
+}
+
+func isErrno(err error) bool {
+	_, ok := err.(syscall.Errno)
+	return ok
 }
 
 // execute runs one claim to a terminal state in the outbox — or, when the
@@ -517,7 +554,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	dir, native, forkOf, err := e.workdir(bg, c)
 	if err != nil {
 		log.Warn("the session's workdir could not be made", "err", err)
-		fail(ClassPrepare, "the session's workdir could not be made on this runner"+e.seeLogs())
+		fail(ClassPrepare, e.localFailure("the session's workdir could not be made on this runner", err))
 		return
 	}
 	// A session opened as a fork starts from the forked session's
@@ -540,7 +577,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 				return
 			}
 			log.Warn("the session to fork could not be read", "fork_from", forkOf, "err", err)
-			fail(ClassPrepare, "the session to fork could not be read on this runner"+e.seeLogs())
+			fail(ClassPrepare, e.localFailure("the session to fork could not be read on this runner", err))
 			return
 		}
 	}
@@ -572,7 +609,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	defer cleanup()
 	if err != nil {
 		log.Warn("the run's grants could not be delivered", "err", err)
-		fail(ClassPrepare, "the run's grants could not be delivered on this runner"+e.seeLogs())
+		fail(ClassPrepare, e.localFailure("the run's grants could not be delivered on this runner", err))
 		return
 	}
 	// After the grants, which may not name PATH: the harness's own git, gh
@@ -580,7 +617,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	path, err := hostool.Links(hostool.LinksDir(e.Data))
 	if err != nil {
 		log.Warn("the host-tool links could not be made", "err", err)
-		fail(ClassPrepare, "the links to this runner's git, gh and docker overrides could not be made"+e.seeLogs())
+		fail(ClassPrepare, e.localFailure("the links to this runner's git, gh and docker overrides could not be made", err))
 		return
 	}
 	if path != "" {
@@ -612,7 +649,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		if hasAccount {
 			if home, err = account.Ensure(e.Data, run.Harness, acct.Label); err != nil {
 				turnLog.Warn("the account's harness home could not be prepared", "err", err)
-				fail(ClassPrepare, "the account's harness home could not be prepared on this runner"+e.seeLogs())
+				fail(ClassPrepare, e.localFailure("the account's harness home could not be prepared on this runner", err))
 				return
 			}
 			// One place counts a move, so that the two kinds are counted the
@@ -686,13 +723,14 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		turn, err := ad.Start(runCtx, spec)
 		if err != nil {
 			cancel()
-			// Only a LocalError hides its cause. The adapters' other start
-			// errors are sentences whose next action may be the hub's — a
-			// model name it sent that is not one, a session to close — and a
-			// hub told only to ask the owner would keep sending the same run.
+			// Only a LocalError's cause is sifted, as the runner's own
+			// failure. The adapters' other start errors are sentences whose
+			// next action may be the hub's — a model name it sent that is not
+			// one, a session to close — and a hub told only to ask the owner
+			// would keep sending the same run.
 			if le, ok := errors.AsType[*adapter.LocalError](err); ok {
 				turnLog.Warn("the harness would not start", "err", le.Err)
-				fail(ClassStart, le.Msg+e.seeLogs())
+				fail(ClassStart, e.localFailure(le.Msg, le.Err))
 				return
 			}
 			fail(ClassStart, err.Error())
@@ -1263,8 +1301,11 @@ func (e *Exec) sessionSources(ctx context.Context, c Claim) (sources []v1.Source
 	}
 	want, _ := json.Marshal(c.Run.Sources)
 	if string(want) != sess.Sources.String {
+		// Not the recorded JSON as stored: a git URL in it may carry a
+		// token, and this goes to the hub and the log (decision 0064).
+		shown, _ := json.Marshal(workdir.ShownSources(sources))
 		return nil, false, &workdir.Error{Class: workdir.ClassSourceRefused,
-			Msg: "the run names sources other than the ones its session's workdir was built from (" + sess.Sources.String + ") — send the same sources, or none, to continue it; start a new session for others"}
+			Msg: "the run names sources other than the ones its session's workdir was built from (" + string(shown) + ") — send the same sources, or none, to continue it; start a new session for others"}
 	}
 	return sources, false, nil
 }

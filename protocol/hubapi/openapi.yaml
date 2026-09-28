@@ -44,6 +44,11 @@ components:
           description: When a limited account's usage limit resets. Absent for an account that is not limited.
           format: date-time
           type: string
+        models:
+          description: "The models the harness listed for this account's login, in its own order: what to offer a run on this account. Not a limit: a run may name any model, and the harness decides whether it exists. Absent when the harness has not listed them for it — the account needs login, or the harness did not answer — and the harness's models are then the runner's best answer."
+          items:
+            type: string
+          type: array
         state:
           description: "free takes runs. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again, at the machine or with a hub login (start_login or login_token). Absent from runners older than this field: the runner cannot say, which is not a fault."
           enum:

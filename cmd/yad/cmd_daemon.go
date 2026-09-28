@@ -213,6 +213,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				if err != nil {
 					return control.AccountResult{}, err
 				}
+				// An account logged in again at the machine may be on another
+				// plan, and the document keeps a login's models for an hour.
+				capability.ForgetModels(ch.Harness)
 				select {
 				case rebuild <- struct{}{}:
 				default:

@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,10 @@ import (
 	"regexp"
 	"sort"
 	"syscall"
+	"time"
+
+	"github.com/skkap/yad/internal/buildinfo"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // Codex names no models in the catalog: which it offers depends on the
@@ -107,6 +112,130 @@ func readModels(path string) []cachedModel {
 		return nil
 	}
 	return cache.Models
+}
+
+// Asking rather than reading (DEV-50): model/list is Codex's own answer for
+// the login the environment points it at — its plan, its config's provider
+// and its own filtering — where models_cache.json is only what it last
+// fetched, and is not there at all for a login that has never run. Measured
+// on 0.157.1, it is answered from that same cache, or with one GET of Codex's
+// model catalog when the cache is older than Codex keeps it: no thread is
+// started and no token is spent. Models above stays the fallback for a Codex
+// that cannot be asked.
+
+// maxModelPages bounds the paging. Codex answers a handful of models in one
+// page; the bound is for a server that keeps handing back a cursor.
+const maxModelPages = 8
+
+// errNoModels is an answer that named no model yad can report.
+var errNoModels = errors.New("codex app-server listed no models")
+
+// ListModels asks the codex at bin for the models it offers the login env
+// points it at, over its app-server, in Codex's own order and without the
+// models it hides from its picker. It starts one app-server and ends it
+// before returning; ctx bounds the whole of it.
+//
+// env is the one a run on that login gets (account.Env), so the answer is
+// about the login the run would use (DEV-62: the rule supervise.Spec states for what a run keeps). The
+// error is yad's own words and never Codex's: nothing it printed is kept.
+func ListModels(ctx context.Context, bin, dir string, env []string) ([]string, error) {
+	return listModels(ctx, bin, dir, env, nil)
+}
+
+func listModels(ctx context.Context, bin, dir string, env []string, raw io.Writer) ([]string, error) {
+	p, err := supervise.Start(ctx, supervise.Spec{
+		Path: bin, Args: []string{"app-server", "--listen", "stdio://"},
+		Dir: dir, Env: env, Stdin: true, NoTTY: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("codex would not start to list its models: %w", err)
+	}
+	conn := NewConn(p.Stdin())
+	if raw != nil {
+		conn.trace = transcript(raw)
+	}
+	eof := make(chan struct{})
+	go func() {
+		defer close(eof)
+		conn.Read(p.Stdout(), func(l Line) {
+			// Nothing is asked that needs approving; a request that comes
+			// anyway gets a refusal rather than silence, which would hold it.
+			if l.Msg != nil && l.Msg.IsRequest() {
+				conn.ReplyError(l.Msg.ID, codeMethodNotFound, "yad only lists models here")
+			}
+		})
+	}()
+	defer func() {
+		// Its input closed, the app-server exits by itself, as it does after
+		// a run; one that does not is stopped.
+		p.Stdin().Close()
+		select {
+		case <-p.Done():
+		case <-time.After(exitGrace):
+			p.Stop(supervise.Ladder{TermGrace: termGrace})
+		}
+		select {
+		case <-eof:
+		case <-time.After(drainGrace):
+		}
+		p.Stdout().Close()
+	}()
+
+	if _, err := conn.Call(ctx, "initialize", map[string]any{
+		"clientInfo": map[string]any{"name": "yad", "title": "YAD", "version": buildinfo.Version},
+	}); err != nil {
+		return nil, callError("initialize", err)
+	}
+	if err := conn.Notify("initialized", nil); err != nil {
+		return nil, callError("initialized", err)
+	}
+	seen := map[string]bool{}
+	var out []string
+	cursor := ""
+	for range maxModelPages {
+		params := map[string]any{}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		res, err := conn.Call(ctx, "model/list", params)
+		if err != nil {
+			return nil, callError("model/list", err)
+		}
+		var page struct {
+			Data []struct {
+				Model  string `json:"model"`
+				Hidden bool   `json:"hidden"`
+			} `json:"data"`
+			NextCursor *string `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(res, &page); err != nil {
+			return nil, errors.New("codex app-server answered model/list with something that is not a model list")
+		}
+		for _, m := range page.Data {
+			if m.Hidden || seen[m.Model] || !modelName.MatchString(m.Model) || len(out) == maxModels {
+				continue
+			}
+			seen[m.Model] = true
+			out = append(out, m.Model)
+		}
+		if page.NextCursor == nil || *page.NextCursor == "" || len(out) == maxModels {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if len(out) == 0 {
+		return nil, errNoModels
+	}
+	return out, nil
+}
+
+// callError is a failed step in yad's words. An error Codex answered with is
+// its message, which is not kept: only that it refused.
+func callError(method string, err error) error {
+	if _, ok := errors.AsType[*RPCError](err); ok {
+		return fmt.Errorf("codex app-server refused %s", method)
+	}
+	return fmt.Errorf("codex app-server did not answer %s: %w", method, err)
 }
 
 // errNotRegular is a path that is not a plain file.
