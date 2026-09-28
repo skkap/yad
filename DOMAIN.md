@@ -310,7 +310,10 @@ _See_: [0005](docs/decisions/0005-pull-by-periodic-sync.md)
 **Claim** — a runner taking a run offered in a sync. **Lease** — the hub's
 promise that an offered or claimed run is this runner's for now; each sync
 renews a claimed run's, and a lease that lapses puts an unclaimed offer back in
-the queue and makes a claimed run **lost** from the hub's side.
+the queue and makes a claimed run **lost** from the hub's side — or
+**cancelled**, for a claim the hub had asked to cancel, which the runner may
+have withdrawn unstarted
+([0061](docs/decisions/0061-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
 **Abandon-after** — how long a hub lets a runner go without a sync before it
 closes that runner's sessions; the runner keeps its credential.
 _See_: [0046](docs/decisions/0046-a-silent-runner-loses-its-offers-with-the-lease-and-its-sessions-after-a-day.md)

@@ -128,7 +128,7 @@ Contract: [HUB.md §3](HUB.md#3-the-calls), one call at a time, and
 | `POST /runners/{runner}/sync` | the periodic call: state and health in; runs, control messages and the next interval out |
 | `POST /runs/{run}/events` | a batch of events, idempotent by `(run, seq)`; answers `acked_through` |
 | `POST /runs/{run}/result` | the terminal state, idempotent; retried from the outbox until acknowledged |
-| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost, requeues its offers, and closes its sessions, ending the runs queued in them |
+| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost (a claim it has asked to cancel, cancelled — 0061), requeues its offers, and closes its sessions, ending the runs queued in them |
 
 Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
@@ -213,7 +213,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   in the run's claim to the executor rather than arriving ahead of it (DEV-113).
   A cancel in that answer withdraws the claim; an interrupt starts the run
   already stopped, so it ends `cancelled` with a result, and a steer waits
-  for the harness.
+  for the harness. A withdrawn claim leaves the next listing, and the hub
+  ends it `cancelled` — at that sync, or when its lease lapses — rather than
+  `lost`: a lost answer can put a claim the hub counts as held in that state
+  ([0061](docs/decisions/0061-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
 - **Drain** — [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md).
   A hub sends `drain` only to a runner advertising the `drain` feature, and
   repeats it until a sync's health says `draining`. A draining runner declares
@@ -300,7 +303,8 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
 - **Sessions stay put.** The first claim in a session binds it to that runner;
   its later runs are offered to that runner alone, one at a time.
 - **Lease.** Every sync renews the lease on every run it lists. A run whose lease
-  lapses (default: four missed intervals) is **lost** on the hub's side. The
+  lapses (default: four missed intervals) is **lost** on the hub's side — a
+  claim the hub has asked to cancel, **cancelled** (0061). The
   lease a hub names is never shorter than the interval it names beside it: a
   shorter one lapses on a runner that synced exactly when it was asked to, so
   the hub takes back the runs of a runner doing everything right. The four

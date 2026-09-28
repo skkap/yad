@@ -17,11 +17,11 @@ var unchecked = []struct {
 	sections []section
 	why      string
 }{{
-	rule:     "POST /runners/{runner}/deregister — the credential dies; the runs that runner held are lost, its offers go back in the queue, and its sessions close with the runs queued in them ended.",
+	rule:     "POST /runners/{runner}/deregister — the credential dies; the runs that runner held are lost, but for a claim the hub has asked to cancel, which ends cancelled, its offers go back in the queue, and its sessions close with the runs queued in them ended.",
 	sections: []section{hubLeases},
 	why:      "deregistering retires the runner every other check here is made as; the second runner --second-token registers could carry it, and does not yet. `yad hub` implements it; a hub you write should too.",
 }, {
-	rule:     "The controls — cancel, interrupt, steer, close_session, drain — their repetition until the runner acts, the single delivery of a steer, and offering nothing to a runner that is draining or has been asked to drain.",
+	rule:     "The controls — cancel, interrupt, steer, close_session, drain — their repetition until the runner acts, the single delivery of a steer, a cancelled claim the runner withdraws recorded cancelled rather than lost, and offering nothing to a runner that is draining or has been asked to drain.",
 	sections: []section{hubControls},
 	why:      "nothing in the protocol asks a hub for a control: only a hub's own API can, and that is outside v1. A conformance runner can only wait for one it cannot cause.",
 }, {

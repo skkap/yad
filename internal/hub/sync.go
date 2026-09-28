@@ -162,6 +162,15 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			}
 			out.Controls = append(out.Controls, controls...)
 		}
+		// A claim this sync leaves out, with a cancel asked for, was withdrawn:
+		// the runner heard the cancel before any answer confirmed the claim —
+		// that answer lost in transit — and owes no result (decision 0019).
+		// The hub asked for this end, so the run is cancelled now rather than
+		// lost when its lease lapses (decision 0061).
+		if err := cancelWithdrawn(ctx, q, runner.ID, req.Runs,
+			fmt.Sprintf("cancelled before runner %s started it; the runner withdrew its claim", runner.ID), now); err != nil {
+			return err
+		}
 
 		// A close the runner reports is what closes the session here, and
 		// answers the close_session this hub was repeating (decision 0035).
@@ -412,10 +421,14 @@ func (h *Hub) SweepEvery() time.Duration { return h.interval }
 // a claim does: one not claimed within it goes back in the queue for any
 // runner, and a claim arriving after that is answered with a cancel, because
 // the run may already be another runner's. Then the runs whose leases lapsed
-// are lost, and last the runners silent past abandon-after are given up —
-// after the leases, so that by then nothing they held is still leased.
+// end: cancelled for a claim the hub was asked to cancel (decision 0061),
+// lost for every other. Last the runners silent past abandon-after are given
+// up — after the leases, so that by then nothing they held is still leased.
 func (h *Hub) sweep(ctx context.Context, q *db.Queries, now time.Time) error {
 	if _, err := q.RequeueWithdrawnOffers(ctx, store.Ms(now)); err != nil {
+		return err
+	}
+	if _, err := q.CancelLapsedClaims(ctx, store.Ms(now)); err != nil {
 		return err
 	}
 	if _, err := q.LoseLapsedRuns(ctx, store.Ms(now)); err != nil {
@@ -440,6 +453,26 @@ func (h *Hub) authenticate(ctx context.Context, pathRunner string) (db.Runner, e
 			"sync with the runner id this credential was issued to")
 	}
 	return r, nil
+}
+
+// cancelWithdrawn ends cancelled every claim of this runner's that a cancel
+// was asked for and that held does not list. Deregister passes no runs: a
+// runner that has gone holds nothing.
+func cancelWithdrawn(ctx context.Context, q *db.Queries, runnerID string, held []v1.HeldRun, reason string, now time.Time) error {
+	ids := make([]string, 0, len(held))
+	for _, r := range held {
+		ids = append(ids, r.RunID)
+	}
+	// A JSON array rather than sqlc.slice, for the reason offer gives.
+	listed, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	_, err = q.CancelWithdrawnClaims(ctx, db.CancelWithdrawnClaimsParams{
+		Reason: sql.NullString{String: reason, Valid: true}, Now: store.Ms(now),
+		RunnerID: sql.NullString{String: runnerID, Valid: true}, ListedJson: string(listed),
+	})
+	return err
 }
 
 // holdable is whether a listed run is this runner's: offered to it and not yet
