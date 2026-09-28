@@ -128,10 +128,13 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlDrain})
 		}
 
-		// The runs this answer cancels. One of them may be queued again — an
-		// offer whose lease lapsed before this late claim arrived — and it is
-		// not offered back in the same answer: a runner handed a cancel and
-		// an offer for one run at once has to guess which the hub meant.
+		// The sessions of the runs this answer cancels, where it offers
+		// nothing. A runner stops a run it is executing only once it has
+		// claimed the offers beside the cancel, so a run offered in the same
+		// session finds that one still live there and is refused. And one of
+		// those runs may be queued again — an offer whose lease lapsed before
+		// this late claim arrived — which a runner handed a cancel and an
+		// offer for at once would have to guess about.
 		cancelled := map[string]bool{}
 		for _, held := range req.Runs {
 			run, err := q.GetRun(ctx, held.RunID)
@@ -139,7 +142,13 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 				// Not this runner's to hold: it must stop, and nothing it
 				// reports for the run will be applied.
 				out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlCancel, RunID: held.RunID})
-				cancelled[held.RunID] = true
+				if err != nil {
+					continue
+				}
+				cancelled[run.SessionID] = true
+				if err := unbindLateClaim(ctx, q, run, held, runner.ID); err != nil {
+					return err
+				}
 				continue
 			}
 			if err != nil {
@@ -311,7 +320,7 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 			HarnessesJson: harnesses, AfterCreatedAt: after.CreatedAt, AfterID: after.ID, RunnerID: me, Max: candidatePage,
 		})
 	}, func(c db.Run) (bool, error) {
-		if n, capped := left[c.Harness]; capped && n <= 0 || cancelled[c.ID] {
+		if n, capped := left[c.Harness]; capped && n <= 0 || cancelled[c.SessionID] {
 			return true, nil
 		}
 		run, err := spec(c)
@@ -635,6 +644,41 @@ func cancelWithdrawn(ctx context.Context, q *db.Queries, runnerID string, held [
 		Reason: sql.NullString{String: reason, Valid: true}, Now: store.Ms(now),
 		RunnerID: sql.NullString{String: runnerID, Valid: true}, ListedJson: string(listed),
 	})
+}
+
+// unbindLateClaim unbinds the session a claim bound when the runner lists
+// that claim after the hub gave it up — its lease lapsed while the runner was
+// silent, so the run ended lost, or cancelled when a cancel had been asked
+// for — because the answer that acknowledged it was lost (DEV-148). A runner
+// lists a claim as claimed until an answer acknowledges it, and this hub will
+// never send one: every answer to it now is a cancel. So the runner withdraws
+// the claim, and deletes the session it opened, at whichever answer it hears
+// first, or in its next process's recovery; the session goes back to unbound
+// now rather than at a sync that leaves the claim out, which would say
+// nothing more. Its next run then goes out opening it, to any runner.
+//
+// Only a claim listed as claimed: a run that started lists preparing or
+// later, and its runner stops it and keeps its session. Only the claim that
+// bound the session, and never a session with a close asked for or made:
+// UnbindWithdrawnSession's rules, for DEV-143's reasons. And not a run with a
+// start moment: its runner holds an acknowledged claim as claimed until the
+// moment, so listing one says nothing about a lost answer, and a runner that
+// kept the session would refuse the next run sent as opening it.
+func unbindLateClaim(ctx context.Context, q *db.Queries, run db.Run, held v1.HeldRun, runnerID string) error {
+	if held.State != v1.RunClaimed {
+		return nil
+	}
+	r, err := spec(run)
+	if err != nil {
+		return err
+	}
+	if r.StartAt != nil {
+		return nil
+	}
+	_, err = q.UnbindWithdrawnSession(ctx, db.UnbindWithdrawnSessionParams{
+		ID: run.SessionID, RunnerID: sql.NullString{String: runnerID, Valid: true}, RunID: sql.NullString{String: run.ID, Valid: true},
+	})
+	return err
 }
 
 // holdable is whether a listed run is this runner's: offered to it and not yet

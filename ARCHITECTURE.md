@@ -317,6 +317,11 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   queue for any runner, and a claim listed after that is answered with
   `cancel`, as a lapsed claim is —
   [0046](docs/decisions/0046-a-silent-runner-loses-its-offers-with-the-lease-and-its-sessions-after-a-day.md).
+  The answer carrying such a cancel offers nothing in that run's session. A
+  lapsed claim the runner lists as `claimed` is one no answer acknowledged,
+  which it withdraws with the session it opened, so the hub unbinds the session
+  when that claim bound it — unless the run has a start moment, which the
+  runner holds an acknowledged claim for (DEV-148).
 - **Abandon after.** A runner that has not synced for longer than the hub's
   abandon-after (default a day, and always longer than the lease) has every
   session bound to it closed and the runs queued in them ended. Its credential

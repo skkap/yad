@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -95,6 +96,12 @@ func TestASessionWhoseFirstRunNeverBoundItOpensWithTheNext(t *testing.T) {
 			}
 			return l
 		}},
+		{"lost while the answer acknowledging its claim was lost", func(t *testing.T, e *env, l *Loop) *Loop {
+			return lapseUnacknowledged(t, e, l, false, "lost")
+		}},
+		{"cancelled on its lapse while the answer acknowledging its claim was lost", func(t *testing.T, e *env, l *Loop) *Loop {
+			return lapseUnacknowledged(t, e, l, true, "cancelled")
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -171,6 +178,41 @@ func TestAnAcknowledgedClaimKeepsItsSessionAtRestart(t *testing.T) {
 	if got := l2.Executor.(*executor).ids(); !slices.Equal(got, []string{"b"}) {
 		t.Fatalf("started %v, want [b]", got)
 	}
+}
+
+// lapseUnacknowledged is DEV-148. The hub binds s1 at the listing that claims
+// a, whose answer never arrives, and the runner is then silent past the
+// lease: the sweep ends a lost, or cancelled when a cancel was asked for
+// meanwhile (decision 0061). Back, the runner lists a as claimed, which the
+// hub no longer holds, so the answer is a cancel; the runner, never told its
+// claim was acknowledged, withdraws it and the session it opened.
+func lapseUnacknowledged(t *testing.T, e *env, l *Loop, cancel bool, want string) *Loop {
+	t.Helper()
+	ctx := context.Background()
+	h := &losesAnswer{Hub: l.Hub}
+	l.Hub = h
+	mustSync(t, l)
+	h.arm()
+	if _, err := l.SyncOnce(ctx); err == nil {
+		t.Fatal("the armed sync's answer arrived")
+	}
+	if cancel {
+		if _, err := e.api(t).Cancel(ctx, "a"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.skew.Store(int64(10 * time.Minute))
+	res := mustSync(t, l)
+	if !slices.Equal(cancels(res), []string{"a"}) {
+		t.Fatalf("cancels %v, want [a]", cancels(res))
+	}
+	if got := e.hubState(t, "a"); got != want {
+		t.Fatalf("a is %s on the hub, want %s", got, want)
+	}
+	if _, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "hub", ID: "s1"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("session s1 is still here after the claim that opened it was withdrawn: %v", err)
+	}
+	return l
 }
 
 // restarted is the loop a new process of the same runner makes, with an
