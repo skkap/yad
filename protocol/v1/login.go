@@ -74,7 +74,7 @@ type LoginReport struct {
 	// the runner never had — the answer to a login_code or cancel_login for
 	// an id it does not know, which it has no way to fill in.
 	Harness string      `json:"harness,omitempty" doc:"The harness being logged in. Absent only when the runner never had this login: the answer to a login_code or cancel_login for an id it does not know."`
-	Account string      `json:"account,omitempty" doc:"The account label, as the owner listed it on the machine. Absent for the harness's own default login, and when the runner never had this login."`
+	Account string      `json:"account,omitempty" doc:"The account label, as start_login or login_token named it. Absent for the harness's own default login, and when the runner never had this login."`
 	Method  LoginMethod `json:"method,omitempty" enum:"link,token" doc:"link: the runner ran the harness's own login and reports its URL. token: the runner stored a token the hub delivered. Absent only when the runner never had this login. A closed set for all of v1."`
 	State   LoginState  `json:"state" enum:"starting,waiting,checking,succeeded,failed,expired,cancelled" doc:"starting: taken, and not yet waiting. waiting: url (and for a device-code harness user_code) is ready; send the code with login_code. checking: the code or token is in, and the runner is asking the harness whether it took. succeeded: the harness's own check says the account is logged in, and it takes runs. failed: it did not take, and error says why. expired: no code arrived within the runner's limit (ten minutes for yad). cancelled: ended by cancel_login, or by a newer login for the same account. The last four are terminal. A closed set for all of v1."`
 	// URL is harness output, and data: it is shown to the owner, never

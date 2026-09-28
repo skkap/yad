@@ -70,6 +70,13 @@ const FeatureEffort = "effort"
 // which a hub can show, where a control it ignored would say nothing.
 const FeatureLogin = "login"
 
+// FeatureAccounts is a runner that lets this hub add accounts — start_login
+// and login_token carrying add — and remove them with remove_account
+// (decision 0057). Unlike the rest it is not in Features: whether a hub may is
+// the owner's per connection (manage_accounts), so each sync loop adds it to
+// the document its own hub is sent, and only beside FeatureLogin.
+const FeatureAccounts = "accounts"
+
 // Build probes the machine and assembles the document from it and the owner's
 // config.
 //
