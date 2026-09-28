@@ -298,7 +298,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTT
 // A method would be the obvious reach for anyone adding a spec endpoint, and
 // would reintroduce exactly that. There is none to reach for, and
 // TestConstrainSourcesIsReachedOnlyFromTheGenerators fails if one appears.
-func OpenAPIYAML() ([]byte, error) { return constrainSources(New(Options{}).api.OpenAPI()).YAML() }
+//
+// extendGatedEnums is this document's alone: the service API has no feature
+// advertisement to make a grown enum safe.
+func OpenAPIYAML() ([]byte, error) {
+	return extendGatedEnums(constrainSources(New(Options{}).api.OpenAPI())).YAML()
+}
 
 // ServiceOpenAPIYAML is the service API's generated document, on the same
 // terms as OpenAPIYAML above.
