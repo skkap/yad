@@ -371,7 +371,7 @@ func TestRefusedSources(t *testing.T) {
 // A hub-sent URL with a token for its user is fetched, and the token reaches
 // neither the run's events nor its error — not in the status that names the
 // fetch, not in git's own reason when the fetch fails, and not in the refusal
-// of a source named twice (decision 0062). git here is a wrapper that fails
+// of a source named twice (decision 0063). git here is a wrapper that fails
 // every fetch as a git that quotes the whole URL would, so nothing leaves the
 // machine.
 func TestAGitURLsTokenStaysOutOfTheRun(t *testing.T) {

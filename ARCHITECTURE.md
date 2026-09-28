@@ -1325,6 +1325,15 @@ line here is a reviewed change.
   sends ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)).
   Hub input and harness output are still data to YAD itself: never executed,
   never passed to a shell, never an instruction to the runner.
+- What leaves the machine is written for its reader. The capability document
+  and health go to every connected hub, so they never name a path on the
+  machine or quote what a child printed (DEV-67). A run's error and events go
+  only to the hub that sent the run, so they may name a path; the runner quotes
+  a cause of its own only when it is an OS error — a path and an errno — and
+  otherwise points at `yad daemon logs`. A command in either follows
+  `Paths.RemoteCommand`, and a URL printed in either — a git source's, one in
+  git's own reason — loses its credential first
+  ([0063](docs/decisions/0063-a-runs-error-may-name-a-path-on-the-runner.md)).
 - A run's sources are argv, never a shell: https and ssh only, no remote
   helpers, no leading `-`, no password in a URL, and nothing on the machine
   outside the owner's `[workdirs] roots`, which default to the owner's home

@@ -100,7 +100,7 @@ var urlInText = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s'"<>]+`)
 // config.RedactURL. git quotes the remote it failed to reach, and a hub-sent
 // URL may carry a token as its user — the one shape parseRemote lets through —
 // which this line would otherwise carry to the hub in the run's error and to
-// the daemon's log (decision 0062). Whether git anonymises the URL itself
+// the daemon's log (decision 0063). Whether git anonymises the URL itself
 // depends on its version and the message, so it is not relied on.
 func redactURLs(s string) string {
 	return urlInText.ReplaceAllStringFunc(s, config.RedactURL)

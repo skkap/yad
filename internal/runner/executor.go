@@ -394,7 +394,7 @@ func (e *Exec) hand(a *activeRun, connection string, c v1.Control, now time.Time
 // It names the cause when the cause is the operating system's: an operation,
 // the path it was on and an errno, as Go writes them. That path is on this
 // machine, perhaps under the owner's home, and it goes only to the hub that
-// sent the run, which is the one debugging it (decision 0062). Any other cause
+// sent the run, which is the one debugging it (decision 0063). Any other cause
 // — a database error, a sentence joined from several, anything that could
 // carry what a child printed — stays in the log line written beside it, and
 // the message sends the owner there.

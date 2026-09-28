@@ -353,7 +353,7 @@ func (a startErr) Start(context.Context, adapter.Spec) (adapter.Turn, error) {
 // A failure that is the runner's own — a harness that will not exec, a
 // directory under its data or an account home that cannot be made — reaches
 // the hub that sent the run with its cause when the cause is the operating
-// system's: the path, under the owner's home, and the errno (decision 0062,
+// system's: the path, under the owner's home, and the errno (decision 0063,
 // reversing what DEV-67 hid). Any other cause stays in the log the message
 // sends the owner to, since it could carry what a child printed. A start
 // error whose next action is the hub's travels as it is, or the hub could not

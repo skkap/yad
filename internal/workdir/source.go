@@ -190,7 +190,7 @@ func plain(field, s, shown string) error {
 // shownURL is a hub-sent git URL as a refusal, an event or a run's error may
 // print it. It goes back only to the hub that sent it, which already holds it
 // — but a URL is where people put a token, and a token is never transmitted
-// (decision 0062, as DEV-91 for a hub's own URL). A URL loses its userinfo,
+// (decision 0063, as DEV-91 for a hub's own URL). A URL loses its userinfo,
 // query and fragment to config.RedactURL; an scp-like user@host:path loses its
 // user the same way; anything else holding an @ is not printed at all. A
 // source with nothing to take out — a path, most URLs — comes back as given.

@@ -97,7 +97,7 @@ const fakeToken = "ghp_FAKEt0kenFAKEt0ken"
 // A refused git URL goes back to the hub that sent it, in the run's error,
 // and never with the credential it carried: its userinfo, query and fragment
 // are taken out, and a URL that cannot be taken apart is not repeated at all
-// (decision 0062, as DEV-91 for a hub's own URL). Every shape here is refused,
+// (decision 0063, as DEV-91 for a hub's own URL). Every shape here is refused,
 // each by a different check.
 func TestARefusedGitURLNeverCarriesItsCredential(t *testing.T) {
 	root := t.TempDir()

@@ -147,8 +147,17 @@ wanted any of this could simply ask the harness for it.
   to hold one — because it authenticates nothing: the runner sends its
   credential as a bearer token, never the URL's userinfo. Wherever yad does
   print a URL it did not choose — a refusal, a hub's redirect, an unreachable
-  hub — the userinfo, query and fragment are taken out first, and a URL that
-  does not parse is not repeated at all (`config.RedactURL`).
+  hub, a run's git source in its events and errors, git's own reason for a
+  failed fetch — the userinfo, query and fragment are taken out first, and a
+  URL that does not parse is not repeated at all (`config.RedactURL`,
+  `shownURL` in `internal/workdir/source.go`).
+- **What a hub learns about the machine depends on what it is reading.** The
+  capability document goes to every hub you connect, so it names no path on
+  the machine and quotes nothing a harness printed. A run's error goes only to
+  the hub that sent the run, and may name the path that failed — a workdir
+  that could not be made, a harness binary that would not start — with the
+  operating system's reason; any other cause stays in your daemon log
+  ([0063](decisions/0063-a-runs-error-may-name-a-path-on-the-runner.md)).
 - **A hub's redirect is refused, never followed** — Go would carry the bearer
   across a same-host redirect even from https to plain http. It is refused as
   the response arrives, before Go's HTTP client parses the `Location`, so a
