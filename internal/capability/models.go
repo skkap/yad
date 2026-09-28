@@ -1,0 +1,220 @@
+package capability
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/account"
+	"github.com/skkap/yad/internal/adapter/claude"
+	"github.com/skkap/yad/internal/adapter/codex"
+	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/harness"
+)
+
+// A harness's models are asked of the harness, for each login a run may use
+// (DEV-50): Claude's list_models control request and Codex's model/list,
+// neither of which runs a turn or spends a token. Asking starts the harness,
+// so an answer is kept, a slow harness is not waited on past a bound, and one
+// that cannot answer is reported from the catalog and said to be.
+
+// lister asks one harness for the models the login env points it at.
+type lister func(ctx context.Context, bin, dir string, env []string) ([]string, error)
+
+var listers = map[string]lister{"claude": claude.ListModels, "codex": codex.ListModels}
+
+// ListModelsForTests, when set, answers in place of every harness, so a test
+// whose fake harness plays a run is not also started to list models.
+var ListModelsForTests func(ctx context.Context, harnessID, bin, dir string, env []string) ([]string, error)
+
+var (
+	// modelsRecheck is how long a login's list is kept. It moves with a
+	// harness release, which is part of what an answer is kept by, so an
+	// upgrade asks again at once; otherwise with a plan, which is rare. The
+	// daemon rebuilds the document every 15 seconds, and each ask starts a
+	// harness — Claude takes seconds and a few hundred megabytes to answer.
+	modelsRecheck = time.Hour
+	// modelsRetry is how soon a login whose harness did not answer is asked
+	// again. Its last answer, if it ever gave one, is reported meanwhile.
+	modelsRetry = 5 * time.Minute
+	// modelsTimeout bounds one ask. Claude 2.1.283 answered in about three
+	// seconds, most of it its own start, and Codex 0.157.1 in a tenth of one;
+	// past this the document goes out without that login's list rather than
+	// hold a registration or a sync's document for a harness that hangs.
+	modelsTimeout = 15 * time.Second
+	modelsNow     = time.Now
+)
+
+type modelsAnswer struct {
+	models []string
+	until  time.Time
+}
+
+var (
+	modelsMu    sync.Mutex
+	modelsAsked = map[string]modelsAnswer{}
+)
+
+// ForgetModels drops the lists kept for a harness, so the next document asks
+// again: a login has just changed, and with it, perhaps, the plan.
+func ForgetModels(id string) {
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	for key := range modelsAsked {
+		if strings.HasPrefix(key, id+"\x00") {
+			delete(modelsAsked, key)
+		}
+	}
+}
+
+// login is one login a run may use: an account's home, or "" for the
+// harness's own default one.
+type login struct{ label, home string }
+
+// logins is every login a run of this harness may use: each account's that
+// can take a run, or with none configured the default home a run inherits.
+// An owner who configured accounts whose states could not be read gets none:
+// the default home would describe a login no run uses.
+func logins(id string, cfg config.Config, accounts []account.Account) []login {
+	mine := account.For(accounts, id)
+	if len(mine) == 0 {
+		if len(cfg.Harness[id].Accounts) > 0 {
+			return nil
+		}
+		return []login{{}}
+	}
+	var out []login
+	for _, a := range mine {
+		// A login that is not there has nothing to list, and what the harness
+		// says with none describes no account.
+		if a.State != v1.AccountNeedsLogin {
+			out = append(out, login{a.Label, a.Home})
+		}
+	}
+	return out
+}
+
+// addModels fills in each harness's models from the harness: every login's
+// list, asked side by side, merged in the harness's order, and each account's
+// own. A harness nothing could be asked of keeps the catalog's list and says
+// so; Codex's own cache of its list answers for a login it could not be asked
+// about, since that is still the harness's word for that login.
+func addModels(ctx context.Context, found []harness.Detected, cfg config.Config, accounts []account.Account) {
+	type ask struct {
+		i  int
+		l  login
+		ms []string
+	}
+	var asks []*ask
+	for i, d := range found {
+		if _, ok := listers[d.ID]; !ok || !d.Present {
+			continue
+		}
+		for _, l := range logins(d.ID, cfg, accounts) {
+			asks = append(asks, &ask{i: i, l: l})
+		}
+	}
+	var wg sync.WaitGroup
+	for _, a := range asks {
+		if d := found[a.i]; d.Ready() {
+			wg.Go(func() { a.ms = modelsOf(ctx, d, a.l.home) })
+		}
+	}
+	wg.Wait()
+
+	for i := range found {
+		d := &found[i]
+		var merged []string
+		for _, a := range asks {
+			if a.i != i {
+				continue
+			}
+			if a.ms == nil && d.ID == "codex" {
+				home := a.l.home
+				if home == "" {
+					home = codex.DefaultHome()
+				}
+				a.ms = codex.Models(home)
+			}
+			if a.ms == nil {
+				continue
+			}
+			for _, m := range a.ms {
+				if !slices.Contains(merged, m) {
+					merged = append(merged, m)
+				}
+			}
+			if a.l.label != "" {
+				if d.AccountModels == nil {
+					d.AccountModels = map[string][]string{}
+				}
+				d.AccountModels[a.l.label] = a.ms
+			}
+		}
+		switch {
+		case len(merged) > 0:
+			d.Models, d.ModelsSource = merged, v1.ModelsFromHarness
+		case len(d.Models) > 0:
+			d.ModelsSource = v1.ModelsFromCatalog
+		}
+	}
+}
+
+// modelsOf is one login's list: kept from the last ask while it is fresh,
+// asked again once it is not. nil is a harness that has never answered for
+// this login.
+func modelsOf(ctx context.Context, d harness.Detected, home string) []string {
+	// The environment of a run on this login, and only that: the answer is
+	// about the credential the run would use (DEV-62: the rule supervise.Spec states for what a run keeps).
+	env := account.Env(d.ID, home)
+	key := modelsKey(d, env)
+	now := modelsNow()
+	modelsMu.Lock()
+	kept, ok := modelsAsked[key]
+	modelsMu.Unlock()
+	if ok && now.Before(kept.until) {
+		return kept.models
+	}
+	askCtx, cancel := context.WithTimeout(ctx, modelsTimeout)
+	defer cancel()
+	// From the user's home, as the login check runs: a run's workdir is not
+	// known here, and the home's is the user's own settings.
+	dir, err := os.UserHomeDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	var got []string
+	if ListModelsForTests != nil {
+		got, err = ListModelsForTests(askCtx, d.ID, d.Path, dir, env)
+	} else {
+		got, err = listers[d.ID](askCtx, d.Path, dir, env)
+	}
+	if ctx.Err() != nil {
+		// The caller stopped asking; that says nothing about the harness.
+		return kept.models
+	}
+	next := modelsAnswer{models: got, until: now.Add(modelsRecheck)}
+	if err != nil {
+		next = modelsAnswer{models: kept.models, until: now.Add(modelsRetry)}
+	}
+	modelsMu.Lock()
+	modelsAsked[key] = next
+	modelsMu.Unlock()
+	return next.models
+}
+
+// modelsKey is what a list is kept by: the harness, the binary and its
+// version, and the environment it was asked in — which names the account's
+// home and, for a token account, its token. Hashed, so no token is held here
+// as a key.
+func modelsKey(d harness.Detected, env []string) string {
+	sum := sha256.Sum256([]byte(strings.Join(env, "\x00")))
+	return d.ID + "\x00" + d.Path + "\x00" + d.Version + "\x00" + hex.EncodeToString(sum[:])
+}
