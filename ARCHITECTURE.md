@@ -603,7 +603,7 @@ driven, with a warning on the harness in the capability document and in
 
 **Fixtures.** Every adapter test replays recorded JSONL named by harness version
 (`internal/adapter/claude/testdata/claude-2.1.276/*.jsonl`,
-`internal/adapter/codex/testdata/codex-0.147.0/*.jsonl` — both directions of
+`internal/adapter/codex/testdata/codex-0.157.1/*.jsonl` — both directions of
 the conversation, ours wrapped as `{">": …}`) through a fake harness process.
 Recording new ones is a manual step, behind a build tag (`YAD_REAL_HARNESS=1 go
 test -tags realharness -run TestRecord ./internal/adapter/claude/`, and the same
@@ -613,10 +613,18 @@ for `codex`); the suite never runs a real harness.
 
 - **One spawn point.** Every child — harness, git, setup hook, `--version` probe —
   starts through `supervise.Start`: its own process group, a scrubbed environment
-  (`CLAUDECODE`, every `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY` unless configured,
-  anything `YAD_*`), and a stderr tail kept at 2 KiB. A run's grants are added
-  after the scrub, which is why a grant may not name `ANTHROPIC_API_KEY` or any
-  other variable that chooses the harness's credential (0040). git and setup hooks start
+  (`CLAUDECODE`, every `CLAUDE_CODE_*`, anything `YAD_*`, and every variable
+  that chooses a harness's credential — `v1.AccountVariable`, the list a grant
+  is refused by, but for the harness home variables, which are the harness's
+  own login when it has no accounts —
+  [0060](docs/decisions/0060-the-owners-own-account-variables-are-removed-from-every-run.md)),
+  and a stderr tail kept at 2 KiB. A run's grants and its account's home and
+  token are added after the scrub, which is why a grant may not name
+  `ANTHROPIC_API_KEY` or any other variable that chooses the harness's
+  credential (0040). The check that decides whether an account can take a run
+  (`account.LoggedIn`) gets the environment the run gets, or it answers about a
+  different credential (DEV-26; the rule, and `OwnLogin`'s one deliberate
+  difference, are on `Spec.KeepEnv`). git and setup hooks start
   with `NoTTY` — a session of their own, no controlling terminal — so nothing
   they run can prompt. A host tool a run uses is the one detection resolved
   ([0045](docs/decisions/0045-runs-use-the-host-tools-detection-resolved.md)):
@@ -855,7 +863,9 @@ for `codex`); the suite never runs a real harness.
   `account/login/cancel` before the app-server is stopped, so a code typed
   late logs nothing in. What Codex words — an error, a refusal — is never
   read or reported; the runner writes its own. That behaviour is read from
-  0.147.0's schema, not yet measured against a real login. A stored token stays in its file for the
+  the schema; of a real login, only a start and its cancel have been measured
+  (0.157.1: the link and code, `canceled`, then a completion with
+  `success: false`) — a login carried through to its end has not. A stored token stays in its file for the
   account's runs throughout: the login runs with `account.LoginEnv` and is
   judged by `account.OwnLogin`, both without the token — claude's check says
   yes to any token — and the token is removed only once the login has taken,
@@ -1340,6 +1350,11 @@ line here is a reviewed change.
   an exposed **data** directory before binding the socket. Nothing refuses an
   exposed `state.db`, `hub.db` or `config.toml`, and nothing else looks at the
   config directory — which is why doctor is where an owner hears about those.
+  It also warns, by name and never by value, about each variable in its
+  environment that would choose a harness's credential over an account's —
+  removed from every run, so an owner who exported one meaning runs to use it
+  hears why they do not (0060). The daemon logs the same about its own
+  environment at start, which a service manager may have set differently.
 - The operator-facing version of this section is
   [docs/run-it-safely.md](docs/run-it-safely.md).
 

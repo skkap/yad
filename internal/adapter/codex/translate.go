@@ -395,7 +395,9 @@ func toolOutcome(it item) (failed *bool, exit *int) {
 	yes, no := true, false
 	byStatus := func() *bool {
 		switch it.Status {
-		case "failed", "declined":
+		// interrupted is a subagent call's, since 0.157.1: it ended
+		// without the answer it was asked for.
+		case "failed", "declined", "interrupted":
 			return &yes
 		case "completed":
 			return &no

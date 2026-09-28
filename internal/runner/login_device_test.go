@@ -20,14 +20,14 @@ import (
 	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
-// What the device-code fixtures answer with (codextest, codex 0.147.0's
+// What the device-code fixtures answer with (codextest, codex 0.157.1's
 // schema): the link and the code the owner is shown, and what Codex says when
 // it will not log the account in — which must never reach a hub.
 const (
 	codexDeviceURL   = "https://auth.openai.com/codex/device"
 	codexDeviceCode  = "K7QM-4XPD"
 	codexRefusalText = "Device code login is not enabled"
-	codexFixtures    = "../adapter/codex/testdata/codex-0.147.0/"
+	codexFixtures    = "../adapter/codex/testdata/codex-0.157.1/"
 )
 
 // deviceRig is a loginRig whose codex is the fake app-server playing a

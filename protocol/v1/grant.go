@@ -75,6 +75,13 @@ var deniedGrantPrefixes = []struct{ prefix, why string }{
 // would never fire, failover would have nothing to fail over, and health would
 // report it free for ever (decision 0040).
 //
+// The owner's own copies of these names are removed from every child the
+// runner starts, by supervise.Scrub reading this same list through
+// AccountVariable, since one set on the machine ranks above the account just
+// as a grant would. The harness home variables are the exception there: the
+// owner's CLAUDE_CONFIG_DIR or CODEX_HOME is the harness's own login when it
+// has no accounts, and an account's home is appended after it and wins.
+//
 // One list for every harness, rather than each harness refusing its own. A hub
 // checks it before queueing without knowing which adapter reads what, a run of
 // one harness may start the other as a tool, and refusing ANTHROPIC_API_KEY on
@@ -140,6 +147,41 @@ var accountGrantPrefixes = []struct{ prefix, why string }{
 	{"CLAUDE_CODE_USE_", "is how Claude is switched onto a cloud provider's credentials (Bedrock, Vertex, Foundry, Claude Platform on AWS), and the next provider will be named the same way"},
 }
 
+// AccountVariable says whether name chooses whose credential a harness uses or
+// which home it reads its login from — whether it is on the list above — and
+// if so why, in words that follow the name: "ANTHROPIC_PROFILE names an
+// Anthropic profile, …". Matched as Grant.Validate matches it, whole or by
+// prefix and in any case.
+//
+// Exported because the list has two readers. Grant.Validate refuses these
+// names from a hub; the runner's supervise.Scrub removes them from the
+// owner's own environment, which ranks above the account the same way, and
+// `yad doctor` names any it finds there (DEV-62). protocol/v1 imports nothing
+// of ours (ARCHITECTURE.md §1), so the list cannot move below it, and a copy
+// in the runner is the drift this function exists to prevent. For a Go hub it
+// answers what Validate already enforces. The answer may change as names are
+// added; the signature is the promise.
+func AccountVariable(name string) (why string, ok bool) {
+	_, why, ok = accountVariable(name)
+	return why, ok
+}
+
+// accountVariable is AccountVariable with the list entry that matched — the
+// name itself, or a prefix followed by '*' — for the refusal to quote.
+func accountVariable(name string) (entry, why string, ok bool) {
+	for n, why := range accountGrantNames {
+		if strings.EqualFold(name, n) {
+			return n, why, true
+		}
+	}
+	for _, d := range accountGrantPrefixes {
+		if len(name) >= len(d.prefix) && strings.EqualFold(name[:len(d.prefix)], d.prefix) {
+			return d.prefix + "*", d.why, true
+		}
+	}
+	return "", "", false
+}
+
 // accountRefusal is the one message for a name either account list refuses:
 // what the name does, the decision, and the two ways a hub gets what it
 // wanted without it.
@@ -169,15 +211,8 @@ func (g Grant) Validate() error {
 			return fmt.Errorf("grant name %s is refused: %s* is denied because %s — send the value under another name", g.Name, d.prefix, d.why)
 		}
 	}
-	for name, why := range accountGrantNames {
-		if strings.EqualFold(g.Name, name) {
-			return accountRefusal(g.Name, name, why)
-		}
-	}
-	for _, d := range accountGrantPrefixes {
-		if len(g.Name) >= len(d.prefix) && strings.EqualFold(g.Name[:len(d.prefix)], d.prefix) {
-			return accountRefusal(g.Name, d.prefix+"*", d.why)
-		}
+	if entry, why, ok := accountVariable(g.Name); ok {
+		return accountRefusal(g.Name, entry, why)
 	}
 	return nil
 }

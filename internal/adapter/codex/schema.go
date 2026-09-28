@@ -34,6 +34,7 @@ import (
 // from, in testdata/codex-<version>/codex_app_server_protocol.schemas.json.
 var pinned = map[string]string{
 	"dc3dfab123e3a20ceb0cb58c017e853b354590c613b369b382d555e595df65b4": "0.147.0",
+	"b78cf4cb0bb29c276c30b5e1625898fc4d30631593dcc2a1debd98ab258e93e6": "0.157.1",
 }
 
 // schemaFile is the bundle generate-json-schema writes, holding every

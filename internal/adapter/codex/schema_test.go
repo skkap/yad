@@ -19,15 +19,31 @@ func recordedSchema(t *testing.T) []byte {
 	return b
 }
 
-// The pin in schema.go is the recorded schema's: a changed surface that was
+// Every pin in schema.go is a recorded schema's: a changed surface that was
 // not re-pinned, or a pin typed by hand, fails here.
 func TestPinnedSchema(t *testing.T) {
-	sum, err := SchemaHash(recordedSchema(t))
-	if err != nil {
-		t.Fatal(err)
+	// Each entry on its own: two hashes for one version would otherwise pass
+	// on the one that matches, and the other would call an unrecorded
+	// surface ready.
+	newest := strings.TrimPrefix(filepath.Base(fixtures), "codex-")
+	newestPinned := false
+	for sum, v := range pinned {
+		newestPinned = newestPinned || v == newest
+		b, err := os.ReadFile(filepath.Join("testdata", "codex-"+v, schemaFile))
+		if err != nil {
+			t.Errorf("codex %s is pinned with no recorded schema: %v", v, err)
+			continue
+		}
+		got, err := SchemaHash(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != sum {
+			t.Errorf("schema.go pins %s as codex %s, whose recorded schema hashes to %s", sum, v, got)
+		}
 	}
-	if v, ok := pinned[sum]; !ok || v != strings.TrimPrefix(filepath.Base(fixtures), "codex-") {
-		t.Fatalf("the recorded schema hashes to %s, which schema.go pins as %q", sum, v)
+	if !newestPinned {
+		t.Errorf("the replayed fixtures are codex %s's, which schema.go does not pin", newest)
 	}
 }
 
@@ -157,9 +173,9 @@ func TestSchemaWarning(t *testing.T) {
 	for _, tc := range []struct {
 		name, schema, version, want string
 	}{
-		{name: "pinned", schema: pinnedFile, version: "codex-cli 0.147.0"},
+		{name: "pinned", schema: pinnedFile, version: "codex-cli 0.157.1"},
 		{name: "a newer codex, same surface", schema: pinnedFile, version: "codex-cli 0.148.0"},
-		{name: "drift", schema: drifted, version: "codex-cli 0.149.0", want: "differs from the one this yad was built against (codex 0.147.0)"},
+		{name: "drift", schema: drifted, version: "codex-cli 0.149.0", want: "differs from the one this yad was built against (codex 0.147.0, 0.157.1)"},
 		{name: "no schema at all", schema: "fail", version: "codex-cli 0.9.0", want: "could not check"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,7 +195,7 @@ func TestSchemaWarning(t *testing.T) {
 	// Asked again for the same binary and version, the answer is remembered:
 	// the probe runs every sync.
 	t.Setenv("CODEX_TEST_SCHEMA", "fail")
-	if got := SchemaWarning(context.Background(), os.Args[0], "codex-cli 0.147.0"); got != "" {
+	if got := SchemaWarning(context.Background(), os.Args[0], "codex-cli 0.157.1"); got != "" {
 		t.Errorf("a remembered answer was checked again: %q", got)
 	}
 }

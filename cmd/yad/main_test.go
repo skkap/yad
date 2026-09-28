@@ -15,6 +15,7 @@ import (
 
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/hostool"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // shortDir is a private temporary directory short enough to hold the
@@ -67,6 +68,18 @@ func privateDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// noAccountVariables empties every account variable the shell running the
+// tests exported, for a test that wants doctor to print no warning at all:
+// doctor warns about each one set (decision 0060), and a developer's own
+// OPENAI_API_KEY is none of the test's business. Empty is enough, since an
+// empty one chooses nothing and doctor says nothing about it.
+func noAccountVariables(t *testing.T) {
+	t.Helper()
+	for _, name := range supervise.AccountVariables(os.Environ()) {
+		t.Setenv(name, "")
+	}
 }
 
 func yad(t *testing.T, args ...string) (int, string, string) {
@@ -199,8 +212,9 @@ func TestDoctorReportsCodexProtocolDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_TEST_SCHEMA", schema)
+	noAccountVariables(t)
 	code, out, errs := yad(t, "doctor")
-	if code != 0 || !regexp.MustCompile(`Codex +ready +0\.147\.0`).MatchString(out) || strings.Contains(out, "warning:") {
+	if code != 0 || !regexp.MustCompile(`Codex +ready +0\.157\.1`).MatchString(out) || strings.Contains(out, "warning:") {
 		t.Fatalf("pinned codex: exit %d:\n%s%s", code, out, errs)
 	}
 
@@ -396,6 +410,43 @@ func TestDoctorWarnsAboutAnExposedProfile(t *testing.T) {
 	}
 	if !utf8.ValidString(out) || strings.ContainsRune(out, utf8.RuneError) {
 		t.Errorf("doctor printed a broken rune:\n%q", out)
+	}
+}
+
+// A variable that would choose a harness's credential over its account's is
+// removed from every run (decision 0060), and an owner who exported one meaning
+// runs to use it hears so from doctor: by name, never by value, as a warning
+// that stops nothing. The harness's own home is not one of them — with no
+// accounts it is the login runs use.
+func TestDoctorWarnsAboutAnAccountVariable(t *testing.T) {
+	t.Setenv("ANTHROPIC_PROFILE", "secret-profile-value")
+	t.Setenv("OPENAI_API_KEY", "sk-secret-openai-value")
+	t.Setenv("CODEX_HOME", t.TempDir())
+	code, out, errs := yad(t, "doctor")
+	if code != 0 {
+		t.Fatalf("doctor exited %d: %s", code, errs)
+	}
+	for _, want := range []string{
+		"warning: ANTHROPIC_PROFILE is set in this environment, and yad removes it from every harness it starts: ANTHROPIC_PROFILE names an Anthropic profile",
+		"warning: OPENAI_API_KEY is set in this environment",
+		"decision 0060",
+		"add an account logged in with it",
+		"No drivable harness",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "CODEX_HOME is set") {
+		t.Errorf("doctor warned about the harness's own home:\n%s", out)
+	}
+	for _, secret := range []string{"secret-profile-value", "sk-secret-openai-value"} {
+		if strings.Contains(out+errs, secret) {
+			t.Errorf("doctor printed a value:\n%s%s", out, errs)
+		}
+	}
+	if got := accountVariableWarnings([]string{"PATH=/bin", "CLAUDE_CONFIG_DIR=/h", "ANTHROPIC_MODEL=opus"}); got != nil {
+		t.Errorf("warnings with no account variable set: %v", got)
 	}
 }
 

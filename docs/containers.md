@@ -42,7 +42,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 # Codex is pinned to the app-server protocol this yad was built against;
 # `yad doctor` warns when an installed codex differs.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex@0.147.0
+RUN npm install -g @anthropic-ai/claude-code @openai/codex@0.157.1
 COPY --from=yad /out/yad /usr/local/bin/yad
 USER node
 WORKDIR /home/node

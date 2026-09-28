@@ -605,9 +605,17 @@ func (t *turn) answer(m *Message) {
 	case "item/commandExecution/requestApproval":
 		var p struct {
 			Command string `json:"command"`
+			Kind    string `json:"kind"`
 		}
 		json.Unmarshal(m.Params, &p)
 		t.conn.Reply(m.ID, map[string]any{"decision": "decline"})
+		if p.Kind == "writeStdin" {
+			// Since 0.157.1 the same request asks to type into a command
+			// already running; naming only the command would say it was
+			// refused a start it already had.
+			declined("input to " + firstNonEmpty(p.Command, "a running command"))
+			break
+		}
 		declined(firstNonEmpty(p.Command, "a command"))
 	case "item/fileChange/requestApproval":
 		t.conn.Reply(m.ID, map[string]any{"decision": "decline"})

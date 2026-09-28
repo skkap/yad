@@ -110,10 +110,19 @@ wanted any of this could simply ask the harness for it.
   ([0040](decisions/0040-a-grant-may-not-move-a-run-off-its-account.md)). This
   is not a defence either: a brief could still tell the harness to run itself
   with any key. It keeps your accounts honest. A grant lands after the runner
-  scrubs your own `ANTHROPIC_API_KEY`, so without it a hub's key would run the
-  turn while the run's events, health and `yad account list` named your
+  scrubs your own copies of the same names, so without it a hub's key would
+  run the turn while the run's events, health and `yad account list` named your
   account — and that account's limits would never fire, failover would never
   move, and health would call it free for ever.
+- **Your own account variables are removed too.** The same list binds you: an
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_PROFILE`, `OPENAI_API_KEY`, base URL or any
+  other name on it that is set where the daemon starts is removed from every
+  harness, setup hook and git it runs, and `yad doctor` names each one it finds
+  ([0060](decisions/0060-the-owners-own-account-variables-are-removed-from-every-run.md)).
+  `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are the exception: with no accounts they
+  are the harness's own login, and an account's home replaces them. To bill
+  runs through an API key, log an account in with it; for a project that
+  needs the key itself, have the hub send it as a grant under another name.
 - **`IS_SANDBOX` is two facts that only make sense together.** It is an
   acceptable *grant name* — no namespace rule refuses it any more — and the
   Claude adapter still strips it from the run's environment before starting
@@ -398,7 +407,7 @@ a world-readable credential:
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
 Claude Code         ready       2.1.278                /Users/me/.local/bin/claude
-Codex               ready       0.147.0                /Users/me/.local/bin/codex
+Codex               ready       0.157.1                /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 GitHub Copilot CLI  —
 OpenCode            —
@@ -421,7 +430,7 @@ $ chmod 600 /tmp/yad/config/credentials/yashiki
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
 Claude Code         ready       2.1.278                /Users/me/.local/bin/claude
-Codex               ready       0.147.0                /Users/me/.local/bin/codex
+Codex               ready       0.157.1                /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 GitHub Copilot CLI  —
 OpenCode            —
@@ -489,7 +498,7 @@ It does **not** confine writes to the workdir alone. In the app-server contract
 this yad is pinned against, a `workspaceWrite` policy leaves `/tmp` and
 `$TMPDIR` writable unless asked otherwise — `excludeSlashTmp` and
 `excludeTmpdirEnvVar` both default to `false`
-(`internal/adapter/codex/testdata/codex-0.147.0/codex_app_server_protocol.schemas.json`)
+(`internal/adapter/codex/testdata/codex-0.157.1/codex_app_server_protocol.schemas.json`)
 — and YAD sends the mode as Codex's own string, setting neither
 (`internal/adapter/codex/codex.go`). Treat it as "not the whole filesystem",
 not as "only the workdir".
