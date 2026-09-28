@@ -27,6 +27,11 @@ type Script struct {
 	// context — SIGKILL — ends it then.
 	IgnoreInterrupt bool
 	IgnoreTerm      bool
+	// AwaitInterrupt holds the turn after its events until an interrupt
+	// reaches it, then ends it with Outcome. With IgnoreInterrupt it is a
+	// harness that hears the interrupt and carries on, with no clock to race
+	// the interrupt's delivery (DEV-147).
+	AwaitInterrupt bool
 	// Stopped is the outcome an interrupt or SIGTERM ends the turn with; nil
 	// is cancelled. A harness whose answer was already on its way reports
 	// that answer instead.
@@ -84,7 +89,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, e
 	a.mu.Unlock()
 
 	s := a.Next(spec)
-	t := &turn{events: make(chan v1.Event), done: make(chan struct{}), stop: make(chan struct{}), script: s}
+	t := &turn{events: make(chan v1.Event), done: make(chan struct{}), stop: make(chan struct{}), heard: make(chan struct{}), script: s}
 	t.native = s.Outcome.NativeSessionID
 	a.mu.Lock()
 	a.turns = append(a.turns, t)
@@ -97,6 +102,7 @@ type turn struct {
 	events chan v1.Event
 	done   chan struct{}
 	stop   chan struct{} // closed by the rung that ends the turn
+	heard  chan struct{} // closed by the first interrupt that reaches the turn
 	script Script
 
 	mu          sync.Mutex
@@ -140,6 +146,16 @@ func (t *turn) play(ctx context.Context) {
 		// then block forever and Wait would never return.
 		select {
 		case t.events <- e:
+		case <-t.stop:
+		case <-ctx.Done():
+		}
+		if end() {
+			return
+		}
+	}
+	if s.AwaitInterrupt {
+		select {
+		case <-t.heard:
 		case <-t.stop:
 		case <-ctx.Done():
 		}
@@ -198,12 +214,18 @@ func (t *turn) Interrupt() error {
 	t.mu.Lock()
 	t.interrupts++
 	failed := t.interrupts <= t.script.InterruptFails
+	first := t.interrupts == t.script.InterruptFails+1
 	t.mu.Unlock()
 	if failed {
 		return errors.New("the harness is not reading its input")
 	}
+	// Halted before it is heard, so a turn awaiting the interrupt that it
+	// also obeys ends stopped rather than with its Outcome.
 	if !t.script.IgnoreInterrupt {
 		t.halt()
+	}
+	if first {
+		close(t.heard)
 	}
 	return nil
 }

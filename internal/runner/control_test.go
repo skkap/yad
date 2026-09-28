@@ -304,7 +304,9 @@ func TestSteerInTheAnswerThatAcknowledgesTheClaim(t *testing.T) {
 }
 
 // An interrupt ends the turn and nothing more: no SIGTERM follows it. A
-// harness that ignores it keeps going and ends as it would have.
+// harness that ignores it keeps going and ends as it would have. That harness
+// waits for the interrupt before it ends: one that could finish first would
+// test nothing, and under load a scripted duration did finish first (DEV-147).
 func TestInterruptEndsTheTurn(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -313,7 +315,7 @@ func TestInterruptEndsTheTurn(t *testing.T) {
 	}{
 		{"the harness stops", fake.Script{Hang: true}, v1.RunCancelled},
 		{"the harness carries on", fake.Script{
-			Events: manyEvents(20), Delay: 5 * time.Millisecond, IgnoreInterrupt: true,
+			AwaitInterrupt: true, IgnoreInterrupt: true,
 			Outcome: adapter.Outcome{State: v1.RunSucceeded, FinalText: "done anyway"},
 		}, v1.RunSucceeded},
 	} {
