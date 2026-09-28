@@ -599,7 +599,7 @@ driven, with a warning on the harness in the capability document and in
 
 **Fixtures.** Every adapter test replays recorded JSONL named by harness version
 (`internal/adapter/claude/testdata/claude-2.1.276/*.jsonl`,
-`internal/adapter/codex/testdata/codex-0.147.0/*.jsonl` — both directions of
+`internal/adapter/codex/testdata/codex-0.157.1/*.jsonl` — both directions of
 the conversation, ours wrapped as `{">": …}`) through a fake harness process.
 Recording new ones is a manual step, behind a build tag (`YAD_REAL_HARNESS=1 go
 test -tags realharness -run TestRecord ./internal/adapter/claude/`, and the same
@@ -777,7 +777,8 @@ for `codex`); the suite never runs a real harness.
 - **`config.toml` has two writers**
   ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)):
   the CLI, and the daemon for an account a hub adds or removes. Every write —
-  `yad account add` and `remove`, `yad connect`, the daemon's — goes through
+  `yad account add` and `remove`, `yad connect`, `yad config apply` (0059),
+  the daemon's — goes through
   `config.Update`: an exclusive `flock` on `config.toml.lock` beside the file
   (not the file itself, which a save replaces by rename), the file read fresh,
   one thing changed, written back before the lock is let go. So neither
@@ -850,7 +851,9 @@ for `codex`); the suite never runs a real harness.
   `account/login/cancel` before the app-server is stopped, so a code typed
   late logs nothing in. What Codex words — an error, a refusal — is never
   read or reported; the runner writes its own. That behaviour is read from
-  0.147.0's schema, not yet measured against a real login. A stored token stays in its file for the
+  the schema; of a real login, only a start and its cancel have been measured
+  (0.157.1: the link and code, `canceled`, then a completion with
+  `success: false`) — a login carried through to its end has not. A stored token stays in its file for the
   account's runs throughout: the login runs with `account.LoginEnv` and is
   judged by `account.OwnLogin`, both without the token — claude's check says
   yes to any token — and the token is removed only once the login has taken,
@@ -1111,6 +1114,10 @@ yad account use                    not built, and not planned: it refuses, sayin
                                    (0039), so there is nothing to pick by hand
 yad service install|uninstall|status
                                    launchd user agent, systemd user unit (0028)
+yad config apply <file>            bring config.toml onto another — a work machine's
+                                   spec: every setting but the connections, its
+                                   accounts added and none removed (0059); writes
+                                   only when a setting differs, and prints each
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1
 yad hub submit --harness h --model m [--effort level] [--session id | --new-session id] <instruction | ->
                                    queue a run; prints its id (--watch follows it)

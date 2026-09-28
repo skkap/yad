@@ -97,7 +97,7 @@ and the tokens it used, go back in the result.
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
 Claude Code         ready       2.1.278                /Users/me/.local/bin/claude
-Codex               ready       0.147.0                /Users/me/.local/bin/codex
+Codex               ready       0.157.1                /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 GitHub Copilot CLI  —
 OpenCode            —

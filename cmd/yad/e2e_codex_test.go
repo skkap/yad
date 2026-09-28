@@ -12,13 +12,13 @@ import (
 )
 
 // The fake codex's side of the end-to-end tests: the test binary started as
-// `codex`, playing conversations recorded from codex 0.147.0 (codextest).
+// `codex`, playing conversations recorded from codex 0.157.1 (codextest).
 // Every end-to-end test runs through it (e2e_harness_test.go); the one here
 // plays the recorded resume, missing rollout and interrupt as recorded, where
 // the others have the fake keep threads itself.
 
 const (
-	codexFixtures = "../../internal/adapter/codex/testdata/codex-0.147.0/"
+	codexFixtures = "../../internal/adapter/codex/testdata/codex-0.157.1/"
 	codexSchema   = codexFixtures + "codex_app_server_protocol.schemas.json"
 )
 

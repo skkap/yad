@@ -85,6 +85,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		cmdErr = cmdSessions(ctx, g, rest, stdout)
 	case "account":
 		cmdErr = cmdAccount(ctx, g, rest, stdout)
+	case "config":
+		cmdErr = cmdConfig(ctx, g, rest, stdout)
 	case "upgrade":
 		cmdErr = cmdUpgrade(ctx, g, rest, stdout)
 	case "conformance":
@@ -152,6 +154,10 @@ usage: yad [--profile name] <command> [flags]
   account remove <harness> <label> [--yes]
                       delete that account's home and its login; the shared
                       transcripts are kept
+  config apply <file> bring config.toml in line with another, a work
+                      machine's spec: every setting but the connections, and
+                      its accounts added to the ones listed here, none
+                      removed. Prints what it changed
   hub serve           the standalone hub (headless)
   hub token create    a one-time registration token for yad connect
   hub admin-token create|list|revoke

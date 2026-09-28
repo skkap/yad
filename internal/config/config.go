@@ -246,11 +246,19 @@ func Default() Config {
 // Unknown keys are refused: a typo in a permission setting must not be silently
 // ignored.
 func Load(p Paths) (Config, error) {
-	c := Default()
-	b, err := os.ReadFile(p.ConfigFile())
+	c, err := ReadFile(p.ConfigFile())
 	if errors.Is(err, fs.ErrNotExist) {
-		return c, nil
+		return Default(), nil
 	}
+	return c, err
+}
+
+// ReadFile reads a config.toml at any path — a profile's, or a work machine
+// spec's that `yad config apply` brings a profile in line with — and, unlike
+// Load, a missing file is an error. What the file leaves out is the default.
+func ReadFile(path string) (Config, error) {
+	c := Default()
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return c, err
 	}
@@ -258,14 +266,14 @@ func Load(p Paths) (Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		var strict *toml.StrictMissingError
 		if errors.As(err, &strict) {
-			return c, fmt.Errorf("%s: unknown setting:\n%s", p.ConfigFile(), strict.String())
+			return c, fmt.Errorf("%s: unknown setting:\n%s", path, strict.String())
 		}
-		return c, fmt.Errorf("%s: %w", p.ConfigFile(), err)
+		return c, fmt.Errorf("%s: %w", path, err)
 	}
 	// Named, because a file that fails here was edited by hand and the owner
 	// needs to know which one to open.
 	if err := c.Validate(); err != nil {
-		return c, fmt.Errorf("%s: %w", p.ConfigFile(), err)
+		return c, fmt.Errorf("%s: %w", path, err)
 	}
 	return c, nil
 }
