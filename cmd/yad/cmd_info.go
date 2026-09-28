@@ -104,7 +104,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 			if f.Account != "" {
 				who += ", account " + f.Account
 			}
-			fmt.Fprintf(w, "\nwarning: %s — the daemon could not ask it which models it offers (since %s), so hubs are sent the last list it gave or the catalog's: %s\n",
+			fmt.Fprintf(w, "\nwarning: %s — the daemon could not ask it which models it offers (since %s), so hubs are sent the last list it gave, the catalog's, or none: %s\n",
 				who, f.Since.Local().Format("2006-01-02 15:04"), f.Reason)
 		}
 	}

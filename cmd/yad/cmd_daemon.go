@@ -310,7 +310,7 @@ func (n modelsNoted) note(log *slog.Logger, failing []capability.ModelsFailure) 
 		n[k] = f.Reason
 		// The reason is an attribute, so it stays on the machine: a hub's
 		// health hears this message and nothing else (healthErrors).
-		log.Warn("a harness did not say which models it offers, so hubs are sent the last list it gave or the catalog's", "harness", f.Harness, "account", f.Account, "reason", f.Reason)
+		log.Warn("a harness did not say which models it offers, so hubs are sent the last list it gave, the catalog's, or none", "harness", f.Harness, "account", f.Account, "reason", f.Reason)
 	}
 	for k := range n {
 		if !now[k] {

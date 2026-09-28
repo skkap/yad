@@ -239,11 +239,19 @@ func callError(method string, err error) error {
 	return fmt.Errorf("codex app-server did not answer %s: %w", method, err)
 }
 
-// listError is callError for model/list itself, whose refusal is the one that
-// says this Codex is older than the request (adapter.ErrModelsRefused).
+// listError is callError for model/list itself. Only a refusal of the request
+// as such says this Codex is older than it (adapter.ErrModelsRefused): Codex
+// reads a method it does not know as an unknown variant of its request enum
+// and answers -32600 (recorded in login-device-unsupported.jsonl), and
+// -32601 is JSON-RPC's own word for it. Any other error — bad params from a
+// Codex newer than this adapter, an internal one — is an answer yad could not
+// use, which an upgrade of Codex would not fix.
 func listError(err error) error {
-	if _, ok := errors.AsType[*RPCError](err); ok {
-		return adapter.ModelsError(adapter.ErrModelsRefused, "codex app-server refused model/list", nil)
+	if e, ok := errors.AsType[*RPCError](err); ok {
+		if e.Code == codeInvalidRequest || e.Code == codeMethodNotFound {
+			return adapter.ModelsError(adapter.ErrModelsRefused, "codex app-server refused model/list", nil)
+		}
+		return adapter.ModelsError(adapter.ErrModelsUnread, "codex app-server answered model/list with an error", nil)
 	}
 	return callError("model/list", err)
 }

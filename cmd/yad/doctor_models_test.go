@@ -107,7 +107,7 @@ func TestE2EDoctorSaysWhyModelsAreTheCatalogs(t *testing.T) {
 	}
 	for _, want := range []string{
 		"warning: Claude Code — the daemon could not ask it which models it offers",
-		"so hubs are sent the last list it gave or the catalog's: claude refused list_models, as a Claude Code older than the request does",
+		"so hubs are sent the last list it gave, the catalog's, or none: claude refused list_models, as a Claude Code older than the request does",
 		"`\"$YAD_CLAUDE_PATH\" update`",
 	} {
 		if !strings.Contains(out, want) {
