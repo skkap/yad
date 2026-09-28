@@ -399,6 +399,43 @@ func TestDoctorWarnsAboutAnExposedProfile(t *testing.T) {
 	}
 }
 
+// A variable that would choose a harness's credential over its account's is
+// removed from every run (decision 0058), and an owner who exported one meaning
+// runs to use it hears so from doctor: by name, never by value, as a warning
+// that stops nothing. The harness's own home is not one of them — with no
+// accounts it is the login runs use.
+func TestDoctorWarnsAboutAnAccountVariable(t *testing.T) {
+	t.Setenv("ANTHROPIC_PROFILE", "secret-profile-value")
+	t.Setenv("OPENAI_API_KEY", "sk-secret-openai-value")
+	t.Setenv("CODEX_HOME", t.TempDir())
+	code, out, errs := yad(t, "doctor")
+	if code != 0 {
+		t.Fatalf("doctor exited %d: %s", code, errs)
+	}
+	for _, want := range []string{
+		"warning: ANTHROPIC_PROFILE is set in this environment, and yad removes it from every harness it starts: ANTHROPIC_PROFILE names an Anthropic profile",
+		"warning: OPENAI_API_KEY is set in this environment",
+		"decision 0058",
+		"add an account logged in with it",
+		"No drivable harness",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "CODEX_HOME is set") {
+		t.Errorf("doctor warned about the harness's own home:\n%s", out)
+	}
+	for _, secret := range []string{"secret-profile-value", "sk-secret-openai-value"} {
+		if strings.Contains(out+errs, secret) {
+			t.Errorf("doctor printed a value:\n%s%s", out, errs)
+		}
+	}
+	if got := accountVariableWarnings([]string{"PATH=/bin", "CLAUDE_CONFIG_DIR=/h", "ANTHROPIC_MODEL=opus"}); got != nil {
+		t.Errorf("warnings with no account variable set: %v", got)
+	}
+}
+
 // A profile nobody has touched is what `yad doctor` mostly runs on, and it must
 // say nothing about exposure there — a diagnostic that warns on a clean machine
 // teaches its reader to skip the warnings.

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"text/tabwriter"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 func cmdVersion(w io.Writer) error {
@@ -104,6 +106,9 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	for _, warn := range config.Exposures(g.paths) {
 		fmt.Fprintf(w, "\nwarning: %s\n", warn)
 	}
+	for _, warn := range accountVariableWarnings(os.Environ()) {
+		fmt.Fprintf(w, "\nwarning: %s\n", warn)
+	}
 	fmt.Fprintf(w, "\nprofile %s — config %s\n", g.paths.Profile, g.paths.Config)
 	// Each way to reach zero has a different next action, and telling someone
 	// with both CLIs installed to install them is worse than saying nothing.
@@ -127,6 +132,28 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	}
 	fmt.Fprintf(w, "%d harness(es) this runner can be given work for.\n", ready)
 	return nil
+}
+
+// accountVariableWarnings tells the owner about each variable in env that
+// chooses a harness's credential, which supervise.Scrub removes from every
+// child (decision 0058). An owner who exported ANTHROPIC_API_KEY expecting
+// runs to bill it would otherwise see them use the account and never learn
+// why. A warning and never a failure: the runner works as it should either
+// way, and this is only what it does with what it found.
+//
+// The name and never the value, which is a credential. It is this shell's
+// environment, the one a `yad daemon start` typed here would inherit; the
+// daemon logs the same about its own when it starts, for one a service
+// manager started with another.
+func accountVariableWarnings(env []string) []string {
+	var out []string
+	for _, name := range supervise.AccountVariables(env) {
+		why, _ := v1.AccountVariable(name)
+		out = append(out, fmt.Sprintf("%s is set in this environment, and yad removes it from every harness it starts: %s %s — "+
+			"a run uses its account's login instead, or the harness's own login when it has no accounts (decision 0058). "+
+			"To bill runs that way, add an account logged in with it; for a project's own use, a hub sends the value as a grant under another name", name, name, why))
+	}
+	return out
 }
 
 // accountLogins reports a harness whose every account needs login as needing

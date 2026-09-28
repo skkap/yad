@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -201,21 +203,107 @@ func TestEnvironmentIsScrubbed(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-secret")
+	t.Setenv("ANTHROPIC_PROFILE", "owners")
+	t.Setenv("OPENAI_API_KEY", "sk-owner")
 	t.Setenv("YAD_DATA_DIR", "/x")
 	t.Setenv("KEEP_ME", "yes")
-	p := spawn(t, "env", "ADDED=1")
+	// The owner's home for the harness, which an account's own replaces by
+	// coming later; and the token a token account's run is handed after the
+	// scrub, which the scrub would have removed from the owner (decision 0054).
+	t.Setenv("CLAUDE_CONFIG_DIR", "/owners-home")
+	p := spawn(t, "env", "ADDED=1", "CLAUDE_CONFIG_DIR=/account-home", "CLAUDE_CODE_OAUTH_TOKEN=tok")
 	out, _ := io.ReadAll(p.Stdout())
 	p.Wait()
-	env := string(out)
-	for _, gone := range []string{"CLAUDECODE=", "CLAUDE_CODE_ENTRYPOINT=", "ANTHROPIC_API_KEY=", "YAD_DATA_DIR="} {
-		if strings.Contains(env, gone) {
+	env := "\n" + string(out)
+	for _, gone := range []string{"CLAUDECODE=", "CLAUDE_CODE_ENTRYPOINT=", "ANTHROPIC_API_KEY=", "ANTHROPIC_PROFILE=", "OPENAI_API_KEY=", "YAD_DATA_DIR=", "CLAUDE_CONFIG_DIR=/owners-home"} {
+		if strings.Contains(env, "\n"+gone) {
 			t.Errorf("child inherited %s", gone)
 		}
 	}
-	for _, kept := range []string{"KEEP_ME=yes", "ADDED=1"} {
-		if !strings.Contains(env, kept) {
+	for _, kept := range []string{"KEEP_ME=yes", "ADDED=1", "CLAUDE_CONFIG_DIR=/account-home", "CLAUDE_CODE_OAUTH_TOKEN=tok"} {
+		if !strings.Contains(env, "\n"+kept+"\n") {
 			t.Errorf("child is missing %s", kept)
 		}
+	}
+}
+
+// Every variable a grant may not carry because it moves a run off its account
+// is removed from the owner's environment too, from the same list
+// (v1.AccountVariable), since the owner's copy ranks above the account's login
+// just as a hub's would (DEV-62). internal/account holds the whole list to
+// this; these are the names DEV-73 found Scrub missing, and the neighbours
+// that must survive.
+func TestScrubRemovesAccountVariables(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		removed bool
+	}{
+		{"ANTHROPIC_API_KEY", true}, {"ANTHROPIC_AUTH_TOKEN", true}, {"ANTHROPIC_PROFILE", true},
+		{"ANTHROPIC_CONFIG_DIR", true}, {"ANTHROPIC_FEDERATION_RULE_ID", true}, {"ANTHROPIC_ORGANIZATION_ID", true},
+		{"ANTHROPIC_BASE_URL", true}, {"ANTHROPIC_CUSTOM_HEADERS", true}, {"CLAUDE_CODE_USE_BEDROCK", true},
+		{"OPENAI_API_KEY", true}, {"OPENAI_BASE_URL", true}, {"CODEX_API_KEY", true}, {"CODEX_ACCESS_TOKEN", true},
+		{"CODEX_REFRESH_TOKEN_URL_OVERRIDE", true}, {"AWS_BEARER_TOKEN_BEDROCK", true},
+		// Matched in any case, as the grant list is: nobody sets these, and
+		// removing one costs nothing.
+		{"anthropic_api_key", true},
+		// The harness's own login when it has no accounts; an account's home
+		// is appended after it and wins when it has one.
+		{"CLAUDE_CONFIG_DIR", false}, {"CODEX_HOME", false},
+		// Not on the list: moves no account, or only behind a switch that is.
+		{"ANTHROPIC_MODEL", false}, {"ANTHROPIC_BEDROCK_BASE_URL", false}, {"MY_OPENAI_API_KEY", false},
+		{"AWS_SECRET_ACCESS_KEY", false}, {"OPENAI_ORG_ID", false}, {"PATH", false},
+	} {
+		got := Scrub([]string{tc.name + "=v"}, nil)
+		if removed := len(got) == 0; removed != tc.removed {
+			t.Errorf("Scrub removed %s: %v, want %v", tc.name, removed, tc.removed)
+		}
+	}
+}
+
+// What doctor and the daemon warn about: names only, each once, and only the
+// ones Scrub removes for choosing a credential.
+func TestAccountVariablesNamesOnly(t *testing.T) {
+	env := []string{"PATH=/bin", "OPENAI_API_KEY=sk-1", "CODEX_HOME=/c", "CLAUDECODE=1", "ANTHROPIC_PROFILE=p", "OPENAI_API_KEY=sk-2", "ANTHROPIC_BASE_URL="}
+	if got := AccountVariables(env); strings.Join(got, ",") != "OPENAI_API_KEY,ANTHROPIC_PROFILE" {
+		t.Errorf("AccountVariables = %v", got)
+	}
+	if got := AccountVariables([]string{"PATH=/bin"}); got != nil {
+		t.Errorf("AccountVariables with none = %v", got)
+	}
+}
+
+// Spec.KeepEnv is set nowhere but this package's tests. Wiring it to the
+// owner's configuration is the day API-key billing can sit beside accounts,
+// and the rules for that day are written on the field (DEV-62); this makes
+// sure whoever wires it reads them.
+func TestKeepEnvIsNotWired(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == ".claude" || d.Name() == "node_modules") {
+			return filepath.SkipDir
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") ||
+			filepath.Dir(path) == filepath.Join(root, "internal", "supervise") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(b), "KeepEnv") {
+			rel, _ := filepath.Rel(root, path)
+			t.Errorf("%s sets supervise.Spec.KeepEnv — read the rules on the field first: refuse or warn about an account variable kept beside accounts, and keep the login check's environment the run's", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

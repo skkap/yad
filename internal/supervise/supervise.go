@@ -21,6 +21,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	v1 "github.com/skkap/yad/protocol/v1"
 )
 
 // Spec is what to run.
@@ -30,8 +32,24 @@ type Spec struct {
 	Dir  string
 	// Env is added to the scrubbed parent environment; later entries win.
 	Env []string
-	// KeepEnv names variables Scrub would otherwise remove — an owner who
-	// configured API-key billing keeps ANTHROPIC_API_KEY.
+	// KeepEnv names variables Scrub would otherwise remove. Nothing outside
+	// this package's tests sets it, and TestKeepEnvIsNotWired fails the day
+	// something does, because two rules bind whoever wires it (DEV-62).
+	//
+	// Wiring it to the owner's configuration must refuse, or at least warn in
+	// `yad doctor`, when a variable it keeps is one v1.AccountVariable names
+	// and the harness has accounts. An owner who kept ANTHROPIC_API_KEY for
+	// API-key billing would have every run spend the key while its events,
+	// limits, failover and health all described the account the runner
+	// picked, none of whose limits would ever fire: decision 0040's lie,
+	// told by the owner's configuration instead of a hub's grant.
+	//
+	// And a probe that asks a harness about an account runs in the same
+	// environment as the run it answers for. `claude auth status` in an
+	// environment holding a key the run is denied says "logged in" about a
+	// credential the run never sees — DEV-26 shipped exactly that, and the
+	// login check goes through Start for this reason. So a variable kept for
+	// a run is kept for that harness's login check too, or for neither.
 	KeepEnv []string
 	// Stdin, when true, gives the caller a writer to the child's stdin. Adapters
 	// that speak a protocol over stdin need it held open until the turn ends.
@@ -290,10 +308,22 @@ func (p *Process) signalGroup(sig syscall.Signal) {
 // Scrub returns env without the variables a child must not inherit:
 //   - CLAUDECODE and CLAUDE_CODE_* make a nested claude believe it is running
 //     inside another Claude Code session and change its behaviour;
-//   - ANTHROPIC_API_KEY silently moves billing from the account's subscription
-//     to the API, unless the owner kept it on purpose;
+//   - every variable that chooses whose credential a harness uses —
+//     v1.AccountVariable, the list a grant is refused by — since one set on
+//     the machine ranks above the account's login and moves the run off it
+//     while every report still names the account (DEV-62, decision 0058);
 //   - YAD_* is the runner's own configuration, which a harness has no business
 //     reading.
+//
+// From every child, not only a harness: a setup hook or a git hook that
+// starts a harness would hand the variable on to it. A project that needs
+// such a key for its own use is sent it as a grant under another name, which
+// is what the grant refusal tells a hub.
+//
+// Only env is scrubbed. What a caller appends after it — a run's grants, an
+// account's home and a token account's CLAUDE_CODE_OAUTH_TOKEN
+// (account.TurnEnv, decision 0054) — reaches the child as given, and wins over
+// anything left in env, os/exec keeping the last of a repeated name.
 func Scrub(env []string, keep []string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
@@ -306,8 +336,37 @@ func Scrub(env []string, keep []string) []string {
 }
 
 func scrubbed(name string) bool {
-	return name == "CLAUDECODE" || name == "ANTHROPIC_API_KEY" ||
-		strings.HasPrefix(name, "CLAUDE_CODE_") || strings.HasPrefix(name, "YAD_")
+	return name == "CLAUDECODE" || strings.HasPrefix(name, "CLAUDE_CODE_") ||
+		strings.HasPrefix(name, "YAD_") || accountVariable(name)
+}
+
+// harnessHomes are the account variables Scrub lets through. The owner's
+// CLAUDE_CONFIG_DIR or CODEX_HOME is not a credential ranked above an
+// account. With no accounts it is the harness's own login, which the default
+// login check (decision 0053) and codex.DefaultHome read from this same
+// environment; with an account, the account's home is appended after it and
+// wins. internal/account's tests hold this set to its own home variables, so
+// a harness that gains one cannot be missed here.
+var harnessHomes = []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME"}
+
+func accountVariable(name string) bool {
+	_, ok := v1.AccountVariable(name)
+	return ok && !contains(harnessHomes, name)
+}
+
+// AccountVariables names the variables in env that Scrub removes because they
+// choose a harness's credential, in env's order, for `yad doctor` and the
+// daemon to warn about. Names only: the values are credentials. An empty one
+// is left out — Scrub still removes it, but it chooses nothing, and a warning
+// about it would teach the owner to skip the warnings.
+func AccountVariables(env []string) []string {
+	var out []string
+	for _, kv := range env {
+		if name, v, _ := strings.Cut(kv, "="); v != "" && accountVariable(name) && !contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func contains(xs []string, s string) bool {
