@@ -91,7 +91,7 @@ func TestCodexUsedPercentIsNotRescaled(t *testing.T) {
 // The point of reporting windows from every run rather than only from a
 // failed one: an ordinary turn that succeeded already knows how much of the
 // account is spent. This is codex's own recorded plain turn, whose snapshot
-// says the primary window is at 93% and names no secondary at all.
+// says the primary window is at 22% and names no secondary at all.
 //
 // A window the snapshot left null is absent from the report rather than zero:
 // zero use is what a fresh window reads, and a hub must not be told an
@@ -109,7 +109,7 @@ func TestASucceededTurnStillReportsItsWindows(t *testing.T) {
 		t.Fatalf("windows %+v, want only the primary the snapshot names", out.Windows)
 	}
 	got := out.Windows[0]
-	want := adapter.Window{Name: "primary", UsedPercent: 93, ResetAt: time.Unix(1789840314, 0).UTC()}
+	want := adapter.Window{Name: "primary", UsedPercent: 22, ResetAt: time.Unix(1791047408, 0).UTC()}
 	if got.Name != want.Name || got.UsedPercent != want.UsedPercent || !got.ResetAt.Equal(want.ResetAt) {
 		t.Errorf("window %+v, want %+v", got, want)
 	}
@@ -149,7 +149,8 @@ func withoutLines(t *testing.T, name, mark string) string {
 // usage limit (DOMAIN.md), and nothing in the outcome may suggest it is.
 func TestCodexTransientRetryIsNotAUsageLimit(t *testing.T) {
 	path := insertBefore(t, "plain", `{"method":"turn/completed"`,
-		`{"method":"error","params":{"error":{"message":"stream disconnected before completion","codexErrorInfo":null,"additionalDetails":null},"willRetry":true,"threadId":"01a0b878-c0c0-7783-b1a6-65eeb944100e","turnId":"01a0b878-c0ca-7562-880a-548f542e449d"},"emittedAtMs":1789801320000}`)
+		`{"method":"error","params":{"error":{"message":"stream disconnected before completion","codexErrorInfo":null,"additionalDetails":null},"willRetry":true,"threadId":"`+
+			threadIn(t, "plain")+`","turnId":"`+turnIn(t, "plain")+`"},"emittedAtMs":1789801320000}`)
 	h := &harness{fixture: path}
 	_, out, _ := drive(t, context.Background(), h.spec(t), nil)
 	if out.State != v1.RunSucceeded {

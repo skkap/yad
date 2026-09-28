@@ -599,7 +599,7 @@ driven, with a warning on the harness in the capability document and in
 
 **Fixtures.** Every adapter test replays recorded JSONL named by harness version
 (`internal/adapter/claude/testdata/claude-2.1.276/*.jsonl`,
-`internal/adapter/codex/testdata/codex-0.147.0/*.jsonl` — both directions of
+`internal/adapter/codex/testdata/codex-0.157.1/*.jsonl` — both directions of
 the conversation, ours wrapped as `{">": …}`) through a fake harness process.
 Recording new ones is a manual step, behind a build tag (`YAD_REAL_HARNESS=1 go
 test -tags realharness -run TestRecord ./internal/adapter/claude/`, and the same
@@ -859,7 +859,9 @@ for `codex`); the suite never runs a real harness.
   `account/login/cancel` before the app-server is stopped, so a code typed
   late logs nothing in. What Codex words — an error, a refusal — is never
   read or reported; the runner writes its own. That behaviour is read from
-  0.147.0's schema, not yet measured against a real login. A stored token stays in its file for the
+  the schema; of a real login, only a start and its cancel have been measured
+  (0.157.1: the link and code, `canceled`, then a completion with
+  `success: false`) — a login carried through to its end has not. A stored token stays in its file for the
   account's runs throughout: the login runs with `account.LoginEnv` and is
   judged by `account.OwnLogin`, both without the token — claude's check says
   yes to any token — and the token is removed only once the login has taken,
