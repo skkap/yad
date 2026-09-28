@@ -120,8 +120,10 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	return nil
 }
 
-// cmdHarnesses prints the exact capability document this runner would register
-// with, so a mismatch can be diagnosed on the machine instead of from a hub's logs.
+// cmdHarnesses prints the capability document this runner registers with, so a
+// mismatch can be diagnosed on the machine instead of from a hub's logs. It is
+// every hub's document but for one feature: accounts, which each hub whose
+// connection allows it is sent on top (capability.ForConnection, decision 0057).
 func cmdHarnesses(ctx context.Context, g global, args []string, w, errw io.Writer) error {
 	fs := flag.NewFlagSet("harnesses", flag.ContinueOnError)
 	// --json is accepted for symmetry with doctor; the document is always JSON.
