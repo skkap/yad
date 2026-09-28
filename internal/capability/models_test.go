@@ -276,6 +276,40 @@ func TestModelsAreKept(t *testing.T) {
 	}
 }
 
+// A login that changes while its harness is being asked — a hub login ending
+// mid-build — is not undone by that ask: its answer may be the old login's,
+// so it is not kept, and the next document asks again.
+func TestModelsForgottenMidAskAreNotKept(t *testing.T) {
+	asking, release := make(chan struct{}), make(chan struct{})
+	first := true
+	a := &asker{answer: func(string, string) ([]string, error) {
+		if first {
+			first = false
+			close(asking)
+			<-release
+			return []string{"old-plan"}, nil
+		}
+		return []string{"new-plan"}, nil
+	}}
+	a.install(t)
+	build := func() []string {
+		found := []harness.Detected{ready(t, "claude")}
+		addModels(context.Background(), found, config.Default(), nil)
+		return found[0].Models
+	}
+	done := make(chan []string, 1)
+	go func() { done <- build() }()
+	<-asking
+	ForgetModels("claude")
+	close(release)
+	if got := <-done; !slices.Equal(got, []string{"old-plan"}) {
+		t.Fatalf("the ask in flight reported %v", got)
+	}
+	if got := build(); !slices.Equal(got, []string{"new-plan"}) || a.count() != 2 {
+		t.Errorf("after the forget: models %v after %d asks, want the new login's after asking again", got, a.count())
+	}
+}
+
 // A harness that hangs is given up on at the bound, and the document goes
 // out without it: a registration never waits on a model list.
 func TestModelsDoNotHoldTheDocument(t *testing.T) {

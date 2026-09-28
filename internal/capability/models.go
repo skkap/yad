@@ -60,6 +60,12 @@ type modelsAnswer struct {
 var (
 	modelsMu    sync.Mutex
 	modelsAsked = map[string]modelsAnswer{}
+	// modelsForgotten counts each harness's ForgetModels. An ask takes
+	// seconds and a forget can land while it runs — a hub login finishing
+	// mid-build — so an answer is kept only if no forget came after it
+	// began: otherwise the old login's list would be written back and kept
+	// for the hour the forget was meant to cut short.
+	modelsForgotten = map[string]int{}
 )
 
 // ForgetModels drops the lists kept for a harness, so the next document asks
@@ -67,6 +73,7 @@ var (
 func ForgetModels(id string) {
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
+	modelsForgotten[id]++
 	for key := range modelsAsked {
 		if strings.HasPrefix(key, id+"\x00") {
 			delete(modelsAsked, key)
@@ -172,12 +179,14 @@ func addModels(ctx context.Context, found []harness.Detected, cfg config.Config,
 // this login.
 func modelsOf(ctx context.Context, d harness.Detected, home string) []string {
 	// The environment of a run on this login, and only that: the answer is
-	// about the credential the run would use (DEV-62: the rule supervise.Spec states for what a run keeps).
+	// about the credential the run would use (DEV-62, and the rule
+	// supervise.Spec states for what a run keeps).
 	env := account.Env(d.ID, home)
 	key := modelsKey(d, env)
 	now := modelsNow()
 	modelsMu.Lock()
 	kept, ok := modelsAsked[key]
+	gen := modelsForgotten[d.ID]
 	modelsMu.Unlock()
 	if ok && now.Before(kept.until) {
 		return kept.models
@@ -205,8 +214,16 @@ func modelsOf(ctx context.Context, d harness.Detected, home string) []string {
 		next = modelsAnswer{models: kept.models, until: now.Add(modelsRetry)}
 	}
 	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	if modelsForgotten[d.ID] != gen {
+		// Forgotten while it was asked: this answer may be the old login's,
+		// so it is reported this once and not kept.
+		if err != nil {
+			return nil
+		}
+		return got
+	}
 	modelsAsked[key] = next
-	modelsMu.Unlock()
 	return next.models
 }
 

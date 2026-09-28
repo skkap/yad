@@ -46,7 +46,7 @@ type HarnessReport struct {
 	// runner's catalog answers, and ModelsSource says so.
 	Models []string `json:"models,omitempty" doc:"Models the harness offers on this runner, such as opus or gpt-5.5, in the harness's own order: every model offered to any login a run may use, once. Where the logins differ, each account's models say what its own is offered. Not a limit: a run may name any model, and the harness decides whether it exists. Absent when the runner knows none."`
 	// ModelsSource is set whenever Models is.
-	ModelsSource string          `json:"models_source,omitempty" enum:"harness,catalog" doc:"Where models came from. harness: the harness listed them, asked without spending a token for the logins a run may use. catalog: the harness could not be asked or did not answer, and models is the runner's own fixed list for it, which may name a model the login is not offered or miss one it is. Absent when models is, and from runners older than this field."`
+	ModelsSource string          `json:"models_source,omitempty" enum:"harness,catalog" doc:"Where models came from. harness: the harness listed them for the logins a run may use — asked without spending a token or, for a Codex that could not be asked, read from the list Codex keeps of its own last answer. catalog: the harness could not be asked or did not answer, and models is the runner's own fixed list for it, which may name a model the login is not offered or miss one it is. Absent when models is, and from runners older than this field."`
 	Accounts     []AccountReport `json:"accounts,omitempty" doc:"The owner's accounts for this harness. Absent when none are configured, and the harness runs on its own login."`
 	// Warnings are what the runner found wrong with a harness it can still
 	// drive — an installed Codex whose app-server protocol differs from the
@@ -115,7 +115,7 @@ type AccountReport struct {
 	Windows []AccountWindow `json:"windows,omitempty" doc:"Every usage window the harness last reported for this account, whether or not it is at a limit, so a hub sees an account running low before it runs out. As fresh as the last turn that ran on it. Absent means no run has heard a window yet, never that the account has no limits."`
 	// Models is per account because a plan decides them: two logins of one
 	// harness can be offered different models (DEV-50).
-	Models []string `json:"models,omitempty" doc:"The models the harness listed for this account's login, in its own order: those a run on this account may name. Absent when the harness has not listed them for it — the account needs login, or the harness did not answer — and the harness's models are then the runner's best answer."`
+	Models []string `json:"models,omitempty" doc:"The models the harness listed for this account's login, in its own order: what to offer a run on this account. Not a limit: a run may name any model, and the harness decides whether it exists. Absent when the harness has not listed them for it — the account needs login, or the harness did not answer — and the harness's models are then the runner's best answer."`
 }
 
 // AccountWindow is one usage window of one account, as its harness names it:

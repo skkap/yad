@@ -850,8 +850,11 @@ for `codex`); the suite never runs a real harness.
   side, each ask bounded at 15 s so a hanging harness never holds a
   registration. An answer is kept an hour (by harness, binary, version and
   that environment, hashed), a failed ask is retried after five minutes with
-  the last answer still reported, and a login changing — at the machine or
-  from a hub — forgets them. The harness's `models` merge every login's; each
+  the last answer still reported. A login yad sees change forgets them — `yad
+  account add` or `remove`, a hub login, an account `LoginProbe` finds logged
+  in again — and an ask a forget overtook is not kept; a default home logged
+  in again behind yad's back, whose environment is unchanged, shows its new
+  plan's list within the hour. The harness's `models` merge every login's; each
   account carries its own. With no answer at all Claude reports the catalog's
   aliases with `models_source: catalog`.
 - **Hub login** ([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)):

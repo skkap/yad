@@ -45,7 +45,7 @@ components:
           format: date-time
           type: string
         models:
-          description: "The models the harness listed for this account's login, in its own order: those a run on this account may name. Absent when the harness has not listed them for it — the account needs login, or the harness did not answer — and the harness's models are then the runner's best answer."
+          description: "The models the harness listed for this account's login, in its own order: what to offer a run on this account. Not a limit: a run may name any model, and the harness decides whether it exists. Absent when the harness has not listed them for it — the account needs login, or the harness did not answer — and the harness's models are then the runner's best answer."
           items:
             type: string
           type: array
