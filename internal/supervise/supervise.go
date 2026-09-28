@@ -44,12 +44,16 @@ type Spec struct {
 	// picked, none of whose limits would ever fire: decision 0040's lie,
 	// told by the owner's configuration instead of a hub's grant.
 	//
-	// And a probe that asks a harness about an account runs in the same
-	// environment as the run it answers for. `claude auth status` in an
-	// environment holding a key the run is denied says "logged in" about a
-	// credential the run never sees — DEV-26 shipped exactly that, and the
-	// login check goes through Start for this reason. So a variable kept for
-	// a run is kept for that harness's login check too, or for neither.
+	// And a check that decides whether an account can take a run
+	// (account.LoggedIn) runs in the same environment as the run it answers
+	// for. `claude auth status` in an environment holding a key the run is
+	// denied says "logged in" about a credential the run never sees — DEV-26
+	// shipped exactly that, and the check goes through Start for this reason.
+	// So a variable kept for a run is kept for that harness's login check
+	// too, or for neither. account.OwnLogin differs on purpose and only by
+	// the token account's stored token, which it leaves out to judge a login
+	// made beside it (decision 0054); it answers about that login, not about
+	// what the account's runs will use.
 	KeepEnv []string
 	// Stdin, when true, gives the caller a writer to the child's stdin. Adapters
 	// that speak a protocol over stdin need it held open until the turn ends.

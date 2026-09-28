@@ -15,6 +15,7 @@ import (
 
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/hostool"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // shortDir is a private temporary directory short enough to hold the
@@ -67,6 +68,18 @@ func privateDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// noAccountVariables empties every account variable the shell running the
+// tests exported, for a test that wants doctor to print no warning at all:
+// doctor warns about each one set (decision 0058), and a developer's own
+// OPENAI_API_KEY is none of the test's business. Empty is enough, since an
+// empty one chooses nothing and doctor says nothing about it.
+func noAccountVariables(t *testing.T) {
+	t.Helper()
+	for _, name := range supervise.AccountVariables(os.Environ()) {
+		t.Setenv(name, "")
+	}
 }
 
 func yad(t *testing.T, args ...string) (int, string, string) {
@@ -199,6 +212,7 @@ func TestDoctorReportsCodexProtocolDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_TEST_SCHEMA", schema)
+	noAccountVariables(t)
 	code, out, errs := yad(t, "doctor")
 	if code != 0 || !regexp.MustCompile(`Codex +ready +0\.147\.0`).MatchString(out) || strings.Contains(out, "warning:") {
 		t.Fatalf("pinned codex: exit %d:\n%s%s", code, out, errs)

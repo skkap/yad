@@ -614,9 +614,10 @@ for `codex`); the suite never runs a real harness.
   and a stderr tail kept at 2 KiB. A run's grants and its account's home and
   token are added after the scrub, which is why a grant may not name
   `ANTHROPIC_API_KEY` or any other variable that chooses the harness's
-  credential (0040). A child that asks a harness about an account — the login
-  check — gets the environment the run gets, or it answers about a different
-  credential (DEV-26; the rule is on `Spec.KeepEnv`). git and setup hooks start
+  credential (0040). The check that decides whether an account can take a run
+  (`account.LoggedIn`) gets the environment the run gets, or it answers about a
+  different credential (DEV-26; the rule, and `OwnLogin`'s one deliberate
+  difference, are on `Spec.KeepEnv`). git and setup hooks start
   with `NoTTY` — a session of their own, no controlling terminal — so nothing
   they run can prompt. A host tool a run uses is the one detection resolved
   ([0045](docs/decisions/0045-runs-use-the-host-tools-detection-resolved.md)):

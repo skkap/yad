@@ -162,8 +162,8 @@ own default login, and the first account added takes that login's place. A
 run's credential is its account's and nothing else: a variable that would
 choose another — an API key, a profile, a base URL — refuses the run when a
 hub sends it as a grant, and is removed from every run when the owner's
-environment holds it; a harness is asked about an account in the environment
-its runs get.
+environment holds it; a harness is asked whether an account can take a run in
+the environment its runs get.
 _Kinds_: free | limited | needs_login
 _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
 [0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md),

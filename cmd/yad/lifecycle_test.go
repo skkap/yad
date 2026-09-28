@@ -480,6 +480,39 @@ func TestServiceStdoutGetsNothingOnceTheLogIsOpen(t *testing.T) {
 	}
 }
 
+// A daemon a service manager started has an environment `yad doctor`, run in
+// the owner's shell, never sees. So the daemon names its own account variables
+// in its log at start (decision 0058) — the names, never a value.
+func TestDaemonLogsItsOwnAccountVariables(t *testing.T) {
+	l := newLifecycle(t)
+	t.Setenv("OPENAI_API_KEY", "sk-daemon-secret-value")
+	t.Setenv("CODEX_HOME", t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() { done <- run(ctx, []string{"daemon", "start", "--foreground"}, io.Discard, io.Discard) }()
+	if !eventuallyTrue(func() bool {
+		res, err := control.Ask(context.Background(), l.p, "status")
+		return err == nil && res.Status.Ready
+	}) {
+		t.Fatal("the foreground daemon never became ready")
+	}
+	cancel()
+	if code := <-done; code != 0 {
+		t.Errorf("exit %d", code)
+	}
+	_, logged, _ := l.yad("daemon", "logs")
+	if !strings.Contains(logged, "OPENAI_API_KEY") || !strings.Contains(logged, "decision 0058") {
+		t.Errorf("the log does not name the variable and the decision:\n%s", logged)
+	}
+	if strings.Contains(logged, "CODEX_HOME") {
+		t.Errorf("the log warns about the harness's own home:\n%s", logged)
+	}
+	b, _ := os.ReadFile(l.p.Log())
+	if strings.Contains(logged+string(b), "sk-daemon-secret-value") {
+		t.Errorf("the daemon logged a value:\n%s", logged)
+	}
+}
+
 // A stop --force the owner cuts short sends nothing more: a wait that ended
 // because the command did is not one that elapsed, and escalating on it would
 // SIGKILL the runner before it had killed its harnesses.

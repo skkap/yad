@@ -58,10 +58,14 @@ the ticket.
   sees the shell it runs in, and a service manager starts the daemon with an
   environment of its own, so the daemon logs the same warning about its own
   environment when it starts.
-- **The probe environment is the run environment.** Any code that asks a
-  harness about an account asks it in the environment the run will get. That
-  is why the login check goes through `supervise.Start`. The rule is written
-  on `supervise.Spec.KeepEnv`, the one field that could break it.
+- **The probe environment is the run environment.** A check that decides
+  whether an account can take a run (`account.LoggedIn`, which sets its
+  state) asks the harness in the environment the run will get. That is why
+  the login check goes through `supervise.Start`. `account.OwnLogin` differs
+  on purpose, and only by leaving out a token account's stored token: it
+  judges a login just made beside the token (0054), not what the account's
+  runs will use. The rule is written on `supervise.Spec.KeepEnv`, the one
+  field that could break it.
 - **`KeepEnv` stays unwired.** It is the field an owner's "keep my
   `ANTHROPIC_API_KEY`" setting would feed. Whoever wires it to configuration
   refuses, or warns in `yad doctor` about, a kept account variable on a
