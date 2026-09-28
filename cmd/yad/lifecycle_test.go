@@ -419,6 +419,50 @@ func TestStatusNeverCarriesACredentialFromAConnectionURL(t *testing.T) {
 	}
 }
 
+// An owner who set path_sources = false long ago must not have to meet a
+// refused run to learn of it: `yad status` says so, by the setting's name, and
+// says nothing new while the setting is left at its default. Through
+// config.toml, the JSON the control socket carries, and the printed status —
+// each a step where it could be lost.
+func TestStatusSaysWhenSourcesOnTheMachineAreOff(t *testing.T) {
+	for _, tc := range []struct {
+		name, toml string
+		off        bool
+	}{
+		{"unset", "", false},
+		{"true", "[workdirs]\npath_sources = true\n", false},
+		{"false", "[workdirs]\npath_sources = false\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := config.Paths{Profile: config.DefaultProfile, Config: t.TempDir(), Data: t.TempDir()}
+			if err := os.WriteFile(p.ConfigFile(), []byte(tc.toml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, err := json.Marshal(statusOf(context.Background(), p, cfg, v1.Capabilities{}, time.Now(), runner.NewMonitor(), logfile.NewRecent(1)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var st control.Status
+			if err := json.Unmarshal(doc, &st); err != nil {
+				t.Fatal(err)
+			}
+			var b bytes.Buffer
+			printStatus(&b, p, st, time.Now())
+			said := strings.Contains(b.String(), "sources on the machine switched off (path_sources = false under [workdirs]")
+			if said != tc.off {
+				t.Errorf("path_sources %s: status says sources on the machine are off: %v, want %v\n%s", tc.name, said, tc.off, b.String())
+			}
+			if !tc.off && strings.Contains(b.String(), "path_sources") {
+				t.Errorf("path_sources %s: status names the setting although it is at its default\n%s", tc.name, b.String())
+			}
+		})
+	}
+}
+
 // A daemon whose only connection cannot start exits at once. The start must
 // say so, never report it started.
 func TestStartReportsADaemonThatCannotRun(t *testing.T) {

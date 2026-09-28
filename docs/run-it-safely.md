@@ -206,7 +206,8 @@ cloned over https or ssh, or in an empty directory — set `path_sources = false
 under `[workdirs]` and restart the runner. `roots = []` does not do it: an
 empty list is the same as none, which is your home directory. With it off, a
 run naming a `path` source or a local git URL fails `source_refused`, and the
-message names the setting; the capability document says `path_sources: false`,
+message names the setting; `yad status` says sources on the machine are switched off;
+the capability document says `path_sources: false`,
 so a hub can send those runs to another runner instead
 ([0062](decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)).
 Like `roots`, it narrows what a hub can ask for, not what the harness can read.

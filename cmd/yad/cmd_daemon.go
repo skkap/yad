@@ -329,7 +329,8 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		Profile: p.Profile, RunnerID: doc.RunnerID, Name: doc.Name, Version: buildinfo.Version, Started: started,
 		// No pool exists until the runner has set up, and nothing is
 		// claimed before it: all of it is free.
-		Capacity: control.Capacity{Total: doc.Capacity.Total, Free: doc.Capacity.Total},
+		Capacity:    control.Capacity{Total: doc.Capacity.Total, Free: doc.Capacity.Total},
+		PathSources: new(cfg.Workdirs.AllowsPathSources()),
 	}
 	snap, err := m.Snapshot(ctx)
 	if snap.Capacity != nil {
