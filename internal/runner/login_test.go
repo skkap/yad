@@ -448,7 +448,7 @@ func TestALoginTheRunnerRefusesSaysWhatToDoAtTheMachine(t *testing.T) {
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "<label>", "--token", "-"}},
 		{"a token for codex", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "codex", Account: "work", Token: "sk-proj-not-a-subscription"},
 			"does not run on a stored token", nil},
-		{"a codex account nobody listed", startLogin("lg1", "codex", "stranger"), "never adds",
+		{"a codex account nobody listed", startLogin("lg1", "codex", "stranger"), "start the login again with add",
 			[]string{"yad", "--profile", "test", "account", "add", "codex", "stranger"}},
 		{"a harness hub login does not log in", startLogin("lg1", "gemini", "work"), "logs in claude",
 			[]string{"yad", "--profile", "test", "doctor"}},

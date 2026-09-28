@@ -280,7 +280,7 @@ func TestACodexDeviceLoginEndedFromOutsideCancelsCodexsOwn(t *testing.T) {
 			if _, err := r.Accounts.Reload(context.Background(), account.Lists{}, account.Ref{Harness: "codex", Label: "work"}, true); err != nil {
 				t.Fatal(err)
 			}
-		}, "removed on the machine"},
+		}, "was removed from this runner"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
