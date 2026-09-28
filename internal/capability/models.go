@@ -21,6 +21,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/probe"
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // A harness's models are asked of the harness, for each login a run may use
@@ -263,7 +264,7 @@ func modelsOf(ctx context.Context, d harness.Detected, home string) modelsAnswer
 	}
 	next := modelsAnswer{models: got, until: now.Add(modelsRecheck)}
 	if err != nil {
-		next = modelsAnswer{models: kept.models, until: now.Add(modelsRetry), failed: modelsReason(d, err, askCtx.Err() != nil), since: now}
+		next = modelsAnswer{models: kept.models, until: now.Add(modelsRetry), failed: modelsReason(d, home, err, askCtx.Err() != nil), since: now}
 		if kept.failed == next.failed {
 			next.since = kept.since
 		}
@@ -288,9 +289,10 @@ var modelsRequest = map[string]string{"claude": "list_models", "codex": "model/l
 // modelsReason is why an ask got no answer, with what to do about it, built
 // from what kind of failure err is and never from its text: the owner reads
 // it in the daemon's log and in `yad doctor`, and what a harness printed is
-// not for either (DEV-146). timedOut is the ask cut off at modelsTimeout,
-// whatever the harness was doing when it was.
-func modelsReason(d harness.Detected, err error, timedOut bool) string {
+// not for either (DEV-146). home is the login's, "" for the harness's own;
+// timedOut is the ask cut off at modelsTimeout, whatever the harness was doing
+// when it was.
+func modelsReason(d harness.Detected, home string, err error, timedOut bool) string {
 	// The binary as detection found it, so each command below runs the file
 	// the runner does: by name on PATH, or through its override.
 	f := probe.Find(d.EnvPath, d.Binary, d.VersionArgs)
@@ -311,11 +313,24 @@ func modelsReason(d harness.Detected, err error, timedOut bool) string {
 		// the adapter is pinned to answers it (decision 0037), and one that
 		// is not is warned about beside it.
 		return fmt.Sprintf("%s refused %s, and what it said is not kept — a configuration or login it cannot load does this, and so does a %s older than the releases this yad was built against; %s",
-			d.Binary, req, d.Label, f.Try(f.Command("login", "status"), "whether its login loads"))
+			d.Binary, req, d.Label, f.Try(loginCommand(d, home, account.StatusArgs(d.ID)), "whether its login loads"))
 	case errors.Is(err, adapter.ErrModelsUnread):
 		return fmt.Sprintf("%s answered %s with no model this yad can read — a %s newer than this yad may answer in a shape it does not know, and upgrading yad is the fix", d.Binary, req, d.Label)
 	}
 	return fmt.Sprintf("%s stopped before it answered %s, and what it printed is not kept — %s", d.Binary, req, f.Try(f.VersionCommand(), "whether it starts"))
+}
+
+// loginCommand is command pointed at the login that was asked. Without its
+// home the check reads the owner's default login and answers about another
+// one entirely, which looks like it worked (account.suggest). An account's
+// home is printed as it is: the reason stays on the machine — the daemon's
+// log and `yad doctor` — and a hub's health hears only the log's message.
+func loginCommand(d harness.Detected, home string, args []string) string {
+	v := account.HomeVar(d.ID)
+	if home == "" || v == "" {
+		return command(d, args)
+	}
+	return v + "=" + shellword.Quote(home) + " " + probed(d).Command(args...)
 }
 
 // modelsKey is what a list is kept by: the harness, the binary and its

@@ -122,6 +122,34 @@ func TestModelsFailureSaysWhy(t *testing.T) {
 	}
 }
 
+// An account's failure points its check at that account's home: without it
+// `codex login status` reads the owner's default login, which may load fine,
+// and sends them looking for a cause that is not there.
+func TestModelsFailureChecksTheLoginAsked(t *testing.T) {
+	resetModels(t)
+	d := standIn(t, "codex", "read line\n"+`echo '{"id":1,"result":{}}'`+"\nread line\nread line\n"+
+		`echo '{"id":2,"error":{"code":-32600,"message":"failed to load configuration"}}'`+"\n/bin/cat >/dev/null\n", 0o755)
+	home := filepath.Join(t.TempDir(), "it's work")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Harness = map[string]config.HarnessConfig{"codex": {Accounts: []string{"work"}}}
+	accounts := []account.Account{{Harness: "codex", Label: "work", Home: home, State: v1.AccountFree}}
+	addModels(context.Background(), []harness.Detected{d}, cfg, accounts)
+
+	got := ModelsFailures()
+	if len(got) != 1 || got[0].Account != "work" {
+		t.Fatalf("failures = %+v, want account work's", got)
+	}
+	prefix := `"$` + d.EnvPath + `" `
+	cmds := shellwordtest.Commands(got[0].Reason, prefix)
+	if len(cmds) != 1 {
+		t.Fatalf("reason %q, want one command starting %s", got[0].Reason, prefix)
+	}
+	shellwordtest.CheckEnv(t, d.EnvPath+"=stub\n"+cmds[0], map[string]string{"CODEX_HOME": home}, "stub", "login", "status")
+}
+
 // A failure is kept beside the answer it leaves standing, per login: an
 // account that answers says nothing, one that does not is named, and its
 // reason keeps the time it began while it stays the same. A new reason starts
