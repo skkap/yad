@@ -91,17 +91,20 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) (int64
 }
 
 const bindSession = `-- name: BindSession :exec
-UPDATE sessions SET runner_id = ? WHERE id = ? AND runner_id IS NULL
+UPDATE sessions SET runner_id = ?1, bound_by_run = ?2
+WHERE id = ?3 AND runner_id IS NULL
 `
 
 type BindSessionParams struct {
 	RunnerID sql.NullString
+	RunID    sql.NullString
 	ID       string
 }
 
-// The first claim in a session binds it; later ones leave it as it is.
+// The first claim in a session binds it, and the session keeps which run's
+// claim that was; later ones leave it as it is.
 func (q *Queries) BindSession(ctx context.Context, arg BindSessionParams) error {
-	_, err := q.db.ExecContext(ctx, bindSession, arg.RunnerID, arg.ID)
+	_, err := q.db.ExecContext(ctx, bindSession, arg.RunnerID, arg.RunID, arg.ID)
 	return err
 }
 
@@ -145,11 +148,12 @@ func (q *Queries) CancelLapsedClaims(ctx context.Context, now int64) (int64, err
 	return result.RowsAffected()
 }
 
-const cancelWithdrawnClaims = `-- name: CancelWithdrawnClaims :execrows
+const cancelWithdrawnClaims = `-- name: CancelWithdrawnClaims :many
 UPDATE runs SET state = 'cancelled', reason = ?1, lease_expires_at = NULL, updated_at = ?2
 WHERE runner_id = ?3 AND state = 'claimed'
   AND id NOT IN (SELECT value FROM json_each(?4))
   AND EXISTS (SELECT 1 FROM run_controls c WHERE c.run_id = runs.id AND c.kind = 'cancel')
+RETURNING id, session_id
 `
 
 type CancelWithdrawnClaimsParams struct {
@@ -159,23 +163,43 @@ type CancelWithdrawnClaimsParams struct {
 	ListedJson interface{}
 }
 
+type CancelWithdrawnClaimsRow struct {
+	ID        string
+	SessionID string
+}
+
 // A claim the hub was asked to cancel that its runner no longer holds, left
 // out of a sync or held by a runner deregistering, was withdrawn, and ends
 // cancelled (decision 0061). A runner lists every run it holds until its
 // result is taken, so a claimed run it leaves out with no result is one it
 // never started. listed_json is the sync's run ids; empty for a runner
 // holding nothing.
-func (q *Queries) CancelWithdrawnClaims(ctx context.Context, arg CancelWithdrawnClaimsParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, cancelWithdrawnClaims,
+func (q *Queries) CancelWithdrawnClaims(ctx context.Context, arg CancelWithdrawnClaimsParams) ([]CancelWithdrawnClaimsRow, error) {
+	rows, err := q.db.QueryContext(ctx, cancelWithdrawnClaims,
 		arg.Reason,
 		arg.Now,
 		arg.RunnerID,
 		arg.ListedJson,
 	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected()
+	defer rows.Close()
+	items := []CancelWithdrawnClaimsRow{}
+	for rows.Next() {
+		var i CancelWithdrawnClaimsRow
+		if err := rows.Scan(&i.ID, &i.SessionID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const clearDrain = `-- name: ClearDrain :exec
@@ -837,7 +861,7 @@ func (q *Queries) GetRunnerByCredential(ctx context.Context, credentialHash stri
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason, offered_to, close_owed FROM sessions WHERE id = ?
+SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason, offered_to, close_owed, bound_by_run FROM sessions WHERE id = ?
 `
 
 func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
@@ -853,6 +877,7 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.CloseReason,
 		&i.OfferedTo,
 		&i.CloseOwed,
+		&i.BoundByRun,
 	)
 	return i, err
 }
@@ -1796,6 +1821,34 @@ func (q *Queries) SoonCandidates(ctx context.Context, arg SoonCandidatesParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const unbindWithdrawnSession = `-- name: UnbindWithdrawnSession :execrows
+UPDATE sessions SET runner_id = NULL, bound_by_run = NULL
+WHERE id = ?1 AND runner_id = ?2 AND bound_by_run = ?3
+  AND close_requested_at IS NULL AND closed_at IS NULL
+`
+
+type UnbindWithdrawnSessionParams struct {
+	ID       string
+	RunnerID sql.NullString
+	RunID    sql.NullString
+}
+
+// A session goes back to unbound when the claim that bound it was withdrawn
+// (DEV-143): the runner deletes the session a withdrawn claim opened, so the
+// next run in it must open it again, wherever it is offered. Only that claim
+// unbinds it. Any later run in the session was offered after it, continuing
+// a session its runner held, and withdrawing one of those leaves the session
+// on that runner's disk. A session with a close asked for or made stays as
+// it is: the runner closes rather than deletes one whose close it heard, and
+// the close is what the hub is waiting to hear from it.
+func (q *Queries) UnbindWithdrawnSession(ctx context.Context, arg UnbindWithdrawnSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, unbindWithdrawnSession, arg.ID, arg.RunnerID, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const unstartedRunsInSession = `-- name: UnstartedRunsInSession :many

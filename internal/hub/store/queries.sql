@@ -57,8 +57,23 @@ SELECT spec FROM runs WHERE session_id = ? AND json_extract(spec, '$.session.new
 ORDER BY created_at, id LIMIT 1;
 
 -- name: BindSession :exec
--- The first claim in a session binds it; later ones leave it as it is.
-UPDATE sessions SET runner_id = ? WHERE id = ? AND runner_id IS NULL;
+-- The first claim in a session binds it, and the session keeps which run's
+-- claim that was; later ones leave it as it is.
+UPDATE sessions SET runner_id = sqlc.arg(runner_id), bound_by_run = sqlc.arg(run_id)
+WHERE id = sqlc.arg(id) AND runner_id IS NULL;
+
+-- A session goes back to unbound when the claim that bound it was withdrawn
+-- (DEV-143): the runner deletes the session a withdrawn claim opened, so the
+-- next run in it must open it again, wherever it is offered. Only that claim
+-- unbinds it. Any later run in the session was offered after it, continuing
+-- a session its runner held, and withdrawing one of those leaves the session
+-- on that runner's disk. A session with a close asked for or made stays as
+-- it is: the runner closes rather than deletes one whose close it heard, and
+-- the close is what the hub is waiting to hear from it.
+-- name: UnbindWithdrawnSession :execrows
+UPDATE sessions SET runner_id = NULL, bound_by_run = NULL
+WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id) AND bound_by_run = sqlc.arg(run_id)
+  AND close_requested_at IS NULL AND closed_at IS NULL;
 
 -- name: CreateRun :exec
 INSERT INTO runs (id, session_id, harness, model, spec, state, created_at, updated_at)
@@ -167,11 +182,12 @@ WHERE state IN ('claimed', 'preparing', 'running', 'waiting') AND lease_expires_
 -- result is taken, so a claimed run it leaves out with no result is one it
 -- never started. listed_json is the sync's run ids; empty for a runner
 -- holding nothing.
--- name: CancelWithdrawnClaims :execrows
+-- name: CancelWithdrawnClaims :many
 UPDATE runs SET state = 'cancelled', reason = sqlc.arg(reason), lease_expires_at = NULL, updated_at = sqlc.arg(now)
 WHERE runner_id = sqlc.arg(runner_id) AND state = 'claimed'
   AND id NOT IN (SELECT value FROM json_each(sqlc.arg(listed_json)))
-  AND EXISTS (SELECT 1 FROM run_controls c WHERE c.run_id = runs.id AND c.kind = 'cancel');
+  AND EXISTS (SELECT 1 FROM run_controls c WHERE c.run_id = runs.id AND c.kind = 'cancel')
+RETURNING id, session_id;
 
 -- name: AppendEvent :execrows
 INSERT INTO events (run_id, seq, body, received_at) VALUES (?, ?, ?, ?)
