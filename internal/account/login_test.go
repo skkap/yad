@@ -75,6 +75,13 @@ func fakeHarness(id string, args []string) int {
 		if os.Getenv("ACCOUNT_TEST_TOKEN_IS_LOGIN") != "" && os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
 			in = true
 		}
+		// As claude does: a key, a profile or a federation rule in the
+		// environment ranks above the login in the home.
+		for _, v := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_PROFILE", "ANTHROPIC_FEDERATION_RULE_ID"} {
+			if os.Getenv(v) != "" {
+				in = true
+			}
+		}
 		b, _ := json.Marshal(map[string]any{
 			"loggedIn": in, "email": "owner@example.com", "subscriptionType": "max",
 			"configDirectory": home,
@@ -107,6 +114,11 @@ func fakeHarness(id string, args []string) int {
 		}
 		if loggedIn() {
 			fmt.Println("Logged in using ChatGPT")
+			return 0
+		}
+		// As codex does: an API key in the environment is a login to it.
+		if os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("CODEX_API_KEY") != "" {
+			fmt.Println("Logged in using an API key")
 			return 0
 		}
 		fmt.Println("Not logged in")
@@ -431,6 +443,52 @@ func TestTheSuggestedCommandIsReadBackByARealShell(t *testing.T) {
 			t.Errorf("sh read\n  %s\nas %q, want %q", line, out, want)
 		}
 	}
+}
+
+// A login check asks about the account in the environment its runs get
+// (supervise.Spec.KeepEnv states the invariant, DEV-62). A key, profile or
+// federation rule the owner exported ranks above the home, and the run never
+// sees one — Scrub removes it — so a check that did see it would call an
+// account with no login of its own logged in, and every run placed on it
+// would fail. The account's own home variable and a token account's token are
+// appended after the scrub, and still reach the check.
+func TestALoginCheckSeesOnlyWhatARunSees(t *testing.T) {
+	for _, tc := range []struct {
+		harness string
+		owner   []string
+	}{
+		{"claude", []string{"ANTHROPIC_API_KEY", "ANTHROPIC_PROFILE", "ANTHROPIC_FEDERATION_RULE_ID"}},
+		{"codex", []string{"OPENAI_API_KEY", "CODEX_API_KEY"}},
+	} {
+		for _, name := range tc.owner {
+			t.Run(tc.harness+"/"+name, func(t *testing.T) {
+				bin := self(t, tc.harness)
+				t.Setenv(name, "the-owners-own-value")
+				home, err := Ensure(t.TempDir(), tc.harness, "work")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if in, err := LoggedIn(context.Background(), tc.harness, bin, home); err != nil || in {
+					t.Errorf("an account with no login, %s set on the machine: in=%v err=%v, want not logged in", name, in, err)
+				}
+			})
+		}
+	}
+	t.Run("a token account keeps its token", func(t *testing.T) {
+		bin := self(t, "claude")
+		t.Setenv("ACCOUNT_TEST_TOKEN_IS_LOGIN", "1")
+		t.Setenv("ANTHROPIC_PROFILE", "the-owners-own-value")
+		home, err := Ensure(t.TempDir(), "claude", "tok")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := SetToken(home, "sk-ant-oat01-stored"); err != nil {
+			t.Fatal(err)
+		}
+		if in, err := LoggedIn(context.Background(), "claude", bin, home); err != nil || !in {
+			t.Errorf("a token account: in=%v err=%v, want logged in on its token", in, err)
+		}
+	})
 }
 
 // A token account asked two ways: as its runs run, where claude's check says

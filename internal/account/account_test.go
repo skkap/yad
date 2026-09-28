@@ -4,6 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/store"
+	"github.com/skkap/yad/internal/supervise"
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
@@ -144,6 +148,45 @@ func TestHomeVariablesAreNotGrantable(t *testing.T) {
 		err := v1.Grant{Name: name, Value: "/elsewhere", As: v1.GrantEnv}.Validate()
 		if err == nil || !strings.Contains(err.Error(), "0040") {
 			t.Errorf("%s's home variable %s as a grant: err %v, want the account refusal", harness, name, err)
+		}
+	}
+}
+
+// The names a hub may not grant and the names removed from the owner's own
+// environment are one list, protocol/v1's (DEV-62), and the only names on it
+// that reach a child from the owner are the harness home variables — the
+// harness's own login when it has no accounts, overridden by an account's
+// home when it has one. The list is read back from the Grant.Name doc, which
+// protocol/v1's tests hold to the list itself, so a name added there is
+// checked here without anyone adding it twice.
+func TestScrubRemovesWhatAGrantMayNotCarry(t *testing.T) {
+	f, _ := reflect.TypeFor[v1.Grant]().FieldByName("Name")
+	var names []string
+	for _, w := range regexp.MustCompile(`[A-Z][A-Z0-9_]*`).FindAllString(f.Tag.Get("doc"), -1) {
+		if _, ok := v1.AccountVariable(w); ok {
+			names = append(names, w)
+		}
+	}
+	// The doc names the provider switches by their prefix; one of them stands
+	// for the family.
+	names = append(names, "CLAUDE_CODE_USE_SOMETHING_NEW")
+	if len(names) < 15 {
+		t.Fatalf("read only %v from the Grant.Name doc — has its wording changed?", names)
+	}
+	homes := map[string]bool{}
+	for _, v := range homeVar {
+		homes[v] = true
+	}
+	for _, name := range names {
+		env := []string{name + "=owner", "PATH=/bin"}
+		kept := len(supervise.Scrub(env, nil)) == 2
+		if kept != homes[name] {
+			t.Errorf("%s: kept by Scrub = %v, want %v — every name a grant may not carry is removed from the owner's environment but a harness home", name, kept, homes[name])
+		}
+	}
+	for name := range homes {
+		if !slices.Contains(names, name) {
+			t.Errorf("home variable %s is not on protocol/v1's list", name)
 		}
 	}
 }
