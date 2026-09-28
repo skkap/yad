@@ -19,9 +19,16 @@ import (
 // The flags' first releases are not known for certain, so the probe asks
 // rather than comparing versions (decision 0050).
 
-// requiredFlags are the flags argv passes on every run that Claude Code has
-// not always had.
-var requiredFlags = []string{"--system-prompt-snapshot"}
+// requiredFlags are the flags argv passes that Claude Code has not always
+// had, each with the runs that pass it. --fork-session is passed only by a
+// run opening a fork, and is required all the same: the runner advertises
+// fork for every Claude it will drive (decision 0065), so a Claude without it
+// would claim forks and fail each at its arguments. It costs no Claude that
+// could otherwise run: every release with --system-prompt-snapshot has it.
+var requiredFlags = []struct{ flag, passedBy string }{
+	{"--system-prompt-snapshot", "every run"},
+	{"--fork-session", "a run opening a fork"},
+}
 
 // helpTimeout bounds the probe. --help answers in well under a second; one
 // that takes seconds is a claude broken in a way its version probe reports.
@@ -93,9 +100,9 @@ func askHelp(ctx context.Context, found probe.Found) (helpAnswer, bool) {
 		return couldNot(found.WontAnswer("--help"))
 	}
 	help := string(out.Stdout)
-	for _, flag := range requiredFlags {
-		if !strings.Contains(help, flag) {
-			return helpAnswer{err: "this claude is older than yad needs: it does not know " + flag + ", which every run passes — " +
+	for _, f := range requiredFlags {
+		if !strings.Contains(help, f.flag) {
+			return helpAnswer{err: "this claude is older than yad needs: it does not know " + f.flag + ", which " + f.passedBy + " passes — " +
 				found.Do(found.Command("update"), "upgrade it")}, true
 		}
 	}

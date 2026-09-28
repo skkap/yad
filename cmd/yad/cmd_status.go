@@ -53,6 +53,14 @@ func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 		s.Name, s.RunnerID, s.Profile, s.Version, s.PID, now.Sub(s.Started).Round(time.Second), state)
 	fmt.Fprintf(w, "capacity %d of %d free · %d session(s) open · spool %d · outbox %d\n",
 		s.Capacity.Free, s.Capacity.Total, s.Sessions, s.SpoolDepth, s.OutboxDepth)
+	// Only when off: it is the one workdir setting that refuses a run a hub
+	// may expect to be taken, and an owner who set it long ago otherwise
+	// learns of it only from that run's error. Named as config.toml names it,
+	// like manage_accounts below, since undoing it is an edit there and a
+	// restart.
+	if s.PathSources != nil && !*s.PathSources {
+		fmt.Fprintln(w, "sources on the machine switched off (path_sources = false under [workdirs] in config.toml) — a run with a path source or a local git URL is refused")
+	}
 
 	fmt.Fprintln(w)
 	if len(s.Connections) == 0 {

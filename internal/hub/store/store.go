@@ -69,7 +69,35 @@ var (
 	ErrNoSession      = errors.New("the hub has no such session")
 	ErrSessionHarness = errors.New("the session belongs to another harness")
 	ErrSessionClosed  = errors.New("the session is closed")
+	// The session a fork names: one the hub does not have, or one no claim
+	// has bound to a runner yet, so there is no conversation anywhere to
+	// copy (decision 0065). The other refusals of a fork's source are the
+	// errors above, naming it.
+	ErrNoForkSource = errors.New("the hub has no session to fork by that id")
+	ErrForkUnbound  = errors.New("the session to fork is on no runner yet")
 )
+
+// forkable checks the session a run opening a fork names, as the runner will
+// when it claims the run (decision 0065): the hub's, bound to a runner — the
+// one the fork is offered to — of the run's harness, and open.
+func forkable(ctx context.Context, q *db.Queries, run v1.Run) error {
+	src, err := q.GetSession(ctx, run.Session.ForkFrom)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("run %q: session %q: %w", run.RunID, run.Session.ForkFrom, ErrNoForkSource)
+	case err != nil:
+		return err
+	case src.ClosedAt.Valid:
+		return fmt.Errorf("run %q: session %q to fork was closed (%s): %w", run.RunID, run.Session.ForkFrom, src.CloseReason.String, ErrSessionClosed)
+	case src.CloseRequestedAt.Valid:
+		return fmt.Errorf("run %q: session %q to fork is closing: %w", run.RunID, run.Session.ForkFrom, ErrSessionClosed)
+	case src.Harness != run.Harness:
+		return fmt.Errorf("run %q: session %q to fork is a %s session, not %s: %w", run.RunID, run.Session.ForkFrom, src.Harness, run.Harness, ErrSessionHarness)
+	case !src.RunnerID.Valid:
+		return fmt.Errorf("run %q: session %q: %w", run.RunID, run.Session.ForkFrom, ErrForkUnbound)
+	}
+	return nil
+}
 
 // EnqueueRun puts a run in the queue. A run in a new session creates it; a
 // run continuing one needs the hub to have it. The run's own flag says which,
@@ -102,7 +130,15 @@ func (s *Store) EnqueueRun(ctx context.Context, run v1.Run, now time.Time) error
 		case errors.Is(err, sql.ErrNoRows) && !run.Session.New:
 			return fmt.Errorf("run %q: session %q: %w", run.RunID, run.Session.ID, ErrNoSession)
 		case errors.Is(err, sql.ErrNoRows):
-			if err := q.CreateSession(ctx, db.CreateSessionParams{ID: run.Session.ID, Harness: run.Harness, CreatedAt: Ms(now)}); err != nil {
+			if run.Session.ForkFrom != "" {
+				if err := forkable(ctx, q, run); err != nil {
+					return err
+				}
+			}
+			if err := q.CreateSession(ctx, db.CreateSessionParams{
+				ID: run.Session.ID, Harness: run.Harness, CreatedAt: Ms(now),
+				ForkFrom: sql.NullString{String: run.Session.ForkFrom, Valid: run.Session.ForkFrom != ""},
+			}); err != nil {
 				return err
 			}
 		case err != nil:

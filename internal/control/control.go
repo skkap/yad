@@ -114,6 +114,11 @@ type Status struct {
 	// success only then, so a daemon that is about to exit on a missing
 	// credential is not reported as started.
 	Ready bool `json:"ready"`
+	// PathSources is the owner's path_sources under [workdirs] as the daemon
+	// loaded it: false when sources on the machine are switched off (decision
+	// 0062). The daemon's copy and not config.toml's, since an edit to the
+	// file reaches runs only at a restart. Nil from a daemon older than it.
+	PathSources *bool `json:"path_sources,omitempty"`
 
 	Capacity    Capacity     `json:"capacity"`
 	Connections []Connection `json:"connections"`

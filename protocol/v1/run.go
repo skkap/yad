@@ -59,6 +59,13 @@ type SessionRef struct {
 	ID   string      `json:"id" doc:"The session's id, chosen by the hub. A session lives on the runner that claimed its first run and is continued only there."`
 	New  bool        `json:"new" doc:"true for the run that opens the session, false for every later run. A runner refuses new true for a session id it already has, and new false for one it does not hold."`
 	Mode SessionMode `json:"mode,omitempty" enum:"per_run,live" doc:"per_run, the default: a fresh harness process for each run, resuming the session's conversation. live is reserved: offer it only to a runner advertising live_sessions, which none does yet."`
+	// ForkFrom opens a session whose conversation starts as a copy of
+	// another's, which goes on untouched (decision 0065). It rides on the
+	// run that opens the session and on no later one: from then on the fork
+	// is a session like any other, resuming its own conversation. A hub
+	// offers it only to the runner holding the session it names, and only
+	// while that runner advertises fork.
+	ForkFrom string `json:"fork_from,omitempty" doc:"Only with new true: open this session as a fork of the session named here — a new conversation that starts from a copy of that session's, as far as the harness has written it, and diverges from there, while the session forked goes on unchanged. Offer the run only to the runner that holds that session, and only while it advertises fork; the runner refuses it (class refused) for a session it does not hold for this hub, of another harness, or closed or closing. The fork gets its own workdir from its own sources, as any new session does; nothing of the forked session's workdir comes with it. Absent: the session starts with an empty conversation."`
 }
 
 // Brief is what the run is told: context goes into the harness's system prompt
@@ -163,6 +170,15 @@ func (r Run) Validate() error {
 	case "", SessionPerRun, SessionLive:
 	default:
 		errs = append(errs, fmt.Errorf("session.mode %q is not per_run or live", r.Session.Mode))
+	}
+	switch {
+	case r.Session.ForkFrom == "":
+	case !r.Session.New:
+		// A continuing run resumes its session's own conversation; one naming
+		// a session to fork would be asking for two conversations at once.
+		errs = append(errs, fmt.Errorf("session.fork_from is only for the run that opens a session: send it with session.new true, or leave it out to continue session %s", r.Session.ID))
+	case r.Session.ForkFrom == r.Session.ID:
+		errs = append(errs, fmt.Errorf("session.fork_from names the session the run opens, %s: name the session to fork", r.Session.ID))
 	}
 	for i, src := range r.Sources {
 		if err := src.Validate(); err != nil {

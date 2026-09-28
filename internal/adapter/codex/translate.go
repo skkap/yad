@@ -21,7 +21,7 @@ type thread struct {
 	ID string `json:"id"`
 }
 
-// threadResult is thread/start's and thread/resume's response.
+// threadResult is thread/start's, thread/resume's and thread/fork's response.
 type threadResult struct {
 	Thread thread `json:"thread"`
 	Model  string `json:"model"`
@@ -213,6 +213,7 @@ type translator struct {
 	retries  int
 	done     *turnInfo // turn/completed, for the run's turn
 	mismatch string    // the thread codex resumed, when it was not the one asked for
+	forkFrom string    // the thread the run forks, or ""
 	fault    *v1.RunError
 }
 
@@ -533,6 +534,9 @@ func (t *translator) fail(class, msg string) {
 }
 
 func (t *translator) mismatchMessage(asked string) string {
+	if t.forkFrom != "" && t.mismatch == t.forkFrom {
+		return fmt.Sprintf("codex answered thread/fork with thread %s, the one to fork, rather than a new thread — the fork did not take and the turn was not started; report this with `codex --version` as a yad bug", t.mismatch)
+	}
 	return fmt.Sprintf("codex resumed thread %s instead of %s — the conversation's context is not the session's; start a new session or check the thread is still on this runner", t.mismatch, asked)
 }
 

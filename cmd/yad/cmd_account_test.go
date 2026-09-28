@@ -444,7 +444,7 @@ func TestDoctorSaysAHarnessWhoseAccountsAllNeedLoginNeedsLogin(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "claude")
 			// Ready by every probe, and no `auth status`: an account's login is
 			// its own state, and the default home is not what its runs use.
-			script := "#!/bin/sh\ncase \"$*\" in\n--help) echo '  --system-prompt-snapshot <on|off>' ;;\n--version) echo '2.1.276 (Claude Code)' ;;\n*) exit 2 ;;\nesac\n"
+			script := "#!/bin/sh\ncase \"$*\" in\n--help) echo '  --system-prompt-snapshot <on|off>  --fork-session' ;;\n--version) echo '2.1.276 (Claude Code)' ;;\n*) exit 2 ;;\nesac\n"
 			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}

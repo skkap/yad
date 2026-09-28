@@ -45,7 +45,7 @@ func fakeLoginHarness(t *testing.T, id, answer string, onPath ...bool) (calls st
 	script := "#!/bin/sh\n" +
 		"case \"$*\" in\n" +
 		"'" + check + "') echo x >> '" + calls + "'; " + status + " ;;\n" +
-		"--help) echo '  --system-prompt-snapshot <on|off>' ;;\n" +
+		"--help) echo '  --system-prompt-snapshot <on|off>  --fork-session' ;;\n" +
 		"*) echo '9.9.9' ;;\n" +
 		"esac\n"
 	bin := filepath.Join(dir, id)

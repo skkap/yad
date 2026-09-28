@@ -20,6 +20,7 @@ import (
 	"github.com/skkap/yad/protocol/hubapi"
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hub/store/db"
 )
@@ -118,7 +119,7 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 		Session: v1.SessionRef{New: true, Mode: v1.SessionPerRun},
 	}
 	if req.Session != nil {
-		run.Session.ID, run.Session.New = req.Session.ID, req.Session.New
+		run.Session.ID, run.Session.New, run.Session.ForkFrom = req.Session.ID, req.Session.New, req.Session.ForkFrom
 	} else {
 		run.Session.ID = newID("ses_")
 	}
@@ -135,6 +136,18 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 	}
 	if err := run.Validate(); err != nil {
 		return nil, Fail(http.StatusBadRequest, v1.CodeInvalid, err.Error(), "fix the request to match protocol/hubapi/openapi.yaml")
+	}
+	// Only for a run the hub does not have yet: a retry of one it queued is
+	// answered with that run, as every other retry is, whatever the forked
+	// session's runner advertises by now.
+	if run.Session.ForkFrom != "" {
+		if _, err := h.store.GetRun(ctx, run.RunID); errors.Is(err, sql.ErrNoRows) {
+			if err := h.refuseUnforkable(ctx, run.Session.ForkFrom); err != nil {
+				return nil, err
+			}
+		} else if err != nil {
+			return nil, err
+		}
 	}
 
 	err := h.store.EnqueueRun(ctx, run, h.now())
@@ -160,6 +173,12 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 			"start a new session: its runner has closed this one, and its workdir with it")
 	case errors.Is(err, store.ErrSessionHarness):
 		return nil, Fail(http.StatusConflict, v1.CodeConflict, err.Error(), "continue the session with its own harness, or start a new session")
+	case errors.Is(err, store.ErrNoForkSource):
+		return nil, Fail(http.StatusNotFound, v1.CodeNotFound, fmt.Sprintf("this hub has no session %q to fork", run.Session.ForkFrom),
+			"check session.fork_from against an earlier run's session_id")
+	case errors.Is(err, store.ErrForkUnbound):
+		return nil, Fail(http.StatusConflict, v1.CodeConflict, fmt.Sprintf("session %q is on no runner yet, so there is no conversation to fork", run.Session.ForkFrom),
+			"fork it once one of its runs has started: `"+serviceCommand("watch", "<run>")+"` follows one of its runs")
 	case err != nil:
 		return nil, err
 	default:
@@ -175,6 +194,36 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 		return nil, err
 	}
 	return &runOutput{Body: view}, nil
+}
+
+// refuseUnforkable is the answer to a fork whose session is on a runner that
+// does not advertise fork. That runner is the only one the fork can go to,
+// and it would never be offered it, so the run would wait queued for ever —
+// refused here instead, while the submitter can still act on it (decision
+// 0065). A session the hub has not bound, or does not have, is left to
+// EnqueueRun, which says which.
+func (h *Hub) refuseUnforkable(ctx context.Context, forkFrom string) error {
+	src, err := h.store.GetSession(ctx, forkFrom)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !src.RunnerID.Valid {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	r, err := h.store.GetRunner(ctx, src.RunnerID.String)
+	if err != nil {
+		return err
+	}
+	doc, err := storedDoc(r)
+	if err != nil {
+		return err
+	}
+	if advertises(doc, capability.FeatureFork) {
+		return nil
+	}
+	return Fail(http.StatusConflict, v1.CodeConflict,
+		fmt.Sprintf("session %q is on runner %s, which does not advertise the %q feature and cannot fork it", forkFrom, r.ID, capability.FeatureFork),
+		"upgrade yad on that runner, or start a new session")
 }
 
 // sameRun reports whether a resubmitted run is the one the hub already holds.

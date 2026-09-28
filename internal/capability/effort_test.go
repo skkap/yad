@@ -48,8 +48,11 @@ func TestAClaudeWithoutTheFlagsRunsNeedIsNotDrivable(t *testing.T) {
 		name, help string
 		drivable   bool
 	}{
-		{"current", "  --system-prompt-snapshot <on|off>", true},
+		{"current", "  --system-prompt-snapshot <on|off>  --fork-session", true},
 		{"too old", "  --append-system-prompt <prompt>", false},
+		// A Claude that cannot fork would take the forks this runner
+		// advertises it can (decision 0065).
+		{"unforking", "  --system-prompt-snapshot <on|off>", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			noTools(t)

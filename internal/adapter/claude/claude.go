@@ -40,6 +40,10 @@ func (Adapter) Harness() string { return "claude" }
 // AppliesEffort: a run's effort is Claude's --effort.
 func (Adapter) AppliesEffort() bool { return true }
 
+// Forks: a fork is --resume of the conversation forked with --fork-session,
+// under a --session-id YAD chooses for the fork (decision 0065).
+func (Adapter) Forks() bool { return true }
+
 // Timings a test may shorten.
 var (
 	// exitGrace is how long Claude gets to exit once its last result is in and
@@ -83,6 +87,9 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 	} else if !uuidPattern.MatchString(session) {
 		return nil, fmt.Errorf("claude session id %q is not a UUID — the session store is damaged; close the session and start a new one", session)
 	}
+	if f := forkFrom(spec); f != "" && !uuidPattern.MatchString(f) {
+		return nil, fmt.Errorf("claude session id %q of the session to fork is not a UUID — the session store is damaged; fork another session", f)
+	}
 	contextFile, err := writeContext(spec.Brief.Context)
 	if err != nil {
 		return nil, err
@@ -108,6 +115,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		p:         p,
 		session:   session,
 		effort:    spec.Effort,
+		forkFrom:  forkFrom(spec),
 		check:     spec.HarnessCheck("claude", "-p", "hello"),
 		frames:    make(chan []byte, 16),
 		written:   1,
@@ -129,6 +137,15 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 	go t.read(raw, contextFile)
 	go t.reap()
 	return t, nil
+}
+
+// forkFrom is the conversation a run forks, or "" for one that starts or
+// resumes its own: a session that has a native id is past its fork.
+func forkFrom(spec adapter.Spec) string {
+	if spec.NativeSessionID != "" {
+		return ""
+	}
+	return spec.ForkFrom
 }
 
 // argv builds the command line. Nothing secret goes here — argv is visible to
@@ -166,9 +183,18 @@ func argv(spec adapter.Spec, session, contextFile string) ([]string, error) {
 		return nil, errors.New("claude refuses bypassPermissions as root, and the runner is root — run yad as an ordinary user (ARCHITECTURE.md §8); inside a disposable container, start the runner with IS_SANDBOX=1 in its environment; or set a narrower permission_mode under [harness.claude] in config.toml")
 	}
 	args = append(args, "--permission-mode", mode)
-	if spec.NativeSessionID != "" {
+	switch {
+	case spec.NativeSessionID != "":
 		args = append(args, "--resume", session)
-	} else {
+	case forkFrom(spec) != "":
+		// Claude copies the forked conversation into a new one and leaves the
+		// original as it was. --session-id names the copy: Claude takes it
+		// beside --resume only with --fork-session, and with it YAD chooses
+		// the fork's id as it does a new session's, so the echoed id is
+		// checked the same way — an echo of the forked id is a fork that did
+		// not take, and would have written into the original (decision 0065).
+		args = append(args, "--resume", spec.ForkFrom, "--fork-session", "--session-id", session)
+	default:
 		args = append(args, "--session-id", session)
 	}
 	if spec.Model != "" {
@@ -268,6 +294,8 @@ type turn struct {
 	ctx     context.Context
 	p       *supervise.Process
 	session string
+	// forkFrom is the conversation this turn forks into session, or "".
+	forkFrom string
 	// check is the login check for the owner, in the run's account home.
 	check string
 	// effort is the run's effort; effortRefused, Claude's own words refusing
@@ -432,6 +460,7 @@ func (t *turn) write(stdin io.WriteCloser) {
 
 func (t *turn) read(raw io.Writer, contextFile string) {
 	tr := newTranslator(t.session, t.q.Push)
+	tr.forkFrom = t.forkFrom
 	// One channel for lines and skipped lines alike, so a skipped line is
 	// reported where it was in the stream.
 	type item struct {

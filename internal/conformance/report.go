@@ -21,11 +21,11 @@ var unchecked = []struct {
 	sections: []section{hubLeases},
 	why:      "deregistering retires the runner every other check here is made as; the second runner --second-token registers could carry it, and does not yet. `yad hub` implements it; a hub you write should too.",
 }, {
-	rule:     "The controls — cancel, interrupt, steer, close_session, drain — their repetition until the runner acts, the single delivery of a steer, a cancelled claim the runner withdraws recorded cancelled rather than lost, and offering nothing to a runner that is draining or has been asked to drain.",
+	rule:     "The controls — cancel, interrupt, steer, close_session, drain — their repetition until the runner acts, the single delivery of a steer, a cancelled claim the runner withdraws recorded cancelled rather than lost and the session it bound unbound, and offering nothing to a runner that is draining or has been asked to drain.",
 	sections: []section{hubControls},
 	why:      "nothing in the protocol asks a hub for a control: only a hub's own API can, and that is outside v1. A conformance runner can only wait for one it cannot cause.",
 }, {
-	rule:     "start_at, min_version, the feature gates on drain, steer, interrupt, close_session, start_at and effort, and holding back every gated control and gated run while a fingerprint has moved and its document has not arrived.",
+	rule:     "start_at, min_version, the feature gates on drain, steer, interrupt, close_session, start_at, effort and fork, and holding back every gated control and gated run while a fingerprint has moved and its document has not arrived.",
 	sections: []section{hubControls, hubVersioning},
 	why:      "each needs a run or a control the protocol gives a runner no way to ask for. What is checked is the other half of the same rule: that a hub sends no control it should have gated.",
 }, {

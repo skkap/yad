@@ -9,8 +9,8 @@
 -- costs an afternoon. (Confirmed by adding one and removing it again, DEV-27.)
 
 -- name: CreateSession :exec
-INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at, fork_from)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetSession :one
 SELECT * FROM sessions WHERE connection = ? AND id = ?;
@@ -329,7 +329,7 @@ UPDATE sessions SET last_used_at = ? WHERE connection = ? AND id = ?;
 -- the run live in it, if any.
 -- name: ListSessions :many
 SELECT s.connection, s.id, s.harness, s.native_id, s.workdir, s.state, s.created_at, s.last_used_at,
-  s.close_reason, s.close_requested_at, s.closed_at, s.reclaimed_at, s.reported_at,
+  s.close_reason, s.close_requested_at, s.closed_at, s.reclaimed_at, s.reported_at, s.fork_from,
   CAST(COALESCE((SELECT r.id FROM runs r
     WHERE r.connection = s.connection AND r.session_id = s.id
       AND r.state IN ('claimed', 'preparing', 'running', 'waiting')), '') AS TEXT) AS live_run,

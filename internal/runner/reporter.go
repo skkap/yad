@@ -46,6 +46,12 @@ type Reporter struct {
 	// Now is the clock for the outbox's retry schedule; nil is time.Now.
 	Now func() time.Time
 	Log *slog.Logger
+	// Handled hears that a flush has done what it can with a result that
+	// was due: the hub has it, never will, or it waits for a retry. The
+	// connection's sync loop holds a run's early sync while its result is
+	// due (Loop.Wake), and this is what lets it go — to ask for the next
+	// run now rather than an interval later. Nil tells nobody.
+	Handled func()
 
 	wake chan struct{}
 	// replayed is closed once the first flush has run: what a previous
@@ -125,6 +131,12 @@ func (r *Reporter) Flush(ctx context.Context) { r.flush(ctx, false) }
 // flush is Flush; all sends every result owed, due or not.
 func (r *Reporter) flush(ctx context.Context, all bool) {
 	r.init()
+	handled := false
+	defer func() {
+		if handled && r.Handled != nil {
+			r.Handled()
+		}
+	}()
 	runs, err := r.Store.RunsWithUnackedEvents(ctx, r.Connection)
 	if err != nil {
 		r.Log.Error("spool not read", "connection", r.Connection, "err", err)
@@ -158,8 +170,8 @@ func (r *Reporter) flush(ctx context.Context, all bool) {
 			r.Log.Error("spool not read", "connection", r.Connection, "run", o.RunID, "err", err)
 			continue
 		}
-		if !behind {
-			r.deliver(ctx, o)
+		if !behind && r.deliver(ctx, o) {
+			handled = true
 		}
 	}
 }
@@ -230,14 +242,15 @@ func (r *Reporter) upload(ctx context.Context, runID string) {
 
 // deliver sends one result. It leaves the outbox only on an answer that
 // settles it: accepted, a different terminal state the hub already holds, or a
-// refusal no retry can change.
-func (r *Reporter) deliver(ctx context.Context, o db.Outbox) {
+// refusal no retry can change. It reports whether the result is no longer
+// due: settled, or put off to its next attempt.
+func (r *Reporter) deliver(ctx context.Context, o db.Outbox) bool {
 	log := r.Log.With("connection", r.Connection, "run", o.RunID)
 	var res v1.Result
 	if err := json.Unmarshal([]byte(o.Body), &res); err != nil {
 		log.Error("outbox entry unreadable; dropping it", "err", err)
 		r.remove(ctx, o)
-		return
+		return true
 	}
 	err := r.Hub.Result(ctx, o.RunID, res)
 	var se *hubclient.StatusError
@@ -258,10 +271,12 @@ func (r *Reporter) deliver(ctx context.Context, o db.Outbox) {
 			Connection: r.Connection, RunID: o.RunID,
 		}); err != nil {
 			log.Error("outbox not updated", "err", err)
+			return false
 		}
-		return
+		return true
 	}
 	r.remove(ctx, o)
+	return true
 }
 
 func (r *Reporter) remove(ctx context.Context, o db.Outbox) {

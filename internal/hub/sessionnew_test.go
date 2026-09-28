@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"net/http"
+	"slices"
 	"testing"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -122,5 +123,128 @@ func TestAContinuingRunIsSentAsSubmitted(t *testing.T) {
 	}
 	if got := offered["c"].Sources; len(got) != 1 || got[0].Path != "/elsewhere" {
 		t.Errorf("c went out with sources %+v, want its own", got)
+	}
+}
+
+// A cancelled claim the runner withdrew takes the session it opened with it on
+// the runner (decision 0061), so the session goes back to unbound when that
+// claim is the one that bound it, and its next run goes out opening it
+// (DEV-143). Before, the session stayed bound, and the next run went out
+// continuing a session no runner held, to be refused. Nothing else unbinds a
+// session: not a withdrawn claim after one that ran, since the runner keeps a
+// session with a transcript (DEV-77); not a lapsed lease, which cannot tell a
+// withdrawal from silence; not a departed runner, whose sessions close; and
+// not a session with a close asked for, which the runner closes rather than
+// deletes and the hub waits to hear closed.
+func TestAWithdrawnClaimUnbindsTheSessionItBoundAlone(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		// arrange takes the session's runs to the one r1 holds as claimed,
+		// and returns it.
+		arrange func(t *testing.T, f *fixture, cred string) string
+		// end follows the answer that carries the cancel.
+		end func(t *testing.T, f *fixture, cred string)
+		// want is s1 at the end: unbound, bound (to r1, by a) or closed.
+		want string
+	}{
+		{"the claim that bound it, left out of the next sync", claimFirst, leaveOut, "unbound"},
+		// The runner's owner closed s1 while the claim was held: the runner
+		// closes it rather than deleting it, and reports the close in the
+		// same sync, which is believed from the runner s1 was offered to.
+		{"the claim that bound it, left out beside the close of its session", claimFirst, func(t *testing.T, f *fixture, cred string) {
+			report := req("r1", 0)
+			report.ClosedSessions = []v1.ClosedSession{{SessionID: "s1", Reason: v1.SessionClosedByOwner, ClosedAt: f.clock.Now()}}
+			f.mustSync(t, "r1", cred, report)
+		}, "closed"},
+		{"a later claim, after one that ran", func(t *testing.T, f *fixture, cred string) string {
+			f.mustSync(t, "r1", cred, req("r1", 0, claimed("a")...))
+			if code, env := f.result(t, cred, "a", v1.Result{State: v1.RunSucceeded}); code != http.StatusOK {
+				t.Fatalf("result: %d %+v", code, env.Error)
+			}
+			if res := f.mustSync(t, "r1", cred, req("r1", 1)); !slices.Equal(ids(res.Runs), []string{"b"}) || res.Runs[0].Session.New {
+				t.Fatalf("offered %+v, want b continuing s1", res.Runs)
+			}
+			f.mustSync(t, "r1", cred, req("r1", 0, claimed("b")...))
+			return "b"
+		}, leaveOut, "bound"},
+		{"the claim that bound it, with a close asked for", func(t *testing.T, f *fixture, cred string) string {
+			claimFirst(t, f, cred)
+			if code, e := f.api(t, "POST", "/sessions/s1/close", f.admin(t, "closer"), nil, nil); code != http.StatusOK {
+				t.Fatalf("close: %d %+v", code, e)
+			}
+			return "a"
+		}, leaveOut, "bound"},
+		{"the claim that bound it, its lease lapsing", claimFirst, func(t *testing.T, f *fixture, cred string) {
+			f.clock.Advance(4 * DefaultSyncInterval)
+			if err := f.hub.Sweep(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}, "bound"},
+		{"the claim that bound it, its runner deregistering", claimFirst, func(t *testing.T, f *fixture, cred string) {
+			if code, env := f.deregister(t, "r1", cred, ""); code != http.StatusOK {
+				t.Fatalf("deregister: %d %+v", code, env)
+			}
+		}, "bound"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			cred := f.register(t, "r1")
+			b := run("b", "s1")
+			b.Session.New = false
+			f.enqueue(t, run("a", "s1"), b)
+			f.mustSync(t, "r1", cred, first("r1", 1))
+			held := tc.arrange(t, f, cred)
+			if code, e := f.api(t, "POST", "/runs/"+held+"/cancel", f.admin(t, "cli"), nil, nil); code != http.StatusOK {
+				t.Fatalf("cancel: %d %s", code, e.Message)
+			}
+			if res := f.mustSync(t, "r1", cred, req("r1", 0, claimed(held)...)); !slices.Equal(cancels(res), []string{held}) {
+				t.Fatalf("cancels %v, want [%s]", cancels(res), held)
+			}
+			tc.end(t, f, cred)
+			if got := f.state(t, held); got != "cancelled" {
+				t.Fatalf("%s is %s, want cancelled", held, got)
+			}
+
+			s, err := f.store.GetSession(ctx, "s1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch tc.want {
+			case "unbound":
+				if s.RunnerID.Valid || s.BoundByRun.Valid {
+					t.Fatalf("s1 is bound to %q by %q, want unbound", s.RunnerID.String, s.BoundByRun.String)
+				}
+				res := f.mustSync(t, "r1", cred, req("r1", 1))
+				if !slices.Equal(ids(res.Runs), []string{"b"}) || !res.Runs[0].Session.New {
+					t.Errorf("offered %+v, want b opening s1", res.Runs)
+				}
+			case "closed":
+				if !s.ClosedAt.Valid || s.RunnerID.String != "r1" {
+					t.Errorf("s1 is closed %v, bound to %q; want closed on r1", s.ClosedAt.Valid, s.RunnerID.String)
+				}
+				if got := f.state(t, "b"); got != "failed" {
+					t.Errorf("b is %s, want failed with its session's close", got)
+				}
+			default:
+				if s.RunnerID.String != "r1" || s.BoundByRun.String != "a" {
+					t.Errorf("s1 is bound to %q by %q, want r1 by a", s.RunnerID.String, s.BoundByRun.String)
+				}
+			}
+		})
+	}
+}
+
+// claimFirst has r1 claim a, the session's first run: the listing binds s1.
+func claimFirst(t *testing.T, f *fixture, cred string) string {
+	f.mustSync(t, "r1", cred, req("r1", 0, claimed("a")...))
+	return "a"
+}
+
+// leaveOut is the sync after a withdrawal: the runner no longer lists the
+// claim.
+func leaveOut(t *testing.T, f *fixture, cred string) {
+	if res := f.mustSync(t, "r1", cred, req("r1", 0)); len(cancels(res)) != 0 {
+		t.Errorf("cancels %v for a run the runner no longer lists", cancels(res))
 	}
 }
