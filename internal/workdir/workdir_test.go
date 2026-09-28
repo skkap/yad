@@ -17,6 +17,8 @@ import (
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // Every git here — the test's own and the one under test — reads no config of
@@ -403,6 +405,37 @@ func TestAGitURLsTokenStaysOutOfTheRun(t *testing.T) {
 	_, _, err = f.prepare("s2", gitSource(url, "", "a"), gitSource(url, "", "b"))
 	if class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "named twice") || strings.Contains(err.Error(), "FAKEt0ken") {
 		t.Errorf("a source named twice: %v", err)
+	}
+}
+
+// git's reason is taken from the last StderrTail bytes it wrote. When those
+// begin partway into a long URL, the scheme redactURLs looks for is gone, so
+// the cut line is never quoted — whatever the URL's query carried.
+func TestACutReasonIsNotQuoted(t *testing.T) {
+	f := newFixture(t)
+	const token = "FAKEt0kenFAKEt0ken"
+	long := "https://example.invalid/" + strings.Repeat("a", supervise.StderrTail) + "?access_token=" + token
+	for _, tc := range []struct {
+		name, stderr, want string
+	}{
+		{"one cut line", "fatal: unable to access '" + long + "/': Could not resolve host", "exit status 128"},
+		{"a whole line after a cut one", "fatal: unable to access '" + long + "/'\nfatal: the last line", "fatal: the last line"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := filepath.Join(t.TempDir(), "stderr")
+			if err := os.WriteFile(body, []byte(tc.stderr+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			wrapper := filepath.Join(t.TempDir(), "git")
+			if err := os.WriteFile(wrapper, []byte("#!/bin/sh\ncat "+body+" >&2\nexit 128\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			f.m.Git = wrapper
+			_, err := f.m.git(context.Background(), "", "fetch")
+			if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want %q and no token", err, tc.want)
+			}
+		})
 	}
 }
 

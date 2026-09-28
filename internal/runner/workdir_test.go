@@ -347,6 +347,37 @@ func TestASessionKeepsItsSources(t *testing.T) {
 	}
 }
 
+// The refusal of a continuation naming other sources names the session's own,
+// and a credential in one of their URLs is taken out first: the refusal goes
+// to the hub and the daemon's log (decision 0063). file://…@localhost is a
+// URL with userinfo that reaches a repository on this machine, so no network.
+func TestASourceRefusalCarriesNoRecordedToken(t *testing.T) {
+	e := newEnv(t)
+	root := t.TempDir()
+	bare := gitRepo(t, root, "#!/bin/sh\n")
+	l := e.loop(t, 1)
+	h := fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}})
+	x := e.sourcedExec(root, h)
+
+	const token = "ghp_FAKEt0kenFAKEt0ken"
+	first := testRun("a", "s1")
+	first.Sources = []v1.Source{{Git: &v1.GitSource{URL: "file://" + token + "@localhost" + bare}}}
+	runOne(t, e, l, x, first)
+	if r := hubResult(t, e, "a"); r.State != v1.RunSucceeded {
+		t.Fatalf("first run: %+v (error %+v)", r, r.Error)
+	}
+	changed := continued("b", "s1")
+	changed.Sources = []v1.Source{{Path: root}}
+	runOne(t, e, l, x, changed)
+	r := hubResult(t, e, "b")
+	if r.Error == nil || r.Error.Class != workdir.ClassSourceRefused {
+		t.Fatalf("a continuation naming other sources: %+v", r)
+	}
+	if strings.Contains(r.Error.Message, "FAKEt0ken") || !strings.Contains(r.Error.Message, "redacted@localhost") {
+		t.Errorf("message = %q, want the session's source named without its token", r.Error.Message)
+	}
+}
+
 // A session is bound to its first run's sources whatever became of that run:
 // a continuation after a failed setup hook runs the hook again in the same
 // worktree, and a session begun with no sources refuses one named later.

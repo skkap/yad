@@ -1269,8 +1269,11 @@ func (e *Exec) sessionSources(ctx context.Context, c Claim) (sources []v1.Source
 	}
 	want, _ := json.Marshal(c.Run.Sources)
 	if string(want) != sess.Sources.String {
+		// Not the recorded JSON as stored: a git URL in it may carry a
+		// token, and this goes to the hub and the log (decision 0063).
+		shown, _ := json.Marshal(workdir.ShownSources(sources))
 		return nil, false, &workdir.Error{Class: workdir.ClassSourceRefused,
-			Msg: "the run names sources other than the ones its session's workdir was built from (" + sess.Sources.String + ") — send the same sources, or none, to continue it; start a new session for others"}
+			Msg: "the run names sources other than the ones its session's workdir was built from (" + string(shown) + ") — send the same sources, or none, to continue it; start a new session for others"}
 	}
 	return sources, false, nil
 }

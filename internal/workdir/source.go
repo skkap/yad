@@ -15,6 +15,8 @@ import (
 	"strings"
 	"unicode"
 
+	v1 "github.com/skkap/yad/protocol/v1"
+
 	"github.com/skkap/yad/internal/config"
 )
 
@@ -198,7 +200,9 @@ func shownURL(raw string) string {
 	if strings.Contains(raw, "://") {
 		return config.RedactURL(raw)
 	}
-	if !strings.Contains(raw, "@") {
+	// A path is a directory on the machine, which a run's error may name
+	// (decision 0063); an @ in one is a directory's name, not a user.
+	if strings.HasPrefix(raw, "/") || !strings.Contains(raw, "@") {
 		return raw
 	}
 	hostPart, path, ok := strings.Cut(raw, ":")
@@ -207,6 +211,21 @@ func shownURL(raw string) string {
 		return config.UnprintableURL
 	}
 	return "redacted@" + host + ":" + path
+}
+
+// ShownSources is a copy of sources with every git URL as shownURL prints it,
+// for a message that names a run's or a session's sources.
+func ShownSources(sources []v1.Source) []v1.Source {
+	out := make([]v1.Source, len(sources))
+	for i, s := range sources {
+		out[i] = s
+		if s.Git != nil {
+			g := *s.Git
+			g.URL = shownURL(g.URL)
+			out[i].Git = &g
+		}
+	}
+	return out
 }
 
 // quotedURL is shownURL in quotes, as a refusal names a field's value — except

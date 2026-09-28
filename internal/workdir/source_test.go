@@ -143,6 +143,7 @@ func TestShownURL(t *testing.T) {
 		{"git@github.com:skkap/yad.git", "redacted@github.com:skkap/yad.git"},
 		{"github.com:skkap/yad", "github.com:skkap/yad"},
 		{"/home/someone/src/yad", "/home/someone/src/yad"},
+		{"/home/someone/go/pkg/mod/example.com/yad@v2.0.0", "/home/someone/go/pkg/mod/example.com/yad@v2.0.0"},
 		{"https://" + fakeToken + "@github.com/skkap/yad", "https://redacted@github.com/skkap/yad"},
 		{"ssh://" + fakeToken + "@github.com/skkap/yad", "ssh://redacted@github.com/skkap/yad"},
 		{"a@b@github.com:skkap/yad", config.UnprintableURL},

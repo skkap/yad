@@ -72,7 +72,7 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 	case ctx.Err() != nil:
 		return "", ctx.Err()
 	case werr != nil:
-		return "", &gitError{verb: args[0], msg: redactURLs(lastLine(p.Stderr())), err: werr}
+		return "", &gitError{verb: args[0], msg: redactURLs(lastLine(wholeLines(p.Stderr()))), err: werr}
 	}
 	return strings.TrimSpace(out), nil
 }
@@ -104,6 +104,19 @@ var urlInText = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s'"<>]+`)
 // depends on its version and the message, so it is not relied on.
 func redactURLs(s string) string {
 	return urlInText.ReplaceAllStringFunc(s, config.RedactURL)
+}
+
+// wholeLines is a stderr tail without its first line when the tail is full:
+// supervise keeps the last StderrTail bytes, so that line may begin partway
+// through a URL, past the scheme redactURLs finds it by, and quote the query
+// behind it. A tail that is one cut line leaves nothing, and the error names
+// git's exit status instead.
+func wholeLines(tail string) string {
+	if len(tail) < supervise.StderrTail {
+		return tail
+	}
+	_, rest, _ := strings.Cut(tail, "\n")
+	return rest
 }
 
 // lastLine is the last non-empty line of s: git's reason, after its progress

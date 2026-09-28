@@ -51,12 +51,14 @@ The bounds, each unchanged by this:
 - **A credential in a URL is never quoted back**, even to the hub that sent
   it. A git source's URL is printed through `shownURL`
   (`internal/workdir/source.go`) in every refusal, the fetch's status event
-  and the run's error: `config.RedactURL` (DEV-91) takes out a URL's userinfo,
+  and the run's error — the session's recorded sources, when a continuation
+  naming others is refused, included (`ShownSources`): `config.RedactURL` (DEV-91) takes out a URL's userinfo,
   query and fragment, an scp-like `user@host:path` loses its user the same
-  way, and anything else holding an `@` is not printed at all. git's own last
-  line has every URL in it redacted the same way before it becomes a run's
-  error, since whether git anonymises the URL it failed to reach depends on its
-  version. The hub already holds the URL; the rule is AGENTS.md's — a token is
+  way, an absolute path is printed as it is, and anything else holding an `@`
+  is not printed at all. git's own last line has every URL in it redacted the
+  same way before it becomes a run's error, since whether git anonymises the
+  URL it failed to reach depends on its version; a line the bounded stderr tail
+  cut, which may begin past a URL's scheme, is not quoted. The hub already holds the URL; the rule is AGENTS.md's — a token is
   never transmitted — not privacy.
 
 `internal/workdir`'s setup-hook messages keep the wording DEV-67 gave them. The
@@ -80,4 +82,4 @@ Quoting only Go's OS error types gets the path back without that.
 **Refuse a git URL that carries a user over https**, since that user is
 usually a token. It would keep the token out of git's argv and the cache's
 config as well as out of messages. It is also a behaviour change for hubs that
-send one on purpose; it is left for its own ticket.
+send one on purpose; it is left for its own ticket, DEV-144.
