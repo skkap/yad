@@ -19,7 +19,7 @@ type Capabilities struct {
 	// PathSources is sent only as false, so the document of every runner
 	// that takes them — and of every runner older than the field — is the
 	// same, fingerprint included (decision 0061).
-	PathSources *bool     `json:"path_sources,omitempty" doc:"false: this runner's owner has switched sources on the machine off, so a run with a path source, or a git source whose url is a path or file:// URL, fails with source_refused — offer it none. Absent: the runner takes them inside the directories its owner allows. Never sent as true."`
+	PathSources *bool     `json:"path_sources,omitempty" doc:"false: this runner's owner has switched sources on the machine off, so a run with a path source, or a git source whose url is a path or file:// URL, fails with source_refused. Offer a run opening a session (session.new) with one to another runner; a run in a session already bound to this runner can go nowhere else, so offer it, and the refusal names the setting. Absent: the runner takes them inside the directories its owner allows. Never sent as true."`
 	ObservedAt  time.Time `json:"observed_at" doc:"When the runner built this document. Left out of the fingerprint, so it changes without the fingerprint moving."`
 }
 
