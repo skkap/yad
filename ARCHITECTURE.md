@@ -606,10 +606,17 @@ for `codex`); the suite never runs a real harness.
 
 - **One spawn point.** Every child — harness, git, setup hook, `--version` probe —
   starts through `supervise.Start`: its own process group, a scrubbed environment
-  (`CLAUDECODE`, every `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY` unless configured,
-  anything `YAD_*`), and a stderr tail kept at 2 KiB. A run's grants are added
-  after the scrub, which is why a grant may not name `ANTHROPIC_API_KEY` or any
-  other variable that chooses the harness's credential (0040). git and setup hooks start
+  (`CLAUDECODE`, every `CLAUDE_CODE_*`, anything `YAD_*`, and every variable
+  that chooses a harness's credential — `v1.AccountVariable`, the list a grant
+  is refused by, but for the harness home variables, which are the harness's
+  own login when it has no accounts —
+  [0058](docs/decisions/0058-the-owners-own-account-variables-are-removed-from-every-run.md)),
+  and a stderr tail kept at 2 KiB. A run's grants and its account's home and
+  token are added after the scrub, which is why a grant may not name
+  `ANTHROPIC_API_KEY` or any other variable that chooses the harness's
+  credential (0040). A child that asks a harness about an account — the login
+  check — gets the environment the run gets, or it answers about a different
+  credential (DEV-26; the rule is on `Spec.KeepEnv`). git and setup hooks start
   with `NoTTY` — a session of their own, no controlling terminal — so nothing
   they run can prompt. A host tool a run uses is the one detection resolved
   ([0045](docs/decisions/0045-runs-use-the-host-tools-detection-resolved.md)):
@@ -1328,6 +1335,11 @@ line here is a reviewed change.
   an exposed **data** directory before binding the socket. Nothing refuses an
   exposed `state.db`, `hub.db` or `config.toml`, and nothing else looks at the
   config directory — which is why doctor is where an owner hears about those.
+  It also warns, by name and never by value, about each variable in its
+  environment that would choose a harness's credential over an account's —
+  removed from every run, so an owner who exported one meaning runs to use it
+  hears why they do not (0058). The daemon logs the same about its own
+  environment at start, which a service manager may have set differently.
 - The operator-facing version of this section is
   [docs/run-it-safely.md](docs/run-it-safely.md).
 

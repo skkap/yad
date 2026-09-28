@@ -1,4 +1,5 @@
 ---
+status: amended by 0058 — the owner's own copies of these names are removed from every run too, from the same list, all but the harness home variables
 date: 2026-09-21
 ---
 
@@ -89,7 +90,9 @@ for every grant).
   the brief tells the harness about. A run that should use another login needs
   the owner to add that login as an account with `yad account add`.
 - **The owner is not bound by this.** It limits what a hub can do. Whether an
-  owner may configure API-key billing on the machine is DEV-62's question.
+  owner may configure API-key billing on the machine was DEV-62's question,
+  answered by [0058](0058-the-owners-own-account-variables-are-removed-from-every-run.md):
+  the owner's own copies are removed from every run too.
 
 `internal/account`'s tests hold every harness home variable to the list, so a
 harness that gains account homes cannot be missed.

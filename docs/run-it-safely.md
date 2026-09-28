@@ -110,10 +110,19 @@ wanted any of this could simply ask the harness for it.
   ([0040](decisions/0040-a-grant-may-not-move-a-run-off-its-account.md)). This
   is not a defence either: a brief could still tell the harness to run itself
   with any key. It keeps your accounts honest. A grant lands after the runner
-  scrubs your own `ANTHROPIC_API_KEY`, so without it a hub's key would run the
-  turn while the run's events, health and `yad account list` named your
+  scrubs your own copies of the same names, so without it a hub's key would
+  run the turn while the run's events, health and `yad account list` named your
   account — and that account's limits would never fire, failover would never
   move, and health would call it free for ever.
+- **Your own account variables are removed too.** The same list binds you: an
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_PROFILE`, `OPENAI_API_KEY`, base URL or any
+  other name on it that is set where the daemon starts is removed from every
+  harness, setup hook and git it runs, and `yad doctor` names each one it finds
+  ([0058](decisions/0058-the-owners-own-account-variables-are-removed-from-every-run.md)).
+  `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are the exception: with no accounts they
+  are the harness's own login, and an account's home replaces them. To bill
+  runs through an API key, log an account in with it; for a project that
+  needs the key itself, have the hub send it as a grant under another name.
 - **`IS_SANDBOX` is two facts that only make sense together.** It is an
   acceptable *grant name* — no namespace rule refuses it any more — and the
   Claude adapter still strips it from the run's environment before starting
