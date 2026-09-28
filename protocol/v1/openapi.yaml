@@ -170,10 +170,10 @@ components:
           description: "For login_code: what the owner got after signing in at the login's url. A secret: never log it or show it again."
           type: string
         harness:
-          description: "The harness to log in, for start_login and login_token: claude, or codex once a runner supports it."
+          description: "The harness to log in, for start_login and login_token: claude or codex. Codex logs in by device code, and never by token."
           type: string
         kind:
-          description: "cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins. login_code: the code the owner got at that URL. login_token: store a token as the account's login. cancel_login: end a login. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name; the four login kinds only to one advertising login. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."
+          description: "cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins (and for Codex the user_code to type there). login_code: the code the owner got at that URL, never for a login reporting user_code. login_token: store a token as the account's login. cancel_login: end a login. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name; the four login kinds only to one advertising login. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."
           enum:
             - cancel
             - interrupt
@@ -516,7 +516,7 @@ components:
             - token
           type: string
         state:
-          description: "starting: taken, and not yet waiting. waiting: url (and for a device-code harness user_code) is ready; send the code with login_code. checking: the code or token is in, and the runner is asking the harness whether it took. succeeded: the harness's own check says the account is logged in, and it takes runs. failed: it did not take, and error says why. expired: no code arrived within the runner's limit (ten minutes for yad). cancelled: ended by cancel_login, or by a newer login for the same account. The last four are terminal. A closed set for all of v1."
+          description: "starting: taken, and not yet waiting. waiting: url (and for a device-code harness user_code) is ready; send the code with login_code, unless user_code is set: then the owner types user_code at url, and no code is sent. checking: the code or token is in, or the device code was entered, and the runner is asking the harness whether it took. succeeded: the harness's own check says the account is logged in, and it takes runs. failed: it did not take, and error says why. expired: no code arrived, or the device code was not entered, within the runner's limit (ten minutes for yad). cancelled: ended by cancel_login, or by a newer login for the same account. The last four are terminal. A closed set for all of v1."
           enum:
             - starting
             - waiting
@@ -534,7 +534,7 @@ components:
           description: "Where the owner signs in, while waiting: the harness's own authorize URL, as it printed it. Show it; never follow it. Absent until waiting, and for a token login."
           type: string
         user_code:
-          description: "For a device-code login: the code the owner types at url, after which nothing comes back through the hub. Absent for Claude, whose login instead waits for login_code."
+          description: "For a device-code login — Codex's — while waiting: the code the owner types at url. Show it beside url; nothing comes back through the hub, so send no login_code for a login that has one. Absent for Claude, whose login instead waits for login_code."
           type: string
       required:
         - login_id

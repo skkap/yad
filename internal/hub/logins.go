@@ -64,7 +64,8 @@ func (h *Hub) registerLogins(api huma.API) {
 		OperationID: "startLogin", Method: http.MethodPost, Path: "/runners/{runner}/logins",
 		Summary: "Log an account in on a runner, by link or by token",
 		Description: "Without a token, the runner runs the harness's own login and reports the link to sign in at: poll the login " +
-			"until it is waiting, show url, and send the code the provider gives with POST .../code. With a token, the runner stores " +
+			"until it is waiting, show url, and send the code the provider gives with POST .../code — or, when it also shows user_code " +
+			"(Codex's device code), show that beside url for the owner to type there, and send nothing. With a token, the runner stores " +
 			"it as the account's login; the token is blanked here as soon as the runner reports the login. Either way the login " +
 			"ends succeeded only when the harness's own check on the machine says so. The account must be one the runner's owner " +
 			"listed; without one, the harness's own default login is logged in, by link only. A newer login for the same account " +
@@ -98,7 +99,8 @@ func (h *Hub) registerLogins(api huma.API) {
 		Summary: "Send the code the owner got after signing in",
 		Description: "Delivered at the runner's next sync, which writes it to the harness's login; the login then moves to checking " +
 			"and ends by the harness's own check. Only a login that is waiting takes a code: before its link is out, or once it " +
-			"has ended, it is 409. A second code before the runner has taken the first replaces it.",
+			"has ended, it is 409, and so is one reporting user_code, whose code is typed at its url. A second code before the " +
+			"runner has taken the first replaces it.",
 		Security: adminSecurity, Errors: []int{400, 401, 404, 409},
 	}, h.sendLoginCode)
 
@@ -207,6 +209,10 @@ func (h *Hub) sendLoginCode(ctx context.Context, in *loginCodeInput) (*loginOutp
 		case hubapi.LoginState(l.State).Terminal():
 			return Fail(http.StatusConflict, v1.CodeConflict, fmt.Sprintf("login %s has already ended %s", l.ID, l.State),
 				"start a new login; a code is good for the login whose link it came from, and only once")
+		case l.UserCode != "":
+			// Codex's device code (0057): the runner has nothing to hand one to.
+			return Fail(http.StatusConflict, v1.CodeConflict, fmt.Sprintf("login %s is by device code, and takes no code back", l.ID),
+				"type its user_code at its url; the runner reports the end once the harness's own check says whether it took")
 		case l.State != string(v1.LoginWaiting):
 			return Fail(http.StatusConflict, v1.CodeConflict, fmt.Sprintf("login %s is %s, and has no link out yet to have got a code from", l.ID, l.State),
 				"wait until the login is waiting and shows its url, sign in there, and send the code it gives")

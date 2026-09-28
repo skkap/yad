@@ -148,6 +148,32 @@ func TestAHubLoginByLink(t *testing.T) {
 	}
 }
 
+// Codex's device-code login (decision 0057): the user code the runner
+// reports is shown beside the link, and the login takes no code back — a
+// code sent to it is refused, and no login_code goes to the runner.
+func TestAHubDeviceCodeLoginTakesNoCode(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	f.mustSync(t, "r1", cred, first("r1", 1))
+	if code, e := f.api(t, "POST", "/runners/r1/logins", tok, hubapi.LoginRequest{LoginID: "lg1", Harness: "codex", Account: "work"}, nil); code != http.StatusCreated {
+		t.Fatalf("start: %d %+v", code, e)
+	}
+	waiting := report("lg1", v1.LoginWaiting, "https://auth.openai.com/codex/device")
+	waiting.Harness, waiting.UserCode = "codex", "K7QM-4XPD"
+	f.mustSync(t, "r1", cred, withLogins(req("r1", 1), waiting))
+	if view := f.login(t, tok, "lg1"); view.URL != waiting.URL || view.UserCode != waiting.UserCode {
+		t.Fatalf("waiting: %+v", view)
+	}
+	code, e := f.api(t, "POST", "/runners/r1/logins/lg1/code", tok, hubapi.LoginCodeRequest{Code: "pasted-anyway"}, nil)
+	if code != http.StatusConflict || !strings.Contains(e.NextAction, "user_code") {
+		t.Errorf("a code for a device-code login: %d %+v, want 409 saying to type the user code", code, e)
+	}
+	if cs := loginControls(f.mustSync(t, "r1", cred, withLogins(req("r1", 1), waiting))); len(cs) != 0 {
+		t.Errorf("controls %+v for a device-code login waiting on its owner, want none", cs)
+	}
+}
+
 // A token login: the token delivered in login_token until the runner reports
 // the login, and blanked in hub.db the moment it does; never in an answer of
 // the service API; refused before it is stored when it names no account or

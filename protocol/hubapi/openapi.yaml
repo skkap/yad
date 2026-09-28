@@ -295,7 +295,7 @@ components:
           description: The runner the login is on.
           type: string
         state:
-          description: "requested: the runner hears of it at its next sync. Then the runner's own: starting, waiting (url is ready; send the code), checking, and the four ends — succeeded, failed, expired, cancelled."
+          description: "requested: the runner hears of it at its next sync. Then the runner's own: starting, waiting (url is ready; send the code — or, with user_code, have it typed at url and send none), checking, and the four ends — succeeded, failed, expired, cancelled."
           enum:
             - requested
             - starting
@@ -314,7 +314,7 @@ components:
           description: "Where to sign in, while waiting: the harness's own authorize link, as the runner reported it."
           type: string
         user_code:
-          description: For a device-code login, the code to type at url.
+          description: "For a device-code login — Codex's — the code to type at url. Nothing comes back through the hub: such a login takes no code, and ends by the runner's own check."
           type: string
       required:
         - login_id
@@ -897,7 +897,7 @@ paths:
       summary: Drain a runner
   /runners/{runner}/logins:
     post:
-      description: "Without a token, the runner runs the harness's own login and reports the link to sign in at: poll the login until it is waiting, show url, and send the code the provider gives with POST .../code. With a token, the runner stores it as the account's login; the token is blanked here as soon as the runner reports the login. Either way the login ends succeeded only when the harness's own check on the machine says so. The account must be one the runner's owner listed; without one, the harness's own default login is logged in, by link only. A newer login for the same account replaces an older one. A runner that does not advertise the login feature is 409."
+      description: "Without a token, the runner runs the harness's own login and reports the link to sign in at: poll the login until it is waiting, show url, and send the code the provider gives with POST .../code — or, when it also shows user_code (Codex's device code), show that beside url for the owner to type there, and send nothing. With a token, the runner stores it as the account's login; the token is blanked here as soon as the runner reports the login. Either way the login ends succeeded only when the harness's own check on the machine says so. The account must be one the runner's owner listed; without one, the harness's own default login is logged in, by link only. A newer login for the same account replaces an older one. A runner that does not advertise the login feature is 409."
       operationId: startLogin
       parameters:
         - description: The runner id.
@@ -1066,7 +1066,7 @@ paths:
       summary: Cancel a login
   /runners/{runner}/logins/{login}/code:
     post:
-      description: "Delivered at the runner's next sync, which writes it to the harness's login; the login then moves to checking and ends by the harness's own check. Only a login that is waiting takes a code: before its link is out, or once it has ended, it is 409. A second code before the runner has taken the first replaces it."
+      description: "Delivered at the runner's next sync, which writes it to the harness's login; the login then moves to checking and ends by the harness's own check. Only a login that is waiting takes a code: before its link is out, or once it has ended, it is 409, and so is one reporting user_code, whose code is typed at its url. A second code before the runner has taken the first replaces it."
       operationId: sendLoginCode
       parameters:
         - description: The runner id.
