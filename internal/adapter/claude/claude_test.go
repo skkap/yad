@@ -642,6 +642,119 @@ func TestRejectedLimitThenSuccessSucceeds(t *testing.T) {
 	}
 }
 
+// A fork, recorded from claude 2.1.284 (decision 0065): the run resumes the
+// conversation forked with --fork-session, under a new --session-id YAD
+// chose, and answers from the forked conversation ("plum") in the new
+// session. The recorder checked the forked transcript was left as it was.
+func TestRecordedFork(t *testing.T) {
+	p, err := filepath.Abs("testdata/claude-2.1.284/fork.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &harness{fixture: p}
+	spec := h.spec(t)
+	spec.ForkFrom = "6f1c2b1e-9d3a-4c55-8e7f-0a1b2c3d4e5f"
+	evs, out, tr := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunSucceeded || strings.TrimSpace(out.FinalText) != "plum" {
+		t.Fatalf("outcome %s %q (error %+v)", out.State, out.FinalText, out.Error)
+	}
+	if slices.Contains(errorClasses(evs), adapter.ClassSessionMismatch) {
+		t.Error("a fork that took was reported as a mismatch")
+	}
+	s := h.seen(t)
+	fresh, ok := s.flag("--session-id")
+	if !ok || !uuidPattern.MatchString(fresh) || fresh == spec.ForkFrom {
+		t.Errorf("--session-id %q, %v: want a new id for the fork", fresh, ok)
+	}
+	if id, _ := s.flag("--resume"); id != spec.ForkFrom {
+		t.Errorf("--resume %q, want the forked %s", id, spec.ForkFrom)
+	}
+	if !slices.Contains(s.argv, "--fork-session") {
+		t.Errorf("argv %v has no --fork-session: the run would continue the forked conversation itself", s.argv)
+	}
+	if tr.NativeSessionID() != fresh || out.NativeSessionID != fresh {
+		t.Errorf("native %q, outcome %q; want the fork's own %s", tr.NativeSessionID(), out.NativeSessionID, fresh)
+	}
+}
+
+// A session past its fork resumes its own conversation, whatever fork the
+// spec still names.
+func TestAForkWithItsOwnConversationResumesIt(t *testing.T) {
+	h := &harness{fixture: fixture("plain")}
+	spec := h.spec(t)
+	spec.NativeSessionID = "6f1c2b1e-9d3a-4c55-8e7f-0a1b2c3d4e5f"
+	spec.ForkFrom = "11111111-1111-4111-8111-111111111111"
+	drive(t, context.Background(), spec, nil)
+	s := h.seen(t)
+	if id, _ := s.flag("--resume"); id != spec.NativeSessionID || slices.Contains(s.argv, "--fork-session") {
+		t.Errorf("argv %v: want a plain resume of %s", s.argv, spec.NativeSessionID)
+	}
+}
+
+// A fork of a conversation Claude has no transcript for, recorded from
+// 2.1.284: session_not_found, which the executor names resume_rejected, with
+// the next action a fork needs.
+func TestForkMissing(t *testing.T) {
+	p, err := filepath.Abs("testdata/claude-2.1.284/fork-missing.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &harness{fixture: p}
+	spec := h.spec(t)
+	spec.ForkFrom = "7ccafc02-e08b-4a43-b6a3-ef3e414faf08"
+	_, out, _ := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassSessionNotFound {
+		t.Fatalf("outcome %+v (%+v)", out, out.Error)
+	}
+	if !strings.Contains(out.Error.Message, "the session to fork") {
+		t.Errorf("message %q does not say the forked session's transcript is missing", out.Error.Message)
+	}
+}
+
+// Claude running the forked session itself rather than a copy of it is a
+// fork that did not take, and would write into the original: stopped at the
+// first frame, as any mismatch is.
+func TestForkMismatch(t *testing.T) {
+	h := &harness{fixture: fixture("plain"), env: map[string]string{"CLAUDE_TEST_KEEP_SESSION": "1"}}
+	spec := h.spec(t)
+	spec.ForkFrom = recordedSession(t, fixture("plain"))
+	_, out, _ := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassSessionMismatch {
+		t.Fatalf("outcome %+v", out)
+	}
+	if !strings.Contains(out.Error.Message, "instead of forking it") {
+		t.Errorf("message %q does not say the fork did not take", out.Error.Message)
+	}
+	if len(h.seen(t).frames("control_request")) != 1 {
+		t.Error("the turn in the forked session was not interrupted")
+	}
+}
+
+// A malformed id of the session to fork is refused before anything starts.
+func TestDamagedForkID(t *testing.T) {
+	h := &harness{fixture: fixture("plain")}
+	spec := h.spec(t)
+	spec.ForkFrom = "--dangerously-skip-permissions"
+	if _, err := (Adapter{}).Start(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "fork another session") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// recordedSession is the session id a recorded stream ran under.
+func recordedSession(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, _ := strings.Cut(string(b), `"session_id":"`)
+	id, _, _ := strings.Cut(rest, `"`)
+	if !uuidPattern.MatchString(id) {
+		t.Fatalf("%s names no session", path)
+	}
+	return id
+}
+
 func TestSessionMismatch(t *testing.T) {
 	// The recorded stream keeps its own session id: Claude ran a session other
 	// than the one it was told to.

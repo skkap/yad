@@ -153,6 +153,9 @@ type translator struct {
 	windows    map[string]adapter.Window
 	apiRetries int
 	mismatch   string
+	// forkFrom is the conversation the turn forks, or "": a mismatch naming
+	// it is a fork that did not take, and a missing transcript is its.
+	forkFrom string
 	// interruptTaken: Claude has acknowledged one of our interrupts. A result
 	// that came before that, and was not itself an abort, was Claude's answer
 	// already on its way when the interrupt landed (decision 0025).
@@ -413,6 +416,9 @@ func (t *translator) emitErr(class, msg string) {
 func (t *translator) streamError(msg string) { t.emitErr(adapter.ClassStream, msg) }
 
 func (t *translator) mismatchMessage() string {
+	if t.forkFrom != "" && t.mismatch == t.forkFrom {
+		return fmt.Sprintf("claude continued session %s instead of forking it into %s — the fork did not take, and the turn was stopped at its first frame; report this with `claude --version` as a yad bug", t.mismatch, t.session)
+	}
 	return fmt.Sprintf("claude ran session %s instead of %s — the resume did not take and the conversation's context is gone; start a new session or check the transcript is still on this runner", t.mismatch, t.session)
 }
 
@@ -517,6 +523,9 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		}
 		return fail(adapter.ClassUsageLimit, msg)
 	case slices.ContainsFunc(r.Errors, func(s string) bool { return strings.HasPrefix(s, "No conversation found") }):
+		if t.forkFrom != "" {
+			return fail(adapter.ClassSessionNotFound, msg+" — the transcript of the session to fork is not on this runner; fork a session that has one, or start a new session")
+		}
 		return fail(adapter.ClassSessionNotFound, msg+" — the session's transcript is not on this runner; start a new session")
 	}
 	// Measured on claude 2.1.281 with a revoked setup-token: is_error, subtype

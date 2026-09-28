@@ -43,7 +43,7 @@ UPDATE runners SET last_sync_at = ?, health = ?, wants_capabilities = ? WHERE id
 UPDATE runners SET capabilities = ?, fingerprint = ?, wants_capabilities = 0 WHERE id = ?;
 
 -- name: CreateSession :exec
-INSERT INTO sessions (id, harness, created_at) VALUES (?, ?, ?)
+INSERT INTO sessions (id, harness, created_at, fork_from) VALUES (?, ?, ?, ?)
 ON CONFLICT (id) DO NOTHING;
 
 -- name: GetSession :one
@@ -90,6 +90,8 @@ SELECT * FROM runs WHERE id = ?;
 -- session has at most one live run. Nor in a session whose close is asked
 -- for: the runner acts on close_session before the offers beside it and would
 -- refuse the run, which instead ends with the close once reported (DEV-120).
+-- A session opened as a fork and not yet bound goes only to the runner that
+-- holds the session it forks, where the conversation is (decision 0065).
 -- Filtering here rather than in Go is what keeps runs it must skip from
 -- filling the page ahead of runs it could take.
 SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id
@@ -98,6 +100,8 @@ WHERE r.state = 'queued'
   AND r.harness IN (SELECT value FROM json_each(sqlc.arg(harnesses_json)))
   AND (r.created_at > sqlc.arg(after_created_at) OR (r.created_at = sqlc.arg(after_created_at) AND r.id > sqlc.arg(after_id)))
   AND (s.runner_id IS NULL OR s.runner_id = sqlc.arg(runner_id))
+  AND (s.fork_from IS NULL OR s.runner_id IS NOT NULL OR EXISTS (
+      SELECT 1 FROM sessions f WHERE f.id = s.fork_from AND f.runner_id = sqlc.arg(runner_id)))
   AND NOT EXISTS (
       SELECT 1 FROM runs o
       WHERE o.session_id = r.session_id
@@ -116,7 +120,8 @@ LIMIT sqlc.arg(max);
 -- one go. Not a waiting one: that ends at an account's reset, hours off, not
 -- when anything the runner is executing does. An unbound session with a run
 -- out is left out: that run may be on its way to another runner, whose claim
--- would bind the session there.
+-- would bind the session there. An unbound fork counts only here, where the
+-- session it forks is (decision 0065).
 SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
   AND s.close_requested_at IS NULL AND s.closed_at IS NULL
@@ -128,6 +133,8 @@ WHERE r.state = 'queued'
       SELECT 1 FROM runs o
       WHERE o.session_id = r.session_id
         AND o.state IN ('offered', 'claimed', 'preparing', 'running', 'waiting'))))
+  AND (s.fork_from IS NULL OR s.runner_id IS NOT NULL OR EXISTS (
+      SELECT 1 FROM sessions f WHERE f.id = s.fork_from AND f.runner_id = sqlc.arg(runner_id)))
   AND NOT EXISTS (
       SELECT 1 FROM runs e
       WHERE e.session_id = r.session_id AND e.state = 'queued'
@@ -335,9 +342,16 @@ UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, upd
 WHERE runner_id = sqlc.arg(runner_id) AND state = 'offered';
 
 -- A departed runner's sessions that still need the hub: the open ones. A
--- closed one holds no waiting run, because every close ends those.
+-- closed one holds no waiting run, because every close ends those. With them,
+-- the open forks of its sessions that no claim has bound: only this runner
+-- could open one, and a run queued in it would otherwise wait for ever
+-- (decision 0065).
 -- name: SessionsToSettle :many
-SELECT id FROM sessions WHERE runner_id = sqlc.arg(runner_id) AND closed_at IS NULL ORDER BY id;
+SELECT s.id FROM sessions s
+WHERE s.closed_at IS NULL
+  AND (s.runner_id = sqlc.arg(runner_id)
+    OR (s.runner_id IS NULL AND s.fork_from IN (SELECT f.id FROM sessions f WHERE f.runner_id = sqlc.arg(runner_id))))
+ORDER BY s.id;
 
 -- Runners silent since before the cutoff that still have an open session
 -- bound to them (decision 0046). Silence counts from the last sync the hub

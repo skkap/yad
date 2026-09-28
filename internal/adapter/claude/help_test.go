@@ -32,6 +32,7 @@ func TestFlagsCheck(t *testing.T) {
 	}{
 		{mode: "current"},
 		{mode: "old", wantErr: `does not know --system-prompt-snapshot, which every run passes — run ` + "`" + `"$YAD_TEST_CLAUDE_HELP_PATH" update` + "`"},
+		{mode: "nofork", wantErr: `does not know --fork-session, which a run opening a fork passes — run ` + "`" + `"$YAD_TEST_CLAUDE_HELP_PATH" update` + "`"},
 		// Not asked is not refused: a probe that failed leaves the harness
 		// drivable, and the adapter's own error is the backstop.
 		{mode: "broken", wantWarning: "yad could not check which flags this claude knows"},

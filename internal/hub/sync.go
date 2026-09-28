@@ -447,11 +447,21 @@ func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) 
 	// queued would say nothing. An undescribed runner is offered none, for
 	// the reason above.
 	takesLocal := described && (doc.PathSources == nil || *doc.PathSources)
+	// A run opening a fork goes only to the runner holding the session it
+	// forks — OfferCandidates sees to that — and only while that runner
+	// advertises fork: one without it would open the session with an empty
+	// conversation and answer as if it had the history (decision 0065). The
+	// run waits, as it can go nowhere else. An undescribed runner is offered
+	// none, for the reason above.
+	forks := described && advertises(doc, capability.FeatureFork)
 	return func(run v1.Run) bool {
 		if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
 			return false
 		}
 		if run.Effort != "" && !takesEffort {
+			return false
+		}
+		if run.Session.ForkFrom != "" && !forks {
 			return false
 		}
 		return !run.Session.New || takesLocal || !slices.ContainsFunc(run.Sources, onTheMachine)
@@ -531,6 +541,14 @@ func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
 		return err
 	}
 	run.Session.New = !sess.RunnerID.Valid
+	// A fork is opened from its source by whichever of its runs opens it —
+	// the first one submitted, or a later one if that never bound it — and a
+	// run continuing it names no fork: the runner has the session by then,
+	// and its own conversation (decision 0065).
+	run.Session.ForkFrom = ""
+	if run.Session.New {
+		run.Session.ForkFrom = sess.ForkFrom.String
+	}
 	if !run.Session.New || len(run.Sources) > 0 {
 		return nil
 	}

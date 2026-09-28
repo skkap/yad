@@ -38,6 +38,9 @@ type session struct {
 	// close its hub has acknowledged.
 	Reclaimed bool `json:"reclaimed,omitempty"`
 	HubTold   bool `json:"hub_told,omitempty"`
+	// ForkFrom is the session this one was opened as a fork of (decision
+	// 0065).
+	ForkFrom string `json:"fork_from,omitempty"`
 }
 
 // cmdSessions lists the sessions this profile's runner holds. It reads the
@@ -71,7 +74,7 @@ func cmdSessions(ctx context.Context, g global, args []string, w io.Writer) erro
 				State: r.State, Workdir: r.Workdir, Created: time.UnixMilli(r.CreatedAt).UTC(),
 				LastUsed: time.UnixMilli(r.LastUsedAt).UTC(), Runs: r.Runs, LiveRun: r.LiveRun,
 				Closing: r.State == "open" && r.CloseRequestedAt.Valid, CloseReason: r.CloseReason.String,
-				Reclaimed: r.ReclaimedAt.Valid, HubTold: r.ReportedAt.Valid,
+				Reclaimed: r.ReclaimedAt.Valid, HubTold: r.ReportedAt.Valid, ForkFrom: r.ForkFrom.String,
 			}
 			if r.ClosedAt.Valid {
 				t := time.UnixMilli(r.ClosedAt.Int64).UTC()

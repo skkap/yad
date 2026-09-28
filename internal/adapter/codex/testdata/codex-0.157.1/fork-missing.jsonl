@@ -1,0 +1,6 @@
+{">":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"yad","title":"YAD","version":"dev"}}}}
+{"id":1,"result":{"userAgent":"yad/0 (recorded)","codexHome":"/codex-home","platformFamily":"unix","platformOs":"macos"}}
+{">":{"jsonrpc":"2.0","method":"initialized"}}
+{">":{"jsonrpc":"2.0","id":2,"method":"thread/fork","params":{"approvalPolicy":"never","cwd":"/work","model":"gpt-5.6-luna","sandbox":"danger-full-access","threadId":"01a0b86e-0000-7000-8000-000000000000"}}}
+{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"host","installationId":"00000000-0000-0000-0000-000000000000","environmentId":null},"emittedAtMs":1790622727902}
+{"error":{"code":-32600,"message":"no rollout found for thread id 01a0b86e-0000-7000-8000-000000000000"},"id":2}
