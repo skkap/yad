@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 	"github.com/skkap/yad/internal/store"
 )
 
@@ -411,4 +413,79 @@ func setAccountState(ctx context.Context, p config.Paths, label string, state v1
 	}
 	defer st.Close()
 	return account.SetState(ctx, st.Queries, "claude", label, state, time.Now())
+}
+
+// A harness whose every account needs login cannot take a run, and doctor
+// says so as it does for a harness with none that is logged out (decision
+// 0053) — where it used to call it ready, and a hub login that ended without
+// taking went unseen on the machine (DEV-138). One account that can run is
+// enough; its runs never use the default home, so that is not asked.
+func TestDoctorSaysAHarnessWhoseAccountsAllNeedLoginNeedsLogin(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		// states are the rows written; a label with no home reads needs_login.
+		states map[string]v1.AccountState
+		homes  []string
+		ready  bool
+	}{
+		{"an account listed by hand and never logged in", []string{"main"}, nil, nil, false},
+		{"an account a run found logged out", []string{"main"}, map[string]v1.AccountState{"main": v1.AccountNeedsLogin}, []string{"main"}, false},
+		{"one logged-out account beside one that runs", []string{"main", "spare"}, map[string]v1.AccountState{"main": v1.AccountNeedsLogin}, []string{"main", "spare"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := accountEnv(t)
+			noTools(t)
+			ctx := context.Background()
+			bin := filepath.Join(t.TempDir(), "claude")
+			// Ready by every probe, and no `auth status`: an account's login is
+			// its own state, and the default home is not what its runs use.
+			script := "#!/bin/sh\ncase \"$*\" in\n--help) echo '  --system-prompt-snapshot <on|off>' ;;\n--version) echo '2.1.276 (Claude Code)' ;;\n*) exit 2 ;;\nesac\n"
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("YAD_CLAUDE_PATH", bin)
+			cfg := config.Default()
+			cfg.Harness = map[string]config.HarnessConfig{"claude": {Accounts: tc.labels}}
+			if err := config.Save(p, cfg); err != nil {
+				t.Fatal(err)
+			}
+			for _, label := range tc.homes {
+				if _, err := account.Ensure(p.Data, "claude", label); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for label, state := range tc.states {
+				if err := setAccountState(ctx, p, label, state); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			code, out, errs := yadIn(t, "doctor")
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, errs)
+			}
+			if got := regexp.MustCompile(`Claude Code +ready`).MatchString(out); got != tc.ready {
+				t.Fatalf("Claude Code reported ready: %v, want %v\n%s", got, tc.ready, out)
+			}
+			if tc.ready {
+				return
+			}
+			if !regexp.MustCompile(`Claude Code +needs login`).MatchString(out) || !strings.Contains(out, "is not logged in — log it in as the error above says") {
+				t.Errorf("doctor does not say Claude Code needs login:\n%s", out)
+			}
+			_, full, ok := strings.Cut(out, "\nerror: Claude Code — ")
+			if !ok {
+				t.Fatalf("doctor prints no error for Claude Code:\n%s", out)
+			}
+			full, _, _ = strings.Cut(full, "\n")
+			shellwordtest.CheckEnv(t, onlyCommand(t, full, "yad --profile default account add"), dirsEnv(t),
+				"yad", "--profile", "default", "account", "add", "claude", "main")
+			shellwordtest.CheckEnv(t, onlyCommand(t, full, "yad --profile default account list"), dirsEnv(t),
+				"yad", "--profile", "default", "account", "list")
+			if strings.Contains(full, account.HomeDir(p.Data, "claude", "main")) {
+				t.Errorf("the error names the account's home: %q", full)
+			}
+		})
+	}
 }
