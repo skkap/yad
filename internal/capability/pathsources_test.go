@@ -12,7 +12,7 @@ import (
 // The document says path_sources only when it is off, so a runner that takes
 // them sends what it sent before the field existed, fingerprint and all, and
 // a hub reading an older runner's document reads the same thing (decision
-// 0061).
+// 0062).
 func TestPathSourcesIsSentOnlyWhenOff(t *testing.T) {
 	noTools(t)
 	ctx := context.Background()

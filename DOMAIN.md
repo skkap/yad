@@ -268,7 +268,7 @@ path source, or a git source whose URL is a local path or `file://`: the two
 reach the same directories, and the roots and the switch govern both. A session keeps
 the sources its workdir was built from; a run continuing it names the same ones
 or none.
-_See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md), [0061](docs/decisions/0061-an-owner-may-switch-sources-on-the-machine-off.md), `internal/workdir`
+_See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md), [0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md), `internal/workdir`
 
 **Workdir** — the directory a session's runs execute in. Owned by the session,
 kept between its runs, reclaimed after it closes. Built from the sources, or

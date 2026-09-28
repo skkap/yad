@@ -438,7 +438,7 @@ carrying an `effort` goes only to a runner advertising `effort`, for as long
 as that takes: any other would run the harness at its default and say nothing. A run
 opening a session with a source on the machine does not go to a runner whose
 document says `path_sources: false`, which would refuse it
-([0061](docs/decisions/0061-an-owner-may-switch-sources-on-the-machine-off.md)). A runner
+([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)). A runner
 whose fingerprint moved without the document it promised is treated as
 advertising neither, until the document it is asked for arrives. `yad hub` advertises no
 `hub_features` of its own — it has nothing beyond the v1 baseline.
@@ -708,7 +708,7 @@ for `codex`); the suite never runs a real harness.
   Hub strings are checked before git sees them, git never prompts, and a local
   source must resolve inside the owner's `[workdirs] roots` — with none
   configured, the owner's home directory; with `path_sources = false`, nowhere
-  ([0061](docs/decisions/0061-an-owner-may-switch-sources-on-the-machine-off.md))
+  ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md))
   ([0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md),
   [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A
   runner with no home directory to resolve reaches nothing.
@@ -1052,7 +1052,7 @@ wait = "30m"   # how long a drain lets runs finish before cancelling them — 00
 
 [workdirs]
 roots         = ["/home/me/src"]  # where path sources and local git URLs may point — 0033; unset = your home directory (0038)
-path_sources  = false             # refuse path sources and local git URLs altogether, whatever roots says; absent = take them — 0061
+path_sources  = false             # refuse path sources and local git URLs altogether, whatever roots says; absent = take them — 0062
 git_timeout   = "10m"
 setup_timeout = "15m"
 ```
@@ -1334,7 +1334,7 @@ line here is a reviewed change.
   helpers, no leading `-`, no password in a URL, and nothing on the machine
   outside the owner's `[workdirs] roots`, which default to the owner's home
   directory when unset, and nothing on it at all with `path_sources = false`
-  ([0061](docs/decisions/0061-an-owner-may-switch-sources-on-the-machine-off.md)) —
+  ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)) —
   [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md),
   [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md). Those
   guards prevent bugs, not attacks: the trust boundary is the machine and its

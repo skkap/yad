@@ -18,7 +18,7 @@ type Capabilities struct {
 	ProtocolFeatures []string        `json:"protocol_features,omitempty" doc:"The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session, effort, login and accounts; live_sessions is reserved. accounts is per hub: a runner lists it only to a hub its owner lets add and remove accounts, and only beside login, so two hubs of one runner may be sent different lists and fingerprints. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."`
 	// PathSources is sent only as false, so the document of every runner
 	// that takes them — and of every runner older than the field — is the
-	// same, fingerprint included (decision 0061).
+	// same, fingerprint included (decision 0062).
 	PathSources *bool     `json:"path_sources,omitempty" doc:"false: this runner's owner has switched sources on the machine off, so a run with a path source, or a git source whose url is a path or file:// URL, fails with source_refused. Offer a run opening a session (session.new) with one to another runner; a run in a session already bound to this runner can go nowhere else, so offer it, and the refusal names the setting. Absent: the runner takes them inside the directories its owner allows. Never sent as true."`
 	ObservedAt  time.Time `json:"observed_at" doc:"When the runner built this document. Left out of the fingerprint, so it changes without the fingerprint moving."`
 }

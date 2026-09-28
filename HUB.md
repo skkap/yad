@@ -675,7 +675,7 @@ with a `path` source, or a `git` source whose `url` is an absolute path or a
 and one that takes it may be connected. A run in a session already bound to
 the runner can go nowhere else — offer it, and the refusal's message tells
 whoever submitted it which setting refused it (decision
-[0061](docs/decisions/0061-an-owner-may-switch-sources-on-the-machine-off.md)).
+[0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)).
 
 **Session rules** decide the rest (§8): a run in a session bound to another
 runner is not offerable here, and neither is a run whose session already has

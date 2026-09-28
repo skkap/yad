@@ -1,5 +1,5 @@
 ---
-status: amended by 0040 — a grant may not name a variable that moves a run off its account (ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR, CODEX_HOME and the rest of protocol/v1's list) — and by 0061, where `[workdirs] path_sources = false` switches sources on the machine off, which no value of roots could
+status: amended by 0040 — a grant may not name a variable that moves a run off its account (ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR, CODEX_HOME and the rest of protocol/v1's list) — and by 0062, where `[workdirs] path_sources = false` switches sources on the machine off, which no value of roots could
 date: 2026-09-19
 ---
 

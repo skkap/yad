@@ -102,7 +102,7 @@ type WorkdirsConfig struct {
 	Roots []string `toml:"roots,omitempty"`
 	// PathSources false refuses every source that reaches this machine — a
 	// path source, and a git source whose URL is a local path or file:// —
-	// whatever Roots says (decision 0061). Unset or true takes them inside
+	// whatever Roots says (decision 0062). Unset or true takes them inside
 	// the roots. A toggle rather than `roots = []`, which the omitempty above
 	// cannot keep through a rewrite of config.toml: absent, the home default
 	// stays unwritten, and false survives every writer as what it says.

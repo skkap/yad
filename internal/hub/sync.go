@@ -309,7 +309,7 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 	takesEffort := described && advertises(doc, capability.FeatureEffort)
 	// A run opening a session with a source on the machine goes only to a
 	// runner whose owner has not switched those off: that runner would fail
-	// it source_refused, where another may take it (decision 0061). A run in
+	// it source_refused, where another may take it (decision 0062). A run in
 	// a session already bound here is offered anyway — it can go nowhere
 	// else, and the runner's refusal names the setting, where a run left
 	// queued would say nothing. An undescribed runner is offered none, for

@@ -392,7 +392,7 @@ func TestASessionIsBoundByItsFirstRun(t *testing.T) {
 // makes the home directory the root. Outside it is still refused, and a runner
 // with no home to resolve reaches nothing rather than everything. With
 // path_sources = false even the home directory is refused, and the result says
-// which setting refused it (0061).
+// which setting refused it (0062).
 func TestPathSourceDefaultsToTheOwnersHome(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

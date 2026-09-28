@@ -54,7 +54,7 @@ type Manager struct {
 	// Roots are the owner's directories a hub may reach (decision 0033).
 	Roots []string
 	// PathSourcesOff is the owner's `[workdirs] path_sources = false`: no
-	// source may reach this machine, whatever Roots says (decision 0061).
+	// source may reach this machine, whatever Roots says (decision 0062).
 	// The zero value takes them, as an unset setting does.
 	PathSourcesOff bool
 	// Git is the git executable. Empty is the one host-tool detection

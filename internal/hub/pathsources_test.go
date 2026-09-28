@@ -17,7 +17,7 @@ func offRunner(id string, free int) v1.SyncRequest {
 
 // A run opening a session with a source on the machine is not offered to a
 // runner that would refuse it, and waits for one that takes it; a run whose
-// sources are all on the network goes to either (decision 0061).
+// sources are all on the network goes to either (decision 0062).
 func TestALocalSourceIsNotOfferedToARunnerWithPathSourcesOff(t *testing.T) {
 	f := newFixture(t)
 	off := f.register(t, "off")
