@@ -330,7 +330,9 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
-		return false, &Error{Class: ClassSourceFailed, Msg: err.Error()}
+		// The source whole first: redactURLs cuts a URL where its pattern
+		// stops, after which the source is no longer found whole.
+		return false, &Error{Class: ClassSourceFailed, Msg: redactURLs(redactSource(err.Error(), it.git.url))}
 	}
 	// The fetch, the ref the new worktree creates and a half-made worktree's
 	// removal are one repository's business at a time; the run that follows

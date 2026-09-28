@@ -406,6 +406,28 @@ func TestAGitURLsTokenStaysOutOfTheRun(t *testing.T) {
 	if class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "named twice") || strings.Contains(err.Error(), "FAKEt0ken") {
 		t.Errorf("a source named twice: %v", err)
 	}
+
+	// Shapes the URL pattern alone cannot take apart: a quote inside the URL
+	// ends the pattern's match early, and an scp-like address has no scheme.
+	// The source itself is known, so it is replaced whole.
+	for i, src := range []string{
+		"https://example.invalid/acme.git?access_token='" + token,
+		"https://example.invalid/acme'.git?access_token=" + token,
+		token + "@example.invalid:acme.git",
+	} {
+		line := filepath.Join(t.TempDir(), "line")
+		if err := os.WriteFile(line, []byte("fatal: unable to access '"+src+"/': Could not resolve host\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = fetch ] && { cat " + line + " >&2; exit 128; }; done\nexec " + real + " \"$@\"\n"
+		if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := f.prepare(fmt.Sprintf("q%d", i), gitSource(src, "", ""))
+		if class(err) != ClassSourceFailed || strings.Contains(err.Error(), "FAKEt0ken") || !strings.Contains(err.Error(), "Could not resolve host") {
+			t.Errorf("%s: err = %v, want git's reason without the token", src, err)
+		}
+	}
 }
 
 // git's reason is taken from the last StderrTail bytes it wrote. When those

@@ -213,6 +213,18 @@ func shownURL(raw string) string {
 	return "redacted@" + host + ":" + path
 }
 
+// redactSource is msg with every copy of the source URL raw in it printed as
+// shownURL prints it. git's reason quotes the remote as it was given, and
+// redactURLs finds only what looks like a URL to a pattern: not an scp-like
+// user@host:path, and not a URL that holds a quote where the pattern stops.
+// The source itself is known here, so it is replaced whole.
+func redactSource(msg, raw string) string {
+	if shown := shownURL(raw); shown != raw {
+		return strings.ReplaceAll(msg, raw, shown)
+	}
+	return msg
+}
+
 // ShownSources is a copy of sources with every git URL as shownURL prints it,
 // for a message that names a run's or a session's sources.
 func ShownSources(sources []v1.Source) []v1.Source {

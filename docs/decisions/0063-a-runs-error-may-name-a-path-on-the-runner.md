@@ -55,10 +55,11 @@ The bounds, each unchanged by this:
   naming others is refused, included (`ShownSources`): `config.RedactURL` (DEV-91) takes out a URL's userinfo,
   query and fragment, an scp-like `user@host:path` loses its user the same
   way, an absolute path is printed as it is, and anything else holding an `@`
-  is not printed at all. git's own last line has every URL in it redacted the
-  same way before it becomes a run's error, since whether git anonymises the
-  URL it failed to reach depends on its version; a line the bounded stderr tail
-  cut, which may begin past a URL's scheme, is not quoted. The hub already holds the URL; the rule is AGENTS.md's — a token is
+  is not printed at all. git's own reason for a failed fetch has the source
+  replaced whole wherever it quotes it, then every other URL in it redacted
+  the same way, before it becomes a run's error, since whether git anonymises
+  the URL it failed to reach depends on its version; a line the bounded stderr
+  tail cut, which may begin past a URL's scheme, is not quoted. The hub already holds the URL; the rule is AGENTS.md's — a token is
   never transmitted — not privacy.
 
 `internal/workdir`'s setup-hook messages keep the wording DEV-67 gave them. The

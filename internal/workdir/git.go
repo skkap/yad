@@ -72,12 +72,16 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 	case ctx.Err() != nil:
 		return "", ctx.Err()
 	case werr != nil:
-		return "", &gitError{verb: args[0], msg: redactURLs(lastLine(wholeLines(p.Stderr()))), err: werr}
+		return "", &gitError{verb: args[0], msg: lastLine(wholeLines(p.Stderr())), err: werr}
 	}
 	return strings.TrimSpace(out), nil
 }
 
-// gitError is a git command that ran and failed.
+// gitError is a git command that ran and failed, with git's reason as git
+// printed it. A reason that can quote a remote — a fetch, a set-head — is
+// redacted where the source is known, by worktree's failed: redactSource
+// first, then redactURLs, since the pattern cuts a URL where it stops and the
+// source would no longer be found whole after it.
 type gitError struct {
 	verb, msg string
 	err       error
@@ -96,12 +100,14 @@ func (e *gitError) Unwrap() error { return e.err }
 // bracket that ends it.
 var urlInText = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s'"<>]+`)
 
-// redactURLs is git's reason with every URL in it passed through
-// config.RedactURL. git quotes the remote it failed to reach, and a hub-sent
-// URL may carry a token as its user — the one shape parseRemote lets through —
-// which this line would otherwise carry to the hub in the run's error and to
-// the daemon's log (decision 0063). Whether git anonymises the URL itself
-// depends on its version and the message, so it is not relied on.
+// redactURLs is s with every URL in it passed through config.RedactURL. git
+// quotes the remote it failed to reach, and a hub-sent URL may carry a token
+// as its user — the one shape parseRemote lets through — or in its query,
+// which git's reason would otherwise carry to the hub in the run's error and
+// to the daemon's log (decision 0063). Whether git anonymises the URL itself
+// depends on its version and the message, so it is not relied on. It catches
+// a URL other than the source too — a redirect's — which redactSource, which
+// knows only the source, cannot.
 func redactURLs(s string) string {
 	return urlInText.ReplaceAllStringFunc(s, config.RedactURL)
 }
