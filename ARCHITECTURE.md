@@ -316,7 +316,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   stays: its next sync is answered normally, with `close_session` for each of
   those sessions until it reports the close.
 - **Timings belong to the hub**: default interval 15 s, bounded 5–60 s; the
-  runner adds ±10 % jitter and backs off 1 s → 30 s on errors.
+  runner adds ±10 % jitter and backs off 1 s → 30 s on errors. A hub may answer
+  `next_sync_ms` as low as 3 s while it holds a queued run the runner would
+  take once a run it holds ends, and `yad hub` does
+  ([0060](docs/decisions/0060-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)).
 
 ### Run
 

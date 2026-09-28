@@ -26,9 +26,14 @@ import (
 // Timings on the runner's side of ARCHITECTURE.md §2. The interval is the
 // hub's to choose; these bound what a hub may ask for, so a hostile or broken
 // one can neither spin a runner nor silence it.
+//
+// The floor is next_sync_ms's, 3 s, below the 5 s that bounds a hub's steady
+// interval: a hub holding a queued run for this runner may ask it back that
+// soon so the run starts once the one ahead of it ends (decision 0060). A
+// runner that clamped to 5 s would still work, only later.
 const (
 	defaultInterval = 15 * time.Second
-	minInterval     = 5 * time.Second
+	minInterval     = 3 * time.Second
 	maxInterval     = 60 * time.Second
 	jitterFraction  = 0.10
 	firstBackoff    = time.Second

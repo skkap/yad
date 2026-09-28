@@ -123,7 +123,7 @@ type HeldRun struct {
 
 // SyncResponse is what the hub wants done until the next sync.
 type SyncResponse struct {
-	NextSyncMS int `json:"next_sync_ms" doc:"Milliseconds until the next sync, 5000 to 60000 inclusive. A runner clamps a value outside that range, adds its own jitter, and syncs sooner when this response offered runs."`
+	NextSyncMS int `json:"next_sync_ms" doc:"Milliseconds until the next sync, 3000 to 60000 inclusive: 5000 or more as the hub's steady interval, and less only while the hub holds a queued run this runner would be offered once a run it holds ends. A runner clamps a value outside that range, adds its own jitter, and syncs sooner when this response offered runs."`
 	// LeaseMS covers offers as well as claims (decision 0046): a runner that
 	// goes silent holding an offer strands nothing past it.
 	LeaseMS    int       `json:"lease_ms" doc:"How long the hub holds each run named in this answer for this runner without hearing from it, measured on the hub from when it handled this sync: every run offered here, and every run the request listed. A listed run the lease lapses on is lost. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."`

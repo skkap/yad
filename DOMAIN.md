@@ -299,7 +299,7 @@ the lease renewal for every run it holds, the health report and the ask for
 work; the answer carries new runs (never more than free capacity), control
 messages and the interval until the next sync.
 _Avoid_: poll and heartbeat as separate things — there is one call
-_See_: [0005](docs/decisions/0005-pull-by-periodic-sync.md)
+_See_: [0005](docs/decisions/0005-pull-by-periodic-sync.md), [0060](docs/decisions/0060-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)
 
 **Claim** — a runner taking a run offered in a sync. **Lease** — the hub's
 promise that an offered or claimed run is this runner's for now; each sync
