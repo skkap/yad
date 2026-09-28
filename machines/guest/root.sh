@@ -111,10 +111,18 @@ say "yad"
 # the host reads to say whether the machine is well.
 #
 # Only when it differs: the runner is restarted for a new binary, and a restart
-# drains the runs it holds. The mark tells runner.sh.
+# drains the runs it holds. The restart is owed before the binary moves, and
+# in the agent's own state rather than the stage, which the next up wipes: an
+# up that fails after this — provision.sh, a harness download — must not
+# leave the old runner running under a new yad that the next up finds equal.
+# runner.sh reads the same file and makes the restart.
 if ! cmp -s "$stage/yad" /usr/local/bin/yad; then
+    # As the agent, so the file stays its own; runuser keeps root's HOME, so
+    # the agent's is looked up.
+    owed_dir=$(getent passwd "$AGENT_USER" | cut -d: -f6)/.local/state/yad-machine
+    runuser -u "$AGENT_USER" -- mkdir -p "$owed_dir"
+    echo "yad was replaced" | runuser -u "$AGENT_USER" -- tee -a "$owed_dir/restart-owed" >/dev/null
     install -m 0755 "$stage/yad" /usr/local/bin/yad
-    touch "$stage/yad-replaced"
 fi
 install -m 0755 "$stage/guest/report.sh" /usr/local/bin/yad-machine-report
 

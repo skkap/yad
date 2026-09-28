@@ -24,6 +24,7 @@ type kitMachine struct {
 	down     string // exists while the stub systemctl says the unit is down
 	failing  string // exists while `yad service install` fails
 	old      string // exists while yad is one from before `yad config apply`
+	state    string // runner.sh's and root.sh's yad-machine state
 	p        config.Paths
 }
 
@@ -44,6 +45,7 @@ func newKitMachine(t *testing.T) *kitMachine {
 		down:     filepath.Join(dir, "down"),
 		failing:  filepath.Join(dir, "failing"),
 		old:      filepath.Join(dir, "old"),
+		state:    filepath.Join(dir, "state", "yad-machine"),
 		p:        config.Paths{Profile: config.DefaultProfile, Config: filepath.Join(dir, "config"), Data: filepath.Join(dir, "data")},
 	}
 	bin := filepath.Join(dir, "bin")
@@ -98,6 +100,17 @@ func writeExec(t *testing.T, path, body string) {
 func (m *kitMachine) spec(src string) {
 	m.t.Helper()
 	if err := os.WriteFile(filepath.Join(m.stage, "spec", "config.toml"), []byte(src), 0o644); err != nil {
+		m.t.Fatal(err)
+	}
+}
+
+// owe writes what root.sh writes before it replaces yad.
+func (m *kitMachine) owe(lines string) {
+	m.t.Helper()
+	if err := os.MkdirAll(m.state, 0o755); err != nil {
+		m.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.state, "restart-owed"), []byte(lines), 0o644); err != nil {
 		m.t.Fatal(err)
 	}
 }
@@ -220,13 +233,12 @@ func TestKitUpRestartsForANewYadAStoppedRunnerAndARestartItOwes(t *testing.T) {
 	m.spec("capacity = 2\n")
 	m.mustUp()
 
-	if err := os.WriteFile(filepath.Join(m.stage, "yad-replaced"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if out, n := m.mustUp(); n != 1 || !strings.Contains(out, "yad was replaced") {
+	// What root.sh owes before it replaces yad, twice over: an up that
+	// failed after the replacement, and the next one's.
+	m.owe("yad was replaced\nyad was replaced\n")
+	if out, n := m.mustUp(); n != 1 || !strings.Contains(out, "runner service — yad was replaced\n") {
 		t.Errorf("an up that replaced yad restarted %d times:\n%s", n, out)
 	}
-	os.Remove(filepath.Join(m.stage, "yad-replaced"))
 
 	m.set(m.down, true)
 	if out, n := m.mustUp(); n != 1 || !strings.Contains(out, "not running") {
@@ -245,6 +257,19 @@ func TestKitUpRestartsForANewYadAStoppedRunnerAndARestartItOwes(t *testing.T) {
 	}
 	if out, n := m.mustUp(); n != 0 {
 		t.Errorf("the owed restart was made twice:\n%s", out)
+	}
+
+	// An up that died after apply wrote config.toml and before it owed the
+	// restart: the checksum it left says the file has moved since.
+	m.spec("capacity = 4\n")
+	if err := os.WriteFile(filepath.Join(m.state, "applying"), []byte("0 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, n := m.mustUp(); n != 1 || !strings.Contains(out, "config.toml changed") {
+		t.Errorf("the up after an interrupted apply restarted %d times:\n%s", n, out)
+	}
+	if _, err := os.Stat(filepath.Join(m.state, "applying")); err == nil {
+		t.Error("an apply seen through left its checksum behind")
 	}
 }
 

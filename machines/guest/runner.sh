@@ -17,22 +17,37 @@ say() { printf -- '--> %s\n' "$*"; }
 cfg=${YAD_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/yad}/config.toml
 unit=yad-runner-default.service
 # The restart this machine is owed, and why, one reason a line. Kept on disk
-# rather than in a variable: an up that stops between changing config.toml and
+# rather than in a variable: an up that stops between changing something and
 # restarting the runner — a dropped connection, a failed install — leaves it
 # here, and the next up makes the restart though it changes nothing itself.
-owed=${XDG_STATE_HOME:-$HOME/.local/state}/yad-machine/restart-owed
-mkdir -p "$(dirname "$owed")"
+# root.sh writes to it too, before it replaces yad, and at this same path:
+# neither sets XDG_STATE_HOME.
+state=${XDG_STATE_HOME:-$HOME/.local/state}/yad-machine
+owed=$state/restart-owed
+# config.toml's checksum from before an apply, there only while one runs.
+applying=$state/applying
+mkdir -p "$state"
 
 owe() {
     [[ -f $owed ]] && grep -qxF -- "$1" "$owed" && return 0
     printf '%s\n' "$1" >>"$owed"
 }
 
-# root.sh leaves this when it installed a yad different from the one there:
-# the runner still running is the old binary.
-if [[ -f $stage/yad-replaced ]]; then owe "yad was replaced"; fi
+sq() {
+    local s=${1//\'/\'\\\'\'}
+    case $1 in
+    '' | *[!A-Za-z0-9_./:=@%+,-]*) printf "'%s'" "$s" ;;
+    *) printf '%s' "$1" ;;
+    esac
+}
 
 checksum() { if [[ -f $cfg ]]; then cksum <"$cfg"; fi; }
+
+# An apply the last up began and never saw the end of: it may have written the
+# file and died before owing the restart.
+if [[ -f $applying && $(checksum) != "$(cat "$applying")" ]]; then
+    owe "config.toml changed"
+fi
 
 say "yad config.toml"
 # Read whole, not piped into grep -q: under pipefail, grep leaving at its first
@@ -44,8 +59,10 @@ if grep -q 'config apply' <<<"$(yad help 2>/dev/null)"; then
     # file stays as yad writes it and a hub adding an account meanwhile is
     # kept. The checksum, not yad's wording, says whether it wrote the file.
     before=$(checksum)
+    printf '%s\n' "$before" >"$applying"
     yad config apply "$stage/spec/config.toml"
     if [[ $(checksum) != "$before" ]]; then owe "config.toml changed"; fi
+    rm -f -- "$applying"
 elif [[ ! -f $cfg ]]; then
     # A yad from before `config apply` — a pinned YAD_VERSION, or the
     # latest release before it shipped: the spec is seeded once, as the kit
@@ -55,7 +72,7 @@ elif [[ ! -f $cfg ]]; then
     owe "config.toml was written"
 elif ! diff -q "$stage/spec/config.toml" "$cfg" >/dev/null; then
     echo "note: this yad has no \`yad config apply\`, so the spec's config.toml was not brought onto $cfg — a newer yad (YAD_VERSION, or --yad) does it. Compare with:"
-    echo "  diff $stage/spec/config.toml $cfg"
+    echo "  diff $(sq "$stage/spec/config.toml") $(sq "$cfg")"
 fi
 
 # Enabled and active, or it is installed again: a machine whose runner is not
@@ -66,7 +83,7 @@ if ! systemctl --user is-enabled --quiet "$unit" 2>/dev/null ||
 fi
 
 if [[ -s $owed ]]; then
-    say "runner service — $(awk 'NR > 1 { printf "; " } { printf "%s", $0 }' "$owed")"
+    say "runner service — $(awk '!seen[$0]++ { printf "%s%s", (n++ ? "; " : ""), $0 }' "$owed")"
     yad service install
     rm -f -- "$owed"
 else
