@@ -401,7 +401,9 @@ nothing did. The rule covers only a run you hold as `claimed` and have asked
 to cancel. A claim nobody asked to cancel stays held until its lease lapses,
 and is lost; a run a sync has reported `preparing` or later owes a result, and
 is lost if none comes. A runner that deregisters holding a cancelled claim is
-the same case: end the claim `cancelled` (§5).
+the same case: end the claim `cancelled` (§5). A withdrawn claim takes the
+session it opened with it, so a session that claim bound is no longer bound
+(§8).
 
 **Response:** `next_sync_ms` and `lease_ms` (required), `runs` (the offers),
 `controls`, `min_version`. Omit `runs` and `controls` when empty.
@@ -1216,10 +1218,22 @@ session it opened with it (§4). A claim held by a runner process that stopped
 before the claim was answered is withdrawn by the next process, session and
 all; one that was answered — so you bound the session — and had not begun to
 prepare is reported `lost`, and its session stays for the next run to
-continue. The one case neither side can see is an answer you sent that the
-runner never read — before it stopped, or before a cancel you sent next
-reached it (§3): you bound the session, the runner withdrew it, and the next
-run, sent `false`, is refused as a session the runner does not hold.
+continue.
+
+An answer you sent that the runner never read leaves you with a bound session
+the runner does not have. When a cancel you sent next reached it first (§3),
+you can see it: the sync that leaves that cancelled claim out is the runner
+saying it withdrew the claim, and with it the session the claim opened. So
+**keep which run's claim bound each session, and unbind the session when the
+withdrawn claim is that run** — its next run then goes out `new: true`, to any
+runner. Nothing else unbinds a session. A withdrawn claim that did not bind it
+came after a run that did, and the runner keeps a session that has run a turn;
+a session whose close you asked for is closed by the runner, not deleted, and
+you are waiting to hear so; a lease that lapses cannot tell a withdrawal from
+a runner gone silent. `yad hub` does exactly this. The one case neither side
+can see is the runner stopping before it read that answer: you bound the
+session, the next process withdrew it, and the next run, sent `false`, is
+refused as a session the runner does not hold.
 
 **Sessions stay put.** The first claim in a session binds it to that runner.
 Its later runs are offered to that runner alone — a session is resumable only
@@ -1526,7 +1540,7 @@ is something **your hub still has to get right** with nothing to catch you:
 | rule | why the suite cannot reach it |
 |---|---|
 | `POST /runners/{runner}/deregister` — held runs lost (a claim you cancelled, `cancelled`), offers requeued, the runner's sessions closed and their queued runs ended | deregistering retires the runner every other check is made as; the second runner `--second-token` registers could carry it, and does not yet. `yad hub` implements it; implement it in yours |
-| The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, a cancelled claim the runner withdraws recorded `cancelled` rather than `lost`, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
+| The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, a cancelled claim the runner withdraws recorded `cancelled` rather than `lost` and the session it bound unbound, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
 | `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, `effort`, `fork`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
 | Hub logins — `start_login` and `login_token` repeated until the runner reports the login, `login_code` while it reports it `waiting`, `cancel_login` until it reports it over; a token held only until the runner reports its login; a login the runner reported and then leaves out ended `failed`; a login ended on the hub's word only while never sent, and a sent one unheard for thirty minutes ended `failed` with its token blanked, a runner's later report still replacing that end | only your own API starts a login, outside v1, and the suite advertises no `login` feature to be sent one. What is checked: that no login control reaches it, and that a sync carrying `logins` is taken |
 | Adding and removing accounts — `add` and `remove_account` only while the runner advertises `accounts` to you, and `remove_account` repeated until neither its capability document nor its health lists the account, or `accounts` is no longer advertised | only your own API adds or removes an account, outside v1, and the suite advertises no `accounts` feature to be sent either. What is checked: that neither reaches it |

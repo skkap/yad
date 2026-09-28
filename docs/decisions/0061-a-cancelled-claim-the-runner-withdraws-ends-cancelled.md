@@ -35,6 +35,18 @@ that a sync leaves out stays held until its lease lapses, and is lost, as
 before. The rule holds too when a runner deregisters holding such a claim, so
 the three ways a withdrawn claim can reach a hub agree.
 
+**The session that claim bound goes back to unbound, at the sync that leaves
+the claim out** (DEV-143). The runner deletes the session a withdrawn claim
+opened, so a hub that keeps it bound sends the next run in it as continuing,
+to that runner alone, which refuses it as a session it does not hold. `yad hub`
+keeps which run's claim bound each session (`sessions.bound_by_run`) and
+unbinds the session only when the withdrawn claim is that run. A later claim
+in the session came after a run that ran, whose session the runner keeps
+(DEV-77: a session with a transcript is closed, never unbound); a session with
+a close asked for is closed on the runner rather than deleted, and the hub is
+waiting for that report; a lapsed lease cannot tell a withdrawal from silence,
+and a departed runner's sessions close. Each of those stays bound.
+
 No protocol shape changes. Conformance cannot check it — only a hub's own API
 asks for a cancel — so it joins the controls on the suite's not-checked list.
 

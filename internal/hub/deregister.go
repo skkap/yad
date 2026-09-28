@@ -110,7 +110,9 @@ func abandon(ctx context.Context, q *db.Queries, runnerID string, gone departure
 	if _, err := q.RequeueRunnerOffers(ctx, db.RequeueRunnerOffersParams{Now: store.Ms(now), RunnerID: me}); err != nil {
 		return err
 	}
-	if err := cancelWithdrawn(ctx, q, runnerID, nil, gone.cancelled, now); err != nil {
+	// Its sessions stay bound, even one a withdrawn claim opened: every
+	// session bound to a runner that has gone closes below.
+	if _, err := cancelWithdrawn(ctx, q, runnerID, nil, gone.cancelled, now); err != nil {
 		return err
 	}
 	if _, err := q.LoseRunnerRuns(ctx, db.LoseRunnerRunsParams{
