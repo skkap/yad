@@ -108,7 +108,7 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []a
 	found := Detect(ctx)
 	DefaultLogins(ctx, found, cfg)
 	<-done
-	addCodexModels(found, cfg, accounts)
+	addModels(ctx, found, cfg, accounts)
 
 	goos, goarch := harness.Platform()
 	name := cfg.Name
@@ -179,32 +179,6 @@ func Detect(ctx context.Context) []harness.Detected {
 	return found
 }
 
-// addCodexModels fills in Codex's models from the list Codex caches in each
-// home a run may use: every account's, or with none configured the default
-// home a run inherits. The catalog cannot name them — they are the login's
-// plan's, and they move with Codex releases.
-//
-// An owner who configured accounts but whose account states could not be
-// read gets none: the homes are the accounts', and without them the default
-// home would describe a login no run uses.
-func addCodexModels(found []harness.Detected, cfg config.Config, accounts []account.Account) {
-	for i, d := range found {
-		if d.ID != "codex" || !d.Present || len(d.Models) > 0 {
-			continue
-		}
-		var homes []string
-		switch mine := account.For(accounts, "codex"); {
-		case len(mine) > 0:
-			for _, a := range mine {
-				homes = append(homes, a.Home)
-			}
-		case len(cfg.Harness["codex"].Accounts) == 0:
-			homes = []string{codex.DefaultHome()}
-		}
-		found[i].Models = codex.Models(homes...)
-	}
-}
-
 // Harnesses turns detection into the public report, with the owner's accounts
 // by label and state. Only the fields a hub may see survive the translation:
 // an account's home, and everything the harness wrote inside it, do not.
@@ -219,9 +193,16 @@ func Harnesses(found []harness.Detected, cfg config.Config, accounts []account.A
 		r := v1.HarnessReport{
 			ID: d.ID, Label: d.Label, Kind: string(d.Kind),
 			Present: d.Present, Version: d.Version, Error: d.Error, Models: d.Models,
-			Warnings: d.Warnings,
+			ModelsSource: d.ModelsSource, Warnings: d.Warnings,
+		}
+		if len(r.Models) > 0 && r.ModelsSource == "" {
+			// Detection alone, with no model probe: the catalog's list.
+			r.ModelsSource = v1.ModelsFromCatalog
 		}
 		if reps := account.Reports(accounts, d.ID); reps != nil {
+			for i := range reps {
+				reps[i].Models = d.AccountModels[reps[i].Label]
+			}
 			r.Accounts = reps
 			// A setup-token lasts a year and nothing else says when it runs
 			// out, so the month before is said here (decision 0054).

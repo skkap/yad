@@ -632,6 +632,15 @@ route on them: a tool is usable when it is `present` with no `error`, and
 `gh` is signed in to, so you can tell a runner that can reach your
 repositories from one that cannot.
 
+**A harness's `models` are what to offer, not a gate.** The runner asks the
+harness itself, without spending a token, which models each login a run may
+use is offered — Claude's `list_models`, Codex's `model/list` — and reports
+them in the harness's order, with each account's own list under the account
+when the harness listed one for it: two accounts on different plans can be
+offered different models. `models_source: catalog` is a harness that could
+not be asked, and a fixed list from the runner in its place. Neither is a
+limit: a run may name any model, and the harness decides whether it exists.
+
 **Prefer a harness whose health says `ready`.** An offer for a harness whose
 every account is at a usage limit or needs a login is not refused — there is
 nothing wrong with the run — but it is left unlisted, and comes back to your

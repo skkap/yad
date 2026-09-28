@@ -25,6 +25,13 @@ agent no longer names the terminal it ran in.
 | `steer` | `turn/steer` sent at the first tool call, answered in the same turn |
 | `approval` | `approval = "untrusted"`, `sandbox = "read-only"`: a command approval, declined |
 
+Recorded by `TestRecordModels` the same way, with no thread, so spending
+nothing (DEV-50):
+
+| Fixture | The conversation |
+|---|---|
+| `list-models` | `initialize`, then `model/list`: the recording login's models |
+
 Written by hand from `plain`, because they cannot be recorded without
 exhausting an account or a context window:
 
