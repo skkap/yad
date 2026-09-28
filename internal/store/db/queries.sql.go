@@ -174,8 +174,8 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) error {
 const createSession = `-- name: CreateSession :exec
 
 
-INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at, fork_from)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateSessionParams struct {
@@ -186,6 +186,7 @@ type CreateSessionParams struct {
 	Workdir    string
 	CreatedAt  int64
 	LastUsedAt int64
+	ForkFrom   sql.NullString
 }
 
 // Every hub-issued id (session, run) is addressed together with its
@@ -205,6 +206,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 		arg.Workdir,
 		arg.CreatedAt,
 		arg.LastUsedAt,
+		arg.ForkFrom,
 	)
 	return err
 }
@@ -416,7 +418,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE connection = ? AND id = ?
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions WHERE connection = ? AND id = ?
 `
 
 type GetSessionParams struct {
@@ -443,6 +445,7 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session
 		&i.ClosedAt,
 		&i.ReclaimedAt,
 		&i.ReportedAt,
+		&i.ForkFrom,
 	)
 	return i, err
 }
@@ -481,7 +484,7 @@ func (q *Queries) HeldRunInSession(ctx context.Context, arg HeldRunInSessionPara
 }
 
 const idleSessions = `-- name: IdleSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < ?1
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < ?1
   AND (?2 = 0 OR s.workdir != '')
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
     AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
@@ -524,6 +527,7 @@ func (q *Queries) IdleSessions(ctx context.Context, arg IdleSessionsParams) ([]S
 			&i.ClosedAt,
 			&i.ReclaimedAt,
 			&i.ReportedAt,
+			&i.ForkFrom,
 		); err != nil {
 			return nil, err
 		}
@@ -1099,7 +1103,7 @@ func (q *Queries) SessionSlot(ctx context.Context, arg SessionSlotParams) (int64
 }
 
 const sessionsCloseRequested = `-- name: SessionsCloseRequested :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions s WHERE s.state = 'open' AND s.close_requested_at IS NOT NULL
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions s WHERE s.state = 'open' AND s.close_requested_at IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
     AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
 ORDER BY s.close_requested_at
@@ -1130,6 +1134,7 @@ func (q *Queries) SessionsCloseRequested(ctx context.Context) ([]Session, error)
 			&i.ClosedAt,
 			&i.ReclaimedAt,
 			&i.ReportedAt,
+			&i.ForkFrom,
 		); err != nil {
 			return nil, err
 		}
@@ -1611,7 +1616,7 @@ func (q *Queries) UnackedEvents(ctx context.Context, arg UnackedEventsParams) ([
 }
 
 const unreclaimedSessions = `-- name: UnreclaimedSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE state != 'open' AND reclaimed_at IS NULL ORDER BY closed_at
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions WHERE state != 'open' AND reclaimed_at IS NULL ORDER BY closed_at
 `
 
 func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
@@ -1639,6 +1644,7 @@ func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
 			&i.ClosedAt,
 			&i.ReclaimedAt,
 			&i.ReportedAt,
+			&i.ForkFrom,
 		); err != nil {
 			return nil, err
 		}
@@ -1654,7 +1660,7 @@ func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
 }
 
 const unreportedClosedSessions = `-- name: UnreportedClosedSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at FROM sessions WHERE connection = ?1 AND state != 'open' AND reported_at IS NULL
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions WHERE connection = ?1 AND state != 'open' AND reported_at IS NULL
 ORDER BY closed_at, id LIMIT ?2
 `
 
@@ -1688,6 +1694,7 @@ func (q *Queries) UnreportedClosedSessions(ctx context.Context, arg UnreportedCl
 			&i.ClosedAt,
 			&i.ReclaimedAt,
 			&i.ReportedAt,
+			&i.ForkFrom,
 		); err != nil {
 			return nil, err
 		}

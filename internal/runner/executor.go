@@ -514,11 +514,35 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassRefused, err.Error())
 		return
 	}
-	dir, native, err := e.workdir(bg, c)
+	dir, native, forkOf, err := e.workdir(bg, c)
 	if err != nil {
 		log.Warn("the session's workdir could not be made", "err", err)
 		fail(ClassPrepare, "the session's workdir could not be made on this runner"+e.seeLogs())
 		return
+	}
+	// A session opened as a fork starts from the forked session's
+	// conversation until the harness has given it one of its own (decision
+	// 0064). Settled before the workdir is prepared, which may clone.
+	var fork string
+	if forkOf != "" {
+		// Refused rather than started empty: the hub asked for the fork's
+		// history, and a run without it would answer as if it had it. Both
+		// first-class adapters fork, so this is for a harness added later.
+		if !adapter.Forks(ad) {
+			fail(ClassRefused, fmt.Sprintf("this runner cannot fork a session of harness %q — open the session without fork_from, or fork it on a runner that can", run.Harness))
+			return
+		}
+		fork, err = e.forkSource(bg, c, forkOf)
+		if err != nil {
+			var gone noConversation
+			if errors.As(err, &gone) {
+				fail(ClassResumeRejected, string(gone))
+				return
+			}
+			log.Warn("the session to fork could not be read", "fork_from", forkOf, "err", err)
+			fail(ClassPrepare, "the session to fork could not be read on this runner"+e.seeLogs())
+			return
+		}
 	}
 	prep, err := e.prepare(ctx, c, a, dir, &lastSeq)
 	if err != nil {
@@ -626,6 +650,14 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			Home: home, Env: turnEnv, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
 			Yad: e.Paths.RemoteCommand,
 		}
+		// Only until the fork has a conversation of its own: a turn after
+		// one that got that far — on the next account — resumes it.
+		if native == "" {
+			spec.ForkFrom = fork
+		}
+		// A fork continues a conversation as a resume does, and a harness
+		// that has none to continue is the same fault (decision 0031).
+		resumed := spec.NativeSessionID != "" || spec.ForkFrom != ""
 		if hasAccount {
 			spec.HomeVar, spec.Account = account.HomeVar(run.Harness), acct.Label
 		}
@@ -682,7 +714,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		e.setState(bg, c, v1.RunRunning)
 		turnLog.Info("run started", "harness", run.Harness, "model", run.Model, "workdir", prep.Dir)
 
-		w := e.stream(bg, c, a, turn, cancel, native, spec.NativeSessionID != "", turnStarted, lastSeq, wallLeft)
+		w := e.stream(bg, c, a, turn, cancel, native, resumed, turnStarted, lastSeq, wallLeft)
 		out := turn.Wait()
 		cancel()
 		lastSeq = w.lastSeq
@@ -709,7 +741,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		e.setSpent(bg, c, prog.spent)
 		res := e.result(out, w, &prog)
 		if res.Error != nil {
-			res.Error.Class = hubClass(res.Error.Class, spec.NativeSessionID != "")
+			res.Error.Class = hubClass(res.Error.Class, resumed)
 		}
 		if hasAccount {
 			e.recordUsage(bg, acct, out, turnLog)
@@ -1237,30 +1269,57 @@ func (e *Exec) sessionSources(ctx context.Context, c Claim) (sources []v1.Source
 	return sources, false, nil
 }
 
-// workdir returns the session's workdir, creating it on first use, and the
-// session's native id. The directory is the session's, not the run's: a
+// workdir returns the session's workdir, creating it on first use, the
+// session's native id, and — while it has none — the session it was opened
+// as a fork of, if any. The directory is the session's, not the run's: a
 // resumed conversation expects the files its earlier runs left, so a later
 // run reuses the recorded path and recreates it if it vanished, and nothing
 // here deletes one — reclaiming is the session's close or its idle TTL
 // (decision 0011). Sources inside it are internal/workdir's.
-func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native string, err error) {
+func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native, forkOf string, err error) {
 	sess, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	dir = sess.Workdir
 	if dir == "" {
 		dir = filepath.Join(e.Data, "workdirs", c.Connection, pathName(c.Run.Session.ID))
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if err := e.Store.SetSessionWorkdir(ctx, db.SetSessionWorkdirParams{
 		Workdir: dir, LastUsedAt: time.Now().UnixMilli(), Connection: c.Connection, ID: c.Run.Session.ID,
 	}); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return dir, sess.NativeID.String, nil
+	if sess.NativeID.String == "" {
+		forkOf = sess.ForkFrom.String
+	}
+	return dir, sess.NativeID.String, forkOf, nil
+}
+
+// noConversation is a session to fork that has no conversation yet.
+type noConversation string
+
+func (n noConversation) Error() string { return string(n) }
+
+// forkSource is the native id of the conversation a fork starts from: the
+// forked session's, read when the fork's harness is about to start, so the
+// copy is of the conversation as it stands then. A session whose harness has
+// not yet given it an id has nothing to copy — its first run is still
+// preparing, or never got that far — and the run ends resume_rejected, as a
+// resume of nothing does; a harness that has an id and no transcript behind
+// it says so itself, and is renamed the same way.
+func (e *Exec) forkSource(ctx context.Context, c Claim, forkOf string) (string, error) {
+	src, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: forkOf})
+	if errors.Is(err, sql.ErrNoRows) || err == nil && src.NativeID.String == "" {
+		return "", noConversation(fmt.Sprintf("session %s has no conversation to fork yet — fork it again once one of its runs has started", forkOf))
+	}
+	if err != nil {
+		return "", err
+	}
+	return src.NativeID.String, nil
 }
 
 // safeName is an id kept as it is. Lower case only: macOS and Windows file

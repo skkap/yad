@@ -315,6 +315,13 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 	// queued would say nothing. An undescribed runner is offered none, for
 	// the reason above.
 	takesLocal := described && (doc.PathSources == nil || *doc.PathSources)
+	// A run opening a fork goes only to the runner holding the session it
+	// forks — OfferCandidates sees to that — and only while that runner
+	// advertises fork: one without it would open the session with an empty
+	// conversation and answer as if it had the history (decision 0064). The
+	// run waits, as it can go nowhere else. An undescribed runner is offered
+	// none, for the reason above.
+	forks := described && advertises(doc, capability.FeatureFork)
 	var (
 		runs   []v1.Run
 		cursor db.Run
@@ -358,6 +365,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 				return nil, err
 			}
 			if run.Session.New && !takesLocal && slices.ContainsFunc(run.Sources, onTheMachine) {
+				continue
+			}
+			if run.Session.ForkFrom != "" && !forks {
 				continue
 			}
 			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
@@ -410,6 +420,14 @@ func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
 		return err
 	}
 	run.Session.New = !sess.RunnerID.Valid
+	// A fork is opened from its source by whichever of its runs opens it —
+	// the first one submitted, or a later one if that never bound it — and a
+	// run continuing it names no fork: the runner has the session by then,
+	// and its own conversation (decision 0064).
+	run.Session.ForkFrom = ""
+	if run.Session.New {
+		run.Session.ForkFrom = sess.ForkFrom.String
+	}
 	if !run.Session.New || len(run.Sources) > 0 {
 		return nil
 	}

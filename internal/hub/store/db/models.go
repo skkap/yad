@@ -111,4 +111,5 @@ type Session struct {
 	CloseReason      sql.NullString
 	OfferedTo        sql.NullString
 	CloseOwed        int64
+	ForkFrom         sql.NullString
 }

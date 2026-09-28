@@ -31,7 +31,7 @@ import (
 // A hub must not use a feature the runner did not advertise, so "live_sessions"
 // is absent until it is built.
 func Features() []string {
-	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession, FeatureEffort, FeatureLogin}
+	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession, FeatureEffort, FeatureFork, FeatureLogin}
 }
 
 // FeatureStartAt is a runner that holds a run until its start_at rather than
@@ -63,6 +63,17 @@ const FeatureCloseSession = "close_session"
 // would succeed saying nothing of it (decision 0049). Advertised because
 // every first-class adapter applies it — a test holds the two together.
 const FeatureEffort = "effort"
+
+// FeatureFork is a runner that opens a session as a fork of another it holds
+// (session.fork_from): the fork's conversation starts from a copy of the
+// other's, which goes on untouched — Claude's --fork-session, Codex's
+// thread/fork (decision 0064). A hub offers a run carrying fork_from only to
+// such a runner, and it is always the one holding the session forked, so a
+// fork waits on that runner rather than going elsewhere. Advertised because
+// every first-class adapter forks, on every harness version the runner will
+// drive: Claude's flags probe asks for --fork-session, and both pinned Codex
+// protocols have thread/fork — a test holds the two together.
+const FeatureFork = "fork"
 
 // FeatureLogin is a runner that acts on the hub-login controls —
 // start_login, login_code, login_token and cancel_login — and reports each

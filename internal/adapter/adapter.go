@@ -47,7 +47,12 @@ type Spec struct {
 	// session. Claude lets YAD choose it up front; Codex assigns its own.
 	SessionID       string
 	NativeSessionID string
-	Brief           v1.Brief
+	// ForkFrom is the native id of another session's conversation, set only
+	// while NativeSessionID is empty: the run opens its session as a fork of
+	// that conversation, which the harness copies and leaves as it was
+	// (decision 0064). Only an adapter that is a Forker is ever given one.
+	ForkFrom string
+	Brief    v1.Brief
 	// Home is the account's harness home (CLAUDE_CONFIG_DIR, CODEX_HOME), for
 	// an adapter that needs the path itself. What actually points the child at
 	// it is the variable in Env: an adapter that ignores this field still runs
@@ -94,6 +99,22 @@ type EffortApplier interface {
 func AppliesEffort(a Adapter) bool {
 	e, ok := a.(EffortApplier)
 	return ok && e.AppliesEffort()
+}
+
+// Forker is an adapter that opens a session as a fork of another session's
+// conversation (Spec.ForkFrom). The runner advertises the fork feature only
+// while every first-class adapter is one, and refuses a fork for a harness
+// whose adapter is not, rather than start the conversation empty: the hub
+// asked for the fork's history, and a run without it would answer as if it
+// had it (decision 0064).
+type Forker interface {
+	Forks() bool
+}
+
+// Forks reports whether an adapter can open a session as a fork.
+func Forks(a Adapter) bool {
+	f, ok := a.(Forker)
+	return ok && f.Forks()
 }
 
 // Turn is one run in flight.

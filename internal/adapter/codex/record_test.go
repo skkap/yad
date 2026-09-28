@@ -48,7 +48,11 @@ type scenario struct {
 	// before, when set, is a first turn in a new thread; the scenario's own
 	// turn resumes it, and only that turn is recorded.
 	before string
-	act    func(t *testing.T, tr adapter.Turn, e v1.Event) bool
+	// fork makes the scenario's own turn fork the before thread into a new
+	// one rather than resume it; with no before, it forks a thread that does
+	// not exist.
+	fork bool
+	act  func(t *testing.T, tr adapter.Turn, e v1.Event) bool
 }
 
 var scenarios = []scenario{
@@ -69,6 +73,14 @@ var scenarios = []scenario{
 	{name: "resume-context", before: "Say hello.",
 		context: "The codeword is BLUE. If asked, give the codeword.",
 		prompt:  "What is the codeword? Reply with the word only."},
+	// A fork: the second turn runs in a new thread copied from the first's,
+	// and the recorder checks the first's rollout was not written to
+	// (decision 0064). With a context, which the adapter injects as it does
+	// on a resume.
+	{name: "fork", before: "Remember this word: plum. Reply with exactly: ok",
+		context: "You are terse.",
+		prompt:  "Which word did I ask you to remember? Reply with the word only.", fork: true},
+	{name: "fork-missing", prompt: "Reply: hi", fork: true},
 	{name: "interrupt", prompt: "Write the numbers from 1 to 200 as English words, one per line. No tools.",
 		act: func(t *testing.T, tr adapter.Turn, e v1.Event) bool {
 			if e.Kind != v1.EventText {
@@ -158,6 +170,15 @@ func TestRecord(t *testing.T) {
 			if s.resume {
 				spec.NativeSessionID = "01a0b86e-0000-7000-8000-000000000000"
 			}
+			var source []byte
+			if s.fork {
+				spec.NativeSessionID, spec.ForkFrom = "", native
+				if native == "" {
+					spec.ForkFrom = "01a0b86e-0000-7000-8000-000000000000"
+				} else {
+					source = rollout(t, codexHome, native)
+				}
+			}
 			var raw bytes.Buffer
 			tr, err := Adapter{Raw: func(adapter.Spec) io.Writer { return &raw }}.Start(ctx, spec)
 			if err != nil {
@@ -171,6 +192,14 @@ func TestRecord(t *testing.T) {
 			}
 			o := tr.Wait()
 			t.Logf("%s: %s %q %+v %+v", s.name, o.State, o.FinalText, o.Error, o.Usage)
+			if source != nil {
+				if o.NativeSessionID == native {
+					t.Errorf("the fork ran in the forked thread %s", native)
+				}
+				if after := rollout(t, codexHome, native); !bytes.Equal(after, source) {
+					t.Errorf("the fork wrote to the forked thread's rollout: %d bytes before, %d after", len(source), len(after))
+				}
+			}
 			scrubbed := scrub(raw.Bytes(), [][2]string{
 				{resolved(work), "/work"}, {work, "/work"},
 				{resolved(codexHome), "/codex-home"}, {codexHome, "/codex-home"},
@@ -215,6 +244,27 @@ func TestRecordSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("codex %s: the adapter's surface hashes to %s — pin it in schema.go", version, sum)
+}
+
+// rollout is a thread's rollout as Codex keeps it, found by id under the
+// home's sessions directory, which is dated.
+func rollout(t *testing.T, codexHome, id string) []byte {
+	t.Helper()
+	var found []string
+	filepath.WalkDir(filepath.Join(codexHome, "sessions"), func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, id+".jsonl") {
+			found = append(found, p)
+		}
+		return nil
+	})
+	if len(found) != 1 {
+		t.Fatalf("the rollout of thread %s: %v", id, found)
+	}
+	b, err := os.ReadFile(found[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func resolved(p string) string {

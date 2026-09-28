@@ -45,6 +45,11 @@ func (Adapter) Harness() string { return "codex" }
 // AppliesEffort: a run's effort is the effort of its turn/start.
 func (Adapter) AppliesEffort() bool { return true }
 
+// Forks: a fork is thread/fork of the thread forked, which Codex copies into
+// a new thread and leaves as it was; the new thread is the session's
+// (decision 0064).
+func (Adapter) Forks() bool { return true }
+
 // Timings a test may shorten.
 var (
 	// handshakeTimeout bounds each step before the turn runs: initialize,
@@ -103,6 +108,13 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 	if spec.NativeSessionID != "" && !threadID.MatchString(spec.NativeSessionID) {
 		return nil, fmt.Errorf("codex thread id %q is not a UUID — the session store is damaged; close the session and start a new one", spec.NativeSessionID)
 	}
+	fork := ""
+	if spec.NativeSessionID == "" {
+		fork = spec.ForkFrom
+	}
+	if fork != "" && !threadID.MatchString(fork) {
+		return nil, fmt.Errorf("codex thread id %q of the session to fork is not a UUID — the session store is damaged; fork another session", fork)
+	}
 	p, err := supervise.Start(ctx, supervise.Spec{
 		Path: spec.Binary, Args: []string{"app-server", "--listen", "stdio://"},
 		Dir: spec.Workdir, Env: spec.Env, Stdin: true,
@@ -115,6 +127,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		p:         p,
 		spec:      spec,
 		asked:     spec.NativeSessionID,
+		forkFrom:  fork,
 		q:         adapter.NewQueue(),
 		wait:      map[int64]string{},
 		begun:     make(chan struct{}),
@@ -124,6 +137,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		exitGrace: exitGrace, drainGrace: drainGrace, termGrace: termGrace,
 	}
 	t.tr = newTranslator(t.q.Push)
+	t.tr.forkFrom = fork
 	t.in = newInput(p.Stdin())
 	t.conn = NewConn(t.in)
 	if a.Raw != nil {
@@ -158,9 +172,12 @@ type turn struct {
 	spec adapter.Spec
 	// asked is the thread the run resumes; "" for a new one.
 	asked string
-	conn  *Conn
-	in    *input
-	q     *adapter.Queue
+	// forkFrom is the thread the run forks into a new one, set only when
+	// asked is "".
+	forkFrom string
+	conn     *Conn
+	in       *input
+	q        *adapter.Queue
 
 	// Owned by run's goroutine until done is closed.
 	tr       *translator
@@ -377,7 +394,7 @@ func (t *turn) respond(method string, m *Message) {
 	case "initialize":
 		t.conn.Notify("initialized", nil)
 		t.startThread()
-	case "thread/start", "thread/resume":
+	case "thread/start", "thread/resume", "thread/fork":
 		var r threadResult
 		if json.Unmarshal(m.Result, &r) != nil || r.Thread.ID == "" {
 			t.tr.fail(adapter.ClassHarness, method+" answered without a thread — report this with `codex --version` as a yad bug")
@@ -388,6 +405,13 @@ func (t *turn) respond(method string, m *Message) {
 		if t.asked != "" && r.Thread.ID != t.asked {
 			// Whatever the turn would do, it would do without the
 			// conversation it was meant to continue. Stopped before it starts.
+			t.tr.mismatch = r.Thread.ID
+			t.tr.emitErr(adapter.ClassSessionMismatch, t.tr.mismatchMessage(t.asked))
+			t.stop()
+			return
+		}
+		if t.forkFrom != "" && r.Thread.ID == t.forkFrom {
+			// The turn would run in the thread it was meant to leave alone.
 			t.tr.mismatch = r.Thread.ID
 			t.tr.emitErr(adapter.ClassSessionMismatch, t.tr.mismatchMessage(t.asked))
 			t.stop()
@@ -408,7 +432,10 @@ func (t *turn) respond(method string, m *Message) {
 			t.stop()
 			return
 		}
-		if method == "thread/resume" && t.spec.Brief.Context != "" {
+		// A fork is a resume into a new thread, and its developerInstructions
+		// are read no sooner than a resume's: until a compaction the copy
+		// opens with the forked thread's (decision 0050).
+		if method != "thread/start" && t.spec.Brief.Context != "" {
 			t.send("thread/inject_items", injectContext(r.Thread.ID, t.spec.Brief.Context))
 			return
 		}
@@ -473,6 +500,11 @@ func (t *turn) startThread() {
 		t.send("thread/resume", params)
 		return
 	}
+	if t.forkFrom != "" {
+		params["threadId"] = t.forkFrom
+		t.send("thread/fork", params)
+		return
+	}
 	t.send("thread/start", params)
 }
 
@@ -502,6 +534,9 @@ func (t *turn) refused(method string, e *RPCError) {
 	switch {
 	case method == "thread/resume" && strings.Contains(e.Message, "no rollout found"):
 		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("codex has no thread %s on this runner (%s) — the session's rollout is gone; start a new session", t.asked, e.Message))
+	case method == "thread/fork" && strings.Contains(e.Message, "no rollout found"):
+		// Measured on 0.157.1: the same words as a resume of nothing.
+		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("codex has no thread %s to fork on this runner (%s) — the forked session's rollout is gone; fork a session that has one, or start a new session", t.forkFrom, e.Message))
 	case method == "turn/start":
 		t.tr.fail(adapter.ClassHarness, "codex refused the turn: "+e.Message)
 	case method == "thread/inject_items":

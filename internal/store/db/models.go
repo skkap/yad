@@ -80,6 +80,7 @@ type Session struct {
 	ClosedAt         sql.NullInt64
 	ReclaimedAt      sql.NullInt64
 	ReportedAt       sql.NullInt64
+	ForkFrom         sql.NullString
 }
 
 type Slot struct {

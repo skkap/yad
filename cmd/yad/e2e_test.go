@@ -148,7 +148,7 @@ func fakeClaude() {
 	}
 	// The flags probe: every flag a run passes is one this claude knows.
 	if len(args) == 1 && args[0] == "--help" {
-		os.Stdout.WriteString("Usage: claude [options]\n  --system-prompt-snapshot <on|off>\n")
+		os.Stdout.WriteString("Usage: claude [options]\n  --system-prompt-snapshot <on|off>\n  --fork-session\n")
 		return
 	}
 	if len(args) == 2 && args[0] == "auth" {

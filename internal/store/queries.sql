@@ -9,8 +9,8 @@
 -- costs an afternoon. (Confirmed by adding one and removing it again, DEV-27.)
 
 -- name: CreateSession :exec
-INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at, fork_from)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetSession :one
 SELECT * FROM sessions WHERE connection = ? AND id = ?;

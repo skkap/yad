@@ -45,6 +45,10 @@ type scenario struct {
 	// before, when set, is a first turn run in a new session; the scenario's
 	// own turn resumes it, and only that turn is recorded.
 	before string
+	// fork makes the scenario's own turn fork the before session into a new
+	// one rather than resume it; with no before, it forks a session that
+	// does not exist.
+	fork bool
 	// act is called with each event and may steer or interrupt; it returns true
 	// once it has acted.
 	act func(t *testing.T, tr adapter.Turn, e v1.Event) bool
@@ -67,6 +71,12 @@ var scenarios = []scenario{
 	{name: "resume-missing", prompt: "Reply: hi", resume: true},
 	{name: "resume", before: "Remember this word: plum. Reply with exactly: ok",
 		prompt: "Which word did I ask you to remember? Reply with the word only."},
+	// A fork: the second turn is a new session opened from a copy of the
+	// first's conversation, and the recorder checks the first's transcript
+	// was not written to (decision 0064).
+	{name: "fork", before: "Remember this word: plum. Reply with exactly: ok",
+		prompt: "Which word did I ask you to remember? Reply with the word only.", fork: true},
+	{name: "fork-missing", prompt: "Reply: hi", fork: true},
 	{name: "interrupt", prompt: "Write the numbers from 1 to 200 as words, one per line.",
 		act: func(t *testing.T, tr adapter.Turn, e v1.Event) bool {
 			if e.Kind != v1.EventText {
@@ -218,6 +228,15 @@ func TestRecord(t *testing.T) {
 			if s.resume {
 				spec.NativeSessionID = newUUID()
 			}
+			var source []byte
+			if s.fork {
+				spec.NativeSessionID, spec.ForkFrom = "", native
+				if native == "" {
+					spec.ForkFrom = newUUID()
+				} else {
+					source = transcript(t, home, native)
+				}
+			}
 			tr, err := a.Start(ctx, spec)
 			if err != nil {
 				t.Fatal(err)
@@ -230,12 +249,39 @@ func TestRecord(t *testing.T) {
 			}
 			o := tr.Wait()
 			t.Logf("%s: %s %+v", s.name, o.State, o.Error)
+			if source != nil {
+				if o.NativeSessionID == native {
+					t.Errorf("the fork ran in the forked session %s", native)
+				}
+				if after := transcript(t, home, native); !bytes.Equal(after, source) {
+					t.Errorf("the fork wrote to the forked session's transcript: %d bytes before, %d after", len(source), len(after))
+				}
+			}
 			scrubbed := scrub(raw.Bytes(), [][2]string{{resolved(work), "/work"}, {work, "/work"}, {home, "/home/user"}})
 			if err := os.WriteFile(filepath.Join(dir, s.name+".jsonl"), scrubbed, 0o644); err != nil {
 				t.Fatal(err)
 			}
 		})
 	}
+}
+
+// transcript is a session's transcript as Claude keeps it, found by id in
+// whichever project directory holds it.
+func transcript(t *testing.T, home, id string) []byte {
+	t.Helper()
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if dir == "" {
+		dir = filepath.Join(home, ".claude")
+	}
+	found, err := filepath.Glob(filepath.Join(dir, "projects", "*", id+".jsonl"))
+	if err != nil || len(found) != 1 {
+		t.Fatalf("the transcript of session %s: %v %v", id, found, err)
+	}
+	b, err := os.ReadFile(found[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func firstNonEmpty(a, b string) string {
