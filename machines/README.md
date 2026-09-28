@@ -50,7 +50,7 @@ A directory. `example/` is one to copy.
 | file | |
 |---|---|
 | `machine.env` | Shell assignments: `MACHINE_NAME`, `MACHINE_CPUS`, `MACHINE_MEMORY` and `MACHINE_DISK` (GiB), `MACHINE_HARNESSES` (`claude`, `codex`), `MACHINE_EGRESS_ALLOW` (private addresses to allow), `NODE_MAJOR`, `CODEX_VERSION`. |
-| `config.toml` | The runner's [configuration](../ARCHITECTURE.md): name, labels, capacity, harness settings. Copied in on the first `up` only — after that `yad connect` and `yad account add` write to the machine's copy. |
+| `config.toml` | The runner's [configuration](../ARCHITECTURE.md): name, labels, capacity, harness settings, accounts. Every `up` brings the machine's copy onto it, keeping the machine's hub connections and its accounts — see [Changing a spec](#changing-a-spec). |
 | `provision.sh` | Optional. Runs as root after the kit's own provisioning, on every `up`: the packages and tools this machine's work needs. Must be idempotent. |
 | `home/` | Laid over `agent`'s home on every `up`, never mirrored: `AGENTS.md` for the harnesses, `.claude/CLAUDE.md`, `.claude/settings.json`, `.codex/AGENTS.md`, skills, a `.gitconfig`. |
 
@@ -82,6 +82,10 @@ yad: `--yad PATH` installs a linux binary you built (`make dist` writes
 `dist/yad-linux-arm64` and `-amd64`); without it, `up` fetches the latest
 release, or `YAD_VERSION`'s, and checks it against the release's
 `checksums.txt`. `YAD_REPO` points at a fork.
+
+`up` restarts the runner only when it has to — `config.toml` changed, a
+different yad was installed, or the runner was not running — since a restart
+drains the runs it holds. An `up` that changes nothing restarts nothing.
 
 `up` also registers the VM to start at the host user's login
 (`limactl autostart`) and protects it from `limactl delete`. `destroy` undoes
@@ -205,6 +209,39 @@ manage_accounts = false   # this hub may log accounts in, but not add or remove 
 A ChatGPT Business, Enterprise or Edu workspace has device-code login off
 until its admin turns it on; until then a Codex login from the hub ends
 `failed` saying so.
+
+## Changing a spec
+
+Edit the spec and run `up` again. The machine's `config.toml` is brought onto
+the spec's by `yad config apply`, which prints each setting it changed:
+
+```
+--> yad config.toml
+changed /home/agent/.config/yad/config.toml to match /var/tmp/yad-machine/spec/config.toml:
+  harness.claude.accounts = ["main", "tl"] (was ["main"])
+  labels = ["linux", "tl"] (was ["linux"])
+a running runner reads it when it starts — `yad --profile default service install` restarts it
+--> runner service — config.toml changed
+```
+
+- **The spec wins** for every setting it can hold — name, labels, capacity,
+  each `[harness.*]`, `[sessions]`, `[drain]`, `[workdirs]` — and a setting
+  it leaves out goes back to yad's default. Change these in the spec, not on
+  the machine: an edit made there is undone by the next `up`, which says so.
+- **Connections stay the machine's.** `yad connect` made them with a
+  credential that is only there; a `[[connection]]` in a spec is not taken.
+- **Accounts are added, never removed.** Each account the spec lists is
+  added to the machine's list, first and in the spec's order; an account
+  only the machine lists — logged in there, or added by a hub — is kept,
+  after them. Taking an account out of the spec does not remove it from the
+  machine: `yad-machine shell NAME yad account remove claude old` does, or a
+  hub's remove. A new account the spec lists shows as `needs_login` until
+  `yad-machine login` makes it.
+
+Why it is shaped this way is in
+[0058](../docs/decisions/0058-up-brings-a-machines-config-onto-its-spec-and-never-removes-an-account.md).
+A yad older than `yad config apply` — an old `YAD_VERSION` — leaves the
+machine's copy alone as before, and says which newer yad does it.
 
 ## Rebuilding
 

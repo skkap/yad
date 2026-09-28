@@ -109,7 +109,13 @@ nft -f /etc/yad-machine/egress.nft
 say "yad"
 # Root-owned, so a run cannot replace the runner that runs it — nor the report
 # the host reads to say whether the machine is well.
-install -m 0755 "$stage/yad" /usr/local/bin/yad
+#
+# Only when it differs: the runner is restarted for a new binary, and a restart
+# drains the runs it holds. The mark tells runner.sh.
+if ! cmp -s "$stage/yad" /usr/local/bin/yad; then
+    install -m 0755 "$stage/yad" /usr/local/bin/yad
+    touch "$stage/yad-replaced"
+fi
 install -m 0755 "$stage/guest/report.sh" /usr/local/bin/yad-machine-report
 
 if [[ -f $stage/spec/provision.sh ]]; then

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs as the runner's user inside a work machine, from `yad-machine up`, after
 # root.sh. Installs the harnesses into the user's own home, lays the spec's home
-# files over it, seeds yad's configuration and installs the runner service.
+# files over it, and hands yad's configuration and the runner service to
+# runner.sh.
 set -euo pipefail
 
 stage=$1
@@ -54,20 +55,7 @@ if [[ -d $stage/spec/home ]]; then
 	rsync -rlt "$stage/spec/home/" "$HOME/"
 fi
 
-cfg=${XDG_CONFIG_HOME:-$HOME/.config}/yad/config.toml
-if [[ ! -f $cfg ]]; then
-	say "yad config.toml"
-	install -d -m 0700 "$(dirname "$cfg")"
-	install -m 0600 "$stage/spec/config.toml" "$cfg"
-elif ! diff -q "$stage/spec/config.toml" "$cfg" >/dev/null; then
-	# After the first up, yad owns the file: connect and account add write to
-	# it. Replacing it would disconnect every hub.
-	echo "note: $cfg differs from the spec's config.toml — expected once a hub is connected; the machine's copy is kept. Compare with:"
-	echo "  diff $stage/spec/config.toml $cfg"
-fi
-
-say "runner service"
-yad service install
+bash "$stage/guest/runner.sh" "$stage"
 
 echo
 yad doctor
