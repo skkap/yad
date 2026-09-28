@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hostool"
 	"github.com/skkap/yad/internal/supervise"
 )
@@ -70,7 +72,7 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 	case ctx.Err() != nil:
 		return "", ctx.Err()
 	case werr != nil:
-		return "", &gitError{verb: args[0], msg: lastLine(p.Stderr()), err: werr}
+		return "", &gitError{verb: args[0], msg: redactURLs(lastLine(p.Stderr())), err: werr}
 	}
 	return strings.TrimSpace(out), nil
 }
@@ -89,6 +91,20 @@ func (e *gitError) Error() string {
 }
 
 func (e *gitError) Unwrap() error { return e.err }
+
+// urlInText is a URL in a line a program printed, up to the quote, space or
+// bracket that ends it.
+var urlInText = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s'"<>]+`)
+
+// redactURLs is git's reason with every URL in it passed through
+// config.RedactURL. git quotes the remote it failed to reach, and a hub-sent
+// URL may carry a token as its user — the one shape parseRemote lets through —
+// which this line would otherwise carry to the hub in the run's error and to
+// the daemon's log (decision 0062). Whether git anonymises the URL itself
+// depends on its version and the message, so it is not relied on.
+func redactURLs(s string) string {
+	return urlInText.ReplaceAllStringFunc(s, config.RedactURL)
+}
 
 // lastLine is the last non-empty line of s: git's reason, after its progress
 // and hints.

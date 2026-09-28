@@ -368,6 +368,44 @@ func TestRefusedSources(t *testing.T) {
 	}
 }
 
+// A hub-sent URL with a token for its user is fetched, and the token reaches
+// neither the run's events nor its error — not in the status that names the
+// fetch, not in git's own reason when the fetch fails, and not in the refusal
+// of a source named twice (decision 0062). git here is a wrapper that fails
+// every fetch as a git that quotes the whole URL would, so nothing leaves the
+// machine.
+func TestAGitURLsTokenStaysOutOfTheRun(t *testing.T) {
+	f := newFixture(t)
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "ghp_FAKEt0kenFAKEt0ken"
+	url := "https://" + token + "@example.invalid/acme.git"
+	wrapper := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = fetch ] && { echo \"fatal: unable to access '" + url + "/': Could not resolve host: example.invalid\" >&2; exit 128; }; done\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.m.Git = wrapper
+
+	_, ev, err := f.prepare("s1", gitSource(url, "", ""))
+	if class(err) != ClassSourceFailed || !strings.Contains(err.Error(), "https://redacted@example.invalid/acme.git/") {
+		t.Fatalf("err = %v, want git's reason with the URL's user taken out", err)
+	}
+	if strings.Contains(err.Error(), "FAKEt0ken") {
+		t.Errorf("the run's error carries the token: %v", err)
+	}
+	if s := ev.statuses(); strings.Contains(s, "FAKEt0ken") || !strings.Contains(s, "fetching https://redacted@example.invalid/acme.git") {
+		t.Errorf("status events = %q, want the fetch named without the token", s)
+	}
+
+	_, _, err = f.prepare("s2", gitSource(url, "", "a"), gitSource(url, "", "b"))
+	if class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "named twice") || strings.Contains(err.Error(), "FAKEt0ken") {
+		t.Errorf("a source named twice: %v", err)
+	}
+}
+
 // git never waits for a person: a remote that asks for a password fails at
 // once. The server is loopback, in process.
 func TestGitNeverPrompts(t *testing.T) {
