@@ -286,7 +286,7 @@ components:
           description: The login id.
           type: string
         method:
-          description: "link: the runner runs the harness's own login and reports its url; send the code with POST .../code. token: the token sent at start is stored as the account's login."
+          description: "link: the runner runs the harness's own login and reports its url; send the code with POST .../code — unless it also reports user_code (Codex's device code), which is typed at url and never sent. token: the token sent at start is stored as the account's login."
           enum:
             - link
             - token
@@ -343,7 +343,7 @@ components:
           description: "The account label, one the runner's owner listed on that machine: a hub never adds an account. Absent logs in the harness's own default login, by link only."
           type: string
         harness:
-          description: "The harness to log in: claude. A runner answers codex, for now, with a failed login naming the command that does it at the machine."
+          description: "The harness to log in: claude or codex. Codex logs in by device code, and never by token."
           minLength: 1
           type: string
         login_id:

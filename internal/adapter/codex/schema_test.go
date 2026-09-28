@@ -107,6 +107,14 @@ func TestSchemaHashCoversTheSurface(t *testing.T) {
 			}
 			sn["oneOf"] = kept
 		}},
+		{name: "a field of the device code's answer", moves: true, change: func(doc map[string]any) {
+			resp := v2(doc)["LoginAccountResponse"].(map[string]any)
+			for _, e := range resp["oneOf"].([]any) {
+				if strings.Contains(mustJSON(e), `"chatgptDeviceCode"`) {
+					delete(e.(map[string]any)["properties"].(map[string]any), "userCode")
+				}
+			}
+		}},
 		{name: "device code removed from the login's start", moves: true, change: func(doc map[string]any) {
 			params := v2(doc)["LoginAccountParams"].(map[string]any)
 			var kept []any

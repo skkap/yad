@@ -50,8 +50,8 @@ const (
 )
 
 // ErrNoDeviceCode is an answer to account/login/start that is not a device
-// code: the wrong type, a link that is not https, or a code that is not one
-// short line.
+// code: the wrong type, no login id, a link that is not https, or a code that
+// is not one short line.
 var ErrNoDeviceCode = errors.New("codex app-server answered account/login/start with no usable device code")
 
 // cancelWait bounds account/login/cancel. The app-server answers from memory;
@@ -99,7 +99,9 @@ func (d *DeviceLogin) Begin(ctx context.Context) (DeviceCode, error) {
 		VerificationURL string `json:"verificationUrl"`
 		UserCode        string `json:"userCode"`
 	}
-	if err := json.Unmarshal(raw, &r); err != nil || r.Type != "chatgptDeviceCode" || !usableURL(r.VerificationURL) || !usableCode(r.UserCode) {
+	// Without its id the login could not be cancelled, and a code typed after
+	// the runner gave up on it would still log the account in.
+	if err := json.Unmarshal(raw, &r); err != nil || r.Type != "chatgptDeviceCode" || r.LoginID == "" || !usableURL(r.VerificationURL) || !usableCode(r.UserCode) {
 		return DeviceCode{}, ErrNoDeviceCode
 	}
 	d.mu.Lock()

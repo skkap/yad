@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,7 +14,12 @@ import (
 // home of its own, and returns it with what the fake saw.
 func deviceLogin(t *testing.T, name string) (*DeviceLogin, *harness, string) {
 	t.Helper()
-	h := &harness{fixture: fixture(name)}
+	return deviceLoginPlaying(t, fixture(name))
+}
+
+func deviceLoginPlaying(t *testing.T, path string) (*DeviceLogin, *harness, string) {
+	t.Helper()
+	h := &harness{fixture: path}
 	spec := h.spec(t)
 	home := t.TempDir()
 	d, err := StartDeviceLogin(context.Background(), os.Args[0], t.TempDir(), append(spec.Env, "CODEX_HOME="+home))
@@ -98,6 +104,23 @@ func TestACodexWithoutDeviceLoginSaysSo(t *testing.T) {
 	_, err := begin(t, d)
 	if _, ok := errors.AsType[*RPCError](err); !ok {
 		t.Fatalf("Begin = %v, want the app-server's error", err)
+	}
+}
+
+// A device code with no login id is no device code: the login could not be
+// cancelled, so a code typed after the runner gave up would still take.
+func TestADeviceCodeWithoutALoginIDIsRefused(t *testing.T) {
+	b, err := os.ReadFile(fixture("login-device"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Replace(string(b), `"loginId":"5f0d3c9e-7a41-4b8e-9d2a-1c6e8f3b2a70",`, "", 1)
+	if body == string(b) {
+		t.Fatal("the fixture's answer names no loginId to take out")
+	}
+	d, _, _ := deviceLoginPlaying(t, writeFixture(t, body))
+	if _, err := begin(t, d); !errors.Is(err, ErrNoDeviceCode) {
+		t.Fatalf("Begin = %v, want ErrNoDeviceCode", err)
 	}
 }
 

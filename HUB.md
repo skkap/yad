@@ -943,8 +943,8 @@ a rule for when to stop sending it:
 | `close_session` | `session_id` | closes the session and deletes its workdir; a session with a run held closes when that run ends; one it does not hold or already closed is reported closed | in every response until the session appears in the runner's `closed_sessions` (§8) |
 | `drain` | nothing | stops claiming, lets the runs it holds finish, then exits. Its health says `draining` and its free capacity is zero | in every response until a sync's health says `draining` |
 | `report_capabilities` | nothing | sends its capability document in the next sync | while the fingerprint differs from the document you hold |
-| `start_login` | `login_id`, `harness`, `account` (absent: the harness's own default login) | runs the harness's own login in that account's home and reports its link as `url` while the login is `waiting` | in every response until the runner reports the login in `logins` |
-| `login_code` | `login_id`, `code` | writes the code the owner got at the link to the login, which then moves to `checking` | in every response while the runner reports the login `waiting` |
+| `start_login` | `login_id`, `harness`, `account` (absent: the harness's own default login) | runs the harness's own login in that account's home and reports its link as `url` while the login is `waiting` — for Codex with `user_code`, the device code to type there | in every response until the runner reports the login in `logins` |
+| `login_code` | `login_id`, `code` | writes the code the owner got at the link to the login, which then moves to `checking` | in every response while the runner reports the login `waiting` with no `user_code`; never for one with a `user_code`, whose code is typed at the link |
 | `login_token` | `login_id`, `harness`, `account`, `token` | stores a `claude setup-token` token as the account's login | in every response until the runner reports the login — then forget the token |
 | `cancel_login` | `login_id` | ends the login `cancelled`; one it never had is reported `cancelled` all the same | in every response until the runner reports the login over |
 | `update` | — | reserved; never send it | never |

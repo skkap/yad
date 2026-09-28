@@ -469,8 +469,8 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `GET /sessions/{session}` | the session: its runner, and `open`, `closing` or `closed` with the reason |
 | `POST /sessions/{session}/close` | a session no runner holds closes here, its unstarted runs cancelled; a held one gets `close_session` until its runner reports it closed; 409 for a runner without the `close_session` feature. A closing or closed session takes no new run |
 | `POST /runners/{runner}/logins` | a hub login for `{harness, account?}`: by link, or by token with `token` — `requested` until the runner's next sync takes it; 409 for a runner without the `login` feature. A newer login for the account replaces an older one |
-| `GET /runners/{runner}/logins/{login}` | the login's state, its `url` while `waiting`, and the runner's `error` at an end; never its code or token |
-| `POST /runners/{runner}/logins/{login}/code` | `{code}` for a `waiting` link login, delivered at the next sync; 409 before the link is out or after the end |
+| `GET /runners/{runner}/logins/{login}` | the login's state, its `url` (and for Codex its `user_code`) while `waiting`, and the runner's `error` at an end; never its code or token |
+| `POST /runners/{runner}/logins/{login}/code` | `{code}` for a `waiting` link login, delivered at the next sync; 409 before the link is out, after the end, or for a device-code login (one showing `user_code`) |
 | `POST /runners/{runner}/logins/{login}/cancel` | a `cancel_login` until the runner reports the login over |
 
 ## §3 Running a harness

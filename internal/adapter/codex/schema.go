@@ -33,7 +33,7 @@ import (
 // pinned maps each known surface hash to the Codex version it was recorded
 // from, in testdata/codex-<version>/codex_app_server_protocol.schemas.json.
 var pinned = map[string]string{
-	"8958495c6028a1ecb1713cc69c1d4dccb97cd00261343cb76b3ca0b47e5341d1": "0.147.0",
+	"dc3dfab123e3a20ceb0cb58c017e853b354590c613b369b382d555e595df65b4": "0.147.0",
 }
 
 // schemaFile is the bundle generate-json-schema writes, holding every
@@ -66,7 +66,7 @@ var surface = struct {
 		"TurnStartResponse", "TurnSteerResponse", "GetAccountRateLimitsResponse",
 		"CommandExecutionRequestApprovalResponse", "FileChangeRequestApprovalResponse",
 		"PermissionsRequestApprovalResponse", "McpServerElicitationRequestResponse",
-		"ExecCommandApprovalResponse", "ApplyPatchApprovalResponse"},
+		"ExecCommandApprovalResponse", "ApplyPatchApprovalResponse", "LoginAccountResponse", "CancelLoginAccountResponse"},
 }
 
 // SchemaHash hashes the adapter's surface of a generated schema bundle. What
