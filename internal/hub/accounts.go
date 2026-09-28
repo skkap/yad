@@ -41,8 +41,8 @@ func (h *Hub) registerAccounts(api huma.API) {
 		Summary: "Remove an account from a runner",
 		Description: "The runner hears it at its next sync and removes the account as its owner's yad account remove does: listed " +
 			"nowhere from then on, runs already on it finish there, and its home — the login — is deleted once the last of them " +
-			"has ended. A login in flight on it ends cancelled. The request stands until the runner's health or capability " +
-			"document names the harness without the account, or the runner stops advertising the accounts feature; a repeat is " +
+			"has ended. A login in flight on it ends cancelled. The request stands until neither the runner's capability " +
+			"document nor its health lists the account, or the runner stops advertising the accounts feature; a repeat is " +
 			"the same request, and a login that adds the account again ends it. A runner that does not advertise accounts to " +
 			"this hub — its owner has turned it off for it, or it runs an older yad — is 409.",
 		Security: adminSecurity, Errors: []int{400, 401, 404, 409},
@@ -173,27 +173,24 @@ func healthAccount(h v1.Health, harness, label string) (v1.AccountReport, bool) 
 	return v1.AccountReport{}, false
 }
 
-// gone is whether the runner's reports leave the account out: this sync's
-// health naming the harness without it, or the runner's current capability
-// document doing so, or naming no such harness at all.
+// gone is whether the runner's reports leave the account out: its current
+// capability document does not list it, and neither does this sync's health.
 //
-// Health alone cannot say it. It names only the harnesses the runner can
-// drive, so removing the last account of a harness with no default login
-// takes the harness out of health altogether — the account gone, and nothing
-// in health to say so — and a health that names no harness is also a runner
-// that could not read its accounts this time. Health also names at most
-// sixteen of a harness's accounts. The document names every harness the
-// runner found, with all its accounts, and a removal rebuilds it at once.
+// The document is the one that can say an account is gone. It names every
+// harness the runner found with all its accounts, and the runner rebuilds it
+// as soon as an account is removed. Health cannot: it names only the
+// harnesses the runner can drive, so removing a harness's last account on a
+// machine with no default login takes the harness out of health altogether;
+// a health naming no harness is also a runner that could not read its
+// accounts that time; and it names at most sixteen of a harness's accounts.
+// But health is built at every sync and the document only when the runner
+// gets to it, so an account health still lists — one just added, say, that a
+// document not yet rebuilt leaves out — is not gone.
 func gone(h v1.Health, doc v1.Capabilities, described bool, harness, label string) bool {
-	for _, hh := range h.Harnesses {
-		if hh.ID == harness {
-			if _, listed := healthAccount(h, harness, label); !listed {
-				return true
-			}
-			break
-		}
-	}
 	if !described {
+		return false
+	}
+	if _, listed := healthAccount(h, harness, label); listed {
 		return false
 	}
 	for _, hr := range doc.Harnesses {

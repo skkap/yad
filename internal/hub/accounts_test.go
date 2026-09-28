@@ -169,8 +169,15 @@ func TestARemovalThroughYadHub(t *testing.T) {
 			t.Fatalf("controls %+v, want remove_account for work", cs)
 		}
 	}
-	// The runner acted: its health names claude, and work no longer.
-	f.mustSync(t, "r1", cred, later(withAccounts(on, "spare")))
+	// Either report alone still listing it is not the account gone.
+	capped := later(withAccounts(on, "spare"))
+	if cs := removals(f.mustSync(t, "r1", cred, capped)); len(cs) != 1 {
+		t.Fatalf("health left it out and the document lists it: controls %+v, want the removal still sent", cs)
+	}
+	// The runner acted: its new document and its health both leave it out.
+	acted := managing("r1", "spare")
+	acted.Fingerprint = "fp-acted"
+	f.mustSync(t, "r1", cred, acted)
 	var gone hubapi.Account
 	f.api(t, "GET", "/runners/r1/accounts/claude/work", tok, nil, &gone)
 	if gone.Listed || gone.State != "" || gone.RemoveRequestedAt != nil {
@@ -259,5 +266,22 @@ func TestAnAddEndsAWaitingRemovalOfItsLabel(t *testing.T) {
 	}
 	if cs := removals(f.mustSync(t, "r1", cred, later(on))); len(cs) != 0 {
 		t.Fatalf("the removal went out after the account was added again: %+v", cs)
+	}
+}
+
+// An account health still lists is not gone because the runner's document,
+// not yet rebuilt since the account was added, leaves it out.
+func TestARemovalWaitsForHealthAsWellAsTheDocument(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	on := managing("r1", "work")
+	f.mustSync(t, "r1", cred, on)
+	if code, e := f.api(t, "POST", "/runners/r1/accounts/claude/new/remove", tok, nil, nil); code != http.StatusOK {
+		t.Fatalf("remove: %d %+v", code, e)
+	}
+	// Health already has the account; the document is from before it.
+	if cs := removals(f.mustSync(t, "r1", cred, later(withAccounts(on, "work", "new")))); len(cs) != 1 || cs[0].Account != "new" {
+		t.Fatalf("controls %+v, want the removal of new sent", cs)
 	}
 }

@@ -70,5 +70,5 @@ type Account struct {
 	State  v1.AccountState `json:"state,omitempty" enum:"free,limited,needs_login" doc:"The account's state in the runner's last health; absent when not listed."`
 	// RemoveRequestedAt stands until the runner's health leaves the
 	// account out, or the runner stops advertising accounts.
-	RemoveRequestedAt *time.Time `json:"remove_requested_at,omitempty" doc:"When a removal was asked for; present until the runner's health or capability document leaves the account out, the runner no longer advertises the accounts feature, or a login adds the account again."`
+	RemoveRequestedAt *time.Time `json:"remove_requested_at,omitempty" doc:"When a removal was asked for; present until neither the runner's capability document nor its health lists the account, the runner no longer advertises the accounts feature, or a login adds the account again."`
 }
