@@ -85,7 +85,8 @@ push: a cancel you decide on now reaches the runner in its next sync.
 `queued` and `offered` are yours; the protocol never carries them. From
 `claimed` on, the runner reports the state in every sync until the run ends,
 and the terminal state arrives in the result. `lost` is the one terminal
-state you decide rather than hear. §4 has the full state machine.
+state you decide rather than hear — and `cancelled`, for a claim you cancelled
+that the runner withdrew unstarted (§3). §4 has the full state machine.
 
 **A session is a conversation that stays on one machine.** Every run belongs
 to one session. The first run in a session binds it to the runner that claims
@@ -314,7 +315,8 @@ taken.
 says why it goes where it does):
 
 1. **Settle what time has decided** (§5): offers whose lease lapsed go back
-   in the queue, held runs whose lease lapsed are lost, and runners silent past
+   in the queue, held runs whose lease lapsed are lost — a claim you have
+   asked to cancel is cancelled instead (below) — and runners silent past
    your abandon-after lose their sessions — so a runner back from a long
    absence hears what became of its runs rather than renewing them.
 2. **Take the document** if the request carries one: it replaces the one you
@@ -347,6 +349,8 @@ says why it goes where it does):
      you have no record of. Do not offer that same run in the answer carrying
      its cancel — the runner would have to guess which one you meant.
    - then add the controls you have for each held run (§7).
+   - **a claim you have asked to cancel that this sync leaves out → it is
+     cancelled.** The runner withdrew it unstarted and owes no result (below).
 
    **A runner lists each run at most once in a sync**, and a yad runner never
    lists one twice. A hub handed two listings of one run may apply either:
@@ -383,6 +387,20 @@ claimed run once a sync listing it has been answered *without a `cancel` for
 it*. That is what makes the cancel in step 4 safe: a run you cancel before the
 runner's listing is answered never starts, and the runner drops it without
 reporting anything.
+
+**A claim you cancel that the runner withdraws ends `cancelled`, never `lost`**
+([0060](docs/decisions/0060-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
+If the answer that acknowledged a claim is lost in transit, you hold the run
+as claimed while the runner is still waiting to hear so. A cancel you ask for
+then reaches it first, so it withdraws the claim — the run never starts and no
+result follows — and its next sync leaves the run out. Record the run
+`cancelled` at that sync or, if no sync comes, when its lease lapses: it ended
+the way you asked, and `lost` would tell your user that something failed when
+nothing did. The rule covers only a run you hold as `claimed` and have asked
+to cancel. A claim nobody asked to cancel stays held until its lease lapses,
+and is lost; a run a sync has reported `preparing` or later owes a result, and
+is lost if none comes. `yad hub` also ends a cancelled claim `cancelled` when
+its runner deregisters holding it.
 
 **Response:** `next_sync_ms` and `lease_ms` (required), `runs` (the offers),
 `controls`, `min_version`. Omit `runs` and `controls` when empty.
@@ -675,8 +693,8 @@ claimed ─► preparing ─► running ─► succeeded | failed | cancelled | 
 | `preparing` | runner | building the workdir, running the repository's setup hook, choosing an account |
 | `running` | runner | the harness is running. A finished run whose result you have not yet acknowledged stays listed as `running`, so its lease outlasts an outage on your side |
 | `waiting` | runner | parked on a usage limit with no process; `resumes_at` says when it expects to continue. It survives a runner restart |
-| `succeeded`, `failed`, `cancelled`, `timed_out` | runner | terminal, reported in the result |
-| `lost` | hub, usually | terminal. You record it when a lease lapses or the runner deregisters. A runner also *reports* `lost` for a run a previous process of it was holding when it died |
+| `succeeded`, `failed`, `cancelled`, `timed_out` | runner | terminal, reported in the result. You record `cancelled` yourself for a run you cancel before any claim, and for a claim you cancelled that the runner withdrew (§3) |
+| `lost` | hub, usually | terminal. You record it when a lease lapses or the runner deregisters — except on a claim you cancelled, which is `cancelled` (§3). A runner also *reports* `lost` for a run a previous process of it was holding when it died |
 
 A run reaches exactly one terminal state and never leaves it. Non-terminal
 states travel in syncs; the terminal one travels in the result. A run also
@@ -720,8 +738,11 @@ sync.
 
 **Leases.** Every sync renews the lease on every run it lists. A run whose
 lease lapses is **lost**: the runner is gone or has stopped talking, and the
-run will not be reported. Decide what lost means for you, but decide it; a run
-in a non-terminal state that nothing will ever end is a queue that only grows.
+run will not be reported. The one exception is a claim you have asked to
+cancel, which is **cancelled**: the runner may have withdrawn it unstarted,
+which is the end you asked for (§3). Decide what lost means for you, but
+decide it; a run in a non-terminal state that nothing will ever end is a queue
+that only grows.
 Lapsed leases must be found even when nothing syncs — `yad hub` sweeps on a
 timer at the sync interval, as well as at the start of every sync — because a
 hub whose only runner went away gets no syncs to notice it by.
@@ -750,8 +771,9 @@ a result that arrives afterwards is a different terminal state, refused with
 
 **Deregister settles everything the runner held, sessions included.** A
 runner that calls `deregister` is not coming back under that credential, so:
-the runs it holds become `lost`; the runs offered to it and not yet claimed go
-back in the queue; and **every session bound to it closes, with the runs still
+the runs it holds become `lost` (a claim you have asked to cancel,
+`cancelled`, §3); the runs offered to it and not yet claimed go back in the
+queue; and **every session bound to it closes, with the runs still
 queued in those sessions ending** — `yad hub` fails them with a reason that
 says to submit the work to a new session. **Do not unbind the sessions
 instead.** A session is resumable only on the runner that holds it, because its
@@ -937,7 +959,7 @@ a rule for when to stop sending it:
 
 | control | carries | what the runner does | send it |
 |---|---|---|---|
-| `cancel` | `run_id` | ends the run: interrupts the harness, then signals its process group, then kills it. A waiting run ends where it stands. A run whose claim you answer with a cancel never starts, and no result is owed | in every response to a sync that lists the run, until the run ends. The runner acts on the first |
+| `cancel` | `run_id` | ends the run: interrupts the harness, then signals its process group, then kills it. A waiting run ends where it stands. A run whose claim you answer with a cancel never starts, and no result is owed: the runner leaves it out of its next sync, and you record it `cancelled` (§3) | in every response to a sync that lists the run, until the run ends. The runner acts on the first |
 | `interrupt` | `run_id` | ends the current turn and keeps the session; the run ends `cancelled` unless the turn finished first. An interrupt that reaches a run before its harness is up ends it as a cancel does | the same as `cancel` |
 | `steer` | `run_id`, `text` | hands the text to the running harness as more input, at its next tool boundary or after the turn. One the harness would not take appears as an `error` event with class `steer_failed` | **once**. Repeat it and the harness reads the text twice |
 | `close_session` | `session_id` | closes the session and deletes its workdir; a session with a run held closes when that run ends; one it does not hold or already closed is reported closed | in every response until the session appears in the runner's `closed_sessions` (§8) |
@@ -1127,9 +1149,9 @@ before the claim was answered is withdrawn by the next process, session and
 all; one that was answered — so you bound the session — and had not begun to
 prepare is reported `lost`, and its session stays for the next run to
 continue. The one case neither side can see is an answer you sent that the
-runner never read before it stopped: you bound the session, the runner
-withdrew it, and the next run, sent `false`, is refused as a session the
-runner does not hold.
+runner never read — before it stopped, or before a cancel you sent next
+reached it (§3): you bound the session, the runner withdrew it, and the next
+run, sent `false`, is refused as a session the runner does not hold.
 
 **Sessions stay put.** The first claim in a session binds it to that runner.
 Its later runs are offered to that runner alone — a session is resumable only
@@ -1413,7 +1435,7 @@ is something **your hub still has to get right** with nothing to catch you:
 | rule | why the suite cannot reach it |
 |---|---|
 | `POST /runners/{runner}/deregister` — held runs lost, offers requeued, the runner's sessions closed and their queued runs ended | deregistering retires the runner every other check is made as; the second runner `--second-token` registers could carry it, and does not yet. `yad hub` implements it; implement it in yours |
-| The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
+| The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, a cancelled claim the runner withdraws recorded `cancelled` rather than `lost`, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
 | `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, `effort`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
 | Hub logins — `start_login` and `login_token` repeated until the runner reports the login, `login_code` while it reports it `waiting`, `cancel_login` until it reports it over; a token held only until the runner reports its login; a login the runner reported and then leaves out ended `failed`; a login ended on the hub's word only while never sent, and a sent one unheard for thirty minutes ended `failed` with its token blanked, a runner's later report still replacing that end | only your own API starts a login, outside v1, and the suite advertises no `login` feature to be sent one. What is checked: that no login control reaches it, and that a sync carrying `logins` is taken |
 | Adding and removing accounts — `add` and `remove_account` only while the runner advertises `accounts` to you, and `remove_account` repeated until neither its capability document nor its health lists the account, or `accounts` is no longer advertised | only your own API adds or removes an account, outside v1, and the suite advertises no `accounts` feature to be sent either. What is checked: that neither reaches it |
@@ -1483,6 +1505,7 @@ checks; the rest is yours to get right.
 **Leases and loss**
 
 - [ ] Every sync renews the lease of every run it lists; lapsed leases are lost, found by a timer as well as by syncs — [§5](#5-leases-timings-and-runners-that-go-away) (C)
+- [ ] A claim you asked to cancel ends `cancelled`, not `lost`, when a sync leaves it out or its lease lapses — [§3](#post-runnersrunnersync)
 - [ ] An offer lapses with its lease and goes back in the queue; a claim listed after that is answered with `cancel` — [§5](#5-leases-timings-and-runners-that-go-away) (C)
 - [ ] `deregister` loses held runs, requeues offers, closes the runner's sessions and ends their queued runs, and retires the credential — [§5](#5-leases-timings-and-runners-that-go-away)
 - [ ] A runner silent past your abandon-after loses its sessions and their queued runs, keeps its credential, and hears `close_session` when it returns — [§5](#5-leases-timings-and-runners-that-go-away)

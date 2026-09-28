@@ -21,12 +21,13 @@ import (
 const maxDeregisterReason = 200
 
 // departure is how the hub settles a runner it has given up on: what each run
-// it held says, why its sessions closed, and what becomes of the runs still
-// waiting in them. mayReturn is a runner that kept its credential — it only
+// it held says — lost, or cancelled for a claim a cancel was asked for — why
+// its sessions closed, and what becomes of the runs still waiting in them. mayReturn is a runner that kept its credential — it only
 // went silent — so its workdirs are still on its disk, and it is sent
 // close_session for each of those sessions if it ever syncs again.
 type departure struct {
 	lost      string
+	cancelled string
 	sessions  v1.SessionCloseReason
 	unstarted unstartedEnd
 	mayReturn bool
@@ -57,7 +58,8 @@ func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, 
 		lost += ": " + why
 	}
 	gone := departure{
-		lost: lost,
+		lost:      lost,
+		cancelled: fmt.Sprintf("cancelled before runner %s started it; the runner deregistered", runner.ID),
 		// The runner's owner took the machine away, and every session on
 		// its disk with it.
 		sessions:  v1.SessionClosedByOwner,
@@ -91,7 +93,10 @@ func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, 
 //   - offers it never claimed go back in the queue first, because an offer
 //     was never a run held — and one in a session of its own is then ended
 //     with that session below, rather than re-offered to nobody;
-//   - runs it held are lost, because nobody is left to report them;
+//   - a claim a cancel was asked for ends cancelled, as a sync leaving it out
+//     would end it (decision 0060): no sync said it started, and that end is
+//     the one asked for;
+//   - the other runs it held are lost, because nobody is left to report them;
 //   - its open sessions close, and the runs waiting in them end. Such a run
 //     would otherwise be offerable to no one — OfferCandidates takes only
 //     sessions unbound or bound to the asking runner — and would stay queued
@@ -103,6 +108,9 @@ func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, 
 func abandon(ctx context.Context, q *db.Queries, runnerID string, gone departure, now time.Time) error {
 	me := sql.NullString{String: runnerID, Valid: true}
 	if _, err := q.RequeueRunnerOffers(ctx, db.RequeueRunnerOffersParams{Now: store.Ms(now), RunnerID: me}); err != nil {
+		return err
+	}
+	if err := cancelWithdrawn(ctx, q, runnerID, nil, gone.cancelled, now); err != nil {
 		return err
 	}
 	if _, err := q.LoseRunnerRuns(ctx, db.LoseRunnerRunsParams{
@@ -149,8 +157,9 @@ func (h *Hub) abandonSilent(ctx context.Context, q *db.Queries, now time.Time) e
 	}
 	for _, id := range silent {
 		gone := departure{
-			lost:     fmt.Sprintf("runner %s had not synced for more than %s while it held this run", id, h.abandonAfter),
-			sessions: v1.SessionClosed,
+			lost:      fmt.Sprintf("runner %s had not synced for more than %s while it held this run", id, h.abandonAfter),
+			cancelled: fmt.Sprintf("cancelled before runner %s started it; the runner had not synced for more than %s", id, h.abandonAfter),
+			sessions:  v1.SessionClosed,
 			unstarted: unstartedEnd{v1.RunFailed, fmt.Sprintf(
 				"its session's runner %s had not synced for more than %s, so the hub closed the session; submit the work to a new session", id, h.abandonAfter)},
 			mayReturn: true,
