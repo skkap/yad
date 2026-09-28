@@ -315,7 +315,7 @@ func (p *Process) signalGroup(sig syscall.Signal) {
 //   - every variable that chooses whose credential a harness uses —
 //     v1.AccountVariable, the list a grant is refused by — since one set on
 //     the machine ranks above the account's login and moves the run off it
-//     while every report still names the account (DEV-62, decision 0059);
+//     while every report still names the account (DEV-62, decision 0060);
 //   - YAD_* is the runner's own configuration, which a harness has no business
 //     reading.
 //

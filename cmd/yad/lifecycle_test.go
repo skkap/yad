@@ -482,7 +482,7 @@ func TestServiceStdoutGetsNothingOnceTheLogIsOpen(t *testing.T) {
 
 // A daemon a service manager started has an environment `yad doctor`, run in
 // the owner's shell, never sees. So the daemon names its own account variables
-// in its log at start (decision 0059) — the names, never a value.
+// in its log at start (decision 0060) — the names, never a value.
 func TestDaemonLogsItsOwnAccountVariables(t *testing.T) {
 	l := newLifecycle(t)
 	t.Setenv("OPENAI_API_KEY", "sk-daemon-secret-value")
@@ -501,7 +501,7 @@ func TestDaemonLogsItsOwnAccountVariables(t *testing.T) {
 		t.Errorf("exit %d", code)
 	}
 	_, logged, _ := l.yad("daemon", "logs")
-	if !strings.Contains(logged, "OPENAI_API_KEY") || !strings.Contains(logged, "decision 0059") {
+	if !strings.Contains(logged, "OPENAI_API_KEY") || !strings.Contains(logged, "decision 0060") {
 		t.Errorf("the log does not name the variable and the decision:\n%s", logged)
 	}
 	if strings.Contains(logged, "CODEX_HOME") {

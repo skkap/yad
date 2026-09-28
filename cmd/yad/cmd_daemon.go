@@ -170,7 +170,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	// always this environment — a service manager starts the daemon with its
 	// own. Names only: the values are credentials.
 	if names := supervise.AccountVariables(os.Environ()); len(names) > 0 {
-		log.Warn("the daemon's environment sets variables that choose a harness's credential; each is removed from every child the runner starts, so runs use their account's login instead (decision 0059)", "variables", names)
+		log.Warn("the daemon's environment sets variables that choose a harness's credential; each is removed from every child the runner starts, so runs use their account's login instead (decision 0060)", "variables", names)
 	}
 
 	// Syncs read the document every interval; probing harnesses that often
