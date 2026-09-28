@@ -445,7 +445,10 @@ it, a new event kind, run state, result state or close reason to a hub
 advertising it in `hub_features`. A yad runner keeps no `hub_features` today,
 because v1 defines none; the first value gated on one needs the runner to keep
 them per connection first. `protocol/v1`'s `TestTheV1EnumsAreClosed` pins every
-set as v1 shipped it.
+set as v1 shipped it. The enums a hub sends are generated as
+`x-extensible-enum`, so `make check-breaking` accepts their gated growth. The
+service API's enums stay `enum`, because it has no features to gate on
+([0058](docs/decisions/0058-an-enum-a-hub-sends-is-written-as-x-extensible-enum.md)).
 
 A hub may refuse a runner below `min_version` with `version_too_old` and a next
 action. `yad hub serve --min-version 0.4.0` sets that floor: a runner under it

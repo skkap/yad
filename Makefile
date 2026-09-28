@@ -68,8 +68,9 @@ check-openapi: generate-openapi
 # release tag and fails on a change that breaks a generated client. Inert, and
 # says so, until the owner pushes the first v[0-9]* tag. scripts/breaking.sh
 # holds the reasoning; it runs after check-openapi, here and in CI, so the
-# documents it reads are known to match the Go types. Its one known false alarm — a grown enum,
-# which §2 Versioning makes safe here — is DEV-87, named in the script too.
+# documents it reads are known to match the Go types. An enum a hub sends grows
+# within v1 behind a feature, and the generator writes it so that oasdiff lets it
+# grow (docs/decisions/0058).
 check-breaking:
 	@./scripts/breaking.sh
 
