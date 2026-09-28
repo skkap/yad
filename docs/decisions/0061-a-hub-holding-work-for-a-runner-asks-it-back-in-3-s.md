@@ -20,18 +20,22 @@ does not change, and no field is renamed or removed.
 **`yad hub` answers 3 s** — the owner's number (DEV-53, 2026-09-29) — while a
 queued run waits for that runner and nothing but a run it is executing: its
 capacity is full, or the run is the next in a session it holds. Precisely,
-the runner lists a run that is not `waiting`, and a queued run passes every
-rule an offer to it applies except capacity and its own session's live run.
-Otherwise the configured interval, unchanged.
+a queued run passes every rule an offer to it applies except capacity and its
+own session's live run, and a run the runner lists as executing — not
+`waiting` — would let it go by ending: the session's live run, or, for
+capacity, a run of its harness when that harness's own cap is full and any run
+otherwise. Otherwise the configured interval, unchanged.
 
 The two conditions are what keep a runner from being asked back for nothing:
 
-- **Something it holds must be executing.** A waiting run gives its capacity
-  back at an account's reset, hours off. A runner listing nothing has its
+- **Something it is executing must free the run by ending.** A waiting run
+  gives its capacity, and its session, back at an account's reset, hours off. A runner listing nothing has its
   capacity taken by what this hub cannot see end — another hub's runs, or a
   pool of none. Either asked back every 3 s would sync a thousand times and
   find itself no freer. The cost is that a runner full of another hub's runs
-  picks this hub's up an interval late, as before.
+  picks this hub's up an interval late, as before. And a run ending frees
+  only its own harness's cap, so a claude run going on does not count for a
+  codex run held back by codex's.
 - **The queued run must be one it would take.** A harness it cannot drive or
   has capped at zero, a session bound to another runner or closing, a start
   moment it cannot hold, an effort it does not take: none shortens anything,

@@ -730,14 +730,17 @@ change was sent before the run existed. `yad hub` answers 3 s when **all** of
 these hold, and its configured interval otherwise
 ([0061](docs/decisions/0061-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)):
 
-- the runner lists a run that is not `waiting`. A waiting run gives its
-  capacity back at an account's reset, hours off, and a runner listing nothing
-  has its capacity taken by nothing you can see end — another hub's runs, or
-  none at all — so asking either back sooner finds it no freer;
 - a queued run is one it would be offered but for its capacity or the live run
   of its own session: a harness it drives and has not capped at zero, in a
   session unbound or bound to it, not closing, and past everything else an
   offer checks — a start moment it cannot hold, an effort it does not take;
+- a run the runner lists as executing — anything but `waiting` — would let
+  that queued run go by ending. A waiting run gives its capacity, and its
+  session, back at an account's reset, hours off; a runner listing nothing has
+  its capacity taken by nothing you can see end — another hub's runs, or none
+  at all — so asking either back sooner finds it no freer. When the queued
+  run's harness has its own cap full (`free_capacity.by_harness` at 0), only a
+  run of that harness ending frees it; otherwise any run ending does;
 - it is not draining, and has not been asked to.
 
 An idle fleet with nothing queued, and a run no runner here can take, keep the

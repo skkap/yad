@@ -98,14 +98,18 @@ LIMIT sqlc.arg(max);
 -- Queued runs this runner would be offered once a run it holds ends: the
 -- rules of OfferCandidates, except that a session bound to it may have a run
 -- out, since that run is this runner's and ending it is what lets the next
--- one go. An unbound session with a run out is left out: that run may be on
--- its way to another runner, whose claim would bind the session there.
+-- one go. Not a waiting one: that ends at an account's reset, hours off, not
+-- when anything the runner is executing does. An unbound session with a run
+-- out is left out: that run may be on its way to another runner, whose claim
+-- would bind the session there.
 SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
   AND s.close_requested_at IS NULL AND s.closed_at IS NULL
   AND r.harness IN (SELECT value FROM json_each(sqlc.arg(harnesses_json)))
   AND (r.created_at > sqlc.arg(after_created_at) OR (r.created_at = sqlc.arg(after_created_at) AND r.id > sqlc.arg(after_id)))
-  AND (s.runner_id = sqlc.arg(runner_id) OR (s.runner_id IS NULL AND NOT EXISTS (
+  AND ((s.runner_id = sqlc.arg(runner_id) AND NOT EXISTS (
+      SELECT 1 FROM runs w WHERE w.session_id = r.session_id AND w.state = 'waiting'))
+    OR (s.runner_id IS NULL AND NOT EXISTS (
       SELECT 1 FROM runs o
       WHERE o.session_id = r.session_id
         AND o.state IN ('offered', 'claimed', 'preparing', 'running', 'waiting'))))

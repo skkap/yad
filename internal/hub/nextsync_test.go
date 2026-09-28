@@ -142,6 +142,64 @@ func TestNextSyncIsSoonerWhileARunWaitsForThisRunner(t *testing.T) {
 	}
 }
 
+// A turn queued behind its session's waiting run waits for an account's
+// reset, not for anything this runner is executing: a run going on in another
+// session does not make it any sooner, and must not ask the runner back in
+// 3 s for as long as that run lasts.
+func TestNextSyncIsNormalForATurnBehindAWaitingRun(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	f.enqueue(t, run("a", "s1"), run("c", "s2"))
+	f.mustSync(t, "r1", cred, first("r1", 2))
+	f.mustSync(t, "r1", cred, req("r1", 0, claimed("a", "c")...))
+	next := run("a2", "s1")
+	next.Session.New = false
+	f.enqueue(t, next)
+	res := f.mustSync(t, "r1", cred, req("r1", 1,
+		v1.HeldRun{RunID: "a", State: v1.RunWaiting}, v1.HeldRun{RunID: "c", State: v1.RunRunning}))
+	if len(res.Runs) != 0 || res.NextSyncMS != 15000 {
+		t.Errorf("offered %v, next_sync_ms %d; want nothing and 15000", ids(res.Runs), res.NextSyncMS)
+	}
+}
+
+// With a harness's own cap full, only a run of that harness ending lets the
+// queued run go: a claude run ending frees nothing for a codex run held back
+// by codex's cap. With only the total full, any run ending frees it.
+func TestNextSyncCountsOnlyARunWhoseEndFreesTheQueuedOne(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		free v1.Capacity
+		want int
+	}{
+		{"its harness's cap full, held by a waiting run", v1.Capacity{Total: 1, ByHarness: map[string]int{"codex": 0}}, 15000},
+		{"only the total full", v1.Capacity{Total: 0}, 3000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			cred := f.register(t, "r1")
+			d := doc("r1")
+			d.Harnesses[1].Kind = "first-class"
+			d.Capacity = v1.Capacity{Total: 3, ByHarness: map[string]int{"codex": 1}}
+			r := first("r1", 2)
+			r.Capabilities = &d
+			x := run("x", "sx")
+			x.Harness = "codex"
+			f.enqueue(t, run("a", "s1"), x)
+			f.mustSync(t, "r1", cred, r)
+			f.mustSync(t, "r1", cred, req("r1", 0, claimed("a", "x")...))
+			y := run("y", "sy")
+			y.Harness = "codex"
+			f.enqueue(t, y)
+			s := req("r1", 0, v1.HeldRun{RunID: "a", State: v1.RunRunning}, v1.HeldRun{RunID: "x", State: v1.RunWaiting})
+			s.Health.FreeCapacity = tc.free
+			res := f.mustSync(t, "r1", cred, s)
+			if len(res.Runs) != 0 || res.NextSyncMS != tc.want {
+				t.Errorf("offered %v, next_sync_ms %d; want nothing and %d", ids(res.Runs), res.NextSyncMS, tc.want)
+			}
+		})
+	}
+}
+
 // A runner holding nothing gets the normal interval whatever is queued: its
 // capacity is taken by nothing this hub can see end — another hub's runs, or
 // a pool of none — so a sooner sync would find it no freer.

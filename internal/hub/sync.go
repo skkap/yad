@@ -241,7 +241,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		if err != nil {
 			return err
 		}
-		soon, err := h.waitsForThisRunner(ctx, q, runner.ID, doc, described, req.Runs, now)
+		soon, err := h.waitsForThisRunner(ctx, q, runner.ID, doc, described, req.Runs, req.Health.FreeCapacity, now)
 		if soon {
 			out.NextSyncMS = int(h.quickInterval() / time.Millisecond)
 		}
@@ -320,14 +320,34 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 // 0061). A run submitted to an idle runner is not helped and cannot be: the
 // answer that would have to change was sent before the run existed (DEV-49).
 //
-// A runner listing only waiting runs, or none, is left at the configured
-// interval: nothing it holds is about to give capacity back, so asking it
-// sooner finds it no freer. And only a run it would be offered counts, so an
-// idle fleet and a run nobody here can take change nothing.
-func (h *Hub) waitsForThisRunner(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, held []v1.HeldRun, now time.Time) (bool, error) {
-	executing := slices.ContainsFunc(held, func(r v1.HeldRun) bool { return r.State != v1.RunWaiting })
-	if !executing {
+// Only a run it would be offered counts, so an idle fleet and a run nobody
+// here can take change nothing. And only one that a run it is executing would
+// let go by ending: a waiting run ends at an account's reset, hours off, and
+// a runner listing none has its capacity taken by nothing this hub can see
+// end, so asking either sooner finds it no freer. With its harness's own cap
+// full, only a run of that harness ending frees it; otherwise the total is
+// what is full, and any run ending frees that.
+func (h *Hub) waitsForThisRunner(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, held []v1.HeldRun, free v1.Capacity, now time.Time) (bool, error) {
+	executing := map[string]bool{}
+	for _, r := range held {
+		if r.State == v1.RunWaiting {
+			continue
+		}
+		run, err := q.GetRun(ctx, r.RunID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		executing[run.Harness] = true
+	}
+	if len(executing) == 0 {
 		return false, nil
+	}
+	frees := func(harness string) bool {
+		n, capped := free.ByHarness[harness]
+		return executing[harness] || !capped || n > 0
 	}
 	var harnesses []string
 	for _, hr := range doc.Harnesses {
@@ -346,6 +366,9 @@ func (h *Hub) waitsForThisRunner(ctx context.Context, q *db.Queries, runnerID st
 			HarnessesJson: list, AfterCreatedAt: after.CreatedAt, AfterID: after.ID, RunnerID: me, Max: candidatePage,
 		})
 	}, func(c db.Run) (bool, error) {
+		if !frees(c.Harness) {
+			return true, nil
+		}
 		run, err := spec(c)
 		found = err == nil && admits(run)
 		return !found, err

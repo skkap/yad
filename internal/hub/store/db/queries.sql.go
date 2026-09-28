@@ -1674,7 +1674,9 @@ WHERE r.state = 'queued'
   AND s.close_requested_at IS NULL AND s.closed_at IS NULL
   AND r.harness IN (SELECT value FROM json_each(?1))
   AND (r.created_at > ?2 OR (r.created_at = ?2 AND r.id > ?3))
-  AND (s.runner_id = ?4 OR (s.runner_id IS NULL AND NOT EXISTS (
+  AND ((s.runner_id = ?4 AND NOT EXISTS (
+      SELECT 1 FROM runs w WHERE w.session_id = r.session_id AND w.state = 'waiting'))
+    OR (s.runner_id IS NULL AND NOT EXISTS (
       SELECT 1 FROM runs o
       WHERE o.session_id = r.session_id
         AND o.state IN ('offered', 'claimed', 'preparing', 'running', 'waiting'))))
@@ -1697,8 +1699,10 @@ type SoonCandidatesParams struct {
 // Queued runs this runner would be offered once a run it holds ends: the
 // rules of OfferCandidates, except that a session bound to it may have a run
 // out, since that run is this runner's and ending it is what lets the next
-// one go. An unbound session with a run out is left out: that run may be on
-// its way to another runner, whose claim would bind the session there.
+// one go. Not a waiting one: that ends at an account's reset, hours off, not
+// when anything the runner is executing does. An unbound session with a run
+// out is left out: that run may be on its way to another runner, whose claim
+// would bind the session there.
 func (q *Queries) SoonCandidates(ctx context.Context, arg SoonCandidatesParams) ([]Run, error) {
 	rows, err := q.db.QueryContext(ctx, soonCandidates,
 		arg.HarnessesJson,
