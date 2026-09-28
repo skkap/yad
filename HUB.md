@@ -348,7 +348,12 @@ says why it goes where it does):
      already lost, whose offer to this runner lapsed before this claim
      arrived, or never heard of: silence leaves the runner holding something
      you have no record of. Do not offer that same run in the answer carrying
-     its cancel — the runner would have to guess which one you meant.
+     its cancel — the runner would have to guess which one you meant — nor
+     any other run in its session: a runner stops a run it is executing only
+     after claiming the offers beside the cancel, and refuses a second live
+     run in one session. If it lists as `claimed` a claim you ended
+     when its lease lapsed, and that claim bound its session, unbind the
+     session (§8).
    - then add the controls you have for each held run (§7).
    - **a claim you have asked to cancel that this sync leaves out → it is
      cancelled.** The runner withdrew it unstarted and owes no result (below).
@@ -863,9 +868,12 @@ It crashed, was switched off, or lost its network; it may come back.
   queue, and you may offer it to any runner. A claim that arrives after that —
   the runner back, listing the run — is answered with a `cancel`, exactly as
   for a run whose lease lapsed after it was claimed: by then the run may be
-  another runner's. `yad hub` also leaves that run out of the offers in the
-  answer carrying the cancel, so no runner is told to stop and start the same
-  run at once. Conformance checks the lapse and the cancel.
+  another runner's. `yad hub` also leaves that run, and every other run in its
+  session, out of the offers in the answer carrying the cancel, so no runner
+  is told to stop and start the same run at once, or handed a second run in a
+  session it still holds one in. A claim it lists as `claimed` after its own
+  lease lapsed unbinds the session it bound (§8). Conformance checks the lapse
+  and the cancel.
 - **Its sessions are given up after a long silence — your abandon-after.**
   Later runs in a session bound to it go to it alone, so a runner that never
   returns would leave them waiting for good. After a silence longer than your
@@ -1222,19 +1230,34 @@ prepare is reported `lost`, and its session stays for the next run to
 continue.
 
 An answer you sent that the runner never read leaves you with a bound session
-the runner does not have. When a cancel you sent next reached it first (§3),
-you can see it: the sync that leaves that cancelled claim out is the runner
-saying it withdrew the claim, and with it the session the claim opened. So
-**keep which run's claim bound each session, and unbind the session when the
-withdrawn claim is that run** — its next run then goes out `new: true`, to any
-runner. Nothing else unbinds a session. A withdrawn claim that did not bind it
-came after a run that did, and the runner keeps a session that has run a turn;
-a session whose close you asked for is closed by the runner, not deleted, and
-you are waiting to hear so; a lease that lapses cannot tell a withdrawal from
-a runner gone silent. `yad hub` does exactly this. The one case neither side
-can see is the runner stopping before it read that answer: you bound the
-session, the next process withdrew it, and the next run, sent `false`, is
-refused as a session the runner does not hold.
+the runner does not have. You can see it in two ways (§3):
+
+- **a cancel you sent next reached it first.** The sync that leaves that
+  cancelled claim out is the runner saying it withdrew the claim, and with it
+  the session the claim opened;
+- **the runner was silent past the claim's lease, and lists it as `claimed`
+  when it comes back.** You ended the run when the lease lapsed — `lost`, or
+  `cancelled` if you had been asked to — so your answer is a `cancel`, and a
+  claim still listed as `claimed` is one no answer acknowledged: the runner
+  withdraws it at whichever cancel it hears first, and the session with it.
+  A run it lists as `preparing` or later started, and it stops that run and
+  keeps the session. A run with a start moment is the exception: the runner
+  holds an acknowledged claim as `claimed` until its moment, so the listing
+  cannot tell a lost answer from a kept session, and the session stays bound.
+
+So **keep which run's claim bound each session, and unbind the session when
+the withdrawn claim is that run** — at the sync that leaves it out, or at the
+sync that answers its late listing with a cancel — and its next run then goes
+out `new: true`, to any runner. Nothing else unbinds a session. A withdrawn
+claim that did not bind it came after a run that did, and the runner keeps a
+session that has run a turn; a session whose close you asked for is closed by
+the runner, not deleted, and you are waiting to hear so; a lease that lapses
+with no sync after it cannot tell a withdrawal from a runner gone silent.
+`yad hub` does exactly this. The one case neither side can see is the runner
+stopping before it read that answer: you bound the session, the next process
+withdrew it, and the next run, sent `false`, is refused as a session the
+runner does not hold. A claim with a start moment whose answer was lost is
+the same, seen from the hub.
 
 **Sessions stay put.** The first claim in a session binds it to that runner.
 Its later runs are offered to that runner alone — a session is resumable only

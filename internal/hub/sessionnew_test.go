@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 )
@@ -232,6 +233,119 @@ func TestAWithdrawnClaimUnbindsTheSessionItBoundAlone(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A claim whose lease lapsed, listed as claimed when its runner comes back,
+// is one the runner was never told was acknowledged: the answer saying so was
+// lost. The hub answers cancel, the runner withdraws the claim and deletes the
+// session it opened, so the session that claim bound goes back to unbound at
+// that answer, and its next run goes out opening it (DEV-148). Before, the
+// session stayed bound, and the next run went out continuing a session no
+// runner held, to be refused. Nothing in the session is offered beside the
+// cancel: the runner still holds the cancelled run when it claims the offers.
+// A run listed as started keeps its session, and so does one with a start
+// moment, whose acknowledged claim is listed as claimed until then; a session
+// with a close asked for stays bound, for DEV-143's reason.
+func TestALateClaimUnbindsTheSessionItBound(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		// arrange runs before the lease lapses, a claimed and s1 bound.
+		arrange func(t *testing.T, f *fixture, cred string)
+		// listed is how r1 lists a when it comes back.
+		listed v1.RunState
+		// a is a's state on the hub, and unbound whether s1 is at the end.
+		a       string
+		unbound bool
+	}{
+		{"claimed, lost on the lapse", nil, v1.RunClaimed, "lost", true},
+		{"claimed, cancelled on the lapse", func(t *testing.T, f *fixture, cred string) {
+			if code, e := f.api(t, "POST", "/runs/a/cancel", f.admin(t, "cli"), nil, nil); code != http.StatusOK {
+				t.Fatalf("cancel: %d %s", code, e.Message)
+			}
+		}, v1.RunClaimed, "cancelled", true},
+		{"started, lost on the lapse", func(t *testing.T, f *fixture, cred string) {
+			f.mustSync(t, "r1", cred, req("r1", 0, running("a")...))
+		}, v1.RunRunning, "lost", false},
+		{"claimed with a close asked for", func(t *testing.T, f *fixture, cred string) {
+			if code, e := f.api(t, "POST", "/sessions/s1/close", f.admin(t, "closer"), nil, nil); code != http.StatusOK {
+				t.Fatalf("close: %d %+v", code, e)
+			}
+		}, v1.RunClaimed, "lost", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			cred := f.register(t, "r1")
+			b := run("b", "s1")
+			b.Session.New = false
+			f.enqueue(t, run("a", "s1"), b)
+			f.mustSync(t, "r1", cred, first("r1", 1))
+			claimFirst(t, f, cred)
+			if tc.arrange != nil {
+				tc.arrange(t, f, cred)
+			}
+			f.clock.Advance(10 * time.Minute)
+
+			res := f.mustSync(t, "r1", cred, req("r1", 1, v1.HeldRun{RunID: "a", State: tc.listed}))
+			if !slices.Equal(cancels(res), []string{"a"}) || len(res.Runs) != 0 {
+				t.Fatalf("answered cancels %v and offers %v, want a cancelled and nothing offered beside it", cancels(res), ids(res.Runs))
+			}
+			if got := f.state(t, "a"); got != tc.a {
+				t.Fatalf("a is %s, want %s", got, tc.a)
+			}
+			s, err := f.store.GetSession(ctx, "s1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.unbound {
+				if s.RunnerID.String != "r1" || s.BoundByRun.String != "a" {
+					t.Fatalf("s1 is bound to %q by %q, want r1 by a", s.RunnerID.String, s.BoundByRun.String)
+				}
+				return
+			}
+			if s.RunnerID.Valid || s.BoundByRun.Valid {
+				t.Fatalf("s1 is bound to %q by %q, want unbound", s.RunnerID.String, s.BoundByRun.String)
+			}
+			res = f.mustSync(t, "r1", cred, req("r1", 1))
+			if !slices.Equal(ids(res.Runs), []string{"b"}) || !res.Runs[0].Session.New {
+				t.Errorf("offered %+v, want b opening s1", res.Runs)
+			}
+		})
+	}
+}
+
+// A run with a start moment keeps its session when it is listed as claimed
+// after its lease lapsed: its runner holds a claim it was told was
+// acknowledged as claimed until the moment, and keeps the session it opened,
+// so a run sent opening it would be refused there (DEV-148).
+func TestALateClaimWithAStartMomentKeepsItsSession(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	a := run("a", "s1")
+	at := f.clock.Now().Add(time.Minute)
+	a.StartAt = &at
+	b := run("b", "s1")
+	b.Session.New = false
+	f.enqueue(t, a, b)
+	if res := f.mustSync(t, "r1", cred, first("r1", 1)); !slices.Equal(ids(res.Runs), []string{"a"}) {
+		t.Fatalf("offered %v, want a", ids(res.Runs))
+	}
+	claimFirst(t, f, cred)
+	f.clock.Advance(10 * time.Minute)
+	if res := f.mustSync(t, "r1", cred, req("r1", 1, claimed("a")...)); !slices.Equal(cancels(res), []string{"a"}) || len(res.Runs) != 0 {
+		t.Fatalf("answered cancels %v and offers %v", cancels(res), ids(res.Runs))
+	}
+	s, err := f.store.GetSession(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.RunnerID.String != "r1" || s.BoundByRun.String != "a" {
+		t.Fatalf("s1 is bound to %q by %q, want r1 by a", s.RunnerID.String, s.BoundByRun.String)
+	}
+	if res := f.mustSync(t, "r1", cred, req("r1", 1)); !slices.Equal(ids(res.Runs), []string{"b"}) || res.Runs[0].Session.New {
+		t.Errorf("offered %+v, want b continuing s1", res.Runs)
 	}
 }
 
