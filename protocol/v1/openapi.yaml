@@ -177,7 +177,8 @@ components:
           type: string
         kind:
           description: "cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins (and for Codex the user_code to type there). login_code: the code the owner got at that URL, never for a login reporting user_code. login_token: store a token as the account's login. cancel_login: end a login. remove_account: take the account named by harness and account off the runner. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name; the four login kinds only to one advertising login; remove_account, and start_login or login_token carrying add, only to one advertising accounts. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."
-          enum:
+          type: string
+          x-extensible-enum:
             - cancel
             - interrupt
             - steer
@@ -190,7 +191,6 @@ components:
             - login_token
             - cancel_login
             - remove_account
-          type: string
         login_id:
           description: "The login, for start_login, login_code, login_token and cancel_login: chosen by the hub, unique on it, 1-128 letters, digits, dots, dashes or underscores."
           type: string
@@ -325,10 +325,10 @@ components:
       properties:
         as:
           description: "env: set as the variable name=value in the harness's environment. file: written to a 0600 file named name outside the workdir, whose path the harness reads from the variable name."
-          enum:
+          type: string
+          x-extensible-enum:
             - env
             - file
-          type: string
         name:
           description: "An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH or HOME, nor a name beginning LD_ or DYLD_, nor one that picks a harness's credential or home — the whole list: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_PROFILE, ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_CONFIG_DIR, CLAUDE_CONFIG_DIR, ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS, any name beginning CLAUDE_CODE_USE_, CODEX_HOME, OPENAI_API_KEY, CODEX_API_KEY, CODEX_ACCESS_TOKEN, OPENAI_BASE_URL, CODEX_REFRESH_TOKEN_URL_OVERRIDE and AWS_BEARER_TOKEN_BEDROCK, whatever the run's harness. Every name is matched in any case. No two grants may share a name, and no two file grants may differ only by case."
           type: string
@@ -742,10 +742,10 @@ components:
           type: string
         mode:
           description: "per_run, the default: a fresh harness process for each run, resuming the session's conversation. live is reserved: offer it only to a runner advertising live_sessions, which none does yet."
-          enum:
+          type: string
+          x-extensible-enum:
             - per_run
             - live
-          type: string
         new:
           description: true for the run that opens the session, false for every later run. A runner refuses new true for a session id it already has, and new false for one it does not hold.
           type: boolean
