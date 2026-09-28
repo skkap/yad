@@ -95,7 +95,7 @@ func checkRegister(ctx context.Context, s *session) error {
 	// From here the credential is a secret this suite holds, and no failure
 	// prints it — including the answer that has just carried it.
 	s.c.learn(res.RunnerCredential)
-	s.note(a.Call, res.SyncIntervalMS, res.LeaseMS)
+	s.note(a.Call, v1MinInterval, res.SyncIntervalMS, res.LeaseMS)
 	return nil
 }
 

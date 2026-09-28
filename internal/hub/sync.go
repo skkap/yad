@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -247,6 +248,13 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			return nil
 		}
 		out.Runs, err = h.offer(ctx, q, runner.ID, doc, described, req.Health.FreeCapacity, cancelled, lease, now)
+		if err != nil {
+			return err
+		}
+		soon, err := h.waitsForThisRunner(ctx, q, runner.ID, doc, described, req.Runs, req.Health.FreeCapacity, now)
+		if soon {
+			out.NextSyncMS = int(h.quickInterval() / time.Millisecond)
+		}
 		return err
 	})
 	if err != nil {
@@ -281,6 +289,119 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 		}
 		return ids
 	}
+	if free.Total <= 0 {
+		return nil, nil
+	}
+	admits := admission(doc, described, now)
+	var runs []v1.Run
+	err := walkCandidates(ctx, takeable, func(harnesses string, after db.Run) ([]db.Run, error) {
+		return q.OfferCandidates(ctx, db.OfferCandidatesParams{
+			HarnessesJson: harnesses, AfterCreatedAt: after.CreatedAt, AfterID: after.ID, RunnerID: me, Max: candidatePage,
+		})
+	}, func(c db.Run) (bool, error) {
+		if n, capped := left[c.Harness]; capped && n <= 0 || cancelled[c.ID] {
+			return true, nil
+		}
+		run, err := spec(c)
+		if err != nil {
+			return false, err
+		}
+		if err := opening(ctx, q, &run); err != nil {
+			return false, err
+		}
+		if !admits(run) {
+			return true, nil
+		}
+		if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
+			return false, err
+		}
+		if err := q.NoteSessionOffer(ctx, db.NoteSessionOfferParams{RunnerID: me, ID: c.SessionID}); err != nil {
+			return false, err
+		}
+		if _, capped := left[c.Harness]; capped {
+			left[c.Harness]--
+		}
+		runs = append(runs, run)
+		return len(runs) < free.Total, nil
+	})
+	return runs, err
+}
+
+// waitsForThisRunner is whether a queued run waits for this runner and for
+// nothing but a run it is executing — full capacity, or its session's live
+// run — which is when the answer asks it back after quickInterval (decision
+// 0063). A run submitted to an idle runner is not helped and cannot be: the
+// answer that would have to change was sent before the run existed (DEV-49).
+//
+// Only a run it would be offered counts, so an idle fleet and a run nobody
+// here can take change nothing. And only one that a run it is executing would
+// let go by ending: a waiting run ends at an account's reset, hours off, and
+// a runner listing none has its capacity taken by nothing this hub can see
+// end, so asking either sooner finds it no freer. With its harness's own cap
+// full, only a run of that harness ending frees it; otherwise the total is
+// what is full, and any run ending frees that.
+func (h *Hub) waitsForThisRunner(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, held []v1.HeldRun, free v1.Capacity, now time.Time) (bool, error) {
+	executing := map[string]bool{}
+	for _, r := range held {
+		if r.State == v1.RunWaiting {
+			continue
+		}
+		run, err := q.GetRun(ctx, r.RunID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		executing[run.Harness] = true
+	}
+	if len(executing) == 0 {
+		return false, nil
+	}
+	frees := func(harness string) bool {
+		n, capped := free.ByHarness[harness]
+		return executing[harness] || !capped || n > 0
+	}
+	var harnesses []string
+	for _, hr := range doc.Harnesses {
+		if n, capped := doc.Capacity.ByHarness[hr.ID]; capped && n <= 0 {
+			continue
+		}
+		if capability.Drivable(doc, hr.ID) && !slices.Contains(harnesses, hr.ID) {
+			harnesses = append(harnesses, hr.ID)
+		}
+	}
+	me := sql.NullString{String: runnerID, Valid: true}
+	admits := admission(doc, described, now)
+	found := false
+	err := walkCandidates(ctx, func() []string { return harnesses }, func(list string, after db.Run) ([]db.Run, error) {
+		return q.SoonCandidates(ctx, db.SoonCandidatesParams{
+			HarnessesJson: list, AfterCreatedAt: after.CreatedAt, AfterID: after.ID, RunnerID: me, Max: candidatePage,
+		})
+	}, func(c db.Run) (bool, error) {
+		if !frees(c.Harness) {
+			return true, nil
+		}
+		run, err := spec(c)
+		if err != nil {
+			return false, err
+		}
+		// Read-only: it decides whether the run would open its session,
+		// which the rule about sources on the machine turns on.
+		if err := opening(ctx, q, &run); err != nil {
+			return false, err
+		}
+		found = admits(run)
+		return !found, nil
+	})
+	return found && err == nil, err
+}
+
+// admission is what a runner's document says about the queued runs it may be
+// offered, capacity aside, judged on a run opening has prepared. Shared by the
+// offer and by waitsForThisRunner, so that a runner is never asked back
+// sooner for a run it would then not be offered.
+func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) bool {
 	// A run whose start moment is still ahead goes only to a runner that will
 	// hold it back: one without the feature starts it on arrival. Once the
 	// moment has passed there is nothing left to hold, so the run is offered
@@ -306,64 +427,76 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 	// that advertises none the run stays queued, which is the honest answer.
 	// An undescribed runner is offered none, for the reason above.
 	takesEffort := described && advertises(doc, capability.FeatureEffort)
-	var (
-		runs   []v1.Run
-		cursor db.Run
-	)
-	for len(runs) < free.Total {
-		harnesses := takeable()
-		if len(harnesses) == 0 {
-			break
+	// A run opening a session with a source on the machine goes only to a
+	// runner whose owner has not switched those off: that runner would fail
+	// it source_refused, where another may take it (decision 0062). A run in
+	// a session already bound here is offered anyway — it can go nowhere
+	// else, and the runner's refusal names the setting, where a run left
+	// queued would say nothing. An undescribed runner is offered none, for
+	// the reason above.
+	takesLocal := described && (doc.PathSources == nil || *doc.PathSources)
+	return func(run v1.Run) bool {
+		if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
+			return false
+		}
+		if run.Effort != "" && !takesEffort {
+			return false
+		}
+		return !run.Session.New || takesLocal || !slices.ContainsFunc(run.Sources, onTheMachine)
+	}
+}
+
+// walkCandidates pages through queued runs oldest first, asking each page for
+// the harnesses harnesses names at that moment — offer's list shrinks as caps
+// fill — until visit says it has seen enough or the queue runs out.
+func walkCandidates(ctx context.Context, harnesses func() []string, page func(harnessesJSON string, after db.Run) ([]db.Run, error), visit func(db.Run) (more bool, err error)) error {
+	var cursor db.Run
+	for {
+		ids := harnesses()
+		if len(ids) == 0 {
+			return nil
 		}
 		// A JSON array rather than sqlc.slice: sqlc numbers its parameters,
 		// and expanding a slice of two or more shifted every one after it.
-		list, err := json.Marshal(harnesses)
+		list, err := json.Marshal(ids)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		page, err := q.OfferCandidates(ctx, db.OfferCandidatesParams{
-			HarnessesJson: string(list), AfterCreatedAt: cursor.CreatedAt, AfterID: cursor.ID, RunnerID: me, Max: candidatePage,
-		})
+		runs, err := page(string(list), cursor)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		for _, c := range page {
+		for _, c := range runs {
 			cursor = c
-			if len(runs) >= free.Total {
-				break
+			more, err := visit(c)
+			if err != nil || !more {
+				return err
 			}
-			if n, capped := left[c.Harness]; capped && n <= 0 || cancelled[c.ID] {
-				continue
-			}
-			var run v1.Run
-			if err := json.Unmarshal([]byte(c.Spec), &run); err != nil {
-				return nil, fmt.Errorf("stored run %s: %w", c.ID, err)
-			}
-			if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
-				continue
-			}
-			if run.Effort != "" && !takesEffort {
-				continue
-			}
-			if err := opening(ctx, q, &run); err != nil {
-				return nil, err
-			}
-			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
-				return nil, err
-			}
-			if err := q.NoteSessionOffer(ctx, db.NoteSessionOfferParams{RunnerID: me, ID: c.SessionID}); err != nil {
-				return nil, err
-			}
-			if _, capped := left[c.Harness]; capped {
-				left[c.Harness]--
-			}
-			runs = append(runs, run)
 		}
-		if len(page) < candidatePage {
-			break
+		if len(runs) < candidatePage {
+			return nil
 		}
 	}
-	return runs, nil
+}
+
+func spec(c db.Run) (v1.Run, error) {
+	var run v1.Run
+	if err := json.Unmarshal([]byte(c.Spec), &run); err != nil {
+		return v1.Run{}, fmt.Errorf("stored run %s: %w", c.ID, err)
+	}
+	return run, nil
+}
+
+// onTheMachine is a source a runner's path_sources governs: a path, or a git
+// URL that names a repository on the runner's own disk. It follows the
+// runner's reading of a URL (parseRemote in internal/workdir) — anything it
+// would take for a network URL goes, and anything malformed it refuses
+// whatever the setting.
+func onTheMachine(s v1.Source) bool {
+	if s.Git == nil {
+		return s.Path != ""
+	}
+	return strings.HasPrefix(s.Git.URL, "/") || strings.HasPrefix(strings.ToLower(s.Git.URL), "file://")
 }
 
 // opening sets session.new on a run about to be offered: true while no claim

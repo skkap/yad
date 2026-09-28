@@ -32,6 +32,7 @@ func TestParseRemote(t *testing.T) {
 	for _, tc := range []struct {
 		url   string
 		roots []string
+		off   bool
 		name  string // want accepted, with this WT_REPO; "" wants refused
 		fetch string // what git is given, when not the URL itself
 		why   string // a word the refusal must carry
@@ -67,8 +68,14 @@ func TestParseRemote(t *testing.T) {
 		{url: escape, roots: roots, why: "outside"},
 		{url: filepath.Join(root, "..", filepath.Base(outside), "other.git"), roots: roots, why: "outside"},
 		{url: filepath.Join(root, "missing.git"), roots: roots, why: "no such file"},
+		// Switched off, a local repository inside the roots is refused, naming
+		// the setting that refused it; one on the network is not a source on
+		// the machine and still goes.
+		{url: repo, roots: roots, off: true, why: "path_sources = false"},
+		{url: "file://" + repo, roots: roots, off: true, why: "path_sources = false"},
+		{url: "https://github.com/skkap/yad.git", roots: roots, off: true, name: "yad"},
 	} {
-		r, err := parseRemote(tc.url, tc.roots)
+		r, err := parseRemote(tc.url, (&Manager{Roots: tc.roots, PathSourcesOff: tc.off}).reach)
 		if tc.name == "" {
 			if err == nil {
 				t.Errorf("%q was accepted", tc.url)
@@ -97,7 +104,7 @@ const fakeToken = "ghp_FAKEt0kenFAKEt0ken"
 // A refused git URL goes back to the hub that sent it, in the run's error,
 // and never with the credential it carried: its userinfo, query and fragment
 // are taken out, and a URL that cannot be taken apart is not repeated at all
-// (decision 0063, as DEV-91 for a hub's own URL). Every shape here is refused,
+// (decision 0064, as DEV-91 for a hub's own URL). Every shape here is refused,
 // each by a different check.
 func TestARefusedGitURLNeverCarriesItsCredential(t *testing.T) {
 	root := t.TempDir()
@@ -121,7 +128,7 @@ func TestARefusedGitURLNeverCarriesItsCredential(t *testing.T) {
 		{"http://example.com/a.git#" + fakeToken, "http://"},
 		{"http://" + strings.Replace(fakeToken, "_", "%40", 1) + "%40x@example.com/a", "http://"},
 	} {
-		_, err := parseRemote(tc.url, []string{root})
+		_, err := parseRemote(tc.url, (&Manager{Roots: []string{root}}).reach)
 		if err == nil {
 			t.Errorf("%s was accepted", tc.url)
 			continue

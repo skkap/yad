@@ -53,7 +53,7 @@ and your answer to it. There are five calls:
 | call | when | what it does |
 |---|---|---|
 | `POST /runners/register` | once, from `yad connect` | a registration token in, a runner credential out |
-| `POST /runners/{runner}/sync` | every 5–60 s, at the interval you name | the runner's health and the runs it holds in; new runs and instructions out |
+| `POST /runners/{runner}/sync` | every 5–60 s, at the interval you name — 3 s while you hold work for it, if you choose | the runner's health and the runs it holds in; new runs and instructions out |
 | `POST /runs/{run}/events` | about every second while a run produces output | a batch of what happened in a run |
 | `POST /runs/{run}/result` | once per run, retried until you answer 2xx | how the run ended |
 | `POST /runners/{runner}/deregister` | when the runner is leaving for good | its credential dies and you settle what it held |
@@ -666,6 +666,17 @@ advertises none the run stays queued, and a run continuing a session bound to
 a runner that does not advertise it (§8) is never offered at all — tell
 whoever submitted it, or submit it without the effort.
 
+**Only sources the runner takes.** A runner whose owner has switched sources
+on the machine off says so in its capability document, `path_sources: false`;
+absent, it takes them, and no runner sends `true`. Such a runner fails a run
+with a `path` source, or a `git` source whose `url` is an absolute path or a
+`file://` URL, with `source_refused`. So offer a run opening a session
+(`session.new`) with one of those to another runner: this one would refuse it,
+and one that takes it may be connected. A run in a session already bound to
+the runner can go nowhere else — offer it, and the refusal's message tells
+whoever submitted it which setting refused it (decision
+[0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)).
+
 **Session rules** decide the rest (§8): a run in a session bound to another
 runner is not offerable here, and neither is a run whose session already has
 a run offered or held.
@@ -719,7 +730,7 @@ these are the ones worth acting on:
 | `grants_lost` | lost | a run parked on a usage limit was picked up by a later runner process, and its grants did not survive. Submit a new run, with its grants |
 | `max_wait_exceeded` | timed_out | it waited longer than `max_wait_ms` for a free account |
 | `wall_clock_timeout`, `inactivity_timeout` | timed_out | stopped by the run's own caps |
-| `source_refused` | failed | a source breaks the owner's rules — a path outside the allowed directories, a transport the runner does not use |
+| `source_refused` | failed | a source breaks the owner's rules — a path outside the allowed directories, any source on the machine at a runner whose document says `path_sources: false`, a transport the runner does not use |
 | `source_failed`, `setup_failed`, `prepare_failed` | failed | the workdir could not be built, or the repository's setup hook failed |
 | `prompt_too_long` | failed | the conversation no longer fits the model's context |
 | `runner_stopping` | cancelled | the runner cancelled it on its way down, not you |
@@ -733,10 +744,41 @@ in a result: the control did not reach the harness, and the run carried on.
 
 **The interval you name must be between 5 s and 60 s.** `sync_interval_ms` at
 register and `next_sync_ms` in every sync response are both bounded,
-inclusive. A hub naming 2 s or 5 min is refused by conformance and clamped by
-a runner. `yad hub` uses 15 s. The runner adds ±10 % jitter, syncs at once
+inclusive — except that `next_sync_ms` may go as low as 3 s, for the answer
+below. A hub naming 2 s or 5 min is refused by conformance and clamped by a
+runner. `yad hub` uses 15 s. The runner adds ±10 % jitter, syncs at once
 when a response carried offers, and backs off from 1 s to 30 s after a failed
 sync.
+
+**You may ask a runner back sooner while you hold work for it.** Between
+5 s and 3 s is for one thing: a queued run this runner would be offered once
+a run it holds ends — its capacity is full, or the run is the next turn in a
+session it is running. Without it that run starts up to a whole interval after
+the run ahead of it ends; with it, within about 3 s. It is optional, and it is
+no help to a runner holding nothing — the run submitted a moment after an idle
+runner's sync still waits one interval, since the answer that would have to
+change was sent before the run existed. `yad hub` answers 3 s when **all** of
+these hold, and its configured interval otherwise
+([0063](docs/decisions/0063-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)):
+
+- a queued run is one it would be offered but for its capacity or the live run
+  of its own session: a harness it drives and has not capped at zero, in a
+  session unbound or bound to it, not closing, and past everything else an
+  offer checks — a start moment it cannot hold, an effort it does not take,
+  a source on the machine its owner has switched off;
+- a run the runner lists as executing — anything but `waiting` — would let
+  that queued run go by ending. A waiting run gives its capacity, and its
+  session, back at an account's reset, hours off; a runner listing nothing has
+  its capacity taken by nothing you can see end — another hub's runs, or none
+  at all — so asking either back sooner finds it no freer. When the queued
+  run's harness has its own cap full (`free_capacity.by_harness` at 0), only a
+  run of that harness ending frees it; otherwise any run ending does;
+- it is not draining, and has not been asked to.
+
+An idle fleet with nothing queued, and a run no runner here can take, keep the
+normal interval. A runner at capacity for the length of a long run is asked
+back five times as often for that long — the price of the next run starting
+seconds after it ends.
 
 **Leases.** Every sync renews the lease on every run it lists. A run whose
 lease lapses is **lost**: the runner is gone or has stopped talking, and the
@@ -1494,13 +1536,14 @@ checks; the rest is yours to get right.
 
 **Sync**
 
-- [ ] `sync_interval_ms` and `next_sync_ms` within 5–60 s; `lease_ms` never shorter than either — [§5](#5-leases-timings-and-runners-that-go-away) (C)
+- [ ] `sync_interval_ms` within 5–60 s and `next_sync_ms` within 3–60 s; `lease_ms` never shorter than either — [§5](#5-leases-timings-and-runners-that-go-away) (C)
 - [ ] An offer is claimed only when the next sync lists it; an offer not listed goes back in the queue at that sync — [§3](#post-runnersrunnersync) (C)
 - [ ] A listed run the runner does not hold is answered with `cancel` — [§3](#post-runnersrunnersync) (C)
 - [ ] Offers within `free_capacity`, both `total` and each `by_harness`, as sent — [§4](#who-may-be-offered-what) (C)
 - [ ] Offers only for harnesses that are first-class, present and error-free — [§4](#who-may-be-offered-what)
 - [ ] Every offered run passes the rules the schema cannot state — [§4](#rules-the-schema-cannot-state) (C)
 - [ ] `start_at` still ahead, `effort`, and `live` sessions only to runners advertising them — [§7](#7-controls-and-features) (C)
+- [ ] A run opening a session with a source on the machine not offered to a runner whose document says `path_sources: false` — [§4](#who-may-be-offered-what)
 - [ ] `report_capabilities` when the fingerprint moves without a document — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync refused when its body's `runner_id` or its capability document's differs from the path, or its credential is another runner's — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync never refused over a dashboard field — load, disk, spool or outbox depth — only over what routing reads — [§3](#post-runnersrunnersync) (C)

@@ -1720,6 +1720,84 @@ func (q *Queries) SilentRunners(ctx context.Context, cutoff sql.NullInt64) ([]st
 	return items, nil
 }
 
+const soonCandidates = `-- name: SoonCandidates :many
+SELECT r.id, r.session_id, r.harness, r.model, r.spec, r.state, r.runner_id, r.lease_expires_at, r.resumes_at, r.reason, r.created_at, r.updated_at, r.events_through FROM runs r JOIN sessions s ON s.id = r.session_id
+WHERE r.state = 'queued'
+  AND s.close_requested_at IS NULL AND s.closed_at IS NULL
+  AND r.harness IN (SELECT value FROM json_each(?1))
+  AND (r.created_at > ?2 OR (r.created_at = ?2 AND r.id > ?3))
+  AND ((s.runner_id = ?4 AND NOT EXISTS (
+      SELECT 1 FROM runs w WHERE w.session_id = r.session_id AND w.state = 'waiting'))
+    OR (s.runner_id IS NULL AND NOT EXISTS (
+      SELECT 1 FROM runs o
+      WHERE o.session_id = r.session_id
+        AND o.state IN ('offered', 'claimed', 'preparing', 'running', 'waiting'))))
+  AND NOT EXISTS (
+      SELECT 1 FROM runs e
+      WHERE e.session_id = r.session_id AND e.state = 'queued'
+        AND (e.created_at < r.created_at OR (e.created_at = r.created_at AND e.id < r.id)))
+ORDER BY r.created_at, r.id
+LIMIT ?5
+`
+
+type SoonCandidatesParams struct {
+	HarnessesJson  interface{}
+	AfterCreatedAt int64
+	AfterID        string
+	RunnerID       sql.NullString
+	Max            int64
+}
+
+// Queued runs this runner would be offered once a run it holds ends: the
+// rules of OfferCandidates, except that a session bound to it may have a run
+// out, since that run is this runner's and ending it is what lets the next
+// one go. Not a waiting one: that ends at an account's reset, hours off, not
+// when anything the runner is executing does. An unbound session with a run
+// out is left out: that run may be on its way to another runner, whose claim
+// would bind the session there.
+func (q *Queries) SoonCandidates(ctx context.Context, arg SoonCandidatesParams) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, soonCandidates,
+		arg.HarnessesJson,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.RunnerID,
+		arg.Max,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Harness,
+			&i.Model,
+			&i.Spec,
+			&i.State,
+			&i.RunnerID,
+			&i.LeaseExpiresAt,
+			&i.ResumesAt,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EventsThrough,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const unstartedRunsInSession = `-- name: UnstartedRunsInSession :many
 SELECT id FROM runs WHERE session_id = ? AND state IN ('queued', 'offered') ORDER BY created_at, id
 `

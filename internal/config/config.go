@@ -100,6 +100,13 @@ type WorkdirsConfig struct {
 	// only when it resolves inside one of them. Unset is the owner's home
 	// directory — EffectiveRoots, not this field, is what a runner reads.
 	Roots []string `toml:"roots,omitempty"`
+	// PathSources false refuses every source that reaches this machine — a
+	// path source, and a git source whose URL is a local path or file:// —
+	// whatever Roots says (decision 0062). Unset or true takes them inside
+	// the roots. A toggle rather than `roots = []`, which the omitempty above
+	// cannot keep through a rewrite of config.toml: absent, the home default
+	// stays unwritten, and false survives every writer as what it says.
+	PathSources *bool `toml:"path_sources,omitempty"`
 	// GitTimeout bounds each git command a workdir needs — a first clone of a
 	// large repository is the longest.
 	GitTimeout Duration `toml:"git_timeout"`
@@ -107,9 +114,15 @@ type WorkdirsConfig struct {
 	SetupTimeout Duration `toml:"setup_timeout"`
 }
 
+// AllowsPathSources is whether a run may name a source on this machine at
+// all; EffectiveRoots then says where.
+func (w WorkdirsConfig) AllowsPathSources() bool {
+	return w.PathSources == nil || *w.PathSources
+}
+
 // EffectiveRoots is what a runner reads: the roots the owner listed, or their
 // home directory when they listed none. The owner trusts the hubs it connects
-// (decision 0038), and 0033's refuse-everything default cost them every folder
+// (decision 0038), and 0033's refuse-everything default cost them every path
 // source before they had written any configuration at all.
 //
 // The default is resolved here and never written to config.toml: a home
@@ -125,7 +138,8 @@ type WorkdirsConfig struct {
 // An empty list is the same as none at all: the field is omitempty, so a
 // `roots = []` an owner wrote would not survive the next `yad connect`
 // rewriting config.toml anyway. An owner who wants a run to reach less than
-// their home names the directories it may use.
+// their home names the directories it may use; one who wants it to reach
+// nothing sets path_sources = false (AllowsPathSources).
 func (w WorkdirsConfig) EffectiveRoots() []string {
 	if len(w.Roots) > 0 {
 		return w.Roots

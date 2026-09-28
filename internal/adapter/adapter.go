@@ -19,7 +19,7 @@ import (
 // a harness binary that will not exec, a temp file that cannot be written.
 // Error is Msg alone, in the runner's words; Err is the cause, which the
 // runner logs, and adds to the run's error only when it is the operating
-// system's own — a path and an errno (decision 0063). Kept apart so that no
+// system's own — a path and an errno (decision 0064). Kept apart so that no
 // other cause, which could carry anything a child printed, reaches the hub.
 // Every other error an adapter returns is a sentence whose next action may be
 // the hub's — a model name it sent that is not one — and travels as it is.

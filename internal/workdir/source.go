@@ -47,7 +47,7 @@ var helperURL = regexp.MustCompile(`^[A-Za-z0-9+.-]+::`)
 // the machine's own credentials (decision 0009); a local repository — a path
 // or file:// — only inside the owner's roots. Everything else is refused:
 // plain http and git:// carry no integrity, and a remote helper is a program.
-func parseRemote(raw string, roots []string) (remote, error) {
+func parseRemote(raw string, reach reachFunc) (remote, error) {
 	shown := quotedURL(raw)
 	if err := plain("git.url", raw, shown); err != nil {
 		return remote{}, err
@@ -80,12 +80,12 @@ func parseRemote(raw string, roots []string) (remote, error) {
 			if h := u.Host; h != "" && h != "localhost" {
 				return remote{}, fmt.Errorf("git.url %s names a file on another host; use an https or ssh URL", shown)
 			}
-			return localRemote(raw, u.Path, roots)
+			return localRemote(raw, u.Path, reach)
 		default:
 			return remote{}, fmt.Errorf("git.url %s uses %s://, which this runner does not fetch from; use an https or ssh URL", shown, u.Scheme)
 		}
 	case strings.HasPrefix(raw, "/"):
-		return localRemote(raw, raw, roots)
+		return localRemote(raw, raw, reach)
 	default:
 		// scp-like: [user@]host:path. A colon after a slash makes it a
 		// relative path, which git would read against the runner's own
@@ -120,12 +120,26 @@ func checkHost(shown, host, user string) error {
 }
 
 // localRemote is a repository on this machine, taken only inside a root.
-func localRemote(raw, path string, roots []string) (remote, error) {
-	dir, err := inRoots("git.url", path, roots)
+func localRemote(raw, path string, reach reachFunc) (remote, error) {
+	dir, err := reach("git.url", path)
 	if err != nil {
 		return remote{}, err
 	}
 	return remote{url: dir, key: "file://" + dir, name: repoName(dir)}, nil
+}
+
+// reachFunc is Manager.reach: the one check every source on this machine
+// passes, a path source and a local git URL alike.
+type reachFunc func(field, path string) (string, error)
+
+// reach is inRoots behind the owner's path_sources. Switched off, the refusal
+// names the setting and not the roots, which are not what refused it — an
+// owner reading "outside the roots" would widen them and change nothing.
+func (m *Manager) reach(field, path string) (string, error) {
+	if m.PathSourcesOff {
+		return "", fmt.Errorf("%s %q is a directory on this machine, and this runner's owner has switched sources on the machine off (path_sources = false under [workdirs] in config.toml) — send the repository as an https or ssh git URL, or its owner removes that line and restarts the runner", field, path)
+	}
+	return inRoots(field, path, m.Roots)
 }
 
 // inRoots resolves an absolute path, symlinks included, and returns it only
@@ -192,7 +206,7 @@ func plain(field, s, shown string) error {
 // shownURL is a hub-sent git URL as a refusal, an event or a run's error may
 // print it. It goes back only to the hub that sent it, which already holds it
 // — but a URL is where people put a token, and a token is never transmitted
-// (decision 0063, as DEV-91 for a hub's own URL). A URL loses its userinfo,
+// (decision 0064, as DEV-91 for a hub's own URL). A URL loses its userinfo,
 // query and fragment to config.RedactURL; an scp-like user@host:path loses its
 // user the same way; anything else holding an @ is not printed at all. A
 // source with nothing to take out — a path, most URLs — comes back as given.
@@ -201,7 +215,7 @@ func shownURL(raw string) string {
 		return config.RedactURL(raw)
 	}
 	// A path is a directory on the machine, which a run's error may name
-	// (decision 0063); an @ in one is a directory's name, not a user.
+	// (decision 0064); an @ in one is a directory's name, not a user.
 	if strings.HasPrefix(raw, "/") || !strings.Contains(raw, "@") {
 		return raw
 	}

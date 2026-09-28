@@ -429,7 +429,7 @@ func TestIntervalBoundsAndJitter(t *testing.T) {
 		ms   int
 		want time.Duration
 	}{
-		{0, 15 * time.Second}, {1, 5 * time.Second}, {20000, 20 * time.Second}, {3600000, 60 * time.Second},
+		{0, 15 * time.Second}, {1, 3 * time.Second}, {3000, 3 * time.Second}, {20000, 20 * time.Second}, {3600000, 60 * time.Second},
 	} {
 		if got := interval(tc.ms); got != tc.want {
 			t.Errorf("interval(%d) = %s, want %s", tc.ms, got, tc.want)

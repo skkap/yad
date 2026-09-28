@@ -51,6 +51,21 @@ const (
 	minLease            = 60 * time.Second
 )
 
+// QuickSyncInterval is what a sync is answered with while a queued run waits
+// for that runner and nothing but a run it is executing (waitsForThisRunner).
+// 3 s is the owner's choice (DEV-53, 2026-09-29): a turn in an interactive
+// session then starts about 3 s after the one before it ends rather than up to
+// 15 s, and a runner asked back that often for the length of a long run costs
+// the hub five syncs where it had one — for that runner, only while the run
+// waits, and nothing for an idle fleet. It sits below MinSyncInterval, which
+// bounds the steady interval; the protocol lets next_sync_ms go to 3 s for
+// this (decision 0063).
+const QuickSyncInterval = 3 * time.Second
+
+// quickInterval is never longer than the configured interval: sooner must not
+// be slower on a hub a test runs at milliseconds.
+func (h *Hub) quickInterval() time.Duration { return min(QuickSyncInterval, h.interval) }
+
 // DefaultAbandonAfter is how long a runner may go without a sync before the
 // hub gives up its sessions (decision 0046). A day outlasts a laptop closed
 // overnight, and not one closed for a weekend, and that is the trade: shorter

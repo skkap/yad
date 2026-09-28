@@ -104,7 +104,7 @@ var urlInText = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s'"<>]+`)
 // quotes the remote it failed to reach, and a hub-sent URL may carry a token
 // as its user — the one shape parseRemote lets through — or in its query,
 // which git's reason would otherwise carry to the hub in the run's error and
-// to the daemon's log (decision 0063). Whether git anonymises the URL itself
+// to the daemon's log (decision 0064). Whether git anonymises the URL itself
 // depends on its version and the message, so it is not relied on. It catches
 // a URL other than the source too — a redirect's — which redactSource, which
 // knows only the source, cannot.

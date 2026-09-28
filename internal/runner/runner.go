@@ -99,7 +99,7 @@ func Serve(ctx context.Context, o Options) error {
 	// the same bare cache.
 	w := o.Config.Workdirs
 	workdirs := &workdir.Manager{
-		Data: o.Paths.Data, Roots: w.EffectiveRoots(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
+		Data: o.Paths.Data, Roots: w.EffectiveRoots(), PathSourcesOff: !w.AllowsPathSources(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
 		Slots: st,
 	}
 	sessions := &Collector{

@@ -373,7 +373,7 @@ func TestRefusedSources(t *testing.T) {
 // A hub-sent URL with a token for its user is fetched, and the token reaches
 // neither the run's events nor its error — not in the status that names the
 // fetch, not in git's own reason when the fetch fails, and not in the refusal
-// of a source named twice (decision 0063). git here is a wrapper that fails
+// of a source named twice (decision 0064). git here is a wrapper that fails
 // every fetch as a git that quotes the whole URL would, so nothing leaves the
 // machine.
 func TestAGitURLsTokenStaysOutOfTheRun(t *testing.T) {
@@ -458,6 +458,30 @@ func TestACutReasonIsNotQuoted(t *testing.T) {
 				t.Errorf("err = %v, want %q and no token", err, tc.want)
 			}
 		})
+	}
+}
+
+// path_sources = false refuses a directory inside the roots, and says that the
+// setting refused it rather than the roots (DEV-72). A repository on the
+// network still goes: it is not a source on the machine.
+func TestPathSourcesOff(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", nil)
+	f.m.PathSourcesOff = true
+	for name, src := range map[string]v1.Source{
+		"a path inside the roots": {Path: f.root},
+		"a local repository":      gitSource(o.bare, "", ""),
+		"a file:// repository":    gitSource("file://"+o.bare, "", ""),
+	} {
+		if err := f.m.Check([]v1.Source{src}, "s-check"); class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "path_sources = false") {
+			t.Errorf("%s, checked: %v, want %s naming path_sources", name, err, ClassSourceRefused)
+		}
+		if _, _, err := f.prepare("s-"+strings.ReplaceAll(name, " ", "-"), src); class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "path_sources = false") {
+			t.Errorf("%s, prepared: %v, want %s naming path_sources", name, err, ClassSourceRefused)
+		}
+	}
+	if caches, _ := filepath.Glob(filepath.Join(f.m.Data, "repos", "*")); len(caches) != 0 {
+		t.Errorf("a refused run left caches: %v", caches)
 	}
 }
 

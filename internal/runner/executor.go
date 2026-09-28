@@ -270,7 +270,7 @@ func (e *Exec) init() {
 		if e.Workdirs == nil {
 			w := e.Config.Workdirs
 			e.Workdirs = &workdir.Manager{
-				Data: e.Data, Roots: w.EffectiveRoots(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
+				Data: e.Data, Roots: w.EffectiveRoots(), PathSourcesOff: !w.AllowsPathSources(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
 				Slots: e.Store,
 			}
 		}
@@ -394,7 +394,7 @@ func (e *Exec) hand(a *activeRun, connection string, c v1.Control, now time.Time
 // It names the cause when the cause is the operating system's: an operation,
 // the path it was on and an errno, as Go writes them. That path is on this
 // machine, perhaps under the owner's home, and it goes only to the hub that
-// sent the run, which is the one debugging it (decision 0063). Any other cause
+// sent the run, which is the one debugging it (decision 0064). Any other cause
 // — a database error, a sentence joined from several, anything that could
 // carry what a child printed — stays in the log line written beside it, and
 // the message sends the owner there.
@@ -1270,7 +1270,7 @@ func (e *Exec) sessionSources(ctx context.Context, c Claim) (sources []v1.Source
 	want, _ := json.Marshal(c.Run.Sources)
 	if string(want) != sess.Sources.String {
 		// Not the recorded JSON as stored: a git URL in it may carry a
-		// token, and this goes to the hub and the log (decision 0063).
+		// token, and this goes to the hub and the log (decision 0064).
 		shown, _ := json.Marshal(workdir.ShownSources(sources))
 		return nil, false, &workdir.Error{Class: workdir.ClassSourceRefused,
 			Msg: "the run names sources other than the ones its session's workdir was built from (" + string(shown) + ") — send the same sources, or none, to continue it; start a new session for others"}

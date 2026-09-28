@@ -53,6 +53,10 @@ type Manager struct {
 	Data string
 	// Roots are the owner's directories a hub may reach (decision 0033).
 	Roots []string
+	// PathSourcesOff is the owner's `[workdirs] path_sources = false`: no
+	// source may reach this machine, whatever Roots says (decision 0062).
+	// The zero value takes them, as an unset setting does.
+	PathSourcesOff bool
 	// Git is the git executable. Empty is the one host-tool detection
 	// resolves — YAD_GIT_PATH's, or PATH's when that names nothing — looked
 	// up again for every command, so the git a run uses is the one its
@@ -164,7 +168,7 @@ func (m *Manager) Prepare(ctx context.Context, req Request) (*Prepared, error) {
 		// the roots, or moved it away and made another in its place — then
 		// the lock is on the one moved away. Held, nobody else may change them.
 		for i, path := range paths {
-			again, err := inRoots(fmt.Sprintf("path source %d", i), path, m.Roots)
+			again, err := m.reach(fmt.Sprintf("path source %d", i), path)
 			if err == nil && again != path {
 				err = fmt.Errorf("path source %s changed while this run waited for it: it now resolves to %s", path, again)
 			}
@@ -219,7 +223,7 @@ func (m *Manager) plan(req Request) ([]item, error) {
 		var it item
 		var name string
 		if src.Git != nil {
-			r, err := parseRemote(src.Git.URL, m.Roots)
+			r, err := parseRemote(src.Git.URL, m.reach)
 			if err != nil {
 				return nil, fmt.Errorf("sources[%d]: %w", i, err)
 			}
@@ -244,7 +248,7 @@ func (m *Manager) plan(req Request) ([]item, error) {
 			}
 			name = r.name
 		} else {
-			dir, err := inRoots(fmt.Sprintf("sources[%d].path", i), src.Path, m.Roots)
+			dir, err := m.reach(fmt.Sprintf("sources[%d].path", i), src.Path)
 			if err != nil {
 				return nil, err
 			}
