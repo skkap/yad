@@ -5,8 +5,9 @@ Each `codex-<version>/<name>.jsonl` is one run's whole conversation with
 the adapter wrote, wrapped as `{">": …}`. They were recorded by
 `record_test.go` through the real adapter, on `gpt-5.6-luna`, with a throwaway
 `CODEX_HOME`, and scrubbed: paths become `/work`, `/codex-home` and
-`/home/user`, the host name becomes `host`, the installation id is zeroed and
-the user agent no longer names the terminal it ran in.
+`/home/user`, the host name becomes `host`, the installation id and the
+ChatGPT account id (in 0.157.1's rate-limit snapshots) are zeroed and the user
+agent no longer names the terminal it ran in.
 
 | Fixture | The run |
 |---|---|
@@ -34,13 +35,16 @@ exhausting an account or a context window:
 | `usage-limit-unnamed` | the same with no snapshot: the adapter asks `account/rateLimits/read` |
 | `prompt-too-long` | the turn fails `contextWindowExceeded` |
 
-Written by hand from the schema, never measured: the device-code login a hub
-starts (DEV-135). Recording one needs a person to type the code at OpenAI, so
-until a login is recorded by hand on a machine with Codex, the order of the
-notifications after `account/login/start` — and whether `auth.json` is written
+Written by hand from the schema: the device-code login a hub starts
+(DEV-135). Recording one needs a person to type the code at OpenAI, so until a
+login is recorded by hand on a machine with Codex, the order of the
+notifications after a code is typed — and whether `auth.json` is written
 before `account/login/completed` — is what the schema suggests, not what Codex
-was seen to do. The handshake is `plain`'s; Codex's error texts are invented,
-since the runner never reads them.
+was seen to do. A start and its cancel were measured on 0.157.1, in a
+throwaway `CODEX_HOME`: `login-device-cancel` is what Codex said, with the
+login id and code replaced by the ones every login fixture uses. The handshake
+is `plain`'s; Codex's other error texts are invented, since the runner never
+reads them.
 
 | Fixture | The login |
 |---|---|
@@ -62,4 +66,10 @@ YAD_REAL_HARNESS=1 go test -tags realharness -run 'TestRecord' -v ./internal/ada
 
 add the hash `TestRecordSchema` prints to `pinned` in `schema.go`, point
 `fixtures` in `codex_test.go` at the new directory, and read the diff before
-committing it.
+committing it. The hand-written fixtures are carried over from the previous
+release's, on the new `plain`'s handshake and in the new release's shapes.
+
+Every release in `pinned` keeps its directory: `yad doctor` calls each of them
+ready, so `TestEveryPinnedReleaseReplays` replays each one's recordings, and
+`TestPinnedSchema` checks each one's pin. Dropping a release from `pinned` is
+what lets its directory go.

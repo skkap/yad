@@ -229,11 +229,14 @@ var (
 	emailish = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
 	agent    = regexp.MustCompile(`"userAgent":"[^"]*"`)
 	install  = regexp.MustCompile(`"installationId":"[^"]*"`)
+	// Codex 0.157.1's rate-limit snapshot names the ChatGPT account it
+	// belongs to.
+	account = regexp.MustCompile(`"accountId":"[^"]*"`)
 )
 
 // scrub removes the recording machine from a conversation: its paths, its
 // host name, its installation id, what the user agent says about the
-// terminal it ran in, and any address.
+// terminal it ran in, its account id, and any address.
 func scrub(raw []byte, paths [][2]string, host string) []byte {
 	s := string(raw)
 	for _, p := range paths {
@@ -246,6 +249,7 @@ func scrub(raw []byte, paths [][2]string, host string) []byte {
 	}
 	s = agent.ReplaceAllString(s, `"userAgent":"yad/0 (recorded)"`)
 	s = install.ReplaceAllString(s, `"installationId":"00000000-0000-0000-0000-000000000000"`)
+	s = account.ReplaceAllString(s, `"accountId":"00000000-0000-0000-0000-000000000000"`)
 	s = emailish.ReplaceAllString(s, "someone@example.com")
 	// Every line must still be JSON: a scrub that broke one would make the
 	// fixture test something Codex never wrote.

@@ -89,6 +89,7 @@ func TestToolOutcomeByKind(t *testing.T) {
 		{`{"type":"dynamicToolCall","status":"failed","success":null}`, "true -"},
 		{`{"type":"collabAgentToolCall","status":"completed"}`, "false -"},
 		{`{"type":"collabAgentToolCall","status":"failed"}`, "true -"},
+		{`{"type":"collabAgentToolCall","status":"interrupted"}`, "true -"},
 		{`{"type":"webSearch","query":"yad"}`, "- -"},
 		{`{"type":"imageView","path":"/x.png"}`, "- -"},
 		{`{"type":"commandExecution","status":"someNewStatus"}`, "- -"},

@@ -398,7 +398,7 @@ a world-readable credential:
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
 Claude Code         ready       2.1.278                /Users/me/.local/bin/claude
-Codex               ready       0.147.0                /Users/me/.local/bin/codex
+Codex               ready       0.157.1                /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 GitHub Copilot CLI  —
 OpenCode            —
@@ -421,7 +421,7 @@ $ chmod 600 /tmp/yad/config/credentials/yashiki
 $ yad doctor
 HARNESS             STATUS      VERSION                PATH
 Claude Code         ready       2.1.278                /Users/me/.local/bin/claude
-Codex               ready       0.147.0                /Users/me/.local/bin/codex
+Codex               ready       0.157.1                /Users/me/.local/bin/codex
 Gemini CLI          no adapter  0.29.2                 /…/bin/gemini
 GitHub Copilot CLI  —
 OpenCode            —
@@ -489,7 +489,7 @@ It does **not** confine writes to the workdir alone. In the app-server contract
 this yad is pinned against, a `workspaceWrite` policy leaves `/tmp` and
 `$TMPDIR` writable unless asked otherwise — `excludeSlashTmp` and
 `excludeTmpdirEnvVar` both default to `false`
-(`internal/adapter/codex/testdata/codex-0.147.0/codex_app_server_protocol.schemas.json`)
+(`internal/adapter/codex/testdata/codex-0.157.1/codex_app_server_protocol.schemas.json`)
 — and YAD sends the mode as Codex's own string, setting neither
 (`internal/adapter/codex/codex.go`). Treat it as "not the whole filesystem",
 not as "only the workdir".

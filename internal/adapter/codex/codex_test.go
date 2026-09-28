@@ -21,7 +21,7 @@ import (
 var _ adapter.Adapter = Adapter{}
 
 // fixtures is the Codex version the replayed conversations were recorded from.
-const fixtures = "testdata/codex-0.147.0"
+const fixtures = "testdata/codex-0.157.1"
 
 func TestMain(m *testing.M) {
 	// This package's children are all the fake, whatever they are named.
@@ -221,6 +221,27 @@ func threadIn(t *testing.T, name string) string {
 	return ""
 }
 
+// turnIn is the id of the turn a recorded conversation ran, so a line added
+// to it lands in that turn whichever release it was recorded from.
+func turnIn(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(fixture(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		var m struct {
+			Method string     `json:"method"`
+			Params turnParams `json:"params"`
+		}
+		if json.Unmarshal([]byte(line), &m) == nil && m.Method == "turn/started" && m.Params.turnID() != "" {
+			return m.Params.turnID()
+		}
+	}
+	t.Fatalf("%s has no turn", name)
+	return ""
+}
+
 // A new session: the app-server is started as the adapter documents, the
 // thread is started with the owner's defaults and the brief's context, the
 // answer streams as text, and usage and the thread id come back.
@@ -244,7 +265,7 @@ func TestPlainRun(t *testing.T) {
 		t.Errorf("statuses = %v, want started first", st)
 	}
 	u, ok := out.Usage["gpt-5.6-luna"]
-	if !ok || u.Output != 5 || u.CacheRead != 9984 || u.Input != 11863-9984 || u.CostUSD != nil {
+	if !ok || u.Output != 5 || u.CacheRead != 9984 || u.Input != 11653-9984 || u.CostUSD != nil {
 		t.Errorf("usage = %+v", out.Usage)
 	}
 	if len(kinds(evs, v1.EventUsage)) != 1 {
@@ -657,6 +678,31 @@ func TestApprovalDeclined(t *testing.T) {
 	}
 }
 
+// A request to type into a command already running is declined as one, and
+// says so: the command itself was allowed to start.
+func TestStdinApprovalDeclined(t *testing.T) {
+	b, err := os.ReadFile(fixture("approval"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Replace(string(b), `"kind":"command"`, `"kind":"writeStdin"`, 1)
+	if body == string(b) {
+		t.Fatal("approval has no command approval to turn into a stdin one")
+	}
+	h := &harness{fixture: writeFixture(t, body)}
+	spec := h.spec(t)
+	spec.Settings = map[string]string{"approval": "untrusted", "sandbox": "read-only"}
+	evs, out, _ := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunSucceeded {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if !slices.ContainsFunc(statuses(evs), func(s string) bool {
+		return strings.HasPrefix(s, "approval declined: input to ") && strings.Contains(s, "touch out.txt")
+	}) {
+		t.Errorf("statuses = %v", statuses(evs))
+	}
+}
+
 // Codex runs subagents as threads on the same pipe, and a resume replays
 // earlier turns: nothing from another thread or another turn is the run's.
 // A server request of a kind YAD does not serve is refused, a line that is
@@ -922,5 +968,69 @@ func TestLegacyApprovalDeclined(t *testing.T) {
 	}
 	if !strings.Contains(reply, `"denied"`) {
 		t.Errorf("reply = %s", reply)
+	}
+}
+
+// Every pinned release is one yad doctor calls ready, so each must still be
+// driven: its recorded conversations replay to the outcomes they were
+// recorded with. The tests above read the newest; this keeps the older ones
+// honest while they stay pinned.
+func TestEveryPinnedReleaseReplays(t *testing.T) {
+	steer := func(tr adapter.Turn, e v1.Event) bool {
+		if e.Kind != v1.EventToolCall {
+			return false
+		}
+		if err := tr.Steer("Also: end your final reply with the word STEERED."); err != nil {
+			t.Error(err)
+		}
+		return true
+	}
+	interrupt := func(tr adapter.Turn, e v1.Event) bool {
+		if e.Kind != v1.EventText {
+			return false
+		}
+		if err := tr.Interrupt(); err != nil {
+			t.Error(err)
+		}
+		return true
+	}
+	for _, v := range pinned {
+		for _, tc := range []struct {
+			fixture, effort, resume string
+			settings                map[string]string
+			act                     func(adapter.Turn, v1.Event) bool
+			state                   v1.RunState
+			final, class            string
+		}{
+			{fixture: "plain", state: v1.RunSucceeded, final: "pong"},
+			{fixture: "tool", state: v1.RunSucceeded, final: "hello from a small file"},
+			{fixture: "tool-outcomes", state: v1.RunSucceeded, final: "done"},
+			{fixture: "file-change", state: v1.RunSucceeded, final: "done"},
+			{fixture: "effort", effort: "low", state: v1.RunSucceeded, final: "pong"},
+			{fixture: "resume", resume: "01a0b879-aaaa-7050-84ee-d1a30d4b696d", state: v1.RunSucceeded, final: "plum"},
+			{fixture: "steer", act: steer, state: v1.RunSucceeded},
+			{fixture: "interrupt", act: interrupt, state: v1.RunCancelled},
+			{fixture: "approval", settings: map[string]string{"approval": "untrusted", "sandbox": "read-only"}, state: v1.RunSucceeded},
+			{fixture: "error", state: v1.RunFailed, class: adapter.ClassHarness},
+			{fixture: "effort-rejected", effort: "bogus", state: v1.RunFailed, class: adapter.ClassHarness},
+			{fixture: "resume-missing", resume: "01a0b86e-0000-7000-8000-000000000000", state: v1.RunFailed, class: adapter.ClassSessionNotFound},
+		} {
+			t.Run(v+"/"+tc.fixture, func(t *testing.T) {
+				p, err := filepath.Abs(filepath.Join("testdata", "codex-"+v, tc.fixture+".jsonl"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				h := &harness{fixture: p}
+				spec := h.spec(t)
+				spec.Effort, spec.NativeSessionID, spec.Settings = tc.effort, tc.resume, tc.settings
+				_, out, _ := drive(t, context.Background(), spec, tc.act)
+				if out.State != tc.state || tc.final != "" && out.FinalText != tc.final {
+					t.Fatalf("outcome = %+v (%+v)", out, out.Error)
+				}
+				if tc.class != "" && (out.Error == nil || out.Error.Class != tc.class) {
+					t.Errorf("error = %+v, want %s", out.Error, tc.class)
+				}
+			})
+		}
 	}
 }

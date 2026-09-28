@@ -37,7 +37,7 @@ for h in ${MACHINE_HARNESSES:-claude codex}; do
 		# the versions it was recorded against (pinned in
 		# internal/adapter/codex/schema.go — a test there keeps this default
 		# one of them). A newer Codex is ready but warned about.
-		want=${CODEX_VERSION:-0.147.0}
+		want=${CODEX_VERSION:-0.157.1}
 		have=$(codex --version 2>/dev/null | awk '{ print $NF }')
 		[[ $have == "$want" ]] || { say "Codex $want"; npm install -g --silent "@openai/codex@$want"; } ;;
 	*)

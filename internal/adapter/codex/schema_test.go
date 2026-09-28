@@ -19,15 +19,26 @@ func recordedSchema(t *testing.T) []byte {
 	return b
 }
 
-// The pin in schema.go is the recorded schema's: a changed surface that was
+// Every pin in schema.go is a recorded schema's: a changed surface that was
 // not re-pinned, or a pin typed by hand, fails here.
 func TestPinnedSchema(t *testing.T) {
-	sum, err := SchemaHash(recordedSchema(t))
-	if err != nil {
-		t.Fatal(err)
+	versions := map[string]bool{strings.TrimPrefix(filepath.Base(fixtures), "codex-"): true}
+	for _, v := range pinned {
+		versions[v] = true
 	}
-	if v, ok := pinned[sum]; !ok || v != strings.TrimPrefix(filepath.Base(fixtures), "codex-") {
-		t.Fatalf("the recorded schema hashes to %s, which schema.go pins as %q", sum, v)
+	for v := range versions {
+		b, err := os.ReadFile(filepath.Join("testdata", "codex-"+v, schemaFile))
+		if err != nil {
+			t.Errorf("codex %s: %v", v, err)
+			continue
+		}
+		sum, err := SchemaHash(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := pinned[sum]; !ok || got != v {
+			t.Errorf("codex %s's recorded schema hashes to %s, which schema.go pins as %q", v, sum, got)
+		}
 	}
 }
 
@@ -157,9 +168,9 @@ func TestSchemaWarning(t *testing.T) {
 	for _, tc := range []struct {
 		name, schema, version, want string
 	}{
-		{name: "pinned", schema: pinnedFile, version: "codex-cli 0.147.0"},
+		{name: "pinned", schema: pinnedFile, version: "codex-cli 0.157.1"},
 		{name: "a newer codex, same surface", schema: pinnedFile, version: "codex-cli 0.148.0"},
-		{name: "drift", schema: drifted, version: "codex-cli 0.149.0", want: "differs from the one this yad was built against (codex 0.147.0)"},
+		{name: "drift", schema: drifted, version: "codex-cli 0.149.0", want: "differs from the one this yad was built against (codex 0.147.0, 0.157.1)"},
 		{name: "no schema at all", schema: "fail", version: "codex-cli 0.9.0", want: "could not check"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,7 +190,7 @@ func TestSchemaWarning(t *testing.T) {
 	// Asked again for the same binary and version, the answer is remembered:
 	// the probe runs every sync.
 	t.Setenv("CODEX_TEST_SCHEMA", "fail")
-	if got := SchemaWarning(context.Background(), os.Args[0], "codex-cli 0.147.0"); got != "" {
+	if got := SchemaWarning(context.Background(), os.Args[0], "codex-cli 0.157.1"); got != "" {
 		t.Errorf("a remembered answer was checked again: %q", got)
 	}
 }

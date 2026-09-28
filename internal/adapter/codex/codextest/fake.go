@@ -546,7 +546,7 @@ const SchemaFile = "codex_app_server_protocol.schemas.json"
 
 // Version is what the fake answers to --version: the version the fixtures
 // were recorded from.
-const Version = "codex-cli 0.147.0"
+const Version = "codex-cli 0.157.1"
 
 // Child reports whether this process was started as the fake: by a test that
 // set CODEX_TEST_FIXTURE or CODEX_TEST_SCHEMA, under the name codex — a test
