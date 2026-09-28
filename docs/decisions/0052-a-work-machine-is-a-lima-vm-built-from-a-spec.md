@@ -1,5 +1,6 @@
 ---
 date: 2026-09-25
+status: amended by 0058 — `up` brings the machine's config.toml onto its spec on every run, keeping its connections and never removing an account
 ---
 
 # A work machine is a Lima VM built from a spec, and its runner's user reaches only the internet
