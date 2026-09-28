@@ -252,8 +252,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   `start_login` and `login_token` may carry `add`, which creates the account:
   the runner lists it once the login takes, and a login that ends any other
   way lists nothing. `remove_account {harness, account}` removes one as `yad
-  account remove` does; a hub repeats it until a sync's health names the
-  harness without the account, or the runner stops advertising `accounts`.
+  account remove` does; a hub repeats it until a sync's health or the
+  runner's capability document names the harness without the account (the
+  document also by naming no such harness: health names only harnesses the
+  runner can drive), or the runner stops advertising `accounts`.
   An added account is the machine's, and every hub's runs rotate through it.
 - **Claim by listing.** A run offered in a sync response is claimed when the
   runner lists it in its next sync. An offered run that the next sync does not
@@ -484,7 +486,7 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `GET /runners/{runner}/logins/{login}` | the login's state, its `url` while `waiting`, and the runner's `error` at an end; never its code or token |
 | `POST /runners/{runner}/logins/{login}/code` | `{code}` for a `waiting` link login, delivered at the next sync; 409 before the link is out or after the end |
 | `POST /runners/{runner}/logins/{login}/cancel` | a `cancel_login` until the runner reports the login over |
-| `POST /runners/{runner}/accounts/{harness}/{account}/remove` | a `remove_account` until the runner's health names the harness without the account, or it stops advertising `accounts`; 409 for a runner without the `accounts` feature |
+| `POST /runners/{runner}/accounts/{harness}/{account}/remove` | a `remove_account` until the runner's health or capability document names the harness without the account, or it stops advertising `accounts`; ended by a login that adds the account again; 409 for a runner without the `accounts` feature |
 | `GET /runners/{runner}/accounts/{harness}/{account}` | whether the runner's last health names the account and in what state, and a removal still waiting |
 
 ## §3 Running a harness
@@ -1042,8 +1044,8 @@ has carried it and `hub_ended` for an end the hub wrote itself; the
 `logins_forget_code` triggers blank a token once the runner has reported its
 login and a code once the login has moved past `waiting`, whoever moves it.
 A login's `add_account` marks one that creates its account, and
-`account_removals` holds each removal asked for until the runner's health
-leaves the account out
+`account_removals` holds each removal asked for until the runner's health or
+capability document leaves the account out
 ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
 Both databases are opened with `secure_delete`, so freed bytes are zeroed
 rather than left in the file.
@@ -1053,7 +1055,8 @@ rather than left in the file.
 ```
 yad doctor                         what is installed, what YAD can drive, and what about
                                    this machine or profile is reachable by other users
-yad harnesses [--json]             the capability document, as a hub receives it
+yad harnesses [--json]             the capability document, as a hub receives it but for
+                                   the accounts feature, added per connection (0057)
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
 yad disconnect <name>              not built: its coordination with a running
                                    daemon is being designed (DEV-81); it refuses

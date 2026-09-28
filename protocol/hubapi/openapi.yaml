@@ -15,7 +15,7 @@ components:
           description: Whether the runner's last health names the account. Health names at most sixteen of a harness's accounts.
           type: boolean
         remove_requested_at:
-          description: When a removal was asked for; present until the runner's health leaves the account out, or the runner no longer advertises the accounts feature.
+          description: When a removal was asked for; present until the runner's health or capability document leaves the account out, the runner no longer advertises the accounts feature, or a login adds the account again.
           format: date-time
           type: string
         runner_id:
@@ -948,7 +948,7 @@ paths:
       summary: Read an account as the runner's last health has it, and a removal asked for
   /runners/{runner}/accounts/{harness}/{account}/remove:
     post:
-      description: "The runner hears it at its next sync and removes the account as its owner's yad account remove does: listed nowhere from then on, runs already on it finish there, and its home — the login — is deleted once the last of them has ended. A login in flight on it ends cancelled. The request stands until the runner's health leaves the account out, or the runner stops advertising the accounts feature; a repeat is the same request. A runner that does not advertise accounts to this hub — its owner has turned it off for it, or it runs an older yad — is 409."
+      description: "The runner hears it at its next sync and removes the account as its owner's yad account remove does: listed nowhere from then on, runs already on it finish there, and its home — the login — is deleted once the last of them has ended. A login in flight on it ends cancelled. The request stands until the runner's health or capability document names the harness without the account, or the runner stops advertising the accounts feature; a repeat is the same request, and a login that adds the account again ends it. A runner that does not advertise accounts to this hub — its owner has turned it off for it, or it runs an older yad — is 409."
       operationId: removeAccount
       parameters:
         - description: The runner id.

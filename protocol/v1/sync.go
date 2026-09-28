@@ -128,7 +128,7 @@ type SyncResponse struct {
 	// goes silent holding an offer strands nothing past it.
 	LeaseMS    int       `json:"lease_ms" doc:"How long the hub holds each run named in this answer for this runner without hearing from it, measured on the hub from when it handled this sync: every run offered here, and every run the request listed. A listed run the lease lapses on is lost. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."`
 	Runs       []Run     `json:"runs,omitempty" doc:"New runs offered. Not claimed yet: a run is claimed when the next sync lists it. Never more than the request's free_capacity, in total or for any harness."`
-	Controls   []Control `json:"controls,omitempty" doc:"Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions, remove_account until the account is absent from health; a steer is sent once."`
+	Controls   []Control `json:"controls,omitempty" doc:"Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions, remove_account until health or the capability document names the harness without the account; a steer is sent once."`
 	MinVersion string    `json:"min_version,omitempty" doc:"The oldest yad this hub takes, as in the register response. Absent is no floor."`
 }
 
@@ -190,8 +190,10 @@ func ControlKinds() []ControlKind {
 // accounts the runner has (decision 0057), and go only to a runner advertising
 // the "accounts" feature — which it advertises only to a hub its owner lets
 // do so, and only beside "login". An add creates the account once its login
-// takes; remove_account is repeated until the account is absent from the
-// runner's health, or the runner no longer advertises "accounts".
+// takes; remove_account is repeated until the runner's health, or its
+// capability document, names the harness without the account — the document
+// also by naming no such harness, since health names only the harnesses a
+// runner can drive — or the runner no longer advertises "accounts".
 //
 // Code and Token are secrets. Neither side logs them, stores them past their
 // use or reports them back; a hub holds a token only until a sync from the

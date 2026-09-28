@@ -279,6 +279,19 @@ func TestALoginReplacedAfterItWasSentEndsAsTheRunnerSays(t *testing.T) {
 func TestAnAccountAddedAndRemovedThroughYadHub(t *testing.T) {
 	x := newLoginE2E(t, "")
 	x.loop.Accounts, x.loop.Paths, x.loop.ManageAccounts = x.Accounts, x.e.paths, true
+	// The document names each harness's accounts, as capability.Build's
+	// does: a hub reads a removal's end from it as well as from health.
+	fixed := x.loop.Capabilities
+	x.loop.Capabilities = func() v1.Capabilities {
+		d := fixed()
+		d.Harnesses = slices.Clone(d.Harnesses)
+		for i, h := range d.Harnesses {
+			for _, l := range x.Accounts.Lists()[h.ID] {
+				d.Harnesses[i].Accounts = append(d.Harnesses[i].Accounts, v1.AccountReport{Label: l, State: v1.AccountFree})
+			}
+		}
+		return d
+	}
 	ctx := context.Background()
 	mustSync(t, x.loop) // the document with accounts in it
 

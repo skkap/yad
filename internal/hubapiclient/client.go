@@ -153,7 +153,7 @@ func (c *Client) CancelLogin(ctx context.Context, runnerID, loginID string) (hub
 }
 
 // RemoveAccount asks a runner to remove an account (decision 0057): it is
-// sent at the runner's next syncs until its health leaves the account out.
+// sent at the runner's next syncs until its reports leave the account out.
 func (c *Client) RemoveAccount(ctx context.Context, runnerID, harness, label string) (hubapi.Account, error) {
 	var out hubapi.Account
 	err := c.do(ctx, http.MethodPost, c.accountPath(runnerID, harness, label)+"/remove", struct{}{}, &out)

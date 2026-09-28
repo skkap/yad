@@ -103,11 +103,16 @@ retried takes at once. `remove_account` for a label neither `config.toml`
 nor the running lists name is nothing to do; from a hub whose connection has
 `manage_accounts = false` it is ignored and logged.
 
-A hub decides the account is gone from a health that names the harness
-without it. A health naming no harness at all — the runner could not read
-its accounts that time — says nothing, and the removal goes on being sent.
-Health names at most sixteen accounts of a harness, so on a runner with more
-a removal can end before the runner has acted on it; the owner's `yad
-account list` is then the word. `yad hub` also ends an add it has not yet
+"Gone from the runner's health" is read as gone from its reports: a sync's
+health naming the harness without the account, or the runner's current
+capability document doing so or naming no such harness. Health alone cannot
+carry it — it names only the harnesses the runner can drive, so removing a
+harness's last account on a machine with no default login takes the harness
+out of health altogether, a health naming no harness is also a runner that
+could not read its accounts that time, and health names at most sixteen of a
+harness's accounts. The document names every harness found, with every
+account, and the daemon rebuilds it as soon as an account is removed. A login
+that adds the account again ends a removal still waiting, since the removal
+would otherwise go out once the account is back. `yad hub` also ends an add it has not yet
 sent, `failed`, once the runner's document arrives without `accounts`, rather
 than waiting ten minutes for it to expire undelivered.

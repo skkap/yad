@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -23,7 +24,7 @@ import (
 // A hub adding and removing a runner's accounts (decision 0057), as yad hub
 // does it. An add is a login carrying add (logins.go). A removal is a row
 // here, and the remove_account control each answer to the runner's syncs
-// carries until its health leaves the account out.
+// carries until the runner's reports leave the account out (gone).
 
 type (
 	accountInput struct {
@@ -40,9 +41,10 @@ func (h *Hub) registerAccounts(api huma.API) {
 		Summary: "Remove an account from a runner",
 		Description: "The runner hears it at its next sync and removes the account as its owner's yad account remove does: listed " +
 			"nowhere from then on, runs already on it finish there, and its home — the login — is deleted once the last of them " +
-			"has ended. A login in flight on it ends cancelled. The request stands until the runner's health leaves the account " +
-			"out, or the runner stops advertising the accounts feature; a repeat is the same request. A runner that does not " +
-			"advertise accounts to this hub — its owner has turned it off for it, or it runs an older yad — is 409.",
+			"has ended. A login in flight on it ends cancelled. The request stands until the runner's health or capability " +
+			"document names the harness without the account, or the runner stops advertising the accounts feature; a repeat is " +
+			"the same request, and a login that adds the account again ends it. A runner that does not advertise accounts to " +
+			"this hub — its owner has turned it off for it, or it runs an older yad — is 409.",
 		Security: adminSecurity, Errors: []int{400, 401, 404, 409},
 	}, func(ctx context.Context, in *accountInput) (*accountOutput, error) {
 		if err := checkAccountName(in.Harness, in.Account); err != nil {
@@ -171,22 +173,39 @@ func healthAccount(h v1.Health, harness, label string) (v1.AccountReport, bool) 
 	return v1.AccountReport{}, false
 }
 
-// goneFrom is whether a sync's health leaves the account out. Only a health
-// that names the harness can say so: one that names none is a runner that
-// could not read its accounts this time (or runs no harness it can drive),
-// and says nothing about this one.
-func goneFrom(h v1.Health, harness, label string) bool {
+// gone is whether the runner's reports leave the account out: this sync's
+// health naming the harness without it, or the runner's current capability
+// document doing so, or naming no such harness at all.
+//
+// Health alone cannot say it. It names only the harnesses the runner can
+// drive, so removing the last account of a harness with no default login
+// takes the harness out of health altogether — the account gone, and nothing
+// in health to say so — and a health that names no harness is also a runner
+// that could not read its accounts this time. Health also names at most
+// sixteen of a harness's accounts. The document names every harness the
+// runner found, with all its accounts, and a removal rebuilds it at once.
+func gone(h v1.Health, doc v1.Capabilities, described bool, harness, label string) bool {
 	for _, hh := range h.Harnesses {
 		if hh.ID == harness {
-			_, listed := healthAccount(h, harness, label)
-			return !listed
+			if _, listed := healthAccount(h, harness, label); !listed {
+				return true
+			}
+			break
 		}
 	}
-	return false
+	if !described {
+		return false
+	}
+	for _, hr := range doc.Harnesses {
+		if hr.ID == harness {
+			return !slices.ContainsFunc(hr.Accounts, func(a v1.AccountReport) bool { return a.Label == label })
+		}
+	}
+	return true
 }
 
 // syncRemovals answers the removals asked of this runner: remove_account for
-// each until this sync's health leaves the account out. One for a runner whose
+// each until the runner's reports leave the account out (gone). One for a runner whose
 // document has arrived and does not advertise accounts ends, since that runner
 // will not act on it (decision 0057); one whose document has not arrived is
 // held back, as every gated control is.
@@ -198,7 +217,7 @@ func syncRemovals(ctx context.Context, q *db.Queries, runnerID string, health v1
 	var out []v1.Control
 	for _, rm := range pending {
 		switch {
-		case goneFrom(health, rm.Harness, rm.Account), described && !advertises(doc, capability.FeatureAccounts):
+		case gone(health, doc, described, rm.Harness, rm.Account), described && !advertises(doc, capability.FeatureAccounts):
 			if err := q.EndAccountRemoval(ctx, db.EndAccountRemovalParams{RunnerID: runnerID, Harness: rm.Harness, Account: rm.Account}); err != nil {
 				return nil, err
 			}

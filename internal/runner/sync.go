@@ -520,7 +520,7 @@ func (l *Loop) removeAccount(ctx context.Context, c v1.Control) {
 	res, removed, err := l.Accounts.Remove(ctx, l.Paths, account.Ref{Harness: c.Harness, Label: c.Account})
 	switch {
 	case err != nil:
-		// Repeated by the hub until health leaves the account out, so the
+		// Repeated by the hub until the runner's reports leave the account out, so the
 		// next sync tries again.
 		log.Warn("the hub asked to remove an account, and it could not be removed; its next ask tries again", "err", err)
 	case removed:

@@ -20,6 +20,9 @@ func managing(id string, labels ...string) v1.SyncRequest {
 	r := first(id, 1)
 	r.Fingerprint = "fp-accounts-" + id
 	r.Capabilities.ProtocolFeatures = append(capability.Features(), capability.FeatureAccounts)
+	for _, l := range labels {
+		r.Capabilities.Harnesses[0].Accounts = append(r.Capabilities.Harnesses[0].Accounts, v1.AccountReport{Label: l, State: v1.AccountFree})
+	}
 	return withAccounts(r, labels...)
 }
 
@@ -205,5 +208,56 @@ func TestARemovalEndsOnlyOnAbsenceOrTheFeatureGone(t *testing.T) {
 	f.api(t, "GET", "/runners/r1/accounts/claude/work", tok, nil, &view)
 	if view.RemoveRequestedAt != nil || !view.Listed {
 		t.Fatalf("a runner that stopped advertising accounts: %+v, want the removal ended and the account still listed", view)
+	}
+}
+
+// Removing a harness's last account on a machine with no default login makes
+// the harness one the runner cannot drive, and health stops naming it. The
+// runner's document, rebuilt at once, still names the harness — without the
+// account — and that ends the removal, rather than it going out for ever and
+// taking away the same label when it is added again.
+func TestARemovalEndsWhenTheHarnessLeavesHealth(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	on := managing("r1", "work")
+	f.mustSync(t, "r1", cred, on)
+	if code, e := f.api(t, "POST", "/runners/r1/accounts/claude/work/remove", tok, nil, nil); code != http.StatusOK {
+		t.Fatalf("remove: %d %+v", code, e)
+	}
+	if cs := removals(f.mustSync(t, "r1", cred, later(on))); len(cs) != 1 {
+		t.Fatalf("controls %+v, want the removal", cs)
+	}
+	// The runner acted: its harness left health, and its new document
+	// names claude with no account.
+	after := managing("r1")
+	after.Fingerprint = "fp-after"
+	after.Health.Harnesses = nil
+	if cs := removals(f.mustSync(t, "r1", cred, after)); len(cs) != 0 {
+		t.Fatalf("still sent once the document left the account out: %+v", cs)
+	}
+	var v hubapi.Account
+	f.api(t, "GET", "/runners/r1/accounts/claude/work", tok, nil, &v)
+	if v.RemoveRequestedAt != nil {
+		t.Fatalf("the removal stands: %+v", v)
+	}
+}
+
+// Adding an account again is the owner's newer word: a removal still waiting
+// for it ends, rather than going out once the account is back.
+func TestAnAddEndsAWaitingRemovalOfItsLabel(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	on := managing("r1", "work")
+	f.mustSync(t, "r1", cred, on)
+	if code, e := f.api(t, "POST", "/runners/r1/accounts/claude/work/remove", tok, nil, nil); code != http.StatusOK {
+		t.Fatalf("remove: %d %+v", code, e)
+	}
+	if code, e := f.api(t, "POST", "/runners/r1/logins", tok, hubapi.LoginRequest{Harness: "claude", Account: "work", Add: true}, nil); code != http.StatusCreated {
+		t.Fatalf("add: %d %+v", code, e)
+	}
+	if cs := removals(f.mustSync(t, "r1", cred, later(on))); len(cs) != 0 {
+		t.Fatalf("the removal went out after the account was added again: %+v", cs)
 	}
 }

@@ -813,7 +813,7 @@ components:
       additionalProperties: true
       properties:
         controls:
-          description: "Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions, remove_account until the account is absent from health; a steer is sent once."
+          description: "Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions, remove_account until health or the capability document names the harness without the account; a steer is sent once."
           items:
             $ref: "#/components/schemas/Control"
           type: array

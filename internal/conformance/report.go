@@ -33,7 +33,7 @@ var unchecked = []struct {
 	sections: []section{hubControls},
 	why:      "only a hub's own API starts a login, which is outside v1, and this runner advertises no login feature to be sent one. What is checked is that none is sent to it, and that its reports are taken.",
 }, {
-	rule:     "Adding and removing accounts: start_login and login_token carrying add, and remove_account, only while the runner advertises accounts to this hub; remove_account repeated until the runner's health leaves the account out, or the runner stops advertising accounts.",
+	rule:     "Adding and removing accounts: start_login and login_token carrying add, and remove_account, only while the runner advertises accounts to this hub; remove_account repeated until the runner's health or capability document leaves the account out, or the runner stops advertising accounts.",
 	sections: []section{hubControls},
 	why:      "only a hub's own API adds or removes an account, which is outside v1, and this runner advertises no accounts feature to be sent either. What is checked is that neither is sent to it.",
 }, {

@@ -163,6 +163,12 @@ func (h *Hub) startLogin(ctx context.Context, in *startLoginInput) (*loginOutput
 			if err := refuseNoAccounts(r, "an add", addAtTheMachine(req.Harness, req.Account)); err != nil {
 				return err
 			}
+			// Adding it again is the owner's newer word. A removal still
+			// waiting would otherwise go out as soon as the account is back
+			// in the runner's reports, and take away what was just added.
+			if err := q.EndAccountRemoval(ctx, db.EndAccountRemovalParams{RunnerID: r.ID, Harness: req.Harness, Account: req.Account}); err != nil {
+				return err
+			}
 		}
 		if _, err := q.GetLogin(ctx, id); err == nil {
 			return Fail(http.StatusConflict, v1.CodeConflict, fmt.Sprintf("the hub already has login %q", id),

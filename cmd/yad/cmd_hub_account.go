@@ -57,8 +57,8 @@ func cmdHubAccount(ctx context.Context, g global, args []string, stdout io.Write
 	}
 	if a.Listed {
 		// The request ended without the account leaving: the runner stopped
-		// advertising accounts to this hub in the meantime.
-		return fmt.Errorf("runner %s stopped letting this hub remove accounts before it removed %s — its owner turned manage_accounts off for this hub; `%s` shows its accounts",
+		// advertising accounts to this hub, or a login added it again.
+		return fmt.Errorf("runner %s still has %s and the removal is no longer asked for — a login added it again, or its owner turned manage_accounts off for this hub; `%s` shows its accounts",
 			cleanLine(a.RunnerID), what, hf.command([]string{"hub", "runners"}, runnerID))
 	}
 	fmt.Fprintf(stdout, "%s is removed from runner %s: no new run takes it, a run already on it finishes there, and its login is deleted once the last one has ended\n",
