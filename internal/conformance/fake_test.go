@@ -96,6 +96,7 @@ const (
 	flawTokenInTheCode   = "the code of a refusal is built from the bearer it was given"
 	flawOffersLiveMode   = "a run is offered in a live session to a runner advertising nothing"
 	flawOffersEffort     = "a run carrying an effort is offered to a runner advertising nothing"
+	flawOffersFork       = "a run opening a fork is offered to a runner advertising nothing"
 	flawGrantInTheOpen   = "a run's grant value comes back quoted in a later refusal"
 	flawRegistersAnyone  = "anyone registers, and the credential comes back under a name of the hub's own"
 	flawUngatedControl   = "a steer goes to a runner that never advertised one"
@@ -478,6 +479,9 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 		}
 		if f.flaw == flawOffersEffort {
 			spec.Effort = "high"
+		}
+		if f.flaw == flawOffersFork {
+			spec.Session.New, spec.Session.ForkFrom = true, "conformance-forked"
 		}
 		if f.flaw == flawGrantInTheOpen {
 			spec.Grants = []v1.Grant{{Name: "TOKEN", Value: grantValue, As: v1.GrantEnv}}

@@ -40,14 +40,17 @@ import (
 // "deaf" never takes the interrupt at all, and dies only by signal.
 // fakeHelp is `claude --help` for the flags probe: "current" lists
 // --system-prompt-snapshot as 2.1.276 onwards do, "old" is a Claude from
-// before it, and "broken" exits with an error.
+// before it, "nofork" one that has it and not --fork-session, and "broken"
+// exits with an error.
 func fakeHelp(mode string) {
 	const head = "Usage: claude [options] [command] [prompt]\n\nOptions:\n  --append-system-prompt <prompt>  Append a system prompt\n"
 	switch mode {
 	case "current":
-		os.Stdout.WriteString(head + "  --system-prompt-snapshot <on|off>  Record the system prompt once per conversation\n")
+		os.Stdout.WriteString(head + "  --system-prompt-snapshot <on|off>  Record the system prompt once per conversation\n  --fork-session  When resuming, create a new session ID\n")
 	case "old":
 		os.Stdout.WriteString(head)
+	case "nofork":
+		os.Stdout.WriteString(head + "  --system-prompt-snapshot <on|off>  Record the system prompt once per conversation\n")
 	default:
 		os.Stderr.WriteString("Error: something went badly wrong\n")
 		os.Exit(1)

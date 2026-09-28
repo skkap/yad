@@ -48,6 +48,9 @@ type Adapter struct {
 	// as a harness added later might be; the fake applies one by default, as
 	// both real adapters do.
 	NoEffort bool
+	// NoFork is an adapter that cannot open a session as a fork; the fake
+	// forks by default, as both real adapters do.
+	NoFork bool
 
 	mu     sync.Mutex
 	Starts []adapter.Spec
@@ -69,6 +72,8 @@ func (a *Adapter) Harness() string {
 }
 
 func (a *Adapter) AppliesEffort() bool { return !a.NoEffort }
+
+func (a *Adapter) Forks() bool { return !a.NoFork }
 
 func (a *Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, error) {
 	if a.Next == nil {

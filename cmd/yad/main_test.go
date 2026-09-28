@@ -150,7 +150,7 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 	}
 
 	bin := dir + "/claude"
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\ncase \"$1\" in\n--help) echo '  --system-prompt-snapshot <on|off>' ;;\n*) echo '2.1.276 (Claude Code)' ;;\nesac\n"), 0o755); err != nil {
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\ncase \"$1\" in\n--help) echo '  --system-prompt-snapshot <on|off>  --fork-session' ;;\n*) echo '2.1.276 (Claude Code)' ;;\nesac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("YAD_CLAUDE_PATH", bin)
@@ -168,7 +168,7 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 	// version probe (decision 0053). Its own path, because the login answer
 	// is kept per binary for a minute.
 	loggedOut := dir + "/claude-logged-out"
-	script := "#!/bin/sh\ncase \"$*\" in\n'auth status') echo '{\"loggedIn\": false}'; exit 1 ;;\n--help) echo '  --system-prompt-snapshot <on|off>' ;;\n*) echo '2.1.276 (Claude Code)' ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$*\" in\n'auth status') echo '{\"loggedIn\": false}'; exit 1 ;;\n--help) echo '  --system-prompt-snapshot <on|off>  --fork-session' ;;\n*) echo '2.1.276 (Claude Code)' ;;\nesac\n"
 	if err := os.WriteFile(loggedOut, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

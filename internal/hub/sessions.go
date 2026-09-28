@@ -184,7 +184,7 @@ func sessionView(ctx context.Context, q *db.Queries, id string) (hubapi.Session,
 		return hubapi.Session{}, err
 	}
 	view := hubapi.Session{
-		SessionID: s.ID, Harness: s.Harness, RunnerID: s.RunnerID.String, State: hubapi.SessionOpen,
+		SessionID: s.ID, Harness: s.Harness, RunnerID: s.RunnerID.String, ForkFrom: s.ForkFrom.String, State: hubapi.SessionOpen,
 		CloseReason: s.CloseReason.String, CreatedAt: time.UnixMilli(s.CreatedAt).UTC(),
 	}
 	if s.CloseRequestedAt.Valid {

@@ -31,7 +31,7 @@ import (
 // A hub must not use a feature the runner did not advertise, so "live_sessions"
 // is absent until it is built.
 func Features() []string {
-	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession, FeatureEffort, FeatureLogin}
+	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession, FeatureEffort, FeatureFork, FeatureLogin}
 }
 
 // FeatureStartAt is a runner that holds a run until its start_at rather than
@@ -63,6 +63,20 @@ const FeatureCloseSession = "close_session"
 // would succeed saying nothing of it (decision 0049). Advertised because
 // every first-class adapter applies it — a test holds the two together.
 const FeatureEffort = "effort"
+
+// FeatureFork is a runner that opens a session as a fork of another it holds
+// (session.fork_from): the fork's conversation starts from a copy of the
+// other's, which goes on untouched — Claude's --fork-session, Codex's
+// thread/fork (decision 0065). A hub offers a run carrying fork_from only to
+// such a runner, and it is always the one holding the session forked, so a
+// fork waits on that runner rather than going elsewhere. Advertised because
+// every first-class adapter forks: Claude's flags probe asks for
+// --fork-session, so a Claude without it is driven not at all, and every
+// pinned Codex protocol has thread/fork — a test holds the two together. A
+// Codex whose protocol drifted from the pinned ones is still driven, with a
+// warning, for forks as for every other method it may have changed (decision
+// 0037); a fork it cannot do fails with Codex's own refusal.
+const FeatureFork = "fork"
 
 // FeatureLogin is a runner that acts on the hub-login controls —
 // start_login, login_code, login_token and cancel_login — and reports each

@@ -704,9 +704,15 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 		case errors.Is(err, sql.ErrNoRows) && !run.Session.New:
 			return refused(fmt.Sprintf("this runner does not hold session %s — sessions resume only on the runner that has them", run.Session.ID))
 		case errors.Is(err, sql.ErrNoRows):
+			if run.Session.ForkFrom != "" {
+				if err := forkable(ctx, q, l.Connection, run); err != nil {
+					return err
+				}
+			}
 			// The workdir is prepared by the executor, which records where.
 			if err := q.CreateSession(ctx, db.CreateSessionParams{
 				Connection: l.Connection, ID: run.Session.ID, Harness: run.Harness, CreatedAt: now, LastUsedAt: now,
+				ForkFrom: sql.NullString{String: run.Session.ForkFrom, Valid: run.Session.ForkFrom != ""},
 			}); err != nil {
 				return err
 			}
@@ -729,6 +735,29 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 		})
 	})
 	return newSession, err
+}
+
+// forkable checks the session a run opening a fork names (decision 0065). It
+// must be one this runner holds for the same hub — a fork happens where the
+// transcript is, and a hub names only its own sessions — of the same harness,
+// and open: a closed session's hub has said it is done with it, and one
+// closing is about to be. Whether it has a conversation yet is the harness's
+// to say when the fork starts, as it is for a resume.
+func forkable(ctx context.Context, q *db.Queries, connection string, run v1.Run) error {
+	src, err := q.GetSession(ctx, db.GetSessionParams{Connection: connection, ID: run.Session.ForkFrom})
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return refused(fmt.Sprintf("this runner does not hold session %s to fork — a session forks only on the runner that has it, for the hub that opened it", run.Session.ForkFrom))
+	case err != nil:
+		return err
+	case src.Harness != run.Harness:
+		return refused(fmt.Sprintf("session %s is a %s session and cannot be forked into a %s one — fork it with its own harness", run.Session.ForkFrom, src.Harness, run.Harness))
+	case src.State != "open":
+		return refused(fmt.Sprintf("session %s was closed on this runner (%s) and is not forked — fork an open session", run.Session.ForkFrom, src.CloseReason.String))
+	case src.CloseRequestedAt.Valid:
+		return refused(fmt.Sprintf("session %s is closing on this runner (%s) and is not forked — fork an open session", run.Session.ForkFrom, src.CloseReason.String))
+	}
+	return nil
 }
 
 // refusal is why this runner cannot take a run, judged from the run alone and

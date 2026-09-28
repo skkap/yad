@@ -330,7 +330,7 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
 Contract: [HUB.md §4](HUB.md#4-runs), and [§9](HUB.md#9-grants) for grants.
 
 ```
-{ run_id, session: { id, new, mode: "per_run" },
+{ run_id, session: { id, new, mode: "per_run", fork_from? },
   harness, model, effort?,
   brief: { context, instruction },
   sources: [{ git: { url, base, branch } } | { path }],
@@ -339,6 +339,10 @@ Contract: [HUB.md §4](HUB.md#4-runs), and [§9](HUB.md#9-grants) for grants.
 ```
 
 `session.mode = "live"` is reserved and refused until a runner advertises it.
+`session.fork_from`, only beside `new: true`, opens the session as a fork of
+another the runner holds for the same connection: a new session, with its own
+workdir from its own sources, whose conversation starts as the harness's copy
+of that one's, which goes on untouched [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md).
 `effort` is how hard the harness thinks, in its own terms, as `model` is — a
 string and never an enum; the runner passes it through unchecked and the
 harness refuses a level it does not take
@@ -439,6 +443,10 @@ once the moment has passed there is nothing to hold, and the run goes to any
 runner, or it would wait for ever on a fleet without the feature. A run
 carrying an `effort` goes only to a runner advertising `effort`, for as long
 as that takes: any other would run the harness at its default and say nothing. A run
+carrying `session.fork_from` goes only to the runner holding the session it
+forks, and only while that runner advertises `fork` — it can go nowhere else,
+so it waits; one without the feature would open the session empty
+[0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md). A run
 opening a session with a source on the machine does not go to a runner whose
 document says `path_sources: false`, which would refuse it
 ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)). A runner
@@ -485,7 +493,7 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 
 | | |
 |---|---|
-| `POST /runs` | queue a run: harness, model, brief, optional sources, grants and session; idempotent by `run_id` |
+| `POST /runs` | queue a run: harness, model, brief, optional sources, grants and session — a new one may fork another with `fork_from`, refused at submit when that session is unknown (404), closed, of another harness, on no runner yet or on one without the `fork` feature (409); idempotent by `run_id` |
 | `GET /runs/{run}` | the run's hub-side state (`queued`, `offered`, then the protocol's) and its result; never its grants |
 | `GET /runs/{run}/events?after=N&wait_ms=…` | long poll: events after `N`, the run, and `done` once the stream is complete |
 | `POST /runs/{run}/cancel` | a run no runner started ends `cancelled` here; a held one gets a `cancel` control, and shows `cancel_requested_at` until it ends |
@@ -533,7 +541,9 @@ claude -p --input-format stream-json --output-format stream-json --verbose
        --include-partial-messages --replay-user-messages
        --disallowed-tools AskUserQuestion --system-prompt-snapshot off
        --permission-mode <owner config>
-       (--session-id <uuid> | --resume <uuid>) [--model m] [--effort level]
+       (--session-id <uuid> | --resume <uuid> |
+        --resume <forked> --fork-session --session-id <uuid>)
+       [--model m] [--effort level]
        [--append-system-prompt-file <context file>]
 ```
 
@@ -577,9 +587,11 @@ run's environment, which carries the hub's grants.
 **Codex** — [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md):
 `codex app-server --listen stdio://`, JSON-RPC over stdin and stdout
 (`internal/adapter/codex/rpc.go`): `initialize` → `initialized` →
-`thread/start`, or `thread/resume` with the stored thread id → one `turn/start`
+`thread/start`, `thread/resume` with the stored thread id, or `thread/fork` of
+the forked session's thread for a fork, whose answer names the new thread →
+one `turn/start`
 with the instruction and the run's `effort`, when it has one; the brief's
-context is the thread's `developerInstructions`, and on a resume it is also
+context is the thread's `developerInstructions`, and on a resume or a fork it is also
 put in the thread as a developer message (`thread/inject_items`) before the
 turn, since Codex reads a resume's instructions only after a compaction
 ([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md)).
@@ -587,7 +599,7 @@ Each of those is answered within 30 s. Codex's models, for the capability
 document, are an app-server of their own: `initialize` → `initialized` →
 `model/list`, and no thread; where it cannot answer, the `models_cache.json`
 Codex keeps in that login's home stands in. The thread id is
-the native session id, exposed the moment `thread/start` answers. Codex writes
+the native session id, exposed the moment `thread/start` or `thread/fork` answers. Codex writes
 subagents' threads to the same pipe and a resume replays the thread's history,
 so only notifications naming the run's thread and, once it has started, the
 run's own turn are read. Only `turn/completed` decides the run; a steer is
@@ -600,7 +612,7 @@ with `session_mismatch`. The rest is
 [0037](docs/decisions/0037-a-codex-run-is-its-own-turn-and-its-protocol-is-pinned.md).
 
 The approval policy and sandbox are the owner's `approval` and `sandbox`, sent
-with every `thread/start` and `thread/resume`, and `never` and
+with every `thread/start`, `thread/resume` and `thread/fork`, and `never` and
 `danger-full-access` when unset — unattended, and the owner's machine is the
 boundary, as for Claude. A request for approval that still arrives is declined
 ([0036](docs/decisions/0036-codex-runs-unsandboxed-and-never-asks-unless-the-owner-says.md)).
@@ -688,7 +700,11 @@ for `codex`); the suite never runs a real harness.
   last used, state)`. The native id is written the moment it is known, not at the
   end — for Claude, at spawn — so a crash does not lose the resume pointer. A run
   in a session with a native id resumes it; one without starts the harness's
-  conversation fresh. Last used is the end of the session's last run.
+  conversation fresh — or, in a session opened as a fork, from the harness's
+  copy of the forked session's conversation, read by its native id when the
+  harness starts [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md). The fork's own id is pinned as any
+  new session's is, and from then on it resumes that. Last used is the end of
+  the session's last run.
 - **A failed resume** ends the run `failed`: `resume_rejected` when the harness
   has no conversation for the id, `session_mismatch` when it ran another one.
   Neither moves the pointer or closes the session; the hub decides —
@@ -698,6 +714,9 @@ for `codex`); the suite never runs a real harness.
   claim (`refused`, [0019](docs/decisions/0019-a-run-starts-once-its-claim-is-acknowledged.md));
   one in a closed or closing session with `session_closed`
   ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md)).
+  A fork of a session it does not hold for that connection, of another
+  harness, or closed or closing is refused at the claim too; one whose forked
+  session has no native id yet ends `resume_rejected` before spawning.
 - **Workdir** per session under `<data>/workdirs/<connection>/<session>/`, kept
   across its runs and never deleted by one —
   [0032](docs/decisions/0032-a-workdir-belongs-to-its-session.md). The session
@@ -1156,7 +1175,7 @@ yad config apply <file>            bring config.toml onto another — a work mac
                                    accounts added and none removed (0059); writes
                                    only when a setting differs, and prints each
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1
-yad hub submit --harness h --model m [--effort level] [--session id | --new-session id] <instruction | ->
+yad hub submit --harness h --model m [--effort level] [--session id | [--new-session id] [--fork session]] <instruction | ->
                                    queue a run; prints its id (--watch follows it)
 yad hub watch <run>                a run's events as they arrive, then its result;
                                    exits non-zero unless it succeeded

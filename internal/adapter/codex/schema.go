@@ -33,8 +33,8 @@ import (
 // pinned maps each known surface hash to the Codex version it was recorded
 // from, in testdata/codex-<version>/codex_app_server_protocol.schemas.json.
 var pinned = map[string]string{
-	"b93a0c4a9ff23792d6b6d77eba52fd9461660b415bc1bc82dd6986296352c6f4": "0.147.0",
-	"08c3537cd7c68248a30a9f1701d84e1f307938b2713ccf2ca015fe248b4ff1db": "0.157.1",
+	"ba72688c25317e21f6c09305957e982a080236247a21be597e12b80117c14ba5": "0.147.0",
+	"12304d548db40115a52970f347f208559bc933dcf4743770bc2182140dfa7586": "0.157.1",
 }
 
 // schemaFile is the bundle generate-json-schema writes, holding every
@@ -52,7 +52,7 @@ var surface = struct {
 	responses []string
 }{
 	methods: map[string][]string{
-		"ClientRequest": {"initialize", "thread/start", "thread/resume", "thread/inject_items", "turn/start", "turn/steer",
+		"ClientRequest": {"initialize", "thread/start", "thread/resume", "thread/fork", "thread/inject_items", "turn/start", "turn/steer",
 			"turn/interrupt", "account/rateLimits/read", "account/login/start", "account/login/cancel", "model/list"},
 		"ClientNotification": {"initialized"},
 		"ServerNotification": {"turn/started", "turn/completed", "item/started", "item/completed",
@@ -63,7 +63,7 @@ var surface = struct {
 			"item/permissions/requestApproval", "mcpServer/elicitation/request",
 			"execCommandApproval", "applyPatchApproval"},
 	},
-	responses: []string{"InitializeResponse", "ThreadStartResponse", "ThreadResumeResponse", "ThreadInjectItemsResponse",
+	responses: []string{"InitializeResponse", "ThreadStartResponse", "ThreadResumeResponse", "ThreadForkResponse", "ThreadInjectItemsResponse",
 		"TurnStartResponse", "TurnSteerResponse", "GetAccountRateLimitsResponse",
 		"CommandExecutionRequestApprovalResponse", "FileChangeRequestApprovalResponse",
 		"PermissionsRequestApprovalResponse", "McpServerElicitationRequestResponse",

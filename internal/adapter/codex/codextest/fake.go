@@ -52,8 +52,10 @@ import (
 //   - CODEX_TEST_THREADS names a directory where the fake keeps a rollout per
 //     thread, as codex keeps them in CODEX_HOME. thread/start mints a new
 //     thread; thread/resume continues one with a rollout and is refused, as
-//     codex refuses it (resume-missing.jsonl), without one; either answers the
-//     fixture's thread request, and KEEP_THREAD has no effect. Each turn's
+//     codex refuses it (resume-missing.jsonl), without one; thread/fork mints
+//     a new thread holding a copy of one with a rollout, and is refused the
+//     same way without one (fork-missing.jsonl); each answers the fixture's
+//     thread request, and KEEP_THREAD has no effect. Each turn's
 //     instruction is appended to its thread's rollout.
 //   - CODEX_TEST_RECALL, with threads kept, makes the answer name what the
 //     thread was asked before this turn ("earlier: a | b"), which is how a
@@ -214,6 +216,11 @@ play:
 				case got.Method == "thread/start":
 					askedThread, earlier = newThread(), nil
 					os.WriteFile(filepath.Join(threads, askedThread), nil, 0o600)
+				case got.Method == "thread/fork" && err == nil && p.ThreadID != "":
+					// The copy starts with everything the forked thread was
+					// asked, and the forked thread's rollout is left alone.
+					askedThread = newThread()
+					os.WriteFile(filepath.Join(threads, askedThread), earlier, 0o600)
 				case p.ThreadID == "" || err != nil:
 					// As recorded in resume-missing.jsonl.
 					out.WriteString(`{"id":` + string(got.ID) + `,"error":{"code":-32600,"message":"no rollout found for thread id ` + p.ThreadID + `"}}` + "\n")
@@ -418,7 +425,7 @@ func started(method, thread string) {
 }
 
 func isThreadRequest(method string) bool {
-	return method == "thread/start" || method == "thread/resume"
+	return method == "thread/start" || method == "thread/resume" || method == "thread/fork"
 }
 
 // newThread is a thread id of codex's shape, fresh each time, as codex mints

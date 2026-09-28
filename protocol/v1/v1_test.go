@@ -208,6 +208,9 @@ func TestRunValidate(t *testing.T) {
 		{"no model", func(r *Run) { r.Model = "" }},
 		{"no instruction", func(r *Run) { r.Brief.Instruction = "" }},
 		{"unknown session mode", func(r *Run) { r.Session.Mode = "warm" }},
+		// A fork opens its session; a continuing run resumes its own.
+		{"fork on a continuing run", func(r *Run) { r.Session.New, r.Session.ForkFrom = false, "other" }},
+		{"fork of itself", func(r *Run) { r.Session.ForkFrom = r.Session.ID }},
 		// Long enough to push Claude's warning quoting it out of the stderr
 		// the runner keeps, so its refusal would go unseen.
 		{"effort longer than a level", func(r *Run) { r.Effort = strings.Repeat("x", 65) }},
@@ -240,6 +243,11 @@ func TestRunValidate(t *testing.T) {
 		if err := r.Validate(); err != nil {
 			t.Errorf("effort %q refused: %v", effort, err)
 		}
+	}
+	fork := good
+	fork.Session.ForkFrom = "other"
+	if err := fork.Validate(); err != nil {
+		t.Errorf("a run opening a fork refused: %v", err)
 	}
 	for _, src := range []Source{{Git: &GitSource{URL: "u"}}, {Path: "/p"}} {
 		if err := src.Validate(); err != nil {
