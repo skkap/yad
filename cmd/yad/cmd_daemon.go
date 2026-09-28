@@ -235,9 +235,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			// The same ring `yad status` shows. Health reports the messages
 			// alone, never the attrs — see runner.healthErrors.
 			RecentErrors: recent.Records,
-			// A hub login that took is news for the document now, as an
-			// account the owner added is.
-			LoginTook: func() {
+			// A hub login that took, or an account a hub added or removed,
+			// is news for the document now, as an account the owner added is.
+			AccountsChanged: func() {
 				select {
 				case rebuild <- struct{}{}:
 				default:
@@ -335,7 +335,8 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		}
 		// Redacted here rather than where status prints it, so nothing that
 		// reads the control socket is handed a credential from the URL.
-		conn := control.Connection{Name: c.Name, URL: config.RedactURL(c.URL), State: cs.State, LastError: cs.LastError, Held: cs.Held, Cap: cs.Cap}
+		conn := control.Connection{Name: c.Name, URL: config.RedactURL(c.URL), State: cs.State, LastError: cs.LastError, Held: cs.Held, Cap: cs.Cap,
+			ManageAccounts: new(c.MayManageAccounts())}
 		if !cs.LastSync.IsZero() {
 			conn.LastSync = &cs.LastSync
 		}

@@ -44,9 +44,13 @@ type Logins struct {
 	Data string
 	// Paths names the profile in the next actions a login's error carries.
 	Paths config.Paths
-	// Accounts is the owner's lists: a hub logs in only an account named
-	// there, or a harness's own default login.
+	// Accounts is the owner's lists: a hub logs in an account named there,
+	// or a harness's own default login — or, with add, lists a new one there
+	// once its login takes (decision 0057).
 	Accounts *Accounts
+	// MayManage is whether a connection's hub may add accounts: the owner's
+	// manage_accounts. Nil lets no hub.
+	MayManage func(conn string) bool
 	// Binary resolves a harness to its executable; nil is harness.Locate.
 	Binary func(harness string) (string, bool)
 	// Changed is told when a login took, so the capability document is built
@@ -121,10 +125,12 @@ type hubLogin struct {
 	conn, id string
 	ref      account.Ref
 	method   v1.LoginMethod
-	state    v1.LoginState
-	url      string
-	errMsg   string
-	updated  time.Time
+	// add is a login that creates its account, listed once the login takes.
+	add     bool
+	state   v1.LoginState
+	url     string
+	errMsg  string
+	updated time.Time
 	// code carries the owner's code to the goroutine driving the login.
 	code chan string
 	// cancel ends the goroutine, and with it the harness's process group.
@@ -256,11 +262,11 @@ func (m *Logins) start(conn string, c v1.Control, method v1.LoginMethod) {
 		return
 	}
 	ref := account.Ref{Harness: c.Harness, Label: c.Account}
-	l := &hubLogin{conn: conn, id: c.LoginID, ref: ref, method: method, state: v1.LoginStarting,
+	l := &hubLogin{conn: conn, id: c.LoginID, ref: ref, method: method, add: c.Add, state: v1.LoginStarting,
 		updated: time.Now(), code: make(chan string, 1), done: make(chan struct{})}
 	m.byKey[k] = l
-	m.Log.Info("a hub started a login", "connection", conn, "login", l.id, "harness", ref.Harness, "account", ref.Label, "method", method)
-	bin, refusal := m.refusal(ref, method, c.Token)
+	m.Log.Info("a hub started a login", "connection", conn, "login", l.id, "harness", ref.Harness, "account", ref.Label, "method", method, "add", c.Add)
+	bin, refusal := m.refusal(l, c.Token)
 	if refusal != "" {
 		close(l.done)
 		m.endLocked(l, v1.LoginFailed, refusal)
@@ -310,7 +316,8 @@ func (m *Logins) start(conn string, c v1.Control, method v1.LoginMethod) {
 // is touched, with the binary that would run it; "" when it will. Its words
 // travel to the hub: no path, and each next action a command for whoever
 // walks to the machine.
-func (m *Logins) refusal(ref account.Ref, method v1.LoginMethod, token string) (string, string) {
+func (m *Logins) refusal(l *hubLogin, token string) (string, string) {
+	ref, method := l.ref, l.method
 	h := ref.Harness
 	if h == "" {
 		return "", "the hub named no harness to log in — start the login again naming one: hub login logs in " + strings.Join(hubLoginHarnesses, " and ")
@@ -334,25 +341,64 @@ func (m *Logins) refusal(ref account.Ref, method v1.LoginMethod, token string) (
 		if ref.Label == "" {
 			// A token is always an account (decision 0054): the default
 			// login is the harness's own, and yad keeps nothing in it.
-			return "", "a token is stored as an account, and this login names none — name an account the owner listed, or add one at the machine with `" + m.Paths.RemoteCommand("account", "add", h, "<label>", "--token", "-") + "`"
+			cmd := "`" + m.Paths.RemoteCommand("account", "add", h, "<label>", "--token", "-") + "`"
+			if m.mayManage(l.conn) {
+				return "", "a token is stored as an account, and this login names none — name one this runner lists, or a new one with add, or add one at the machine with " + cmd
+			}
+			return "", "a token is stored as an account, and this login names none — name one this runner lists, or add one at the machine with " + cmd
 		}
 		if err := account.CheckToken(token); err != nil {
 			return "", "the token was not stored: " + err.Error()
 		}
 	}
-	if ref.Label != "" {
-		if config.ValidName(ref.Label) != nil || !m.Accounts.Lists().Has(ref) {
-			// A hub logs in what the owner listed and never adds an account:
-			// what is on this machine is the owner's to decide (0055).
-			return "", fmt.Sprintf("%s account %q is not one this runner's owner listed, and a hub never adds one — at the machine, `%s` adds it",
-				h, ref.Label, m.Paths.RemoteCommand("account", "add", h, ref.Label))
+	if l.add {
+		// Refused whatever else is wrong with the login: the owner turned
+		// this off for this hub, and a hub that retried with another label
+		// would only be refused again (decision 0057).
+		switch {
+		case !m.mayManage(l.conn):
+			label := ref.Label
+			if config.ValidName(label) != nil {
+				label = "<label>"
+			}
+			return "", fmt.Sprintf("this runner's owner has not let this hub add accounts (manage_accounts = false for its connection) — at the machine, `%s` adds it",
+				m.Paths.RemoteCommand("account", "add", h, label))
+		case ref.Label == "":
+			return "", "add creates an account, and this login names none — start it again naming the new account's label"
+		case config.ValidName(ref.Label) != nil:
+			return "", fmt.Sprintf("%s is not an account label: use lowercase letters, digits, dashes and underscores, starting with a letter or digit, at most 64 — start the login again with another", named(ref.Label))
+		case m.Accounts.Lists().Has(ref):
+			// A mistyped re-login must not become a second account, and a
+			// re-login that meant this one needs no add (decision 0057).
+			return "", fmt.Sprintf("%s account %q is already listed on this runner — to log it in again, start the login without add", h, ref.Label)
 		}
+	} else if ref.Label != "" && (config.ValidName(ref.Label) != nil || !m.Accounts.Lists().Has(ref)) {
+		label := ref.Label
+		if config.ValidName(label) != nil {
+			label = "<label>"
+		}
+		return "", fmt.Sprintf("%s account %s is not one this runner lists — %s", h, named(ref.Label), m.toAdd(l.conn, h, label))
 	}
 	bin, ok := m.Binary(h)
 	if !ok {
 		return "", fmt.Sprintf("%s is not installed on this machine — `%s` at the machine shows where it was looked for", h, m.Paths.RemoteCommand("doctor"))
 	}
 	return bin, ""
+}
+
+func (m *Logins) mayManage(conn string) bool {
+	return m.MayManage != nil && m.MayManage(conn)
+}
+
+// toAdd is how an account this runner does not list comes to be: by a login
+// with add, from a hub its owner lets add accounts, and in any case at the
+// machine, with yad account add and args after the label.
+func (m *Logins) toAdd(conn, harness, label string, args ...string) string {
+	cmd := "`" + m.Paths.RemoteCommand(append([]string{"account", "add", harness, label}, args...)...) + "`"
+	if m.mayManage(conn) {
+		return "start the login again with add to add it, or add it at the machine with " + cmd
+	}
+	return "add it at the machine with " + cmd + " — this runner's owner has not let this hub add accounts"
 }
 
 // takeCode hands the owner's code to a login waiting for one. A repeat, or a
@@ -462,11 +508,21 @@ var errRemoved = errors.New("removed")
 // it is still listed, made after any login it replaced has let go, and the
 // hold that keeps a removal from deleting the home under the login — the
 // home goes when release lets go of it, with whatever the login wrote there.
+//
+// A login that adds its account holds a label nothing lists yet, and one
+// that does not take leaves its home for the next try, as `yad account add`
+// does (decision 0043).
 func (m *Logins) claim(l *hubLogin) (home string, release func(), err error) {
 	if l.ref.Label == "" {
 		return "", func() {}, nil
 	}
-	hold, ok := m.Accounts.takeForLogin(l.ref, l.id)
+	var hold *accountHold
+	ok := true
+	if l.add {
+		hold = m.Accounts.takeForAdd(l.ref, l.id)
+	} else {
+		hold, ok = m.Accounts.takeForLogin(l.ref, l.id)
+	}
 	if !ok {
 		return "", nil, errRemoved
 	}
@@ -484,7 +540,7 @@ func (m *Logins) claimed(l *hubLogin, log *slog.Logger) (home string, release fu
 	home, release, err := m.claim(l)
 	switch {
 	case errors.Is(err, errRemoved):
-		m.end(l, v1.LoginCancelled, m.removedReason(l.ref))
+		m.end(l, v1.LoginCancelled, m.removedReason(l))
 		return "", nil, false
 	case err != nil:
 		log.Error("a hub login could not prepare the account's home", "err", err)
@@ -494,14 +550,15 @@ func (m *Logins) claimed(l *hubLogin, log *slog.Logger) (home string, release fu
 	return home, release, true
 }
 
-func (m *Logins) removedReason(r account.Ref) string {
-	return fmt.Sprintf("%s account %q was removed on the machine, and a hub never adds one back — at the machine, `%s` adds it again",
-		r.Harness, r.Label, m.Paths.RemoteCommand("account", "add", r.Harness, r.Label))
+func (m *Logins) removedReason(l *hubLogin) string {
+	return fmt.Sprintf("%s account %q was removed from this runner while it was being logged in — %s",
+		l.ref.Harness, l.ref.Label, m.toAdd(l.conn, l.ref.Harness, l.ref.Label))
 }
 
 // hubLoginHarnesses are the harnesses a hub login can log in here. Codex's
 // device code has its place on the wire and waits on its runner side
-// (decision 0055).
+// (decision 0055, DEV-135); until then a Codex add is refused like any Codex
+// hub login.
 var hubLoginHarnesses = []string{"claude"}
 
 // named is a name a hub sent, fit to quote in words that go back to it: one
@@ -522,7 +579,7 @@ func (m *Logins) accountRemoved(r account.Ref) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if l := m.live[r]; l != nil {
-		m.endLocked(l, v1.LoginCancelled, m.removedReason(r))
+		m.endLocked(l, v1.LoginCancelled, m.removedReason(l))
 	}
 }
 
@@ -721,15 +778,28 @@ func (m *Logins) check(ctx context.Context, l *hubLogin, bin, home string, log *
 			return
 		}
 	}
-	if l.ref.Label == "" {
+	switch {
+	case l.ref.Label == "":
 		// The capability document keeps its answer about a default login
 		// for a minute; the owner who just logged in should not wait on it.
 		capability.ForgetDefaultLogin(h)
-	} else if _, err := m.Accounts.LoggedInAgain(ctx, l.ref); err != nil {
-		// Only a removal, or a label no listing could hold, gets here.
-		log.Warn("a hub login took on an account no longer listed", "err", err)
-		m.end(l, v1.LoginFailed, m.removedReason(l.ref))
-		return
+	case l.add:
+		// Listed only now that it has taken (decision 0057): a login that
+		// ends any other way lists nothing. A label listed meanwhile — the
+		// owner at the machine, another hub — is this same account.
+		if _, err := m.Accounts.Add(ctx, m.Paths, l.ref); err != nil {
+			log.Error("a hub login took, and its account could not be added to config.toml", "err", err)
+			m.end(l, v1.LoginFailed, fmt.Sprintf("the login took, and the account could not be added to config.toml, so it takes no runs — `%s` at the machine says why; its home keeps the login, so a new login with add finishes it",
+				m.Paths.RemoteCommand("daemon", "logs")))
+			return
+		}
+	default:
+		if _, err := m.Accounts.LoggedInAgain(ctx, l.ref); err != nil {
+			// Only a removal, or a label no listing could hold, gets here.
+			log.Warn("a hub login took on an account no longer listed", "err", err)
+			m.end(l, v1.LoginFailed, m.removedReason(l))
+			return
+		}
 	}
 	if m.Changed != nil {
 		m.Changed()

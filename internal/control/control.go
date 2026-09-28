@@ -136,12 +136,16 @@ type Connection struct {
 	URL  string `json:"url"`
 	// Held is the runs this connection has of the capacity pool, and Cap the
 	// owner's bound on it: 0 is no cap of its own.
-	Held        int        `json:"held"`
-	Cap         int        `json:"cap,omitempty"`
-	State       string     `json:"state"` // starting | syncing | retrying | stopped
-	LastSync    *time.Time `json:"last_sync,omitempty"`
-	LastError   string     `json:"last_error,omitempty"`
-	LastErrorAt *time.Time `json:"last_error_at,omitempty"`
+	Held int `json:"held"`
+	Cap  int `json:"cap,omitempty"`
+	// ManageAccounts is the owner's manage_accounts: whether this hub may
+	// add and remove the runner's accounts (decision 0057). Nil from a
+	// daemon older than the setting.
+	ManageAccounts *bool      `json:"manage_accounts,omitempty"`
+	State          string     `json:"state"` // starting | syncing | retrying | stopped
+	LastSync       *time.Time `json:"last_sync,omitempty"`
+	LastError      string     `json:"last_error,omitempty"`
+	LastErrorAt    *time.Time `json:"last_error_at,omitempty"`
 }
 
 // Run is one run the runner holds.

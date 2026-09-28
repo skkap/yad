@@ -69,7 +69,17 @@ func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 			if c.Cap > 0 {
 				held = fmt.Sprintf("%d of %d run(s)", c.Held, c.Cap)
 			}
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", cleanLine(c.Name), c.State, held, last, cleanLine(c.URL))
+			// The setting's own name, since changing it is an edit to
+			// config.toml and a restart.
+			var accounts string
+			switch {
+			case c.ManageAccounts == nil:
+			case *c.ManageAccounts:
+				accounts = "manage_accounts on"
+			default:
+				accounts = "manage_accounts off"
+			}
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\n", cleanLine(c.Name), c.State, held, last, accounts, cleanLine(c.URL))
 			if c.LastError != "" && c.LastErrorAt != nil {
 				fmt.Fprintf(tw, "  \t\tlast error %s: %s\t\n", ago(*c.LastErrorAt), cleanLine(c.LastError))
 			}
