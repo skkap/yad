@@ -342,7 +342,7 @@ func checks() []check {
 		run:     checkOffersWithinCapacity,
 	}, {
 		id:      "sync/timings",
-		rule:    "Timings belong to the hub: the sync interval it names is between 5 s and 60 s.",
+		rule:    "Timings belong to the hub: the sync interval it names at register is between 5 s and 60 s, and the next_sync_ms of a sync between 3 s and 60 s.",
 		section: hubLeases,
 		needs:   credential,
 		run:     checkTimings,

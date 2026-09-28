@@ -14,12 +14,12 @@ import (
 // for tests: the floor is what stops a hostile or broken hub spinning the
 // machine, and a test that drives the protocol in milliseconds is not a reason
 // to ship a runner that will.
-func TestTheShippedSyncFloorIsFiveSeconds(t *testing.T) {
+func TestTheShippedSyncFloorIsThreeSeconds(t *testing.T) {
 	if SyncFloorForTests != 0 {
 		t.Fatalf("a test left the floor seam set to %s", SyncFloorForTests)
 	}
-	if minInterval != 5*time.Second {
-		t.Errorf("minInterval = %s, want 5s", minInterval)
+	if minInterval != 3*time.Second {
+		t.Errorf("minInterval = %s, want 3s", minInterval)
 	}
 	for _, tc := range []struct {
 		name string
@@ -28,6 +28,8 @@ func TestTheShippedSyncFloorIsFiveSeconds(t *testing.T) {
 	}{
 		{"a hub naming a millisecond", 1, minInterval},
 		{"a hub naming 50ms", 50, minInterval},
+		{"a hub holding a run for it", 3000, 3 * time.Second},
+		{"a hub naming its steady floor", 5000, 5 * time.Second},
 		{"a hub naming an hour", 3_600_000, maxInterval},
 		{"a hub naming nothing", 0, defaultInterval},
 	} {

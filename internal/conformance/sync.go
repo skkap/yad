@@ -275,9 +275,9 @@ func checkClaimByListing(ctx context.Context, s *session) error {
 
 func checkTimings(_ context.Context, s *session) error {
 	for _, t := range s.timings {
-		if t.interval < v1MinInterval || t.interval > v1MaxInterval {
+		if t.interval < t.floor || t.interval > v1MaxInterval {
 			return brokenf("answering %s the hub named a sync interval of %s, outside the %s to %s the protocol bounds it to",
-				t.call, t.interval, v1MinInterval, v1MaxInterval)
+				t.call, t.interval, t.floor, v1MaxInterval)
 		}
 	}
 	return nil
@@ -297,9 +297,13 @@ func checkLeaseOutlastsTheInterval(_ context.Context, s *session) error {
 }
 
 // The interval a hub may name (HUB.md §5). The default of 15 s is the
-// hub's business; the bounds are the protocol's.
+// hub's business; the bounds are the protocol's. A sync's next_sync_ms may go
+// lower than register's sync_interval_ms, for a hub asking a runner back
+// sooner while it holds work for it (decision 0063); whether it names that
+// only then is not something a runner can see, so only the bound is checked.
 const (
 	v1MinInterval = 5 * time.Second
+	v1MinNextSync = 3 * time.Second
 	v1MaxInterval = 60 * time.Second
 )
 

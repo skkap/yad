@@ -53,7 +53,7 @@ and your answer to it. There are five calls:
 | call | when | what it does |
 |---|---|---|
 | `POST /runners/register` | once, from `yad connect` | a registration token in, a runner credential out |
-| `POST /runners/{runner}/sync` | every 5–60 s, at the interval you name | the runner's health and the runs it holds in; new runs and instructions out |
+| `POST /runners/{runner}/sync` | every 5–60 s, at the interval you name — 3 s while you hold work for it, if you choose | the runner's health and the runs it holds in; new runs and instructions out |
 | `POST /runs/{run}/events` | about every second while a run produces output | a batch of what happened in a run |
 | `POST /runs/{run}/result` | once per run, retried until you answer 2xx | how the run ended |
 | `POST /runners/{runner}/deregister` | when the runner is leaving for good | its credential dies and you settle what it held |
@@ -744,10 +744,41 @@ in a result: the control did not reach the harness, and the run carried on.
 
 **The interval you name must be between 5 s and 60 s.** `sync_interval_ms` at
 register and `next_sync_ms` in every sync response are both bounded,
-inclusive. A hub naming 2 s or 5 min is refused by conformance and clamped by
-a runner. `yad hub` uses 15 s. The runner adds ±10 % jitter, syncs at once
+inclusive — except that `next_sync_ms` may go as low as 3 s, for the answer
+below. A hub naming 2 s or 5 min is refused by conformance and clamped by a
+runner. `yad hub` uses 15 s. The runner adds ±10 % jitter, syncs at once
 when a response carried offers, and backs off from 1 s to 30 s after a failed
 sync.
+
+**You may ask a runner back sooner while you hold work for it.** Between
+5 s and 3 s is for one thing: a queued run this runner would be offered once
+a run it holds ends — its capacity is full, or the run is the next turn in a
+session it is running. Without it that run starts up to a whole interval after
+the run ahead of it ends; with it, within about 3 s. It is optional, and it is
+no help to a runner holding nothing — the run submitted a moment after an idle
+runner's sync still waits one interval, since the answer that would have to
+change was sent before the run existed. `yad hub` answers 3 s when **all** of
+these hold, and its configured interval otherwise
+([0063](docs/decisions/0063-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)):
+
+- a queued run is one it would be offered but for its capacity or the live run
+  of its own session: a harness it drives and has not capped at zero, in a
+  session unbound or bound to it, not closing, and past everything else an
+  offer checks — a start moment it cannot hold, an effort it does not take,
+  a source on the machine its owner has switched off;
+- a run the runner lists as executing — anything but `waiting` — would let
+  that queued run go by ending. A waiting run gives its capacity, and its
+  session, back at an account's reset, hours off; a runner listing nothing has
+  its capacity taken by nothing you can see end — another hub's runs, or none
+  at all — so asking either back sooner finds it no freer. When the queued
+  run's harness has its own cap full (`free_capacity.by_harness` at 0), only a
+  run of that harness ending frees it; otherwise any run ending does;
+- it is not draining, and has not been asked to.
+
+An idle fleet with nothing queued, and a run no runner here can take, keep the
+normal interval. A runner at capacity for the length of a long run is asked
+back five times as often for that long — the price of the next run starting
+seconds after it ends.
 
 **Leases.** Every sync renews the lease on every run it lists. A run whose
 lease lapses is **lost**: the runner is gone or has stopped talking, and the
@@ -1505,7 +1536,7 @@ checks; the rest is yours to get right.
 
 **Sync**
 
-- [ ] `sync_interval_ms` and `next_sync_ms` within 5–60 s; `lease_ms` never shorter than either — [§5](#5-leases-timings-and-runners-that-go-away) (C)
+- [ ] `sync_interval_ms` within 5–60 s and `next_sync_ms` within 3–60 s; `lease_ms` never shorter than either — [§5](#5-leases-timings-and-runners-that-go-away) (C)
 - [ ] An offer is claimed only when the next sync lists it; an offer not listed goes back in the queue at that sync — [§3](#post-runnersrunnersync) (C)
 - [ ] A listed run the runner does not hold is answered with `cancel` — [§3](#post-runnersrunnersync) (C)
 - [ ] Offers within `free_capacity`, both `total` and each `by_harness`, as sent — [§4](#who-may-be-offered-what) (C)
