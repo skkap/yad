@@ -51,17 +51,21 @@ usual way a new sqlc output file goes missing from a PR.
 **The protocol is a public surface.** A diff in `protocol/v1/openapi.yaml` is
 a change every TypeScript hub will feel. If it renames or removes anything, it
 belongs in v2, not in this PR. `make check-breaking` is what stops that by
-machine rather than by eye: each document against itself at the last release
-tag that is not this commit's own, failing on anything oasdiff rates breaking.
-The exclusion is what keeps it honest during a release — `release.yml` runs
-`make check` with HEAD detached at the tag being published, and without it the
-baseline would be the working tree and the check would compare a file to
-itself. It covers
+machine rather than by eye. It checks each document against the same document
+at the release before this commit, and fails on anything oasdiff rates
+breaking. For a commit that is itself a release, "the release before" means
+the tag just below its own in version order. For any other commit it means
+the newest release it builds on. That keeps the check honest during a
+release. `release.yml` runs `make check` with HEAD detached at the tag being
+published, and if the commit's own tag were the baseline, the check would
+compare a file with itself. `scripts/breaking_test.go` runs every release
+topology against the script. It covers
 `protocol/hubapi/openapi.yaml` too — a service generates its client from that
 file alone ([0022](docs/decisions/0022-hub-service-api-beside-the-protocol.md)),
 and the same renamed field showed up as one error in the protocol document and
-six in the hub's. Until the owner pushes the first `v[0-9]*` tag there is no
-baseline and the check says so on every run rather than passing quietly.
+six in the hub's. v0.1.0 is the first baseline. A commit with no earlier
+release, such as one older than v0.1.0, has no baseline, and the check says
+so rather than passing quietly.
 
 **Cross-compilation** is part of the bar because the runner is developed on
 macOS and deployed on Linux: anything reaching for `syscall` outside a `unix`
@@ -157,11 +161,9 @@ document is not on that list: CI's `check-openapi` fails it by name.
   `PATH` and a release made of files on disk. Nothing here downloads a real
   release, and no check on this machine proves the install script on a fresh
   Linux VM.
-- **No breaking-change check has anything to compare against yet.** `oasdiff`
-  is wired — `make check-breaking`, in `make check` and in CI — but this
-  repository has no `v[0-9]*` tag, so there is no released document to hold the
-  current one against. It prints that it is inert on every run, naming what it
-  did not do, and starts guarding the moment the owner pushes the first release
-  tag. Nothing else has to change then. Until that push, a green
-  `check-breaking` is not evidence that either document is compatible with
-  anything; it is evidence that nothing has been released.
+- **No release is checked for order until it is pushed.** `release.yml` first
+  runs `scripts/release-guard.sh`. It refuses a tag on a commit that an
+  earlier release already contains, because that would publish older code
+  under a newer version. It runs only on the tag push. Nothing local stops such
+  a tag from being made, and the guard is tested against throwaway
+  repositories in `scripts/release_guard_test.go`.

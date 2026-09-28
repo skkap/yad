@@ -36,6 +36,10 @@ jobs:
           # it falls back to a short SHA, so a shallow clone would ship a
           # plausible-looking binary that no version floor can read.
           fetch-depth: 0
+      # Before anything else runs. A tag on a commit an earlier release already
+      # contains ships older code under a newer version, and `make check` would
+      # pass it (DEV-90). Needs the tags, which fetch-depth 0 brings.
+      - run: scripts/release-guard.sh "$GITHUB_REF_NAME"
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
