@@ -112,4 +112,5 @@ type Session struct {
 	OfferedTo        sql.NullString
 	CloseOwed        int64
 	ForkFrom         sql.NullString
+	BoundByRun       sql.NullString
 }

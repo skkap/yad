@@ -71,6 +71,30 @@ func TestASessionWhoseFirstRunNeverBoundItOpensWithTheNext(t *testing.T) {
 			cancelOnHub(t, e, "a")
 			return l2
 		}},
+		{"cancelled after the answer acknowledging its claim was lost", func(t *testing.T, e *env, l *Loop) *Loop {
+			// DEV-143. The hub binds s1 at the listing whose answer never
+			// arrives, so it holds a as claimed while the runner waits.
+			h := &losesAnswer{Hub: l.Hub}
+			l.Hub = h
+			mustSync(t, l)
+			h.arm()
+			if _, err := l.SyncOnce(ctx); err == nil {
+				t.Fatal("the armed sync's answer arrived")
+			}
+			if _, err := e.api(t).Cancel(ctx, "a"); err != nil {
+				t.Fatal(err)
+			}
+			// The cancel reaches the runner before any acknowledgement: it
+			// withdraws the claim and the session the claim opened. The next
+			// sync leaves a out, and the hub ends it cancelled there.
+			if res := mustSync(t, l); !slices.Equal(cancels(res), []string{"a"}) {
+				t.Fatalf("cancels %v, want [a]", cancels(res))
+			}
+			if _, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "hub", ID: "s1"}); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("session s1 is still here after the claim that opened it was withdrawn: %v", err)
+			}
+			return l
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
