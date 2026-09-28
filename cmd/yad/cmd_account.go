@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -187,13 +186,10 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 		fmt.Fprintf(w, "%s account %q: its stored token is removed; it logs in %s's own way from now on\n", id, label, id)
 	}
 
-	// Read again, not the copy from before the login: that took minutes, and
-	// a `yad connect` in another terminal meanwhile must not be written over.
-	cfg, err := config.Load(g.paths)
-	if err != nil {
-		return err
-	}
-	if err := addToConfig(g.paths, cfg, id, label); err != nil {
+	// Read again under the lock, not the copy from before the login: that
+	// took minutes, and a `yad connect` in another terminal or an account a
+	// hub added meanwhile must not be written over (decision 0057).
+	if _, err := config.UpdateAccounts(ctx, g.paths, id, config.WithAccount(label)); err != nil {
 		return err
 	}
 	res, err := tellDaemon(ctx, g.paths, control.AccountChange{Harness: id, Label: label})
@@ -401,20 +397,10 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 			return nil
 		}
 	}
-	cfg, err := config.Load(g.paths)
-	if err != nil {
-		return err
-	}
 	// Out of config.toml first: from here no daemon, running or starting,
 	// gives the account a new run.
-	if h, ok := cfg.Harness[id]; ok {
-		if i := slices.Index(h.Accounts, label); i >= 0 {
-			h.Accounts = slices.Delete(slices.Clone(h.Accounts), i, i+1)
-			cfg.Harness[id] = h
-			if err := config.Save(g.paths, cfg); err != nil {
-				return err
-			}
-		}
+	if _, err := config.UpdateAccounts(ctx, g.paths, id, config.WithoutAccount(label)); err != nil {
+		return err
 	}
 	res, err := tellDaemon(ctx, g.paths, control.AccountChange{Harness: id, Label: label, Removed: true})
 	again := g.paths.Command("account", "remove", id, label, "--yes")
@@ -454,24 +440,6 @@ func checkHarness(id string) error {
 		}
 	}
 	return fmt.Errorf("yad has no account home for %q — accounts work for %v, and a harness without one uses its own login", id, known)
-}
-
-// addToConfig appends a label to the harness's account order if it is not
-
-// addToConfig appends a label to the harness's account list if it is not
-// already there. The list says which accounts take part and breaks ties among
-// them; which one a run takes is the soonest refill (decision 0039).
-func addToConfig(p config.Paths, cfg config.Config, id, label string) error {
-	h := cfg.Harness[id]
-	if slices.Contains(h.Accounts, label) {
-		return nil
-	}
-	h.Accounts = append(slices.Clone(h.Accounts), label)
-	if cfg.Harness == nil {
-		cfg.Harness = map[string]config.HarnessConfig{}
-	}
-	cfg.Harness[id] = h
-	return config.Save(p, cfg)
 }
 
 // interactive says a person is at the terminal: both a keyboard to type the

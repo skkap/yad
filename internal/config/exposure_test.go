@@ -244,6 +244,7 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 		"internal/config/credentials.go": "writePrivate: runner-id, credentials/* and hub-admin-token — all in privateFiles",
 		"internal/config/config.go":      "Save writes config.toml 0600 — in privateFiles, as the mode without the rotation",
 		"internal/config/identity.go":    "runner-id, in privateFiles",
+		"internal/config/update.go":      "config.toml.lock, empty: a lock beside config.toml, and holding nothing",
 		"cmd/yad/cmd_hub.go":             "WriteSecret for hub-admin-token, which is in privateFiles",
 		"internal/store/store.go":        "state.db and hub.db — both in privateFiles",
 		"internal/control/server.go":     "yad.sock and yad.lock: gone when the daemon stops, and inside the data directory this checks as a whole",
