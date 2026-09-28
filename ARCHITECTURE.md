@@ -228,8 +228,11 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
 - **Hub login** — [0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md).
   A hub sends the four login controls only to a runner advertising `login`.
   `start_login {login_id, harness, account?}` runs the harness's own login on
-  the machine and the runner reports its link as `url` while `waiting`;
-  `login_code {login_id, code}` carries the code the owner got there;
+  the machine and the runner reports its link as `url` while `waiting` — for
+  Codex, with `user_code`, the device code the owner types there, and nothing
+  comes back ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md));
+  `login_code {login_id, code}` carries the code the owner got there, never to
+  a login reporting `user_code`;
   `login_token {login_id, harness, account, token}` stores a
   `claude setup-token` token as the account's login; `cancel_login {login_id}`
   ends one. The runner reports each login in `logins` — `starting`, `waiting`,
@@ -241,9 +244,7 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   sent and unheard for thirty minutes `failed`, blanking its token; a
   runner's later report of an end replaces the hub's. `code` and
   `token` are secrets: logged by neither side, never reported back, and a
-  token held by the hub only until the runner reports its login. `user_code`
-  is for a device-code login — Codex's, which a runner answers `failed` for
-  until its side is built.
+  token held by the hub only until the runner reports its login.
 - **Claim by listing.** A run offered in a sync response is claimed when the
   runner lists it in its next sync. An offered run that the next sync does not
   list was never received, and the hub offers it again. The runner takes the
@@ -557,7 +558,9 @@ subagents' threads to the same pipe and a resume replays the thread's history,
 so only notifications naming the run's thread and, once it has started, the
 run's own turn are read. Only `turn/completed` decides the run; a steer is
 `turn/steer` into the same turn, an interrupt `turn/interrupt`; once the turn is
-over input closes and the app-server gets 2 s to exit. A resume Codex has no
+over input closes and the app-server gets 2 s to exit. A hub login drives
+the same app-server's device-code login instead of a thread (hub login,
+below). A resume Codex has no
 rollout for fails with `resume_rejected`, and one that resumes another thread
 with `session_mismatch`. The rest is
 [0037](docs/decisions/0037-a-codex-run-is-its-own-turn-and-its-protocol-is-pinned.md).
@@ -805,7 +808,18 @@ for `codex`); the suite never runs a real harness.
   read from it; the code goes to its stdin; it took only when that login
   itself exited 0 within a minute of the code and the harness's own check then
   says logged in — never by the wording, and never by the check alone, which
-  says yes to a credential already in the home from before. A stored token stays in its file for the
+  says yes to a credential already in the home from before. Codex's is a
+  device code over its app-server (`byDevice`, driving
+  `internal/adapter/codex.DeviceLogin`, [0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)):
+  `account/login/start` with `chatgptDeviceCode` answers with the link and the
+  code, reported as `url` and `user_code`; `account/login/completed` with
+  `success` is the login's own condition, and once the app-server has exited
+  on its input closing — after writing `auth.json` — `codex login status`
+  decides. A login ended from the hub, or unentered after ten minutes, sends
+  `account/login/cancel` before the app-server is stopped, so a code typed
+  late logs nothing in. What Codex words — an error, a refusal — is never
+  read or reported; the runner writes its own. That behaviour is read from
+  0.147.0's schema, not yet measured against a real login. A stored token stays in its file for the
   account's runs throughout: the login runs with `account.LoginEnv` and is
   judged by `account.OwnLogin`, both without the token — claude's check says
   yes to any token — and the token is removed only once the login has taken,
@@ -815,9 +829,9 @@ for `codex`); the suite never runs a real harness.
   that checks an added account, and the capability document is rebuilt at
   once; a default login drops the minute-long cached answer instead. Thirty
   seconds for the link, ten minutes for the code (`expired`), a minute to
-  exit; one login per account, a newer one superseding. Codex, a token with no
-  account and an unlisted account end `failed` with the command that does it
-  at the machine. Logins are memory only — nothing in `state.db`, the code and
+  exit; one login per account, a newer one superseding. A token for Codex or
+  with no account, and an unlisted account, end `failed` with the command that
+  does it at the machine. Logins are memory only — nothing in `state.db`, the code and
   the token in no log, report or error — so a restart forgets those in flight.
   `yad hub` keeps them in `hub.db` and blanks the token once the runner has
   reported its login, and the code once it has taken it. It ends a login on
@@ -1067,6 +1081,8 @@ yad hub close-session <session>    the session takes no new run; its runner dele
 yad hub login start <runner> <harness> [account] [--code -]
                                    log an account in on a runner by link: prints the
                                    link once the runner has it, reads the code on stdin
+                                   (Codex: prints the link and its device code, reads
+                                   nothing, and waits for the owner to type it)
 yad hub login token <runner> <harness> <account>
                                    log it in with a setup-token token read from stdin
 yad hub login status|cancel <runner> <login>

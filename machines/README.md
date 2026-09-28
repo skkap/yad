@@ -167,16 +167,23 @@ on stdin.
 it ([0055](../docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)),
 no shell on the machine is needed. A hub shows **Log in** beside an account
 its runner reports as `needs_login`: follow the link and paste the code back,
-or paste a `claude setup-token` token. The runner runs Claude's own login in
-the account's home, or stores the token there, and the account is back in
-service once Claude's own check says so. A hub logs in only accounts listed in
-`config.toml`, never adds one, and Codex still logs in here. With `yad hub` as
-the hub:
+or paste a `claude setup-token` token — for Codex, follow the link and type
+the code the hub shows there
+([0057](../docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
+The runner runs the harness's own login in the account's home, or stores the
+token there, and the account is back in service once the harness's own check
+says so. A hub logs in only accounts listed in `config.toml`, and never adds
+one. With `yad hub` as the hub:
 
 ```bash
 yad hub login start <runner> claude main    # prints the link, then reads the code
 yad hub login token <runner> claude main < token.txt
+yad hub login start <runner> codex main     # prints the link and the code to type there
 ```
+
+A ChatGPT Business, Enterprise or Edu workspace has device-code login off
+until its admin turns it on; until then a Codex login from the hub ends
+`failed` saying so.
 
 ## Rebuilding
 

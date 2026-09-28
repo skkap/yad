@@ -1011,6 +1011,14 @@ label the owner listed on that machine, which the runner's health names: a
 runner never adds one, and answers any other with `failed`. A token needs an
 account; a link login without one logs in the harness's own default login.
 
+**Codex logs in by device code**
+([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)),
+still a `link` login: its `waiting` report carries `user_code` beside `url`.
+Show both; the owner signs in at the link and types the code there, and
+nothing comes back through you — **never send `login_code` to a login that
+reported `user_code`**. It ends like any other, by the runner's own check.
+Codex takes no token: a `login_token` for it ends `failed`.
+
 Each login's `state` moves `starting` → `waiting` (`url` set) → `checking` →
 one of `succeeded`, `failed`, `expired`, `cancelled`, and the runner repeats
 it in every sync until one carrying the end is answered — take a repeat as the
@@ -1019,8 +1027,7 @@ same news, and a report for a login you never started as news you may ignore.
 action. Success is the harness's own login check on the machine, never its
 output. A newer login for the same account replaces the older one, which the
 runner reports `cancelled`. yad's runner gives a code ten minutes (`expired`
-after) and answers Codex with `failed` until its side is built; `user_code` is
-for that device-code login.
+after), whether it is pasted back or typed at the link.
 
 **The rules the reports cannot enforce for you.** The `code` and the `token`
 are secrets: never log them, never show them again, never return them from an

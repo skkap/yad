@@ -133,10 +133,10 @@ each account in once; the login lives in the volume.
 
   The runner then reports `main` as needing a login, and the hub shows
   **Log in** beside it: a link to follow and a code to paste back, or a
-  `claude setup-token` token to paste. How that works, and the
+  `claude setup-token` token to paste — and for a Codex account under
+  `[harness.codex]`, a link and a code to type there. How that works, and the
   `yad hub login` commands for `yad hub`, are in
-  [machines/README.md](../machines/README.md#logging-in). Codex still logs
-  in with the device code above.
+  [machines/README.md](../machines/README.md#logging-in).
 
 Then check:
 
