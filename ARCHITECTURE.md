@@ -777,7 +777,7 @@ for `codex`); the suite never runs a real harness.
 - **`config.toml` has two writers**
   ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)):
   the CLI, and the daemon for an account a hub adds or removes. Every write —
-  `yad account add` and `remove`, `yad connect`, `yad config apply` (0058),
+  `yad account add` and `remove`, `yad connect`, `yad config apply` (0059),
   the daemon's — goes through
   `config.Update`: an exclusive `flock` on `config.toml.lock` beside the file
   (not the file itself, which a save replaces by rename), the file read fresh,
@@ -1114,7 +1114,7 @@ yad service install|uninstall|status
                                    launchd user agent, systemd user unit (0028)
 yad config apply <file>            bring config.toml onto another — a work machine's
                                    spec: every setting but the connections, its
-                                   accounts added and none removed (0058); writes
+                                   accounts added and none removed (0059); writes
                                    only when a setting differs, and prints each
 yad hub serve                      the standalone hub: protocol at /v1, service API at /api/v1
 yad hub submit --harness h --model m [--effort level] [--session id | --new-session id] <instruction | ->

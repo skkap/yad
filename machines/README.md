@@ -239,7 +239,7 @@ a running runner reads it when it starts — `yad --profile default service inst
   `yad-machine login` makes it.
 
 Why it is shaped this way is in
-[0058](../docs/decisions/0058-up-brings-a-machines-config-onto-its-spec-and-never-removes-an-account.md).
+[0059](../docs/decisions/0059-up-brings-a-machines-config-onto-its-spec-and-never-removes-an-account.md).
 A yad older than `yad config apply` — an old `YAD_VERSION` — leaves the
 machine's copy alone as before, and says which newer yad does it.
 

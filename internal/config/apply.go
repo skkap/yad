@@ -15,7 +15,7 @@ import (
 )
 
 // A work machine's config.toml has an author besides yad: the machine spec it
-// was built from (decision 0058). The spec owns every setting but two things
+// was built from (decision 0059). The spec owns every setting but two things
 // only the machine can know — the hubs it is connected to, and the accounts
 // logged in on it, whether at its terminal or by a hub. So a spec's accounts
 // are made sure of and never subtracted: a label the spec does not list may

@@ -55,7 +55,7 @@ say "yad config.toml"
 # match can end the pipeline on yad's SIGPIPE and read as "no such command".
 if grep -q 'config apply' <<<"$(yad help 2>/dev/null)"; then
     # The spec owns every setting but the connections, and its accounts are
-    # added to the machine's, never subtracted from them (decision 0058).
+    # added to the machine's, never subtracted from them (decision 0059).
     # yad does the merge, under the lock its other writers take, so the
     # file stays as yad writes it and a hub adding an account meanwhile is
     # kept. The checksum, not yad's wording, says whether it wrote the file.

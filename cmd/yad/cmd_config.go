@@ -13,7 +13,7 @@ import (
 const configUsage = "usage: yad config apply <file>"
 
 // cmdConfig is `yad config apply`, which brings this profile's config.toml in
-// line with another — a work machine's spec (decision 0058) — and says what
+// line with another — a work machine's spec (decision 0059) — and says what
 // it changed. It is how `yad-machine up` takes a spec's change to a built
 // machine, and it goes through the same lock as every other writer, so a hub
 // adding an account meanwhile is neither lost nor overwritten.

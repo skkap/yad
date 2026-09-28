@@ -44,7 +44,7 @@ _See_: [0052](docs/decisions/0052-a-work-machine-is-a-lima-vm-built-from-a-spec.
 **Machine spec** — the directory a work machine is built from: `machine.env`
 (name, size, harnesses, egress), the runner's `config.toml` — every setting
 but the connections, and accounts it makes sure of and never removes
-([0058](docs/decisions/0058-up-brings-a-machines-config-onto-its-spec-and-never-removes-an-account.md)) — an optional
+([0059](docs/decisions/0059-up-brings-a-machines-config-onto-its-spec-and-never-removes-an-account.md)) — an optional
 `provision.sh`, and `home/`, laid over the runner's user's home. It holds no
 secret; the machine's own credentials are logged in by hand, once.
 _Avoid_: spec alone where a hub's run spec could be meant
