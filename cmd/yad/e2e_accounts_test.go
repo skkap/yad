@@ -166,6 +166,27 @@ func TestTheCLIAndTheDaemonWriteAccountsAtOnce(t *testing.T) {
 	if !slices.Equal(c.Labels, []string{"edited-by-hand"}) {
 		t.Errorf("the hand edit is lost: labels %v", c.Labels)
 	}
+
+	// And the running daemon says the same as the file: its health, as the
+	// hub last heard it, names exactly those accounts.
+	want := slices.Sorted(slices.Values(got))
+	var inHealth []string
+	eventually(t, "the daemon's health names what config.toml lists", func() bool {
+		r, err := api.Runner(ctx, id)
+		if err != nil || r.Health == nil {
+			return false
+		}
+		inHealth = nil
+		for _, hh := range r.Health.Harnesses {
+			if hh.ID == "claude" {
+				for _, a := range hh.Accounts {
+					inHealth = append(inHealth, a.Label)
+				}
+			}
+		}
+		slices.Sort(inHealth)
+		return slices.Equal(inHealth, want)
+	})
 }
 
 // within is eventually for a goroutine, where a test may not stop: it

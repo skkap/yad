@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -278,4 +280,51 @@ func TestTheAccountsFeatureIsPerConnection(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+// Changes to the lists take turns, and each reloads config.toml as it then
+// reads. An add whose reload is held up — here by a store not yet open, which
+// every reload waits for — does not let a removal written after it be undone
+// when the add's reload finally lands: the removal waits for the add, not the
+// other way round. Without the turns the two reload in either order, and the
+// removed account comes back in the daemon while config.toml says it is gone.
+func TestAnAddReloadingLateDoesNotUndoARemoval(t *testing.T) {
+	x := &Exec{}
+	fakeClaudeBinary(t, x)
+	for range 6 {
+		e := newEnv(t)
+		cfg := accountConfig("work", "old")
+		if err := config.Save(e.paths, cfg); err != nil {
+			t.Fatal(err)
+		}
+		a := accountsOf(e.paths.Data, cfg)
+		a.Binary = x.Binary
+		ctx := context.Background()
+		plantCredential(t, e.paths.Data, "new")
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			if _, err := a.Add(ctx, e.paths, account.Ref{Harness: "claude", Label: "new"}); err != nil {
+				t.Error(err)
+			}
+		})
+		// The add has written and is waiting to reload.
+		deadline := time.Now().Add(10 * time.Second)
+		for !slices.Contains(listedInConfig(t, e.paths), "new") {
+			if time.Now().After(deadline) {
+				t.Fatal("the add never wrote config.toml")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		wg.Go(func() {
+			if _, _, err := a.Remove(ctx, e.paths, account.Ref{Harness: "claude", Label: "old"}); err != nil {
+				t.Error(err)
+			}
+		})
+		time.Sleep(100 * time.Millisecond)
+		a.attach(ctx, e.store)
+		wg.Wait()
+		if got := a.Lists()["claude"]; !slices.Equal(got, []string{"work", "new"}) {
+			t.Fatalf("the daemon lists %v, config.toml %v", got, listedInConfig(t, e.paths))
+		}
+	}
 }

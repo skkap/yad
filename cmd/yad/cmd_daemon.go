@@ -200,12 +200,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 					return control.AccountResult{}, lists.Keep(account.Ref{Harness: ch.Harness, Label: ch.Label})
 				}
 				// config.toml as it reads now, not as it read at start: the
-				// CLI wrote the change there before it asked.
-				now, err := config.Load(g.paths)
-				if err != nil {
-					return control.AccountResult{}, err
-				}
-				res, err := lists.Reload(ctx, account.ListsOf(now), account.Ref{Harness: ch.Harness, Label: ch.Label}, ch.Removed)
+				// CLI wrote the change there before it asked. In turn with a
+				// hub's adds and removals, which write it too (decision 0057).
+				res, err := lists.Reread(ctx, g.paths, account.Ref{Harness: ch.Harness, Label: ch.Label}, ch.Removed)
 				if err != nil {
 					return control.AccountResult{}, err
 				}
