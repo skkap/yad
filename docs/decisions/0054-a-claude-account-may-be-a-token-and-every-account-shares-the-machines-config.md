@@ -1,5 +1,5 @@
 ---
-status: amended by 0055 — a hub may relay a Claude login, and deliver a token once; Anthropic support allowed it on 2026-09-25
+status: amended by 0055 — a hub may relay a Claude login, and deliver a token once; Anthropic support allowed it on 2026-09-25 — and by 0057, which builds the Codex device-code login from a hub this record left as backlog
 date: 2026-09-25
 ---
 
