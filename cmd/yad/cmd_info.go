@@ -142,8 +142,10 @@ func accountLogins(found []harness.Detected, accounts []account.Account, p confi
 			continue
 		}
 		found[i].NeedsLogin = true
+		// AddArgs: a token account parked on a refused token is logged in
+		// again with a new token, never by a login it would outrank (0054).
 		found[i].Error = fmt.Sprintf("none of its accounts is logged in — `%s` logs %q in, and `%s` shows each",
-			p.Command("account", "add", d.ID, mine[0].Label), mine[0].Label, p.Command("account", "list"))
+			p.Command(account.AddArgs(d.ID, mine[0].Label, mine[0].Home)...), mine[0].Label, p.Command("account", "list"))
 	}
 }
 

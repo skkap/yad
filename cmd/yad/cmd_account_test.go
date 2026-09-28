@@ -427,11 +427,15 @@ func TestDoctorSaysAHarnessWhoseAccountsAllNeedLoginNeedsLogin(t *testing.T) {
 		// states are the rows written; a label with no home reads needs_login.
 		states map[string]v1.AccountState
 		homes  []string
-		ready  bool
+		// token is an account parked on a refused token: it is logged in
+		// again with a new one, never by a login the token would outrank.
+		token bool
+		ready bool
 	}{
-		{"an account listed by hand and never logged in", []string{"main"}, nil, nil, false},
-		{"an account a run found logged out", []string{"main"}, map[string]v1.AccountState{"main": v1.AccountNeedsLogin}, []string{"main"}, false},
-		{"one logged-out account beside one that runs", []string{"main", "spare"}, map[string]v1.AccountState{"main": v1.AccountNeedsLogin}, []string{"main", "spare"}, true},
+		{"an account listed by hand and never logged in", []string{"main"}, nil, nil, false, false},
+		{"an account a run found logged out", []string{"main"}, map[string]v1.AccountState{"main": v1.AccountNeedsLogin}, []string{"main"}, false, false},
+		{"a token account whose token was refused", []string{"main"}, map[string]v1.AccountState{"main": v1.AccountNeedsLogin}, []string{"main"}, true, false},
+		{"one logged-out account beside one that runs", []string{"main", "spare"}, map[string]v1.AccountState{"main": v1.AccountNeedsLogin}, []string{"main", "spare"}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := accountEnv(t)
@@ -452,6 +456,11 @@ func TestDoctorSaysAHarnessWhoseAccountsAllNeedLoginNeedsLogin(t *testing.T) {
 			}
 			for _, label := range tc.homes {
 				if _, err := account.Ensure(p.Data, "claude", label); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.token {
+				if err := account.SetToken(account.HomeDir(p.Data, "claude", "main"), "sk-ant-oat01-refused"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -479,8 +488,11 @@ func TestDoctorSaysAHarnessWhoseAccountsAllNeedLoginNeedsLogin(t *testing.T) {
 				t.Fatalf("doctor prints no error for Claude Code:\n%s", out)
 			}
 			full, _, _ = strings.Cut(full, "\n")
-			shellwordtest.CheckEnv(t, onlyCommand(t, full, "yad --profile default account add"), dirsEnv(t),
-				"yad", "--profile", "default", "account", "add", "claude", "main")
+			add := []string{"yad", "--profile", "default", "account", "add", "claude", "main"}
+			if tc.token {
+				add = append(add, "--token", "-")
+			}
+			shellwordtest.CheckEnv(t, onlyCommand(t, full, "yad --profile default account add"), dirsEnv(t), add...)
 			shellwordtest.CheckEnv(t, onlyCommand(t, full, "yad --profile default account list"), dirsEnv(t),
 				"yad", "--profile", "default", "account", "list")
 			if strings.Contains(full, account.HomeDir(p.Data, "claude", "main")) {
