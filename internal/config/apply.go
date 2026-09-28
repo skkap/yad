@@ -88,6 +88,9 @@ func merge(spec, have Config) Config {
 	next := spec
 	next.Labels = slices.Clone(spec.Labels)
 	next.Workdirs.Roots = slices.Clone(spec.Workdirs.Roots)
+	if p := spec.Workdirs.PathSources; p != nil {
+		next.Workdirs.PathSources = new(*p)
+	}
 	// A connection needs a credential that only `yad connect` on the machine
 	// makes, so the spec's are never taken: one taken would name a hub the
 	// runner cannot sync with.

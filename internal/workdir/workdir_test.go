@@ -368,6 +368,30 @@ func TestRefusedSources(t *testing.T) {
 	}
 }
 
+// path_sources = false refuses a directory inside the roots, and says that the
+// setting refused it rather than the roots (DEV-72). A repository on the
+// network still goes: it is not a source on the machine.
+func TestPathSourcesOff(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", nil)
+	f.m.PathSourcesOff = true
+	for name, src := range map[string]v1.Source{
+		"a path inside the roots": {Path: f.root},
+		"a local repository":      gitSource(o.bare, "", ""),
+		"a file:// repository":    gitSource("file://"+o.bare, "", ""),
+	} {
+		if err := f.m.Check([]v1.Source{src}, "s-check"); class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "path_sources = false") {
+			t.Errorf("%s, checked: %v, want %s naming path_sources", name, err, ClassSourceRefused)
+		}
+		if _, _, err := f.prepare("s-"+strings.ReplaceAll(name, " ", "-"), src); class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "path_sources = false") {
+			t.Errorf("%s, prepared: %v, want %s naming path_sources", name, err, ClassSourceRefused)
+		}
+	}
+	if caches, _ := filepath.Glob(filepath.Join(f.m.Data, "repos", "*")); len(caches) != 0 {
+		t.Errorf("a refused run left caches: %v", caches)
+	}
+}
+
 // git never waits for a person: a remote that asks for a password fails at
 // once. The server is loopback, in process.
 func TestGitNeverPrompts(t *testing.T) {

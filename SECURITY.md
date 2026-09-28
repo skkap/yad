@@ -33,7 +33,8 @@ These break a promise YAD makes, and are vulnerabilities:
   ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
 - A grant that reaches the prompt, the logs, the events or the checkout, or
   outlives its run.
-- A source that reaches a directory outside the owner's `[workdirs] roots`.
+- A source that reaches a directory outside the owner's `[workdirs] roots`, or
+  any directory on a runner whose owner set `path_sources = false`.
 - The runner listening on a network port. Its only socket is a Unix socket for
   its own CLI.
 - `yad upgrade` or `scripts/install.sh` installing a binary whose checksum does

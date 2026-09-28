@@ -206,7 +206,7 @@ components:
           description: "The branch the run works on, checked out as a worktree of the repository. Absent: yad/<connection>/<session>, named after the session."
           type: string
         url:
-          description: "The repository: an https or ssh URL, fetched with the machine's own credentials and never with a password in the URL, or an absolute path or file:// URL of a repository on the runner's machine, inside the directories its owner allows. Required."
+          description: "The repository: an https or ssh URL, fetched with the machine's own credentials and never with a password in the URL, or an absolute path or file:// URL of a repository on the runner's machine, inside the directories its owner allows and never at a runner whose capability document says path_sources is false. Required."
           type: string
       required:
         - url

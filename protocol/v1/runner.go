@@ -16,7 +16,11 @@ type Capabilities struct {
 	HostTools        []HostTool      `json:"host_tools,omitempty" doc:"The non-harness tools a run may need, as they exist on this runner. A tool is usable when present is true and error is empty, and, for a tool that has a login, when logged_in is true as well. A tool that is missing or broken is reported rather than left out."`
 	Capacity         Capacity        `json:"capacity" doc:"How many runs the runner executes at once, and the owner's per-harness caps. The configured size, not what is free now: that is each sync's health.free_capacity."`
 	ProtocolFeatures []string        `json:"protocol_features,omitempty" doc:"The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session, effort, login and accounts; live_sessions is reserved. accounts is per hub: a runner lists it only to a hub its owner lets add and remove accounts, and only beside login, so two hubs of one runner may be sent different lists and fingerprints. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."`
-	ObservedAt       time.Time       `json:"observed_at" doc:"When the runner built this document. Left out of the fingerprint, so it changes without the fingerprint moving."`
+	// PathSources is sent only as false, so the document of every runner
+	// that takes them — and of every runner older than the field — is the
+	// same, fingerprint included (decision 0062).
+	PathSources *bool     `json:"path_sources,omitempty" doc:"false: this runner's owner has switched sources on the machine off, so a run with a path source, or a git source whose url is a path or file:// URL, fails with source_refused. Offer a run opening a session (session.new) with one to another runner; a run in a session already bound to this runner can go nowhere else, so offer it, and the refusal names the setting. Absent: the runner takes them inside the directories its owner allows. Never sent as true."`
+	ObservedAt  time.Time `json:"observed_at" doc:"When the runner built this document. Left out of the fingerprint, so it changes without the fingerprint moving."`
 }
 
 // HarnessReport is one harness as it exists on the runner. Accounts appear by
