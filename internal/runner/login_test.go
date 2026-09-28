@@ -687,7 +687,8 @@ func TestALoginThatEndsWithoutTakingLeavesTheAccountAsItsCheckSays(t *testing.T)
 		// gone, or "logged in" at the machine.
 		home string
 		// check is RUNNER_TEST_CLAUDE for the login's own check: "broken"
-		// cannot answer.
+		// cannot answer, and "once" answers the login and not the check
+		// that follows it.
 		check string
 		start v1.Control
 		then  func(t *testing.T, r *loginRig)
@@ -707,6 +708,9 @@ func TestALoginThatEndsWithoutTakingLeavesTheAccountAsItsCheckSays(t *testing.T)
 			r.until(t, "lg1", v1.LoginWaiting)
 			r.Control("hub", loginCode("lg1", fakeLoginCode))
 		}, v1.LoginSucceeded, v1.AccountFree},
+		{"taken, and the check after it cannot answer", "", "once",
+			v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Account: "work", Token: "sk-ant-oat01-checked-once"},
+			nil, v1.LoginSucceeded, v1.AccountFree},
 		// The check, not the end: an account already logged in keeps its
 		// login when a hub's attempt at another one is abandoned.
 		{"cancelled on an account logged in at the machine", "logged in", "", startLogin("lg1", "claude", "work"), cancel, v1.LoginCancelled, v1.AccountFree},

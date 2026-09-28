@@ -328,7 +328,7 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 		log.Info("the owner removed the account", "runs_still_on_it", len(runs))
 		return Changed{Runs: runs}, nil
 	}
-	state := a.checkAdded(ctx, st, r, log)
+	state := a.checkAdded(ctx, st, r, log, "")
 	log.Info("the owner added the account", "state", state)
 	return Changed{State: state}, nil
 }
@@ -354,7 +354,11 @@ func (a *Accounts) LoggedInAgain(ctx context.Context, r account.Ref) (v1.Account
 		return "", fmt.Errorf("%s account %q was removed on the machine while it was being logged in", r.Harness, r.Label)
 	}
 	log := a.log().With("harness", r.Harness, "account", r.Label)
-	state := a.checkAdded(ctx, st, r, log)
+	// The login's own check has just said yes. A second that cannot answer —
+	// a timeout, or the login cancelled between the two — is not a no, and
+	// must not leave the needs_login written before the login made the home
+	// (beforeLoginMakesHome).
+	state := a.checkAdded(ctx, st, r, log, v1.AccountFree)
 	log.Info("a hub logged the account in", "state", state)
 	return state, nil
 }
@@ -445,8 +449,9 @@ func (a *Accounts) loginNotTaken(r account.Ref, made bool) {
 
 // checkAdded asks the harness whether a newly added account is logged in,
 // records a definite answer, and returns the account's state as a run would
-// now read it.
-func (a *Accounts) checkAdded(ctx context.Context, st *store.Store, r account.Ref, log *slog.Logger) v1.AccountState {
+// now read it. unanswered is what a check that cannot answer records, "" for
+// nothing.
+func (a *Accounts) checkAdded(ctx context.Context, st *store.Store, r account.Ref, log *slog.Logger, unanswered v1.AccountState) v1.AccountState {
 	var q *db.Queries
 	if st != nil {
 		q = st.Queries
@@ -457,6 +462,13 @@ func (a *Accounts) checkAdded(ctx context.Context, st *store.Store, r account.Re
 	}
 	if bin, ok := binary(r.Harness); ok && q != nil && account.CanLogIn(r.Harness) {
 		switch in, err := account.LoggedIn(ctx, r.Harness, bin, account.HomeDir(a.data, r.Harness, r.Label)); {
+		case err != nil && unanswered != "":
+			log.Warn("could not check the account's login again; it is recorded as its login found it", "state", unanswered, "err", err)
+			// Not cancelled with ctx: a login cancelled or a daemon stopping
+			// between the two checks still took.
+			if err := account.SetState(context.WithoutCancel(ctx), q, r.Harness, r.Label, unanswered, time.Now()); err != nil {
+				log.Warn("could not record the account's state", "state", unanswered, "err", err)
+			}
 		case err != nil:
 			log.Warn("could not check the added account's login; it is left as it reads", "err", err)
 		default:
