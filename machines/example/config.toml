@@ -1,6 +1,8 @@
-# The runner's config.toml, copied into the machine on the first `up` only —
-# after that `yad connect` and `yad account add` write to the machine's copy,
-# and it is the one that counts. ARCHITECTURE.md §4 describes every key.
+# The runner's config.toml. Every `up` brings the machine's copy onto this one:
+# every setting here wins, and one left out goes back to the default — but the
+# machine keeps its hub connections, and an account listed there and not here
+# (logged in at the machine, or added by a hub) is kept too. ARCHITECTURE.md §4
+# describes every key.
 
 name     = "example"
 labels   = ["linux", "example"]
@@ -11,7 +13,8 @@ cap = 2
 # The accounts this machine runs on. Listed here, each is reported as
 # needs_login — to `yad-machine status` and to every hub — until someone logs
 # it in with `yad-machine login`, so a new machine says what it is missing
-# instead of failing its first run.
+# instead of failing its first run. Taking one off this list does not remove
+# it from the machine: `yad account remove` there, or from a hub, does.
 accounts = ["main"]
 
 [harness.codex]
