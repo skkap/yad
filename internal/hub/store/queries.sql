@@ -287,8 +287,8 @@ ORDER BY r.id;
 -- Hub logins (decision 0055).
 
 -- name: CreateLogin :exec
-INSERT INTO logins (id, runner_id, harness, account, method, token, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO logins (id, runner_id, harness, account, method, token, add_account, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetLogin :one
 SELECT * FROM logins WHERE id = ?;
@@ -353,3 +353,20 @@ WHERE (state IN ('starting', 'waiting', 'checking') OR state = 'requested' AND s
 -- name: EndRunnerLogins :execrows
 UPDATE logins SET state = 'failed', error = sqlc.arg(error), url = '', hub_ended = 1, updated_at = sqlc.arg(now)
 WHERE runner_id = sqlc.arg(runner_id) AND state IN ('requested', 'starting', 'waiting', 'checking');
+
+-- Removing a runner's accounts (decision 0057).
+
+-- A repeat keeps the first request's time: it is the same removal.
+-- name: RequestAccountRemoval :exec
+INSERT INTO account_removals (runner_id, harness, account, requested_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT (runner_id, harness, account) DO NOTHING;
+
+-- name: GetAccountRemoval :one
+SELECT * FROM account_removals WHERE runner_id = ? AND harness = ? AND account = ?;
+
+-- name: AccountRemovals :many
+SELECT * FROM account_removals WHERE runner_id = ? ORDER BY requested_at, harness, account;
+
+-- name: EndAccountRemoval :exec
+DELETE FROM account_removals WHERE runner_id = ? AND harness = ? AND account = ?;

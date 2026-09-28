@@ -152,6 +152,26 @@ func (c *Client) CancelLogin(ctx context.Context, runnerID, loginID string) (hub
 	return out, err
 }
 
+// RemoveAccount asks a runner to remove an account (decision 0057): it is
+// sent at the runner's next syncs until its reports leave the account out.
+func (c *Client) RemoveAccount(ctx context.Context, runnerID, harness, label string) (hubapi.Account, error) {
+	var out hubapi.Account
+	err := c.do(ctx, http.MethodPost, c.accountPath(runnerID, harness, label)+"/remove", struct{}{}, &out)
+	return out, err
+}
+
+// Account reads an account as the runner's last health has it, and whether
+// a removal is waiting.
+func (c *Client) Account(ctx context.Context, runnerID, harness, label string) (hubapi.Account, error) {
+	var out hubapi.Account
+	err := c.do(ctx, http.MethodGet, c.accountPath(runnerID, harness, label), nil, &out)
+	return out, err
+}
+
+func (c *Client) accountPath(runnerID, harness, label string) string {
+	return "/runners/" + url.PathEscape(runnerID) + "/accounts/" + url.PathEscape(harness) + "/" + url.PathEscape(label)
+}
+
 func (c *Client) loginPath(runnerID, loginID string) string {
 	return "/runners/" + url.PathEscape(runnerID) + "/logins/" + url.PathEscape(loginID)
 }

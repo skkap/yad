@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -118,7 +119,10 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		notes = append(notes, "account states could not be read, so every configured account is registered as free: "+err.Error())
 		accounts = nil
 	}
-	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: capability.Build(ctx, id, cfg, accounts)})
+	// As this connection's syncs will send it, so the hub knows from the
+	// start what it may ask (decision 0057).
+	doc := capability.ForConnection(capability.Build(ctx, id, cfg, accounts), conn.MayManageAccounts())
+	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: doc})
 	if err != nil {
 		return conn, none, notes, fmt.Errorf("register with %s: %w", shown, err)
 	}
@@ -129,7 +133,16 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		return conn, none, notes, fmt.Errorf("the hub registered this runner but the credential could not be saved (%w) — fix the config directory and connect again with a new token", err)
 	}
 	if existing < 0 {
-		if err := config.Save(p, next); err != nil {
+		// Under config.toml's lock, onto the file as it reads now: the
+		// register above was a round trip, and an account a hub added in
+		// the meantime must not be written over (decision 0057).
+		if _, err := config.Update(ctx, p, func(c *config.Config) (bool, error) {
+			if slices.ContainsFunc(c.Connections, func(k config.Connection) bool { return k.Name == conn.Name }) {
+				return false, nil
+			}
+			c.Connections = append(c.Connections, conn)
+			return true, nil
+		}); err != nil {
 			// A credential with no connection naming it is a secret nobody
 			// will use or clean up.
 			return conn, none, notes, errors.Join(fmt.Errorf("save %s: %w — connect again with a new token", p.ConfigFile(), err), p.DeleteCredential(name))

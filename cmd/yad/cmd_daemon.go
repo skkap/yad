@@ -200,12 +200,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 					return control.AccountResult{}, lists.Keep(account.Ref{Harness: ch.Harness, Label: ch.Label})
 				}
 				// config.toml as it reads now, not as it read at start: the
-				// CLI wrote the change there before it asked.
-				now, err := config.Load(g.paths)
-				if err != nil {
-					return control.AccountResult{}, err
-				}
-				res, err := lists.Reload(ctx, account.ListsOf(now), account.Ref{Harness: ch.Harness, Label: ch.Label}, ch.Removed)
+				// CLI wrote the change there before it asked. In turn with a
+				// hub's adds and removals, which write it too (decision 0057).
+				res, err := lists.Reread(ctx, g.paths, account.Ref{Harness: ch.Harness, Label: ch.Label}, ch.Removed)
 				if err != nil {
 					return control.AccountResult{}, err
 				}
@@ -235,9 +232,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			// The same ring `yad status` shows. Health reports the messages
 			// alone, never the attrs — see runner.healthErrors.
 			RecentErrors: recent.Records,
-			// A hub login that took is news for the document now, as an
-			// account the owner added is.
-			LoginTook: func() {
+			// A hub login that took, or an account a hub added or removed,
+			// is news for the document now, as an account the owner added is.
+			AccountsChanged: func() {
 				select {
 				case rebuild <- struct{}{}:
 				default:
@@ -335,7 +332,8 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		}
 		// Redacted here rather than where status prints it, so nothing that
 		// reads the control socket is handed a credential from the URL.
-		conn := control.Connection{Name: c.Name, URL: config.RedactURL(c.URL), State: cs.State, LastError: cs.LastError, Held: cs.Held, Cap: cs.Cap}
+		conn := control.Connection{Name: c.Name, URL: config.RedactURL(c.URL), State: cs.State, LastError: cs.LastError, Held: cs.Held, Cap: cs.Cap,
+			ManageAccounts: new(c.MayManageAccounts())}
 		if !cs.LastSync.IsZero() {
 			conn.LastSync = &cs.LastSync
 		}

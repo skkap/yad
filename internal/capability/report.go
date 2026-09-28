@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"slices"
 	"sort"
 	"time"
 
@@ -69,6 +70,24 @@ const FeatureEffort = "effort"
 // are installed: a login this runner cannot do ends failed with the reason,
 // which a hub can show, where a control it ignored would say nothing.
 const FeatureLogin = "login"
+
+// FeatureAccounts is a runner that lets this hub add accounts — start_login
+// and login_token carrying add — and remove them with remove_account
+// (decision 0057). Unlike the rest it is not in Features: whether a hub may is
+// the owner's per connection (manage_accounts), so ForConnection adds it to
+// the document that connection's hub is sent.
+const FeatureAccounts = "accounts"
+
+// ForConnection is the document as one connection's hub is sent it: doc, with
+// FeatureAccounts for a hub its owner lets add and remove accounts, and only
+// beside FeatureLogin, since an add is a login. doc itself, which every other
+// hub is sent too, is left as it was.
+func ForConnection(doc v1.Capabilities, manageAccounts bool) v1.Capabilities {
+	if manageAccounts && slices.Contains(doc.ProtocolFeatures, FeatureLogin) {
+		doc.ProtocolFeatures = append(slices.Clone(doc.ProtocolFeatures), FeatureAccounts)
+	}
+	return doc
+}
 
 // Build probes the machine and assembles the document from it and the owner's
 // config.

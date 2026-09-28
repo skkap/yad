@@ -67,9 +67,10 @@ func (h *Hub) registerLogins(api huma.API) {
 			"until it is waiting, show url, and send the code the provider gives with POST .../code — or, when it also shows user_code " +
 			"(Codex's device code), show that beside url for the owner to type there, and send nothing. With a token, the runner stores " +
 			"it as the account's login; the token is blanked here as soon as the runner reports the login. Either way the login " +
-			"ends succeeded only when the harness's own check on the machine says so. The account must be one the runner's owner " +
-			"listed; without one, the harness's own default login is logged in, by link only. A newer login for the same account " +
-			"replaces an older one. A runner that does not advertise the login feature is 409.",
+			"ends succeeded only when the harness's own check on the machine says so. The account must be one the runner lists, " +
+			"or with add a new one, which the runner lists once the login takes; without one, the harness's own default login is " +
+			"logged in, by link only. A newer login for the same account replaces an older one. A runner that does not advertise " +
+			"the login feature is 409, and an add to one that does not advertise accounts.",
 		DefaultStatus: http.StatusCreated,
 		Security:      adminSecurity, Errors: []int{400, 401, 404, 409},
 	}, h.startLogin)
@@ -132,6 +133,10 @@ func (h *Hub) startLogin(ctx context.Context, in *startLoginInput) (*loginOutput
 		return nil, Fail(http.StatusBadRequest, v1.CodeInvalid,
 			fmt.Sprintf("account %q is not an account label: labels are lowercase letters, digits, dashes and underscores", req.Account),
 			"name the account as `"+runnerCommand("account", "list")+"` shows it on the runner's machine")
+	case req.Add && req.Account == "":
+		return nil, Fail(http.StatusBadRequest, v1.CodeInvalid,
+			"add creates an account, and this request names none",
+			"name the new account's label in account: lowercase letters, digits, dashes and underscores")
 	case method == v1.LoginByToken && req.Account == "":
 		// A token is always an account's (decision 0054); the runner would
 		// refuse it, and the token would have been stored here for nothing.
@@ -156,6 +161,17 @@ func (h *Hub) startLogin(ctx context.Context, in *startLoginInput) (*loginOutput
 		if err := refuseUnadvertised(r, v1.ControlStartLogin, capability.FeatureLogin, loginAtTheMachine(req.Harness, req.Account)); err != nil {
 			return err
 		}
+		if req.Add {
+			if err := refuseNoAccounts(r, "an add", addAtTheMachine(req.Harness, req.Account)); err != nil {
+				return err
+			}
+			// Adding it again is the owner's newer word. A removal still
+			// waiting would otherwise go out as soon as the account is back
+			// in the runner's reports, and take away what was just added.
+			if err := q.EndAccountRemoval(ctx, db.EndAccountRemovalParams{RunnerID: r.ID, Harness: req.Harness, Account: req.Account}); err != nil {
+				return err
+			}
+		}
 		if _, err := q.GetLogin(ctx, id); err == nil {
 			return Fail(http.StatusConflict, v1.CodeConflict, fmt.Sprintf("the hub already has login %q", id),
 				"use a new login_id, or leave it out and the hub generates one")
@@ -178,7 +194,7 @@ func (h *Hub) startLogin(ctx context.Context, in *startLoginInput) (*loginOutput
 		}
 		if err := q.CreateLogin(ctx, db.CreateLoginParams{
 			ID: id, RunnerID: r.ID, Harness: req.Harness, Account: req.Account, Method: string(method),
-			Token: req.Token, CreatedAt: store.Ms(now), UpdatedAt: store.Ms(now),
+			Token: req.Token, AddAccount: boolInt(req.Add), CreatedAt: store.Ms(now), UpdatedAt: store.Ms(now),
 		}); err != nil {
 			return err
 		}
@@ -299,7 +315,7 @@ func loginAtTheMachine(harness, label string) string {
 // loginView is a login as the service API shows it: never its code or token.
 func loginView(l db.Login) hubapi.Login {
 	view := hubapi.Login{
-		LoginID: l.ID, RunnerID: l.RunnerID, Harness: l.Harness, Account: l.Account, Method: v1.LoginMethod(l.Method),
+		LoginID: l.ID, RunnerID: l.RunnerID, Harness: l.Harness, Account: l.Account, Add: l.AddAccount != 0, Method: v1.LoginMethod(l.Method),
 		State: hubapi.LoginState(l.State), URL: l.Url, UserCode: l.UserCode, Error: l.Error,
 		CodeSent:  l.Code != "",
 		CreatedAt: time.UnixMilli(l.CreatedAt).UTC(), UpdatedAt: time.UnixMilli(l.UpdatedAt).UTC(),
@@ -320,7 +336,13 @@ func loginView(l db.Login) hubapi.Login {
 // A login the runner reported, and leaves out now while it is not over, is
 // gone: the runner reports every login until its end is answered, so only a
 // restart loses one. It ends here, failed, rather than waiting for ever.
-func syncLogins(ctx context.Context, q *db.Queries, runnerID string, reports []v1.LoginReport, gated bool, now time.Time) ([]v1.Control, error) {
+//
+// gated is whether the runner's current document advertises login, and adds
+// whether it advertises accounts too (decision 0057). An add not yet sent to
+// a runner whose document has arrived and says no accounts will never be
+// taken — its owner turned adding off for this hub, or it runs an older yad —
+// so it ends here, never sent, rather than waiting out its delivery.
+func syncLogins(ctx context.Context, q *db.Queries, runnerID string, reports []v1.LoginReport, gated, adds, described bool, now time.Time) ([]v1.Control, error) {
 	reported := map[string]bool{}
 	for _, r := range reports {
 		reported[r.LoginID] = true
@@ -355,13 +377,23 @@ func syncLogins(ctx context.Context, q *db.Queries, runnerID string, reports []v
 		switch {
 		case l.CancelRequestedAt.Valid:
 			out = append(out, v1.Control{Kind: v1.ControlCancelLogin, LoginID: l.ID})
+		case l.State == string(hubapi.LoginRequested) && l.AddAccount != 0 && !adds:
+			if !described {
+				continue
+			}
+			if _, err := q.EndLogin(ctx, db.EndLoginParams{State: string(v1.LoginFailed),
+				Error: "the runner does not let this hub add accounts: its owner has turned it off for this hub, or it runs a yad from before adding — " +
+					addAtTheMachine(l.Harness, l.Account),
+				Now: store.Ms(now), ID: l.ID}); err != nil {
+				return nil, err
+			}
 		case l.State == string(hubapi.LoginRequested):
 			// From this answer on the runner may have it, and only its
 			// report can end it (endOrCancel).
 			if err := q.MarkLoginSent(ctx, db.MarkLoginSentParams{Now: sql.NullInt64{Int64: store.Ms(now), Valid: true}, ID: l.ID}); err != nil {
 				return nil, err
 			}
-			c := v1.Control{Kind: v1.ControlStartLogin, LoginID: l.ID, Harness: l.Harness, Account: l.Account}
+			c := v1.Control{Kind: v1.ControlStartLogin, LoginID: l.ID, Harness: l.Harness, Account: l.Account, Add: l.AddAccount != 0}
 			if l.Method == string(v1.LoginByToken) {
 				c.Kind, c.Token = v1.ControlLoginToken, l.Token
 			}

@@ -33,6 +33,10 @@ var unchecked = []struct {
 	sections: []section{hubControls},
 	why:      "only a hub's own API starts a login, which is outside v1, and this runner advertises no login feature to be sent one. What is checked is that none is sent to it, and that its reports are taken.",
 }, {
+	rule:     "Adding and removing accounts: start_login and login_token carrying add, and remove_account, only while the runner advertises accounts to this hub; remove_account repeated until neither the runner's capability document nor its health lists the account, or the runner stops advertising accounts.",
+	sections: []section{hubControls},
+	why:      "only a hub's own API adds or removes an account, which is outside v1, and this runner advertises no accounts feature to be sent either. What is checked is that neither is sent to it.",
+}, {
 	rule:     "Sessions stay put: the first claim in a session binds it to that runner, its later runs are offered to that runner alone, one at a time, and session.new is true for the run that opens a session and false for every later one.",
 	sections: []section{hubSessions},
 	why:      "it needs two runs in one session, which only a hub's own way of queueing runs can arrange.",

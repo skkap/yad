@@ -270,3 +270,82 @@ func TestALoginReplacedAfterItWasSentEndsAsTheRunnerSays(t *testing.T) {
 		t.Errorf("the account is %q, want free", got)
 	}
 }
+
+// An account added and removed from yad hub, end to end (decision 0057): the
+// add delivered with add and listed once its login took, the account then in
+// the health the hub reads; the removal repeated until that health leaves it
+// out, and then no longer sent. From a connection whose owner has not let it,
+// the hub is never told it may, and refuses both.
+func TestAnAccountAddedAndRemovedThroughYadHub(t *testing.T) {
+	x := newLoginE2E(t, "")
+	x.loop.Accounts, x.loop.Paths, x.loop.ManageAccounts = x.Accounts, x.e.paths, true
+	// The document names each harness's accounts, as capability.Build's
+	// does: a hub reads a removal's end from it as well as from health.
+	fixed := x.loop.Capabilities
+	x.loop.Capabilities = func() v1.Capabilities {
+		d := fixed()
+		d.Harnesses = slices.Clone(d.Harnesses)
+		for i, h := range d.Harnesses {
+			for _, l := range x.Accounts.Lists()[h.ID] {
+				d.Harnesses[i].Accounts = append(d.Harnesses[i].Accounts, v1.AccountReport{Label: l, State: v1.AccountFree})
+			}
+		}
+		return d
+	}
+	ctx := context.Background()
+	mustSync(t, x.loop) // the document with accounts in it
+
+	l, err := x.api.StartLogin(ctx, x.runner, hubapi.LoginRequest{Harness: "claude", Account: "second", Add: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.syncUntil(t, l.LoginID, is(v1.LoginWaiting))
+	if _, err := x.api.SendLoginCode(ctx, x.runner, l.LoginID, fakeLoginCode); err != nil {
+		t.Fatal(err)
+	}
+	x.syncUntil(t, l.LoginID, is(v1.LoginSucceeded))
+	mustSync(t, x.loop)
+	a, err := x.api.Account(ctx, x.runner, "claude", "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Listed || a.State != v1.AccountFree {
+		t.Fatalf("the hub reads the added account as %+v, want listed and free", a)
+	}
+
+	if a, err = x.api.RemoveAccount(ctx, x.runner, "claude", "second"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for a.RemoveRequestedAt != nil || a.Listed {
+		if time.Now().After(deadline) {
+			t.Fatalf("the removal stopped at %+v\nlog:\n%s", a, x.log.String())
+		}
+		mustSync(t, x.loop)
+		if a, err = x.api.Account(ctx, x.runner, "claude", "second"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if x.Accounts.Lists().Has(account.Ref{Harness: "claude", Label: "second"}) {
+		t.Error("the runner still lists the removed account")
+	}
+	if _, err := os.Stat(account.HomeDir(x.e.paths.Data, "claude", "second")); !os.IsNotExist(err) {
+		t.Errorf("the removed account's home is still there (%v)", err)
+	}
+	for _, c := range mustSync(t, x.loop).Controls {
+		if c.Kind == v1.ControlRemoveAccount {
+			t.Errorf("the hub still sends %+v once health left the account out", c)
+		}
+	}
+
+	// Turned off for this hub: the document it is sent says so, and it
+	// refuses both rather than sending what the runner would ignore.
+	x.loop.ManageAccounts = false
+	mustSync(t, x.loop)
+	if _, err := x.api.StartLogin(ctx, x.runner, hubapi.LoginRequest{Harness: "claude", Account: "third", Add: true}); err == nil || !strings.Contains(err.Error(), "manage_accounts = false") {
+		t.Errorf("an add to a runner that turned it off: %v", err)
+	}
+	if _, err := x.api.RemoveAccount(ctx, x.runner, "claude", "work"); err == nil {
+		t.Error("a removal from a runner that turned it off was taken")
+	}
+}

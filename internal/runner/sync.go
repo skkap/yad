@@ -16,6 +16,7 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/capability"
+	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/logfile"
 	"github.com/skkap/yad/internal/store"
@@ -154,6 +155,16 @@ type Loop struct {
 	// in logins (decision 0055), shared with every other connection. Nil
 	// ignores the controls, and reports none.
 	Logins *Logins
+	// ManageAccounts is the owner's manage_accounts for this connection:
+	// whether its hub may add and remove accounts (decision 0057). Only
+	// then is it sent the accounts feature, and only then is its
+	// remove_account acted on.
+	ManageAccounts bool
+	// Paths is where config.toml is, for an account this hub removes.
+	Paths config.Paths
+	// AccountsChanged is told when this hub removed an account, so the
+	// capability document is built again now. Nil tells nobody.
+	AccountsChanged func()
 
 	sentFingerprint string
 	wantDocument    bool
@@ -328,7 +339,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	if err != nil {
 		return v1.SyncResponse{}, err
 	}
-	doc := l.Capabilities()
+	doc := l.document()
 	fp := capability.Fingerprint(doc)
 	res := emptyReservation()
 	if l.Executor != nil && !draining && l.mayClaim() {
@@ -431,6 +442,8 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 				continue
 			}
 			l.Logins.Control(l.Connection, c)
+		case v1.ControlRemoveAccount:
+			l.removeAccount(ctx, c)
 		}
 	}
 	for id, cs := range l.answered {
@@ -484,6 +497,38 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	res.Close()
 	l.sendRefusals(ctx)
 	return out, nil
+}
+
+// document is the capability document as this connection's hub is sent it:
+// the runner's, with the accounts feature added for a hub its owner lets add
+// and remove accounts, and only beside login (decision 0057). So the
+// fingerprint is this hub's own, and turning manage_accounts off moves it.
+func (l *Loop) document() v1.Capabilities {
+	return capability.ForConnection(l.Capabilities(), l.ManageAccounts)
+}
+
+// removeAccount is a hub's remove_account (decision 0057): `yad account
+// remove`'s path through the daemon. It is ignored from a hub whose
+// connection the owner has not let manage accounts — that hub was never sent
+// the feature, and its repeats stop once it reads the document again.
+func (l *Loop) removeAccount(ctx context.Context, c v1.Control) {
+	log := l.Log.With("connection", l.Connection, "harness", c.Harness, "account", c.Account)
+	if !l.ManageAccounts {
+		log.Warn("the hub asked to remove an account, and this runner's owner has not let it (manage_accounts = false); ignored")
+		return
+	}
+	res, removed, err := l.Accounts.Remove(ctx, l.Paths, account.Ref{Harness: c.Harness, Label: c.Account})
+	switch {
+	case err != nil:
+		// Repeated by the hub until the runner's reports leave the account out, so the
+		// next sync tries again.
+		log.Warn("the hub asked to remove an account, and it could not be removed; its next ask tries again", "err", err)
+	case removed:
+		log.Info("the hub removed the account", "runs_still_on_it", len(res.Runs))
+		if l.AccountsChanged != nil {
+			l.AccountsChanged()
+		}
+	}
 }
 
 // mayClaim is whether the replay that must come first is done.

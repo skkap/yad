@@ -56,6 +56,15 @@ type Connection struct {
 	Name string `toml:"name"`
 	URL  string `toml:"url"`
 	Cap  int    `toml:"cap,omitempty"`
+	// ManageAccounts false stops this hub adding and removing the runner's
+	// accounts (decision 0057); absent lets it, as the owner trusts the hubs
+	// it connects (0038). Read at start, like the rest of a connection.
+	ManageAccounts *bool `toml:"manage_accounts,omitempty"`
+}
+
+// MayManageAccounts is whether this hub may add and remove accounts.
+func (c Connection) MayManageAccounts() bool {
+	return c.ManageAccounts == nil || *c.ManageAccounts
 }
 
 // SessionsConfig governs reclaiming workdirs (decisions 0011 and 0035).

@@ -78,3 +78,42 @@ so a hub would follow two report lists for one flow.
 **A login for an unlisted label creates it, with no flag.** The smallest wire
 change. It also means a typo in a re-login creates a second account as soon
 as someone finishes signing in.
+
+## As built
+
+The lock is an exclusive `flock` on `config.toml.lock` beside the file,
+since a save replaces `config.toml` by rename and a lock on the file replaced
+would be a lock on nothing. Every writer takes it — `yad account add` and
+`remove`, `yad connect`, the daemon — and gives up after ten seconds with an
+error saying to run the command again. Comments in `config.toml` do not
+survive a write, which was already true of `yad account add`.
+
+`accounts` is added to the document per connection, before it is
+fingerprinted, and `yad connect` registers with it too, so a hub knows what it
+may ask from the start. `yad status` shows each connection's
+`manage_accounts`.
+
+An add holds its label as a login holds a listed one, so a removal of the
+same label waiting on a run's end does not delete the home the add is
+logging into. On a yes, the label goes into `config.toml` under the lock and
+the lists are reloaded as `accounts_changed` reloads them; a label listed
+meanwhile, by the owner or another hub, is the same account. If the write
+fails, the login ends `failed` with the home still logged in, so an add
+retried takes at once. `remove_account` for a label neither `config.toml`
+nor the running lists name is nothing to do; from a hub whose connection has
+`manage_accounts = false` it is ignored and logged.
+
+"Gone from the runner's health" is read as gone from its reports: neither
+the runner's current capability document nor the sync's health lists the
+account. The document decides — it names every harness found, with every
+account, and the daemon rebuilds it as soon as an account is removed. Health
+alone cannot: it names only the harnesses the runner can drive, so removing a
+harness's last account on a machine with no default login takes the harness
+out of it altogether; a health naming no harness is also a runner that could
+not read its accounts that time; and it names at most sixteen of a harness's
+accounts. But health is built at every sync, so while it still lists the
+account a document not yet rebuilt does not end the removal. A login
+that adds the account again ends a removal still waiting, since the removal
+would otherwise go out once the account is back. `yad hub` also ends an add it has not yet
+sent, `failed`, once the runner's document arrives without `accounts`, rather
+than waiting ten minutes for it to expire undelivered.

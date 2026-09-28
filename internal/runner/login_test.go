@@ -124,6 +124,11 @@ func newLoginRig(t *testing.T, e *env, cfg config.Config, mode string) *loginRig
 	x := &Exec{}
 	fakeClaudeBinary(t, x)
 	t.Setenv(fakeLoginMode, mode)
+	// config.toml says what the lists say, as on a machine: an account a hub
+	// adds or removes is written there, and the lists read back from it.
+	if err := config.Save(e.paths, cfg); err != nil {
+		t.Fatal(err)
+	}
 	accounts := accountsOf(e.paths.Data, cfg)
 	accounts.Binary = x.Binary
 	accounts.attach(context.Background(), e.store)
@@ -131,8 +136,10 @@ func newLoginRig(t *testing.T, e *env, cfg config.Config, mode string) *loginRig
 	r.Logins = &Logins{
 		Data: e.paths.Data, Paths: e.paths, Accounts: accounts, Binary: x.Binary,
 		Changed: func() { r.changed.Add(1) },
-		Log:     slog.New(slog.NewJSONHandler(r.log, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		URLWait: 20 * time.Second, CodeWait: 20 * time.Second, ExitWait: 20 * time.Second,
+		// As for a connection whose owner said nothing (decision 0057).
+		MayManage: func(string) bool { return true },
+		Log:       slog.New(slog.NewJSONHandler(r.log, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		URLWait:   20 * time.Second, CodeWait: 20 * time.Second, ExitWait: 20 * time.Second,
 	}
 	// As Serve wires it: an account the owner removes ends its login.
 	accounts.onRemoved(r.accountRemoved)
@@ -435,13 +442,13 @@ func TestALoginTheRunnerRefusesSaysWhatToDoAtTheMachine(t *testing.T) {
 		says string
 		want []string
 	}{
-		{"an account nobody listed", startLogin("lg1", "claude", "stranger"), "never adds",
+		{"an account nobody listed", startLogin("lg1", "claude", "stranger"), "start the login again with add",
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "stranger"}},
 		{"a token with no account", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Token: "sk-ant-oat01-x"}, "names none",
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "<label>", "--token", "-"}},
 		{"a token for codex", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "codex", Account: "work", Token: "sk-proj-not-a-subscription"},
 			"does not run on a stored token", nil},
-		{"a codex account nobody listed", startLogin("lg1", "codex", "stranger"), "never adds",
+		{"a codex account nobody listed", startLogin("lg1", "codex", "stranger"), "start the login again with add",
 			[]string{"yad", "--profile", "test", "account", "add", "codex", "stranger"}},
 		{"a harness hub login does not log in", startLogin("lg1", "gemini", "work"), "logs in claude",
 			[]string{"yad", "--profile", "test", "doctor"}},

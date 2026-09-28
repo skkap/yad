@@ -354,7 +354,7 @@ func checks() []check {
 		run:     checkLeaseOutlastsTheInterval,
 	}, {
 		id:      "versioning/controls-are-gated",
-		rule:    "Neither side uses what the other did not advertise: drain, close_session, steer and interrupt go only to a runner whose capability document advertises each by name, start_login, login_code, login_token and cancel_login only to one advertising login, and this runner advertises none.",
+		rule:    "Neither side uses what the other did not advertise: drain, close_session, steer and interrupt go only to a runner whose capability document advertises each by name, start_login, login_code, login_token and cancel_login only to one advertising login, remove_account and a login carrying add only to one advertising accounts, and this runner advertises none.",
 		section: hubControls,
 		needs:   credential,
 		run:     checkControlsAreGated,

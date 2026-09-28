@@ -943,10 +943,11 @@ a rule for when to stop sending it:
 | `close_session` | `session_id` | closes the session and deletes its workdir; a session with a run held closes when that run ends; one it does not hold or already closed is reported closed | in every response until the session appears in the runner's `closed_sessions` (§8) |
 | `drain` | nothing | stops claiming, lets the runs it holds finish, then exits. Its health says `draining` and its free capacity is zero | in every response until a sync's health says `draining` |
 | `report_capabilities` | nothing | sends its capability document in the next sync | while the fingerprint differs from the document you hold |
-| `start_login` | `login_id`, `harness`, `account` (absent: the harness's own default login) | runs the harness's own login in that account's home and reports its link as `url` while the login is `waiting` — for Codex with `user_code`, the device code to type there | in every response until the runner reports the login in `logins` |
+| `start_login` | `login_id`, `harness`, `account` (absent: the harness's own default login), `add` | runs the harness's own login in that account's home and reports its link as `url` while the login is `waiting` — for Codex with `user_code`, the device code to type there. With `add`, the account is new, and the runner lists it once the login takes | in every response until the runner reports the login in `logins` |
 | `login_code` | `login_id`, `code` | writes the code the owner got at the link to the login, which then moves to `checking` | in every response while the runner reports the login `waiting` with no `user_code`; never for one with a `user_code`, whose code is typed at the link |
-| `login_token` | `login_id`, `harness`, `account`, `token` | stores a `claude setup-token` token as the account's login | in every response until the runner reports the login — then forget the token |
+| `login_token` | `login_id`, `harness`, `account`, `token`, `add` | stores a `claude setup-token` token as the account's login; with `add`, as `start_login` | in every response until the runner reports the login — then forget the token |
 | `cancel_login` | `login_id` | ends the login `cancelled`; one it never had is reported `cancelled` all the same | in every response until the runner reports the login over |
+| `remove_account` | `harness`, `account` | removes the account as its owner's `yad account remove` does: listed nowhere from then on, a run on it finishes there, its home is deleted when the last one ends, and a login in flight on it ends `cancelled`. One it does not list is nothing to do | in every response until neither the runner's current capability document nor the sync's health lists the account, or the runner stops advertising `accounts` |
 | `update` | — | reserved; never send it | never |
 
 **Features are promises, not decoration.** A runner advertises
@@ -964,6 +965,7 @@ asked for it.
 | `start_at` | a run carrying `start_at` — offer one only to a runner that advertises it |
 | `effort` | a run carrying `effort` — offer one only to a runner that advertises it, however long it waits |
 | `login` | the four login controls. A runner advertising it reports each login in `logins` |
+| `accounts` | `add` on `start_login` and `login_token`, and the `remove_account` control. Per hub: a runner advertises it only to a hub its owner lets add and remove accounts, and only beside `login`, so its fingerprint for you may differ from another hub's |
 | `live_sessions` | a run whose `session.mode` is `live` — offer one only to a runner that advertises it. The spec lists `live` as an enum value and connects it to no feature, so this pairing exists only here |
 
 **A feature gates what you send, never what you accept** ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)).
@@ -1007,9 +1009,9 @@ lets your UI log a runner's account in without a shell on the machine: by
 owner pastes and send it with `login_code` — or by **token** — `login_token`
 with a `claude setup-token` token the owner pasted. Choose the `login_id`;
 it is 1–128 letters, digits, dots, dashes or underscores. The account is a
-label the owner listed on that machine, which the runner's health names: a
-runner never adds one, and answers any other with `failed`. A token needs an
-account; a link login without one logs in the harness's own default login.
+label the runner lists, which its health names, and a login for any other
+ends `failed` — unless it carries `add` (below). A token needs an account; a
+link login without one logs in the harness's own default login.
 
 **Codex logs in by device code**
 ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)),
@@ -1028,6 +1030,38 @@ action. Success is the harness's own login check on the machine, never its
 output. A newer login for the same account replaces the older one, which the
 runner reports `cancelled`. yad's runner gives a code ten minutes (`expired`
 after), whether it is pasted back or typed at the link.
+
+**Managing accounts** ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md))
+lets your UI add a runner's account and remove one, where the runner
+advertises `accounts` to you. Offer both only then; a re-login needs only
+`login`.
+
+- **Add** is a login carrying `add: true`, followed in `logins` exactly as
+  any login. `account` is the new label: lowercase letters, digits, `-` and
+  `_`, starting with a letter or digit, at most 64. The runner lists it only
+  once the login takes, so `succeeded` means the account is now in its health;
+  a login that ends any other way lists nothing. A label the runner already
+  lists, one it does not take, none at all, or a hub the owner has not let
+  add accounts, ends `failed` with the next action. When a harness's health
+  names no accounts, it runs on its own default login, and the first account
+  added replaces that login in rotation: say so before the owner adds it.
+- **Remove** is `remove_account`, repeated until neither the runner's
+  current capability document nor the sync's health lists the account, or
+  the runner no longer advertises `accounts`. The document decides: it names
+  every harness the runner found with all its accounts, and the runner sends
+  a new one after a removal. Health cannot say an account is gone — it names
+  only the harnesses the runner can drive, so removing a harness's last
+  account on a machine with no default login takes the harness out of it
+  altogether, and it names at most sixteen accounts of a harness — but while
+  it still lists the account, a document not yet rebuilt does not end the
+  removal. Removing a harness's last account
+  puts it back on its own default login. A login that adds the account again
+  ends a removal still waiting, or the removal would go out once the account
+  is back and take it away.
+- An account is the machine's, not the hub's that added it: every hub the
+  runner syncs with has its runs rotate through it, and sees it in health.
+  There is no ownership to show, and a hub may remove an account the owner
+  added at the machine.
 
 **The rules the reports cannot enforce for you.** The `code` and the `token`
 are secrets: never log them, never show them again, never return them from an
@@ -1363,7 +1397,7 @@ out a lease.
 
 ### What it does not check
 
-The suite prints this list itself, and it is sixteen rules — not a footnote. Each
+The suite prints this list itself, and it is seventeen rules — not a footnote. Each
 is something **your hub still has to get right** with nothing to catch you:
 
 | rule | why the suite cannot reach it |
@@ -1372,6 +1406,7 @@ is something **your hub still has to get right** with nothing to catch you:
 | The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
 | `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, `effort`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
 | Hub logins — `start_login` and `login_token` repeated until the runner reports the login, `login_code` while it reports it `waiting`, `cancel_login` until it reports it over; a token held only until the runner reports its login; a login the runner reported and then leaves out ended `failed`; a login ended on the hub's word only while never sent, and a sent one unheard for thirty minutes ended `failed` with its token blanked, a runner's later report still replacing that end | only your own API starts a login, outside v1, and the suite advertises no `login` feature to be sent one. What is checked: that no login control reaches it, and that a sync carrying `logins` is taken |
+| Adding and removing accounts — `add` and `remove_account` only while the runner advertises `accounts` to you, and `remove_account` repeated until neither its capability document nor its health lists the account, or `accounts` is no longer advertised | only your own API adds or removes an account, outside v1, and the suite advertises no `accounts` feature to be sent either. What is checked: that neither reaches it |
 | Sessions staying put — first claim binds the session to that runner, later runs to that runner alone, one at a time — and `session.new` set right | needs two runs in one session, which only your own queueing can arrange |
 | Closes in `closed_sessions` believed from the holder or the last-offered runner, whatever features it advertises, a repeat taken as the same news, and the runs queued in a closed session ended; nothing offered in a session you have sent `close_session` for until the close is reported | the suite advertises no feature, so no hub asks it to close a session, and the only sessions it has hold its runs, which no runner closes; the queued runs need a second run in the session |
 | Offers only for a harness the runner can drive — first-class, present, no `error` — and preferably one whose health says `ready` | the suite is offered only what you queued for the one harness it advertises; seeing another offered needs a run queued for it |
@@ -1454,6 +1489,7 @@ checks; the rest is yours to get right.
 
 - [ ] `cancel` and `interrupt` repeated until the run ends; `steer` sent once; `drain` and `close_session` repeated until answered — [§7](#7-controls-and-features)
 - [ ] Login controls only to a runner advertising `login`, each repeated until `logins` answers it; a sync carrying `logins` taken; a token held only until the runner reports its login; a login ended on your word only while never sent; a sent login unheard for thirty minutes ended `failed` and its token blanked; a login reported and then left out ended `failed` — [§7](#7-controls-and-features) (C, as far as the gate and taking the reports)
+- [ ] `add` and `remove_account` only to a runner advertising `accounts` to you; `remove_account` repeated until neither the capability document nor health lists the account, or `accounts` is no longer advertised — [§7](#7-controls-and-features) (C, as far as the gate)
 - [ ] No gated control to a runner that does not advertise its feature — [§7](#7-controls-and-features) (C, as far as a runner advertising none)
 - [ ] Sessions bound by their first claim, later runs to that runner only, one at a time; `session.new` set right — [§8](#8-sessions)
 - [ ] Nothing offered in a session you have sent `close_session` for until its close is reported — [§8](#8-sessions)

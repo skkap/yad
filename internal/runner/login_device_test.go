@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -279,7 +280,7 @@ func TestACodexDeviceLoginEndedFromOutsideCancelsCodexsOwn(t *testing.T) {
 			if _, err := r.Accounts.Reload(context.Background(), account.Lists{}, account.Ref{Harness: "codex", Label: "work"}, true); err != nil {
 				t.Fatal(err)
 			}
-		}, "removed on the machine"},
+		}, "was removed from this runner"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -298,5 +299,38 @@ func TestACodexDeviceLoginEndedFromOutsideCancelsCodexsOwn(t *testing.T) {
 				t.Error("codex's app-server outlived the login")
 			}
 		})
+	}
+}
+
+// A Codex account a hub adds rides the same device code (decision 0057):
+// listed in config.toml and in the running lists only once Codex's own check
+// finds the login, and free, so runs take it without a restart.
+func TestAHubAddsACodexAccountByDeviceCode(t *testing.T) {
+	e := newEnv(t)
+	r := newDeviceRig(t, e, codexConfig("work"), "login-device")
+	r.Control("hub", addLogin(startLogin("lg1", "codex", "second")))
+	second := account.Ref{Harness: "codex", Label: "second"}
+
+	if rep := r.until(t, "lg1", v1.LoginWaiting); rep.UserCode != codexDeviceCode {
+		t.Fatalf("the report is %+v, want codex's code", rep)
+	}
+	if r.Accounts.Lists().Has(second) {
+		t.Fatal("the account was listed before its login took")
+	}
+
+	r.open()
+	r.until(t, "lg1", v1.LoginSucceeded)
+	c, err := config.Load(e.paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Harness["codex"].Accounts; !slices.Equal(got, []string{"work", "second"}) {
+		t.Errorf("config.toml lists %v, want the new account after the owner's", got)
+	}
+	if !r.Accounts.Lists().Has(second) {
+		t.Error("the running lists do not name the new account, so no run takes it until a restart")
+	}
+	if got := codexAccountState(t, e, "second"); got != v1.AccountFree {
+		t.Errorf("the added account is %q, want free", got)
 	}
 }

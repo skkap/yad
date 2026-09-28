@@ -46,9 +46,10 @@ type Options struct {
 	// RecentErrors is the ring the process keeps for `yad status`; health
 	// reports its messages to every hub. Nil sends no recent_errors.
 	RecentErrors func() []logfile.Record
-	// LoginTook is told when a hub login took (decision 0055), so the
-	// process can rebuild the capability document at once. Nil tells nobody.
-	LoginTook func()
+	// AccountsChanged is told when a hub login took (decision 0055), or a hub
+	// added or removed an account (0057), so the process can rebuild the
+	// capability document at once. Nil tells nobody.
+	AccountsChanged func()
 }
 
 // Serve syncs every configured connection, all of them drawing on one
@@ -116,7 +117,12 @@ func Serve(ctx context.Context, o Options) error {
 	sv.probe = &LoginProbe{Store: st, Accounts: o.Accounts, Log: o.Log}
 	// Bound to Serve's own context, and closed before the store: a login
 	// that takes writes the account's row as it ends.
-	logins := &Logins{Data: o.Paths.Data, Paths: o.Paths, Accounts: o.Accounts, Changed: o.LoginTook, Log: o.Log}
+	manage := map[string]bool{}
+	for _, conn := range o.Config.Connections {
+		manage[conn.Name] = conn.MayManageAccounts()
+	}
+	logins := &Logins{Data: o.Paths.Data, Paths: o.Paths, Accounts: o.Accounts, Changed: o.AccountsChanged, Log: o.Log,
+		MayManage: func(conn string) bool { return manage[conn] }}
 	logins.bind(ctx)
 	defer logins.Close()
 	o.Accounts.onRemoved(logins.accountRemoved)
@@ -159,6 +165,7 @@ func Serve(ctx context.Context, o Options) error {
 			Accounts:   o.Accounts,
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
 			RecentErrors: o.RecentErrors, Logins: logins,
+			ManageAccounts: manage[conn.Name], Paths: o.Paths, AccountsChanged: o.AccountsChanged,
 		})
 	}
 	return sv.run(ctx)

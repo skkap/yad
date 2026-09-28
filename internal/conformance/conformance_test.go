@@ -99,6 +99,8 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawOffersEffort, check: "run/gated-features", want: Failed},
 		{flaw: flawUngatedControl, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawUngatedLogin, check: "versioning/controls-are-gated", want: Failed},
+		{flaw: flawUngatedRemoval, check: "versioning/controls-are-gated", want: Failed},
+		{flaw: flawUngatedAdd, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawRefusesLogins, check: "sync/logins-accepted", want: Failed},
 		{flaw: flawNoNextAction, check: "errors/next-action", want: Failed},
 		{flaw: flawRenewsEverything, check: "lease/lapse", leaseWait: time.Minute, want: Failed},

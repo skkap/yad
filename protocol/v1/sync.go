@@ -128,7 +128,7 @@ type SyncResponse struct {
 	// goes silent holding an offer strands nothing past it.
 	LeaseMS    int       `json:"lease_ms" doc:"How long the hub holds each run named in this answer for this runner without hearing from it, measured on the hub from when it handled this sync: every run offered here, and every run the request listed. A listed run the lease lapses on is lost. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."`
 	Runs       []Run     `json:"runs,omitempty" doc:"New runs offered. Not claimed yet: a run is claimed when the next sync lists it. Never more than the request's free_capacity, in total or for any harness."`
-	Controls   []Control `json:"controls,omitempty" doc:"Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions; a steer is sent once."`
+	Controls   []Control `json:"controls,omitempty" doc:"Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions, remove_account until neither the capability document nor health lists the account; a steer is sent once."`
 	MinVersion string    `json:"min_version,omitempty" doc:"The oldest yad this hub takes, as in the register response. Absent is no floor."`
 }
 
@@ -152,12 +152,15 @@ const (
 	ControlLoginCode   ControlKind = "login_code"
 	ControlLoginToken  ControlKind = "login_token"
 	ControlCancelLogin ControlKind = "cancel_login"
+	// ControlRemoveAccount takes an account off the runner (decision 0057),
+	// sent only to a runner advertising the "accounts" feature.
+	ControlRemoveAccount ControlKind = "remove_account"
 )
 
 // ControlKinds lists the closed set, for validation and the parity test.
 func ControlKinds() []ControlKind {
 	return []ControlKind{ControlCancel, ControlInterrupt, ControlSteer, ControlCloseSession, ControlDrain, ControlReportCapabilities, ControlUpdate,
-		ControlStartLogin, ControlLoginCode, ControlLoginToken, ControlCancelLogin}
+		ControlStartLogin, ControlLoginCode, ControlLoginToken, ControlCancelLogin, ControlRemoveAccount}
 }
 
 // Control is one instruction. Which of the optional fields are set depends on
@@ -183,19 +186,32 @@ func ControlKinds() []ControlKind {
 // waiting, cancel_login until it is reported over. A runner takes a repeat as
 // the same instruction.
 //
+// add on start_login or login_token, and remove_account, change which
+// accounts the runner has (decision 0057), and go only to a runner advertising
+// the "accounts" feature — which it advertises only to a hub its owner lets
+// do so, and only beside "login". An add creates the account once its login
+// takes; remove_account is repeated until neither the runner's capability
+// document nor its health lists the account — the document decides, since
+// health names only the harnesses a runner can drive and at most sixteen
+// accounts of each — or the runner no longer advertises "accounts".
+//
 // Code and Token are secrets. Neither side logs them, stores them past their
 // use or reports them back; a hub holds a token only until a sync from the
 // runner reports the login it was delivered for, and never shows it again.
 type Control struct {
-	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update,start_login,login_code,login_token,cancel_login" doc:"cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins (and for Codex the user_code to type there). login_code: the code the owner got at that URL, never for a login reporting user_code. login_token: store a token as the account's login. cancel_login: end a login. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name; the four login kinds only to one advertising login. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."`
+	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update,start_login,login_code,login_token,cancel_login,remove_account" doc:"cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins (and for Codex the user_code to type there). login_code: the code the owner got at that URL, never for a login reporting user_code. login_token: store a token as the account's login. cancel_login: end a login. remove_account: take the account named by harness and account off the runner. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name; the four login kinds only to one advertising login; remove_account, and start_login or login_token carrying add, only to one advertising accounts. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."`
 	RunID     string      `json:"run_id,omitempty" doc:"The run, for cancel, interrupt and steer."`
 	SessionID string      `json:"session_id,omitempty" doc:"The session, for close_session."`
 	Text      string      `json:"text,omitempty" doc:"What to tell the harness, for steer."`
 	LoginID   string      `json:"login_id,omitempty" doc:"The login, for start_login, login_code, login_token and cancel_login: chosen by the hub, unique on it, 1-128 letters, digits, dots, dashes or underscores."`
-	// Harness and Account name what to log in. The account must be one the
-	// owner listed on the machine: a hub never creates one.
-	Harness string `json:"harness,omitempty" doc:"The harness to log in, for start_login and login_token: claude or codex. Codex logs in by device code, and never by token."`
-	Account string `json:"account,omitempty" doc:"The account label, for start_login and login_token: one the owner listed on the machine, since a hub never creates an account. Absent in start_login logs in the harness's own default login; login_token needs one."`
-	Code    string `json:"code,omitempty" doc:"For login_code: what the owner got after signing in at the login's url. A secret: never log it or show it again."`
-	Token   string `json:"token,omitempty" doc:"For login_token: a claude setup-token token. A secret that works for a year: never log it, never return it from any API, and hold it only until a sync from the runner reports this login."`
+	// Harness and Account name what to log in, or what remove_account takes
+	// off. Without Add the account must already be listed on the runner.
+	Harness string `json:"harness,omitempty" doc:"The harness, for start_login, login_token and remove_account: claude or codex. Codex logs in by device code, and never by token."`
+	Account string `json:"account,omitempty" doc:"The account label, for start_login, login_token and remove_account. Without add, one the runner already lists; with add, a new one: lowercase letters, digits, dashes and underscores, starting with a letter or digit, at most 64. Absent in start_login logs in the harness's own default login; login_token, add and remove_account need one."`
+	// Add makes a login create its account (decision 0057): listed on the
+	// runner only once the login takes, so one that does not take lists
+	// nothing.
+	Add   bool   `json:"add,omitempty" doc:"For start_login and login_token: create the account named in account, listing it on the runner once its login takes. A login that does not take lists nothing. A label the runner already lists ends the login failed; log it in again without add. Sent only to a runner advertising accounts."`
+	Code  string `json:"code,omitempty" doc:"For login_code: what the owner got after signing in at the login's url. A secret: never log it or show it again."`
+	Token string `json:"token,omitempty" doc:"For login_token: a claude setup-token token. A secret that works for a year: never log it, never return it from any API, and hold it only until a sync from the runner reports this login."`
 }

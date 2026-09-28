@@ -40,6 +40,14 @@ type Accounts struct {
 	Binary func(harness string) (string, bool)
 	Log    *slog.Logger
 
+	// changing orders every change to the lists: a hub's add or removal —
+	// its write to config.toml and the reload after it — and the CLI's
+	// accounts_changed. Each reloads from config.toml as it reads at that
+	// moment, under this, so the last reload is always of a file every
+	// earlier write had reached. A reload from a copy taken before could
+	// otherwise land after a newer one and bring back what it removed.
+	changing sync.Mutex
+
 	mu    sync.Mutex
 	lists account.Lists
 	// held is every run on each account right now, by the hold it took.
@@ -121,18 +129,39 @@ func (a *Accounts) takeForLogin(r account.Ref, loginID string) (*accountHold, bo
 	return a.hold(&accountHold{ref: r, run: loginID, login: true})
 }
 
-func (a *Accounts) hold(h *accountHold) (*accountHold, bool) {
-	r := h.ref
+// takeForAdd is takeForLogin for a hub login that adds its account (decision
+// 0057), which is not listed yet and so is held whatever the lists say. A
+// home a removal left waiting to be deleted — a run on it still ending — is
+// kept, as `yad account add` keeps it with Keep: the login is about to make it
+// the new account's.
+func (a *Accounts) takeForAdd(r account.Ref, loginID string) *accountHold {
+	if a == nil {
+		return nil
+	}
+	h := &accountHold{ref: r, run: loginID, login: true}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !a.lists.Has(r) {
+	delete(a.doomed, r)
+	a.holdLocked(h)
+	return h
+}
+
+func (a *Accounts) hold(h *accountHold) (*accountHold, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.lists.Has(h.ref) {
 		return nil, false
 	}
+	a.holdLocked(h)
+	return h, true
+}
+
+func (a *Accounts) holdLocked(h *accountHold) {
+	r := h.ref
 	if a.held[r] == nil {
 		a.held[r] = map[*accountHold]bool{}
 	}
 	a.held[r][h] = true
-	return h, true
 }
 
 // release ends a hold. The last hold on a removed account is what deletes its
@@ -333,12 +362,80 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 	return Changed{State: state}, nil
 }
 
+// Reread is the CLI's accounts_changed (decision 0043): the CLI has written
+// config.toml, and the lists are reloaded from it as it reads now, in turn
+// with every other change.
+func (a *Accounts) Reread(ctx context.Context, p config.Paths, r account.Ref, removed bool) (Changed, error) {
+	a.changing.Lock()
+	defer a.changing.Unlock()
+	return a.reread(ctx, p, r, removed)
+}
+
+func (a *Accounts) reread(ctx context.Context, p config.Paths, r account.Ref, removed bool) (Changed, error) {
+	cfg, err := config.Load(p)
+	if err != nil {
+		return Changed{}, err
+	}
+	return a.Reload(ctx, account.ListsOf(cfg), r, removed)
+}
+
+// Add lists an account a hub has just logged in with add (decision 0057):
+// config.toml's list for the harness, under its lock and as the file reads
+// now, and then the lists here, as `yad account add` and its accounts_changed
+// do. The daemon never writes back the copy of config.toml it started with,
+// which would undo every hand edit since.
+func (a *Accounts) Add(ctx context.Context, p config.Paths, r account.Ref) (v1.AccountState, error) {
+	if a == nil {
+		return "", errors.New("this runner keeps no account lists to add to")
+	}
+	if err := checkRef(r); err != nil {
+		return "", err
+	}
+	a.changing.Lock()
+	defer a.changing.Unlock()
+	if _, err := config.UpdateAccounts(ctx, p, r.Harness, config.WithAccount(r.Label)); err != nil {
+		return "", err
+	}
+	res, err := a.reread(ctx, p, r, false)
+	return res.State, err
+}
+
+// Remove takes an account off for a hub's remove_account (decision 0057), as
+// `yad account remove` and its accounts_changed do: out of config.toml under
+// its lock, then Reload's removal — runs on it finish there, its home goes
+// when the last lets go, and a login in flight on it ends. A label neither
+// config.toml nor the lists here name is nothing to remove, and ok is false:
+// the hub repeats the control until the runner's reports leave the account out, and a
+// repeat finds it gone.
+func (a *Accounts) Remove(ctx context.Context, p config.Paths, r account.Ref) (res Changed, ok bool, err error) {
+	if a == nil {
+		return Changed{}, false, nil
+	}
+	if err := checkRef(r); err != nil {
+		return Changed{}, false, err
+	}
+	a.changing.Lock()
+	defer a.changing.Unlock()
+	inFile := false
+	if _, err := config.UpdateAccounts(ctx, p, r.Harness, func(labels []string) []string {
+		inFile = slices.Contains(labels, r.Label)
+		return config.WithoutAccount(r.Label)(labels)
+	}); err != nil {
+		return Changed{}, false, err
+	}
+	if !inFile && !a.Lists().Has(r) {
+		return Changed{}, false, nil
+	}
+	res, err = a.reread(ctx, p, r, true)
+	return res, err == nil, err
+}
+
 // LoggedInAgain is Reload's added-account half for an account the lists
 // already name, which a hub login has just logged in (decision 0055): the
 // harness's own check is asked again and its answer written, so the account
 // goes free the way one `yad account add` added does. Nothing about the lists
-// changes — a hub never adds an account — and one removed since the login
-// began is refused rather than brought back.
+// changes — a login that adds its account is Add — and one removed since the
+// login began is refused rather than brought back.
 func (a *Accounts) LoggedInAgain(ctx context.Context, r account.Ref) (v1.AccountState, error) {
 	if a == nil {
 		return "", fmt.Errorf("this runner lists no %s account %q", r.Harness, r.Label)
@@ -351,7 +448,7 @@ func (a *Accounts) LoggedInAgain(ctx context.Context, r account.Ref) (v1.Account
 	st := a.store
 	a.mu.Unlock()
 	if !listed {
-		return "", fmt.Errorf("%s account %q was removed on the machine while it was being logged in", r.Harness, r.Label)
+		return "", fmt.Errorf("%s account %q was removed while it was being logged in", r.Harness, r.Label)
 	}
 	log := a.log().With("harness", r.Harness, "account", r.Label)
 	// The login's own check has just said yes. A second that cannot answer —

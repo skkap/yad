@@ -106,6 +106,7 @@ func (h *Hub) registerService(api huma.API) {
 	h.registerDrain(api)
 	h.registerSessions(api)
 	h.registerLogins(api)
+	h.registerAccounts(api)
 }
 
 func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error) {
