@@ -79,7 +79,8 @@ push: a cancel you decide on now reaches the runner in its next sync.
                  └───────────┴───────────┴──────────┴──► succeeded | failed |
                                                          cancelled | timed_out
                    (a result, from the runner)
-            any held state ── lease lapses ──► lost   (your decision)
+            any held state ── lease lapses ──► lost   (your decision;
+                                                      a claim you cancelled: cancelled, §3)
 ```
 
 `queued` and `offered` are yours; the protocol never carries them. From
@@ -399,8 +400,8 @@ the way you asked, and `lost` would tell your user that something failed when
 nothing did. The rule covers only a run you hold as `claimed` and have asked
 to cancel. A claim nobody asked to cancel stays held until its lease lapses,
 and is lost; a run a sync has reported `preparing` or later owes a result, and
-is lost if none comes. `yad hub` also ends a cancelled claim `cancelled` when
-its runner deregisters holding it.
+is lost if none comes. A runner that deregisters holding a cancelled claim is
+the same case: end the claim `cancelled` (§5).
 
 **Response:** `next_sync_ms` and `lease_ms` (required), `runs` (the offers),
 `controls`, `min_version`. Omit `runs` and `controls` when empty.
@@ -682,7 +683,8 @@ claimed ─► preparing ─► running ─► succeeded | failed | cancelled | 
                           │  ▲
                           ▼  │ (limit resets / account frees)
                         waiting ──────────────────────────► timed_out (max_wait)
-   any non-terminal state ── lease lapses ──► lost      (decided by the hub)
+   any non-terminal state ── lease lapses ──► lost      (decided by the hub;
+                                                         a claim it cancelled: cancelled, §3)
 ```
 
 | state | whose | meaning |
@@ -787,7 +789,8 @@ runner's row, so a token issued for that runner id brings it back.
 three steps** ([0046](docs/decisions/0046-a-silent-runner-loses-its-offers-with-the-lease-and-its-sessions-after-a-day.md)).
 It crashed, was switched off, or lost its network; it may come back.
 
-- **Its held runs are lost when their leases lapse**, as above.
+- **Its held runs are lost when their leases lapse**, as above — a claim you
+  have asked to cancel, cancelled.
 - **An offer to it lapses with the same lease.** The `lease_ms` beside an offer
   covers the offer: one the runner has not claimed within it goes back in your
   queue, and you may offer it to any runner. A claim that arrives after that —
@@ -1434,7 +1437,7 @@ is something **your hub still has to get right** with nothing to catch you:
 
 | rule | why the suite cannot reach it |
 |---|---|
-| `POST /runners/{runner}/deregister` — held runs lost, offers requeued, the runner's sessions closed and their queued runs ended | deregistering retires the runner every other check is made as; the second runner `--second-token` registers could carry it, and does not yet. `yad hub` implements it; implement it in yours |
+| `POST /runners/{runner}/deregister` — held runs lost (a claim you cancelled, `cancelled`), offers requeued, the runner's sessions closed and their queued runs ended | deregistering retires the runner every other check is made as; the second runner `--second-token` registers could carry it, and does not yet. `yad hub` implements it; implement it in yours |
 | The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, a cancelled claim the runner withdraws recorded `cancelled` rather than `lost`, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
 | `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, `effort`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
 | Hub logins — `start_login` and `login_token` repeated until the runner reports the login, `login_code` while it reports it `waiting`, `cancel_login` until it reports it over; a token held only until the runner reports its login; a login the runner reported and then leaves out ended `failed`; a login ended on the hub's word only while never sent, and a sent one unheard for thirty minutes ended `failed` with its token blanked, a runner's later report still replacing that end | only your own API starts a login, outside v1, and the suite advertises no `login` feature to be sent one. What is checked: that no login control reaches it, and that a sync carrying `logins` is taken |
@@ -1507,7 +1510,7 @@ checks; the rest is yours to get right.
 - [ ] Every sync renews the lease of every run it lists; lapsed leases are lost, found by a timer as well as by syncs — [§5](#5-leases-timings-and-runners-that-go-away) (C)
 - [ ] A claim you asked to cancel ends `cancelled`, not `lost`, when a sync leaves it out or its lease lapses — [§3](#post-runnersrunnersync)
 - [ ] An offer lapses with its lease and goes back in the queue; a claim listed after that is answered with `cancel` — [§5](#5-leases-timings-and-runners-that-go-away) (C)
-- [ ] `deregister` loses held runs, requeues offers, closes the runner's sessions and ends their queued runs, and retires the credential — [§5](#5-leases-timings-and-runners-that-go-away)
+- [ ] `deregister` loses held runs (a claim you cancelled ends `cancelled`), requeues offers, closes the runner's sessions and ends their queued runs, and retires the credential — [§5](#5-leases-timings-and-runners-that-go-away)
 - [ ] A runner silent past your abandon-after loses its sessions and their queued runs, keeps its credential, and hears `close_session` when it returns — [§5](#5-leases-timings-and-runners-that-go-away)
 
 **Events and results**

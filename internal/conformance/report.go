@@ -17,7 +17,7 @@ var unchecked = []struct {
 	sections []section
 	why      string
 }{{
-	rule:     "POST /runners/{runner}/deregister — the credential dies; the runs that runner held are lost, its offers go back in the queue, and its sessions close with the runs queued in them ended.",
+	rule:     "POST /runners/{runner}/deregister — the credential dies; the runs that runner held are lost, but for a claim the hub has asked to cancel, which ends cancelled, its offers go back in the queue, and its sessions close with the runs queued in them ended.",
 	sections: []section{hubLeases},
 	why:      "deregistering retires the runner every other check here is made as; the second runner --second-token registers could carry it, and does not yet. `yad hub` implements it; a hub you write should too.",
 }, {

@@ -128,7 +128,7 @@ Contract: [HUB.md §3](HUB.md#3-the-calls), one call at a time, and
 | `POST /runners/{runner}/sync` | the periodic call: state and health in; runs, control messages and the next interval out |
 | `POST /runs/{run}/events` | a batch of events, idempotent by `(run, seq)`; answers `acked_through` |
 | `POST /runs/{run}/result` | the terminal state, idempotent; retried from the outbox until acknowledged |
-| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost, requeues its offers, and closes its sessions, ending the runs queued in them |
+| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost (a claim it has asked to cancel, cancelled — 0060), requeues its offers, and closes its sessions, ending the runs queued in them |
 
 Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and

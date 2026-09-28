@@ -32,8 +32,8 @@ It is narrow on purpose. Only a run the hub holds as `claimed` — never one a
 sync has reported `preparing` or later, which owes a result and is `lost` if
 none comes — and only with a cancel asked for. A claim nobody asked to cancel
 that a sync leaves out stays held until its lease lapses, and is lost, as
-before. `yad hub` applies the same rule when a runner deregisters holding such
-a claim, so the three ways a withdrawn claim can reach the hub agree.
+before. The rule holds too when a runner deregisters holding such a claim, so
+the three ways a withdrawn claim can reach a hub agree.
 
 No protocol shape changes. Conformance cannot check it — only a hub's own API
 asks for a cancel — so it joins the controls on the suite's not-checked list.
