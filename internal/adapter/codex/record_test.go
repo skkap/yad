@@ -183,6 +183,49 @@ func TestRecord(t *testing.T) {
 	}
 }
 
+// TestRecordModels keeps what model/list answers for the recording login, as
+// testdata/codex-<version>/list-models.jsonl. It starts no thread and spends
+// no token (DEV-50):
+//
+//	YAD_REAL_HARNESS=1 go test -tags realharness -run TestRecordModels -v ./internal/adapter/codex/
+func TestRecordModels(t *testing.T) {
+	if os.Getenv("YAD_REAL_HARNESS") != "1" {
+		t.Skip("set YAD_REAL_HARNESS=1 to record the model list")
+	}
+	bin, err := exec.LookPath("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(bin, "--version").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(out))
+	dir := filepath.Join("testdata", "codex-"+fields[len(fields)-1])
+	home, _ := os.UserHomeDir()
+	host, _ := os.Hostname()
+	work, codexHome := t.TempDir(), t.TempDir()
+	if err := os.Symlink(filepath.Join(home, ".codex", "auth.json"), filepath.Join(codexHome, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	var raw bytes.Buffer
+	models, err := listModels(ctx, bin, work, []string{"CODEX_HOME=" + codexHome}, &raw)
+	t.Logf("models %v, err %v", models, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scrubbed := scrub(raw.Bytes(), [][2]string{
+		{resolved(work), "/work"}, {work, "/work"},
+		{resolved(codexHome), "/codex-home"}, {codexHome, "/codex-home"},
+		{home, "/home/user"},
+	}, host)
+	if err := os.WriteFile(filepath.Join(dir, "list-models.jsonl"), scrubbed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestRecordSchema keeps the schema the installed codex generates, which
 // schema_test.go pins.
 func TestRecordSchema(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/skkap/yad/internal/account"
+	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/store"
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -158,6 +159,10 @@ func (p *LoginProbe) probe(ctx context.Context, a account.Account) bool {
 	// through its own connection's next sync, which reads account state
 	// anyway, so the account is noticed within one sync interval without
 	// anything here having to know that parked runs exist.
+	// The login that brought it back may be on another plan than the one
+	// that lapsed, and the capability document keeps a login's models for
+	// an hour by its home, which has not changed.
+	capability.ForgetModels(a.Harness)
 	log.Info("the account has been logged in again and is back in service")
 	return true
 }

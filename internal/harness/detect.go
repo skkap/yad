@@ -36,6 +36,11 @@ type Detected struct {
 	// account the owner gave it. Installed and working, and unable to take
 	// runs until someone logs it in.
 	NeedsLogin bool `json:"needs_login,omitempty"`
+	// ModelsSource says where Models came from, and AccountModels is what the
+	// harness listed for each account by label. Both are filled in by the
+	// capability document's model probe; detection leaves them empty.
+	ModelsSource  string              `json:"models_source,omitempty"`
+	AccountModels map[string][]string `json:"account_models,omitempty"`
 }
 
 // Ready reports whether a run may target this harness right now: first-class,

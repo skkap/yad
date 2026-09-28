@@ -799,6 +799,9 @@ func (m *Logins) check(ctx context.Context, l *hubLogin, bin, home string, log *
 			return
 		}
 	}
+	// The models a login is offered follow its plan, and the document keeps
+	// them for an hour; a new login is asked again at once.
+	capability.ForgetModels(h)
 	switch {
 	case l.ref.Label == "":
 		// The capability document keeps its answer about a default login

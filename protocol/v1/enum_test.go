@@ -33,6 +33,9 @@ func TestTheV1EnumsAreClosed(t *testing.T) {
 		{ClosedSession{}, "Reason", "hub", []string{"closed", "closed_by_owner", "expired", "disk_pressure"}},
 		{AccountReport{}, "State", "hub", []string{"free", "limited", "needs_login"}},
 		{HarnessReport{}, "Kind", "hub", []string{"first-class", "recognised"}},
+		// Came with its field (DEV-50): a hub built before it has no
+		// models_source to validate.
+		{HarnessReport{}, "ModelsSource", "hub", []string{"harness", "catalog"}},
 		// The four login kinds came after v1 shipped, gated on the "login"
 		// feature a runner advertises (decision 0055); remove_account after
 		// them, gated on "accounts" (decision 0057).
@@ -66,7 +69,7 @@ func TestTheV1EnumsAreClosed(t *testing.T) {
 func TestEveryEnumIsPinned(t *testing.T) {
 	pinned := map[string]bool{
 		"Event.Kind": true, "HeldRun.State": true, "Result.State": true, "ClosedSession.Reason": true,
-		"AccountReport.State": true, "HarnessReport.Kind": true, "Control.Kind": true, "SessionRef.Mode": true, "Grant.As": true,
+		"AccountReport.State": true, "HarnessReport.Kind": true, "HarnessReport.ModelsSource": true, "Control.Kind": true, "SessionRef.Mode": true, "Grant.As": true,
 		"LoginReport.Method": true, "LoginReport.State": true,
 	}
 	seen := map[reflect.Type]bool{}

@@ -554,7 +554,9 @@ resumed run's context never reaches the model
 ([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md)).
 The capability probe asks the installed claude's `--help` for every flag a run
 passes, and a Claude lacking one is reported with an error — not drivable —
-saying to run `claude update`.
+saying to run `claude update`. Its models are Claude's answer to the
+`list_models` control request, sent to a `claude -p` given no user message —
+no turn, no token — with `--no-session-persistence` and the owner's hooks off.
 `AskUserQuestion` is disallowed — headless, it returns an empty answer. Claude
 does not refuse an `--effort` it does not know: it warns on stderr and runs at
 its default, so the adapter watches stderr for that warning until Claude's
@@ -583,9 +585,11 @@ with the instruction and the run's `effort`, when it has one; the brief's
 context is the thread's `developerInstructions`, and on a resume it is also
 put in the thread as a developer message (`thread/inject_items`) before the
 turn, since Codex reads a resume's instructions only after a compaction
-([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md)). Codex's model list is read
-from `models_cache.json` in each home a run may use, for the capability
-document. Each of those is answered within 30 s. The thread id is
+([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md)).
+Each of those is answered within 30 s. Codex's models, for the capability
+document, are an app-server of their own: `initialize` → `initialized` →
+`model/list`, and no thread; where it cannot answer, the `models_cache.json`
+Codex keeps in that login's home stands in. The thread id is
 the native session id, exposed the moment `thread/start` answers. Codex writes
 subagents' threads to the same pipe and a resume replays the thread's history,
 so only notifications naming the run's thread and, once it has started, the
@@ -846,6 +850,19 @@ for `codex`); the suite never runs a real harness.
   the harness reports an error naming its own login command and takes no runs,
   and `yad doctor` shows it as `needs login`
   ([0053](docs/decisions/0053-a-harness-on-its-own-login-is-checked-like-an-account.md)).
+- **Models are the harness's, per login** (`capability.addModels`, DEV-50).
+  Each login a run may use — every account that does not need login, or the
+  default home — is asked for its models in a run's environment, side by
+  side, each ask bounded at 15 s so a hanging harness never holds a
+  registration. An answer is kept an hour (by harness, binary, version and
+  that environment, hashed), a failed ask is retried after five minutes with
+  the last answer still reported. A login yad sees change forgets them — `yad
+  account add` or `remove`, a hub login, an account `LoginProbe` finds logged
+  in again — and an ask a forget overtook is not kept; a default home logged
+  in again behind yad's back, whose environment is unchanged, shows its new
+  plan's list within the hour. The harness's `models` merge every login's; each
+  account carries its own. With no answer at all Claude reports the catalog's
+  aliases with `models_source: catalog`.
 - **Hub login** ([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)):
   any connected hub may log in an account `config.toml` lists, or a harness's
   own default login — and, with `add`, a new account, unless the owner has
@@ -1336,6 +1353,15 @@ line here is a reviewed change.
   sends ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)).
   Hub input and harness output are still data to YAD itself: never executed,
   never passed to a shell, never an instruction to the runner.
+- What leaves the machine is written for its reader. The capability document
+  and health go to every connected hub, so they never name a path on the
+  machine or quote what a child printed (DEV-67). A run's error and events go
+  only to the hub that sent the run, so they may name a path; the runner quotes
+  a cause of its own only when it is an OS error — a path and an errno — and
+  otherwise points at `yad daemon logs`. A command in either follows
+  `Paths.RemoteCommand`, and a URL printed in either — a git source's, one in
+  git's own reason — loses its credential first
+  ([0064](docs/decisions/0064-a-runs-error-may-name-a-path-on-the-runner.md)).
 - A run's sources are argv, never a shell: https and ssh only, no remote
   helpers, no leading `-`, no password in a URL, and nothing on the machine
   outside the owner's `[workdirs] roots`, which default to the owner's home

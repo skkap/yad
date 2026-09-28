@@ -11,8 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
+
+	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/config"
 )
 
 // A source is hub input, which is data and never an instruction (decision
@@ -43,22 +48,25 @@ var helperURL = regexp.MustCompile(`^[A-Za-z0-9+.-]+::`)
 // or file:// — only inside the owner's roots. Everything else is refused:
 // plain http and git:// carry no integrity, and a remote helper is a program.
 func parseRemote(raw string, reach reachFunc) (remote, error) {
-	if err := plain("git.url", raw); err != nil {
+	shown := quotedURL(raw)
+	if err := plain("git.url", raw, shown); err != nil {
 		return remote{}, err
 	}
 	if helperURL.MatchString(raw) {
-		return remote{}, fmt.Errorf("git.url %q names a git remote helper (<transport>::…); use an https or ssh URL", raw)
+		return remote{}, fmt.Errorf("git.url %s names a git remote helper (<transport>::…); use an https or ssh URL", shown)
 	}
 	r := remote{url: raw, key: strings.TrimRight(raw, "/")}
 	switch {
 	case strings.Contains(raw, "://"):
 		u, err := url.Parse(raw)
 		if err != nil {
-			return remote{}, fmt.Errorf("git.url %q is not a URL: %w", raw, err)
+			// Not url.Parse's error: it quotes the URL whole, and an
+			// invalid port is quoted from beside the password (DEV-91).
+			return remote{}, fmt.Errorf("git.url %s is not a URL — check it for a character that needs escaping or a port that is not a number", shown)
 		}
 		switch strings.ToLower(u.Scheme) {
 		case "https", "ssh", "git+ssh", "ssh+git":
-			if err := checkHost(raw, u.Hostname(), u.User.Username()); err != nil {
+			if err := checkHost(shown, u.Hostname(), u.User.Username()); err != nil {
 				return remote{}, err
 			}
 			if _, ok := u.User.Password(); ok {
@@ -70,11 +78,11 @@ func parseRemote(raw string, reach reachFunc) (remote, error) {
 			r.name = repoName(u.Path)
 		case "file":
 			if h := u.Host; h != "" && h != "localhost" {
-				return remote{}, fmt.Errorf("git.url %q names a file on another host; use an https or ssh URL", raw)
+				return remote{}, fmt.Errorf("git.url %s names a file on another host; use an https or ssh URL", shown)
 			}
 			return localRemote(raw, u.Path, reach)
 		default:
-			return remote{}, fmt.Errorf("git.url %q uses %s://, which this runner does not fetch from; use an https or ssh URL", raw, u.Scheme)
+			return remote{}, fmt.Errorf("git.url %s uses %s://, which this runner does not fetch from; use an https or ssh URL", shown, u.Scheme)
 		}
 	case strings.HasPrefix(raw, "/"):
 		return localRemote(raw, raw, reach)
@@ -84,13 +92,13 @@ func parseRemote(raw string, reach reachFunc) (remote, error) {
 		// directory.
 		hostPart, path, ok := strings.Cut(raw, ":")
 		if !ok || strings.Contains(hostPart, "/") || path == "" {
-			return remote{}, fmt.Errorf("git.url %q is neither a URL, an scp-like user@host:path, nor an absolute path", raw)
+			return remote{}, fmt.Errorf("git.url %s is neither a URL, an scp-like user@host:path, nor an absolute path", shown)
 		}
 		user, host, hasUser := strings.Cut(hostPart, "@")
 		if !hasUser {
 			user, host = "", hostPart
 		}
-		if err := checkHost(raw, host, user); err != nil {
+		if err := checkHost(shown, host, user); err != nil {
 			return remote{}, err
 		}
 		r.name = repoName(path)
@@ -99,13 +107,14 @@ func parseRemote(raw string, reach reachFunc) (remote, error) {
 }
 
 // checkHost refuses what ssh would read as an option: a host or a user that
-// begins with a dash is the ProxyCommand injection git once shipped.
-func checkHost(raw, host, user string) error {
+// begins with a dash is the ProxyCommand injection git once shipped. shown is
+// the URL as quotedURL prints it.
+func checkHost(shown, host, user string) error {
 	if host == "" {
-		return fmt.Errorf("git.url %q names no host", raw)
+		return fmt.Errorf("git.url %s names no host", shown)
 	}
 	if strings.HasPrefix(host, "-") || strings.HasPrefix(user, "-") {
-		return fmt.Errorf("git.url %q has a host or user beginning with '-', which ssh would read as an option", raw)
+		return fmt.Errorf("git.url %s has a host or user beginning with '-', which ssh would read as an option", shown)
 	}
 	return nil
 }
@@ -181,22 +190,84 @@ func within(root, path string) bool {
 
 // plain refuses what has no business in a git argument: nothing, a leading
 // dash that git would read as an option, whitespace and control characters.
-func plain(field, s string) error {
+// shown is s as a refusal may quote it, which for a URL is quotedURL's.
+func plain(field, s, shown string) error {
 	switch {
 	case s == "":
 		return fmt.Errorf("%s is empty", field)
 	case strings.HasPrefix(s, "-"):
-		return fmt.Errorf("%s %q begins with '-', which git would read as an option", field, s)
+		return fmt.Errorf("%s %s begins with '-', which git would read as an option", field, shown)
 	case strings.IndexFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0:
-		return fmt.Errorf("%s %q contains whitespace or a control character", field, s)
+		return fmt.Errorf("%s %s contains whitespace or a control character", field, shown)
 	}
 	return nil
+}
+
+// shownURL is a hub-sent git URL as a refusal, an event or a run's error may
+// print it. It goes back only to the hub that sent it, which already holds it
+// — but a URL is where people put a token, and a token is never transmitted
+// (decision 0064, as DEV-91 for a hub's own URL). A URL loses its userinfo,
+// query and fragment to config.RedactURL; an scp-like user@host:path loses its
+// user the same way; anything else holding an @ is not printed at all. A
+// source with nothing to take out — a path, most URLs — comes back as given.
+func shownURL(raw string) string {
+	if strings.Contains(raw, "://") {
+		return config.RedactURL(raw)
+	}
+	// A path is a directory on the machine, which a run's error may name
+	// (decision 0064); an @ in one is a directory's name, not a user.
+	if strings.HasPrefix(raw, "/") || !strings.Contains(raw, "@") {
+		return raw
+	}
+	hostPart, path, ok := strings.Cut(raw, ":")
+	_, host, _ := strings.Cut(hostPart, "@")
+	if !ok || strings.Contains(hostPart, "/") || strings.Contains(host, "@") || strings.Contains(path, "@") {
+		return config.UnprintableURL
+	}
+	return "redacted@" + host + ":" + path
+}
+
+// redactSource is msg with every copy of the source URL raw in it printed as
+// shownURL prints it. git's reason quotes the remote as it was given, and
+// redactURLs finds only what looks like a URL to a pattern: not an scp-like
+// user@host:path, and not a URL that holds a quote where the pattern stops.
+// The source itself is known here, so it is replaced whole.
+func redactSource(msg, raw string) string {
+	if shown := shownURL(raw); shown != raw {
+		return strings.ReplaceAll(msg, raw, shown)
+	}
+	return msg
+}
+
+// ShownSources is a copy of sources with every git URL as shownURL prints it,
+// for a message that names a run's or a session's sources.
+func ShownSources(sources []v1.Source) []v1.Source {
+	out := make([]v1.Source, len(sources))
+	for i, s := range sources {
+		out[i] = s
+		if s.Git != nil {
+			g := *s.Git
+			g.URL = shownURL(g.URL)
+			out[i].Git = &g
+		}
+	}
+	return out
+}
+
+// quotedURL is shownURL in quotes, as a refusal names a field's value — except
+// for a URL that cannot be printed, which is already a phrase.
+func quotedURL(raw string) string {
+	s := shownURL(raw)
+	if s == config.UnprintableURL {
+		return s
+	}
+	return strconv.Quote(s)
 }
 
 // checkRef enforces git's own rules for a ref name (git-check-ref-format),
 // and the ones it leaves to the caller: no leading dash, and not HEAD.
 func checkRef(field, s string) error {
-	if err := plain(field, s); err != nil {
+	if err := plain(field, s, strconv.Quote(s)); err != nil {
 		return err
 	}
 	bad := func(why string) error { return fmt.Errorf("%s %q is not a valid git ref name: %s", field, s, why) }
