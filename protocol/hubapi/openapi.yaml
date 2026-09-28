@@ -206,7 +206,7 @@ components:
           description: "The branch the run works on, checked out as a worktree of the repository. Absent: yad/<connection>/<session>, named after the session."
           type: string
         url:
-          description: "The repository: an https or ssh URL, fetched with the machine's own credentials and never with a password in the URL, or an absolute path or file:// URL of a repository on the runner's machine, inside the directories its owner allows. Required."
+          description: "The repository: an https or ssh URL, fetched with the machine's own credentials and never with a password in the URL, or an absolute path or file:// URL of a repository on the runner's machine, inside the directories its owner allows and never at a runner whose capability document says path_sources is false. Required."
           type: string
       required:
         - url
@@ -1413,7 +1413,7 @@ paths:
       summary: Read a run's state, and its result once it has one
   /runs/{run}/cancel:
     post:
-      description: "A run no runner has started — queued, or offered and not yet claimed — is cancelled here and now. A run a runner holds is cancelled by that runner at its next sync, down the cancel ladder: the harness is interrupted, then its process group gets SIGTERM, then SIGKILL; cancel_requested_at is set until then, and the result's cancel_latency_ms says how long the harness took to stop. A harness that finished before the cancel reached it keeps its own result. Cancelling a cancelled run answers it as it is; any other finished run is 409."
+      description: "A run no runner has started — queued, or offered and not yet claimed — is cancelled here and now. A run a runner holds is cancelled by that runner at its next sync, down the cancel ladder: the harness is interrupted, then its process group gets SIGTERM, then SIGKILL; cancel_requested_at is set until then, and the result's cancel_latency_ms says how long the harness took to stop. A claim the runner had not yet heard confirmed is withdrawn instead, unstarted: it ends cancelled with no result, when the runner's next sync leaves it out or its lease lapses. A harness that finished before the cancel reached it keeps its own result. Cancelling a cancelled run answers it as it is; any other finished run is 409."
       operationId: cancelRun
       parameters:
         - description: The run id.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -162,6 +163,15 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			}
 			out.Controls = append(out.Controls, controls...)
 		}
+		// A claim this sync leaves out, with a cancel asked for, was withdrawn:
+		// the runner heard the cancel before any answer confirmed the claim —
+		// that answer lost in transit — and owes no result (decision 0019).
+		// The hub asked for this end, so the run is cancelled now rather than
+		// lost when its lease lapses (decision 0061).
+		if err := cancelWithdrawn(ctx, q, runner.ID, req.Runs,
+			fmt.Sprintf("cancelled before runner %s started it; the runner withdrew its claim", runner.ID), now); err != nil {
+			return err
+		}
 
 		// A close the runner reports is what closes the session here, and
 		// answers the close_session this hub was repeating (decision 0035).
@@ -297,6 +307,14 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 	// that advertises none the run stays queued, which is the honest answer.
 	// An undescribed runner is offered none, for the reason above.
 	takesEffort := described && advertises(doc, capability.FeatureEffort)
+	// A run opening a session with a source on the machine goes only to a
+	// runner whose owner has not switched those off: that runner would fail
+	// it source_refused, where another may take it (decision 0062). A run in
+	// a session already bound here is offered anyway — it can go nowhere
+	// else, and the runner's refusal names the setting, where a run left
+	// queued would say nothing. An undescribed runner is offered none, for
+	// the reason above.
+	takesLocal := described && (doc.PathSources == nil || *doc.PathSources)
 	var (
 		runs   []v1.Run
 		cursor db.Run
@@ -339,6 +357,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 			if err := opening(ctx, q, &run); err != nil {
 				return nil, err
 			}
+			if run.Session.New && !takesLocal && slices.ContainsFunc(run.Sources, onTheMachine) {
+				continue
+			}
 			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
 				return nil, err
 			}
@@ -355,6 +376,18 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 		}
 	}
 	return runs, nil
+}
+
+// onTheMachine is a source a runner's path_sources governs: a path, or a git
+// URL that names a repository on the runner's own disk. It follows the
+// runner's reading of a URL (parseRemote in internal/workdir) — anything it
+// would take for a network URL goes, and anything malformed it refuses
+// whatever the setting.
+func onTheMachine(s v1.Source) bool {
+	if s.Git == nil {
+		return s.Path != ""
+	}
+	return strings.HasPrefix(s.Git.URL, "/") || strings.HasPrefix(strings.ToLower(s.Git.URL), "file://")
 }
 
 // opening sets session.new on a run about to be offered: true while no claim
@@ -412,10 +445,14 @@ func (h *Hub) SweepEvery() time.Duration { return h.interval }
 // a claim does: one not claimed within it goes back in the queue for any
 // runner, and a claim arriving after that is answered with a cancel, because
 // the run may already be another runner's. Then the runs whose leases lapsed
-// are lost, and last the runners silent past abandon-after are given up —
-// after the leases, so that by then nothing they held is still leased.
+// end: cancelled for a claim the hub was asked to cancel (decision 0061),
+// lost for every other. Last the runners silent past abandon-after are given
+// up — after the leases, so that by then nothing they held is still leased.
 func (h *Hub) sweep(ctx context.Context, q *db.Queries, now time.Time) error {
 	if _, err := q.RequeueWithdrawnOffers(ctx, store.Ms(now)); err != nil {
+		return err
+	}
+	if _, err := q.CancelLapsedClaims(ctx, store.Ms(now)); err != nil {
 		return err
 	}
 	if _, err := q.LoseLapsedRuns(ctx, store.Ms(now)); err != nil {
@@ -440,6 +477,26 @@ func (h *Hub) authenticate(ctx context.Context, pathRunner string) (db.Runner, e
 			"sync with the runner id this credential was issued to")
 	}
 	return r, nil
+}
+
+// cancelWithdrawn ends cancelled every claim of this runner's that a cancel
+// was asked for and that held does not list. Deregister passes no runs: a
+// runner that has gone holds nothing.
+func cancelWithdrawn(ctx context.Context, q *db.Queries, runnerID string, held []v1.HeldRun, reason string, now time.Time) error {
+	ids := make([]string, 0, len(held))
+	for _, r := range held {
+		ids = append(ids, r.RunID)
+	}
+	// A JSON array rather than sqlc.slice, for the reason offer gives.
+	listed, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	_, err = q.CancelWithdrawnClaims(ctx, db.CancelWithdrawnClaimsParams{
+		Reason: sql.NullString{String: reason, Valid: true}, Now: store.Ms(now),
+		RunnerID: sql.NullString{String: runnerID, Valid: true}, ListedJson: string(listed),
+	})
+	return err
 }
 
 // holdable is whether a listed run is this runner's: offered to it and not yet

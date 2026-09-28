@@ -37,7 +37,9 @@ func (h *Hub) registerControls(api huma.API) {
 		Description: "A run no runner has started — queued, or offered and not yet claimed — is cancelled here and now. " +
 			"A run a runner holds is cancelled by that runner at its next sync, down the cancel ladder: the harness is " +
 			"interrupted, then its process group gets SIGTERM, then SIGKILL; cancel_requested_at is set until then, and the " +
-			"result's cancel_latency_ms says how long the harness took to stop. A harness that finished before the cancel " +
+			"result's cancel_latency_ms says how long the harness took to stop. A claim the runner had not yet heard confirmed is " +
+			"withdrawn instead, unstarted: it ends cancelled with no result, when the runner's next sync leaves it out or its lease " +
+			"lapses. A harness that finished before the cancel " +
 			"reached it keeps its own result. Cancelling a cancelled run answers it as it is; any other finished run is 409.",
 		Security: adminSecurity, Errors: []int{401, 404, 409},
 	}, func(ctx context.Context, in *runInput) (*runOutput, error) {

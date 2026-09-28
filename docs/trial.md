@@ -142,7 +142,7 @@ yad --profile dogfood hub submit --harness claude --model sonnet \
 harness edits your files directly, so point it only at a directory you are
 happy to have changed. Either kind is taken only inside the directories
 `[workdirs] roots` in the profile's `config.toml` allows — your home directory
-when it lists none.
+when it lists none, and none at all when it says `path_sources = false`.
 
 **Continue the conversation.** A session keeps the harness's transcript and
 its workdir between runs, so a follow-up names the session and not the source:
