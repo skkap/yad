@@ -70,7 +70,7 @@ func ListModels(ctx context.Context, bin, dir string, env []string) ([]string, e
 func listModels(ctx context.Context, bin, dir string, env []string, raw io.Writer) ([]string, error) {
 	p, err := supervise.Start(ctx, supervise.Spec{Path: bin, Args: modelsArgs, Dir: dir, Env: runEnv(env), Stdin: true, NoTTY: true})
 	if err != nil {
-		return nil, fmt.Errorf("claude would not start to list its models: %w", err)
+		return nil, adapter.ModelsError(adapter.ErrModelsNoStart, "claude would not start to list its models", err)
 	}
 	answer := make(chan listAnswer, 1)
 	read := make(chan struct{})
@@ -150,7 +150,7 @@ func readModels(r io.Reader, raw io.Writer) listAnswer {
 		if f.Response.Subtype != "success" {
 			// A Claude from before list_models answers with an error. What it
 			// says is not kept.
-			return listAnswer{err: errors.New("claude refused list_models — a Claude older than the request does")}
+			return listAnswer{err: adapter.ModelsError(adapter.ErrModelsRefused, "claude refused list_models — a Claude older than the request does", nil)}
 		}
 		seen := map[string]bool{}
 		var out []string
@@ -163,7 +163,7 @@ func readModels(r io.Reader, raw io.Writer) listAnswer {
 			out = append(out, m.Value)
 		}
 		if len(out) == 0 {
-			return listAnswer{err: errors.New("claude listed no models")}
+			return listAnswer{err: adapter.ModelsError(adapter.ErrModelsUnread, "claude listed no models", nil)}
 		}
 		return listAnswer{models: out}
 	}

@@ -638,7 +638,8 @@ use is offered — Claude's `list_models`, Codex's `model/list` — and reports
 them in the harness's order, with each account's own list under the account
 when the harness listed one for it: two accounts on different plans can be
 offered different models. `models_source: catalog` is a harness that could
-not be asked, and a fixed list from the runner in its place. Neither is a
+not be asked, and a fixed list from the runner in its place; why it could not
+is not sent — the machine's owner sees it in `yad doctor`. Neither is a
 limit: a run may name any model, and the harness decides whether it exists.
 
 **Prefer a harness whose health says `ready`.** An offer for a harness whose

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/control"
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/supervise"
 )
@@ -54,6 +56,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	if *asJSON {
 		return writeJSON(w, found)
 	}
+	failing, unanswered := daemonModelsFailures(ctx, g.paths)
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "HARNESS\tSTATUS\tVERSION\tPATH")
@@ -93,6 +96,20 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		for _, warn := range d.Warnings {
 			fmt.Fprintf(w, "\nwarning: %s — %s\n", d.Label, warn)
 		}
+		for _, f := range failing {
+			if f.Harness != d.ID {
+				continue
+			}
+			who := d.Label
+			if f.Account != "" {
+				who += ", account " + f.Account
+			}
+			fmt.Fprintf(w, "\nwarning: %s — the daemon could not ask it which models it offers (since %s), so hubs are sent the last list it gave or the catalog's: %s\n",
+				who, f.Since.Local().Format("2006-01-02 15:04"), f.Reason)
+		}
+	}
+	if unanswered {
+		fmt.Fprintf(w, "\nnote: the daemon did not answer, so why a harness's models may be the catalog's is not shown — `%s` says what it is doing\n", g.paths.Command("status"))
 	}
 	// How the machine is set up rather than what is installed on it, so these
 	// carry no harness label, and they stay out of --json: that is the
@@ -132,6 +149,25 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	}
 	fmt.Fprintf(w, "%d harness(es) this runner can be given work for.\n", ready)
 	return nil
+}
+
+// daemonModelsFailures is each login the profile's daemon could not ask for
+// its models, and why (DEV-146). The daemon's, not this command's own: its ask
+// is the one behind the models_source a hub shows, from the environment and
+// the binary the daemon resolved, and asking again here would start every
+// login's harness for seconds each to learn something the daemon already
+// knows. Asked over the control socket, since the CLI never writes state.db
+// and this is not in it (decision 0043). No daemon is no answer and nothing
+// to say; unanswered is one that holds the lock and did not answer.
+func daemonModelsFailures(ctx context.Context, p config.Paths) (failing []control.ModelsFailure, unanswered bool) {
+	res, err := control.Ask(ctx, p, "status")
+	if _, wedged := errors.AsType[*control.UnresponsiveError](err); wedged {
+		return nil, true
+	}
+	if err != nil || res.Status == nil {
+		return nil, false
+	}
+	return res.Status.ModelsFailures, false
 }
 
 // accountVariableWarnings tells the owner about each variable in env that

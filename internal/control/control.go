@@ -122,6 +122,22 @@ type Status struct {
 	SpoolDepth  int          `json:"spool_depth"`  // events not yet acknowledged by their hub
 	OutboxDepth int          `json:"outbox_depth"` // results not yet acknowledged
 	Errors      []LogRecord  `json:"errors"`       // the latest warnings and errors, oldest first
+	// ModelsFailures is each login whose harness did not answer the last
+	// time the daemon asked it for its models, which `yad doctor` shows
+	// beside the harness. It is here and not in the capability document: a
+	// hub is told the list is the catalog's, and why is the owner's to read
+	// (DEV-146). Nil from a daemon older than it.
+	ModelsFailures []ModelsFailure `json:"models_failures,omitempty"`
+}
+
+// ModelsFailure is one login's failed ask for its models.
+type ModelsFailure struct {
+	Harness string `json:"harness"`
+	// Account is the account's label, or empty for the harness's own login.
+	Account string `json:"account,omitempty"`
+	// Reason is yad's words with the next action, never the harness's.
+	Reason string    `json:"reason"`
+	Since  time.Time `json:"since"`
 }
 
 // Capacity is the pool: Free is what no run and no sync in flight holds.

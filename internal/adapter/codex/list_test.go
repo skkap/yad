@@ -3,12 +3,15 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/skkap/yad/internal/adapter"
 )
 
 // listed is what the recorded login offered on 0.157.1, in Codex's order.
@@ -112,17 +115,20 @@ func TestListModelsFailures(t *testing.T) {
 		fixture func(t *testing.T) string
 		env     map[string]string
 		want    string
+		// kind is what the caller words its reason by (DEV-146); nil is a
+		// Codex that ended before it answered, which wraps none.
+		kind error
 	}{
 		{"refused", func(t *testing.T) string {
 			return derived(t, asked(2, ""), `{"id":2,"error":{"code":-32601,"message":"secret at /Users/someone"}}`)
-		}, nil, "refused model/list"},
+		}, nil, "refused model/list", adapter.ErrModelsRefused},
 		{"nothing listed", func(t *testing.T) string {
 			return derived(t, asked(2, ""), `{"id":2,"result":{"data":[],"nextCursor":null}}`)
-		}, nil, "listed no models"},
+		}, nil, "listed no models", adapter.ErrModelsUnread},
 		{"not a list", func(t *testing.T) string {
 			return derived(t, asked(2, ""), `{"id":2,"result":{"data":"gpt-5.5"}}`)
-		}, nil, "not a model list"},
-		{"died", func(t *testing.T) string { return derived(t) }, map[string]string{"CODEX_TEST_MODE": "died"}, "did not answer model/list"},
+		}, nil, "not a model list", adapter.ErrModelsUnread},
+		{"died", func(t *testing.T) string { return derived(t) }, map[string]string{"CODEX_TEST_MODE": "died"}, "did not answer model/list", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, _, err := list(t, tc.fixture(t), tc.env, 20*time.Second)
@@ -131,6 +137,11 @@ func TestListModelsFailures(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "secret") {
 				t.Errorf("the error quotes Codex: %v", err)
+			}
+			for _, k := range []error{adapter.ErrModelsNoStart, adapter.ErrModelsRefused, adapter.ErrModelsUnread} {
+				if got, want := errors.Is(err, k), k == tc.kind; got != want {
+					t.Errorf("errors.Is(err, %v) = %v, want %v; err %v", k, got, want, err)
+				}
 			}
 		})
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -13,10 +15,12 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/account"
+	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/claude"
 	"github.com/skkap/yad/internal/adapter/codex"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/probe"
 )
 
 // A harness's models are asked of the harness, for each login a run may use
@@ -55,6 +59,27 @@ var (
 type modelsAnswer struct {
 	models []string
 	until  time.Time
+	// failed is why the last ask got no answer, in yad's words, and since
+	// is when it first said so; "" is an ask that was answered. Kept with
+	// the answer it leaves standing, so a document built from a kept answer
+	// still says why that answer is old.
+	failed string
+	since  time.Time
+}
+
+// ModelsFailure is one login whose harness did not answer the last time it
+// was asked for its models, as of the last document built. It is for the
+// owner — the daemon's log and `yad doctor` — and never the document: a hub
+// is told where the models came from (models_source), and why an ask failed
+// on the machine is the machine's to fix.
+type ModelsFailure struct {
+	Harness string
+	// Account is the account's label, or "" for the harness's own login.
+	Account string
+	// Reason is yad's words with the next action; never what the harness
+	// printed, which may carry a path or a credential (DEV-60, DEV-67).
+	Reason string
+	Since  time.Time
 }
 
 var (
@@ -66,7 +91,19 @@ var (
 	// began: otherwise the old login's list would be written back and kept
 	// for the hour the forget was meant to cut short.
 	modelsForgotten = map[string]int{}
+	// modelsFailing is the last document's failures, which ModelsFailures
+	// hands out.
+	modelsFailing []ModelsFailure
 )
+
+// ModelsFailures is every login the last document built in this process could
+// not ask for its models, by harness and account. The daemon builds the
+// document every interval, so for it this is now.
+func ModelsFailures() []ModelsFailure {
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	return slices.Clone(modelsFailing)
+}
 
 // ForgetModels drops the lists kept for a harness, so the next document asks
 // again: a login has just changed, and with it, perhaps, the plan.
@@ -118,6 +155,9 @@ func addModels(ctx context.Context, found []harness.Detected, cfg config.Config,
 		i  int
 		l  login
 		ms []string
+		// failed and since are the ask's modelsAnswer's.
+		failed string
+		since  time.Time
 	}
 	var asks []*ask
 	for i, d := range found {
@@ -131,10 +171,22 @@ func addModels(ctx context.Context, found []harness.Detected, cfg config.Config,
 	var wg sync.WaitGroup
 	for _, a := range asks {
 		if d := found[a.i]; d.Ready() {
-			wg.Go(func() { a.ms = modelsOf(ctx, d, a.l.home) })
+			wg.Go(func() {
+				got := modelsOf(ctx, d, a.l.home)
+				a.ms, a.failed, a.since = got.models, got.failed, got.since
+			})
 		}
 	}
 	wg.Wait()
+	var failing []ModelsFailure
+	for _, a := range asks {
+		if a.failed != "" {
+			failing = append(failing, ModelsFailure{Harness: found[a.i].ID, Account: a.l.label, Reason: a.failed, Since: a.since})
+		}
+	}
+	modelsMu.Lock()
+	modelsFailing = failing
+	modelsMu.Unlock()
 
 	for i := range found {
 		d := &found[i]
@@ -175,9 +227,9 @@ func addModels(ctx context.Context, found []harness.Detected, cfg config.Config,
 }
 
 // modelsOf is one login's list: kept from the last ask while it is fresh,
-// asked again once it is not. nil is a harness that has never answered for
-// this login.
-func modelsOf(ctx context.Context, d harness.Detected, home string) []string {
+// asked again once it is not. Its models are nil for a harness that has never
+// answered for this login, and its failed says why the last ask was not.
+func modelsOf(ctx context.Context, d harness.Detected, home string) modelsAnswer {
 	// The environment of a run on this login, and only that: the answer is
 	// about the credential the run would use (DEV-62, and the rule
 	// supervise.Spec states for what a run keeps).
@@ -189,7 +241,7 @@ func modelsOf(ctx context.Context, d harness.Detected, home string) []string {
 	gen := modelsForgotten[d.ID]
 	modelsMu.Unlock()
 	if ok && now.Before(kept.until) {
-		return kept.models
+		return kept
 	}
 	askCtx, cancel := context.WithTimeout(ctx, modelsTimeout)
 	defer cancel()
@@ -207,24 +259,60 @@ func modelsOf(ctx context.Context, d harness.Detected, home string) []string {
 	}
 	if ctx.Err() != nil {
 		// The caller stopped asking; that says nothing about the harness.
-		return kept.models
+		return kept
 	}
 	next := modelsAnswer{models: got, until: now.Add(modelsRecheck)}
 	if err != nil {
-		next = modelsAnswer{models: kept.models, until: now.Add(modelsRetry)}
+		next = modelsAnswer{models: kept.models, until: now.Add(modelsRetry), failed: modelsReason(d, err, askCtx.Err() != nil), since: now}
+		if kept.failed == next.failed {
+			next.since = kept.since
+		}
 	}
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
 	if modelsForgotten[d.ID] != gen {
 		// Forgotten while it was asked: this answer may be the old login's,
-		// so it is reported this once and not kept.
+		// so it is reported this once and not kept, and so is its failure.
 		if err != nil {
-			return nil
+			return modelsAnswer{failed: next.failed, since: now}
 		}
-		return got
+		return modelsAnswer{models: got}
 	}
 	modelsAsked[key] = next
-	return next.models
+	return next
+}
+
+// modelsRequest is what each harness is asked, as its owner would look it up.
+var modelsRequest = map[string]string{"claude": "list_models", "codex": "model/list"}
+
+// modelsReason is why an ask got no answer, with what to do about it, built
+// from what kind of failure err is and never from its text: the owner reads
+// it in the daemon's log and in `yad doctor`, and what a harness printed is
+// not for either (DEV-146). timedOut is the ask cut off at modelsTimeout,
+// whatever the harness was doing when it was.
+func modelsReason(d harness.Detected, err error, timedOut bool) string {
+	// The binary as detection found it, so each command below runs the file
+	// the runner does: by name on PATH, or through its override.
+	f := probe.Find(d.EnvPath, d.Binary, d.VersionArgs)
+	req := modelsRequest[d.ID]
+	switch {
+	case timedOut:
+		return fmt.Sprintf("%s did not answer %s within %s — %s", d.Binary, req, modelsTimeout, f.Try(f.VersionCommand(), "whether it starts promptly"))
+	case errors.Is(err, adapter.ErrModelsNoStart):
+		return fmt.Sprintf("%s could not be started to ask it: %s", d.Binary, f.WontStart())
+	case errors.Is(err, adapter.ErrModelsRefused) && d.ID == "claude":
+		// The oldest Claude seen to answer it; when the request arrived is
+		// not recorded anywhere yad can read.
+		return fmt.Sprintf("%s refused %s, as a Claude Code older than the request does (2.1.283 answers it) — %s", d.Binary, req, f.Do(f.Command("update"), "upgrade it"))
+	case errors.Is(err, adapter.ErrModelsRefused):
+		// Every Codex the adapter is pinned to answers it (decision 0037),
+		// so this one is older than those, and how it was installed — npm,
+		// Homebrew, a release binary — is how it is upgraded.
+		return fmt.Sprintf("%s refused %s, which every %s this yad was built against answers — upgrade %s the way it was installed", d.Binary, req, d.Label, d.Label)
+	case errors.Is(err, adapter.ErrModelsUnread):
+		return fmt.Sprintf("%s answered %s with no model this yad can read — a %s newer than this yad may answer in a shape it does not know, and upgrading yad is the fix", d.Binary, req, d.Label)
+	}
+	return fmt.Sprintf("%s stopped before it answered %s, and what it printed is not kept — %s", d.Binary, req, f.Try(f.VersionCommand(), "whether it starts"))
 }
 
 // modelsKey is what a list is kept by: the harness, the binary and its
