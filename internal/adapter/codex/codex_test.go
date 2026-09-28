@@ -477,7 +477,7 @@ func TestResume(t *testing.T) {
 	}
 	u := out.Usage["gpt-5.6-luna"]
 	if total := u.Input + u.CacheRead; total == 0 || total > 13000 {
-		// The replayed first turn alone is 11 871 tokens.
+		// The replayed first turn alone is 11 658 tokens.
 		t.Errorf("usage = %+v: counted more than the resumed turn", u)
 	}
 	if got := text(evs); got != "plum" {
@@ -997,6 +997,7 @@ func TestEveryPinnedReleaseReplays(t *testing.T) {
 	for _, v := range pinned {
 		for _, tc := range []struct {
 			fixture, effort, resume string
+			context                 string
 			settings                map[string]string
 			act                     func(adapter.Turn, v1.Event) bool
 			state                   v1.RunState
@@ -1008,6 +1009,10 @@ func TestEveryPinnedReleaseReplays(t *testing.T) {
 			{fixture: "file-change", state: v1.RunSucceeded, final: "done"},
 			{fixture: "effort", effort: "low", state: v1.RunSucceeded, final: "pong"},
 			{fixture: "resume", resume: "01a0b879-aaaa-7050-84ee-d1a30d4b696d", state: v1.RunSucceeded, final: "plum"},
+			// thread/resume, thread/inject_items, turn/start: the one
+			// recording of a continuing run's context.
+			{fixture: "resume-context", resume: "01a0b879-aaaa-7050-84ee-d1a30d4b696d",
+				context: "The codeword is BLUE. If asked, give the codeword.", state: v1.RunSucceeded, final: "BLUE"},
 			{fixture: "steer", act: steer, state: v1.RunSucceeded},
 			{fixture: "interrupt", act: interrupt, state: v1.RunCancelled},
 			{fixture: "approval", settings: map[string]string{"approval": "untrusted", "sandbox": "read-only"}, state: v1.RunSucceeded},
@@ -1023,6 +1028,7 @@ func TestEveryPinnedReleaseReplays(t *testing.T) {
 				h := &harness{fixture: p}
 				spec := h.spec(t)
 				spec.Effort, spec.NativeSessionID, spec.Settings = tc.effort, tc.resume, tc.settings
+				spec.Brief.Context = tc.context
 				_, out, _ := drive(t, context.Background(), spec, tc.act)
 				if out.State != tc.state || tc.final != "" && out.FinalText != tc.final {
 					t.Fatalf("outcome = %+v (%+v)", out, out.Error)

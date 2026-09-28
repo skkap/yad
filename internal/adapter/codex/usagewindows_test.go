@@ -91,7 +91,7 @@ func TestCodexUsedPercentIsNotRescaled(t *testing.T) {
 // The point of reporting windows from every run rather than only from a
 // failed one: an ordinary turn that succeeded already knows how much of the
 // account is spent. This is codex's own recorded plain turn, whose snapshot
-// says the primary window is at 93% and names no secondary at all.
+// says the primary window is at 22% and names no secondary at all.
 //
 // A window the snapshot left null is absent from the report rather than zero:
 // zero use is what a fresh window reads, and a hub must not be told an

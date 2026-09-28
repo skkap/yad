@@ -24,7 +24,7 @@ func outcome(tool *v1.ToolEvent) string {
 
 // Every tool result says whether it failed, from what Codex reported and never
 // from the output, and a command's carries its exit status too. Recorded from
-// Codex 0.147.0: a command that exited 3, one that exited 0, a file created
+// Codex 0.157.1: a command that exited 3, one that exited 0, a file created
 // with apply_patch, and a command the owner's approval policy declined. The
 // output keeps its "[exit N]" and "[declined: …]" tails, so a hub reading
 // only the output loses nothing (DEV-125).

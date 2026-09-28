@@ -22,23 +22,28 @@ func recordedSchema(t *testing.T) []byte {
 // Every pin in schema.go is a recorded schema's: a changed surface that was
 // not re-pinned, or a pin typed by hand, fails here.
 func TestPinnedSchema(t *testing.T) {
-	versions := map[string]bool{strings.TrimPrefix(filepath.Base(fixtures), "codex-"): true}
-	for _, v := range pinned {
-		versions[v] = true
-	}
-	for v := range versions {
+	// Each entry on its own: two hashes for one version would otherwise pass
+	// on the one that matches, and the other would call an unrecorded
+	// surface ready.
+	newest := strings.TrimPrefix(filepath.Base(fixtures), "codex-")
+	newestPinned := false
+	for sum, v := range pinned {
+		newestPinned = newestPinned || v == newest
 		b, err := os.ReadFile(filepath.Join("testdata", "codex-"+v, schemaFile))
 		if err != nil {
-			t.Errorf("codex %s: %v", v, err)
+			t.Errorf("codex %s is pinned with no recorded schema: %v", v, err)
 			continue
 		}
-		sum, err := SchemaHash(b)
+		got, err := SchemaHash(b)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, ok := pinned[sum]; !ok || got != v {
-			t.Errorf("codex %s's recorded schema hashes to %s, which schema.go pins as %q", v, sum, got)
+		if got != sum {
+			t.Errorf("schema.go pins %s as codex %s, whose recorded schema hashes to %s", sum, v, got)
 		}
+	}
+	if !newestPinned {
+		t.Errorf("the replayed fixtures are codex %s's, which schema.go does not pin", newest)
 	}
 }
 
