@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
@@ -297,6 +298,14 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 	// that advertises none the run stays queued, which is the honest answer.
 	// An undescribed runner is offered none, for the reason above.
 	takesEffort := described && advertises(doc, capability.FeatureEffort)
+	// A run opening a session with a source on the machine goes only to a
+	// runner whose owner has not switched those off: that runner would fail
+	// it source_refused, where another may take it (decision 0061). A run in
+	// a session already bound here is offered anyway — it can go nowhere
+	// else, and the runner's refusal names the setting, where a run left
+	// queued would say nothing. An undescribed runner is offered none, for
+	// the reason above.
+	takesLocal := described && (doc.PathSources == nil || *doc.PathSources)
 	var (
 		runs   []v1.Run
 		cursor db.Run
@@ -339,6 +348,9 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 			if err := opening(ctx, q, &run); err != nil {
 				return nil, err
 			}
+			if run.Session.New && !takesLocal && slices.ContainsFunc(run.Sources, onTheMachine) {
+				continue
+			}
 			if err := q.OfferRun(ctx, db.OfferRunParams{RunnerID: me, LeaseExpiresAt: lease, UpdatedAt: store.Ms(now), ID: c.ID}); err != nil {
 				return nil, err
 			}
@@ -355,6 +367,18 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 		}
 	}
 	return runs, nil
+}
+
+// onTheMachine is a source a runner's path_sources governs: a path, or a git
+// URL that names a repository on the runner's own disk. It follows the
+// runner's reading of a URL (parseRemote in internal/workdir) — anything it
+// would take for a network URL goes, and anything malformed it refuses
+// whatever the setting.
+func onTheMachine(s v1.Source) bool {
+	if s.Git == nil {
+		return s.Path != ""
+	}
+	return strings.HasPrefix(s.Git.URL, "/") || strings.HasPrefix(strings.ToLower(s.Git.URL), "file://")
 }
 
 // opening sets session.new on a run about to be offered: true while no claim

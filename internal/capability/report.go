@@ -135,8 +135,20 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []a
 		HostTools:        HostTools(tools),
 		Capacity:         caps,
 		ProtocolFeatures: Features(),
+		PathSources:      PathSources(cfg.Workdirs),
 		ObservedAt:       time.Now().UTC(),
 	}
+}
+
+// PathSources is the document's path_sources: false when the owner has
+// switched sources on the machine off, so a hub offers this runner no run it
+// would refuse (decision 0061), and absent otherwise. Never true: absent
+// already means it, and a runner older than the field says the same.
+func PathSources(w config.WorkdirsConfig) *bool {
+	if w.AllowsPathSources() {
+		return nil
+	}
+	return new(false)
 }
 
 // Detect is harness.Detect with the checks an adapter adds for its harness:

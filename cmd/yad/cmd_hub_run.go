@@ -92,7 +92,7 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 	gitURL := fs.String("git", "", "a repository the run works in, checked out as a worktree on the runner")
 	base := fs.String("base", "", "with --git: where a new branch is cut from (default: the repository's default branch)")
 	branch := fs.String("branch", "", "with --git: the branch the run works on (default: one named after the session)")
-	path := fs.String("path", "", "a directory on the runner's machine the run works in, in place — the runner's owner must allow it")
+	path := fs.String("path", "", "a directory on the runner's machine the run works in, in place — the runner's owner must allow it, and a run opening a session is offered only to a runner whose owner has not set path_sources = false")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return err

@@ -183,6 +183,16 @@ starts. Nothing does: the harness is an ordinary process running as you, and it
 can read your whole home whatever `roots` says. Narrowing `roots` narrows what
 a hub can ask to have checked out, and that is all it is for.
 
+To take no source on the machine at all — every run working in a repository
+cloned over https or ssh, or in an empty directory — set `path_sources = false`
+under `[workdirs]` and restart the runner. `roots = []` does not do it: an
+empty list is the same as none, which is your home directory. With it off, a
+run naming a `path` source or a local git URL fails `source_refused`, and the
+message names the setting; the capability document says `path_sources: false`,
+so a hub can send those runs to another runner instead
+([0061](decisions/0061-an-owner-may-switch-sources-on-the-machine-off.md)).
+Like `roots`, it narrows what a hub can ask for, not what the harness can read.
+
 If a machine also runs `yad hub`, note that the hub's own store holds every run
 it has been given, and **the grants of each one that has not ended, in
 plaintext** (`internal/hub/store/migrations/0001_init.sql`). A run's spec
@@ -526,7 +536,8 @@ Two things about this that are not negotiable by anyone else:
       or remove accounts (`yad status` shows each connection's setting)
 - [ ] Only hubs you would hand this machine to are in `config.toml`
 - [ ] `[workdirs] roots` set, if a hub should be able to check out less than
-      your whole home directory
+      your whole home directory — or `path_sources = false`, if nothing on
+      the machine at all
 - [ ] `yad service install` run as that user, after PATH is what you want it
 - [ ] On Linux, lingering decided one way or the other
 
