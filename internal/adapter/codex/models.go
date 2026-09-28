@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/supervise"
 )
@@ -128,7 +129,7 @@ func readModels(path string) []cachedModel {
 const maxModelPages = 8
 
 // errNoModels is an answer that named no model yad can report.
-var errNoModels = errors.New("codex app-server listed no models")
+var errNoModels = adapter.ModelsError(adapter.ErrModelsUnread, "codex app-server listed no models", nil)
 
 // ListModels asks the codex at bin for the models it offers the login env
 // points it at, over its app-server, in Codex's own order and without the
@@ -148,7 +149,7 @@ func listModels(ctx context.Context, bin, dir string, env []string, raw io.Write
 		Dir: dir, Env: env, Stdin: true, NoTTY: true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("codex would not start to list its models: %w", err)
+		return nil, adapter.ModelsError(adapter.ErrModelsNoStart, "codex would not start to list its models", err)
 	}
 	conn := NewConn(p.Stdin())
 	if raw != nil {
@@ -199,7 +200,7 @@ func listModels(ctx context.Context, bin, dir string, env []string, raw io.Write
 		}
 		res, err := conn.Call(ctx, "model/list", params)
 		if err != nil {
-			return nil, callError("model/list", err)
+			return nil, listError(err)
 		}
 		var page struct {
 			Data []struct {
@@ -209,7 +210,7 @@ func listModels(ctx context.Context, bin, dir string, env []string, raw io.Write
 			NextCursor *string `json:"nextCursor"`
 		}
 		if err := json.Unmarshal(res, &page); err != nil {
-			return nil, errors.New("codex app-server answered model/list with something that is not a model list")
+			return nil, adapter.ModelsError(adapter.ErrModelsUnread, "codex app-server answered model/list with something that is not a model list", nil)
 		}
 		for _, m := range page.Data {
 			if m.Hidden || seen[m.Model] || !modelName.MatchString(m.Model) || len(out) == maxModels {
@@ -236,6 +237,20 @@ func callError(method string, err error) error {
 		return fmt.Errorf("codex app-server refused %s", method)
 	}
 	return fmt.Errorf("codex app-server did not answer %s: %w", method, err)
+}
+
+// listError is callError for model/list itself, whose refusal is
+// adapter.ErrModelsRefused. For Codex that does not say it is older than the
+// request: its code cannot tell. Codex answers a method it does not know as an
+// unknown variant of its request enum, -32600 (recorded in
+// login-device-unsupported.jsonl), and model/list's own failure to load its
+// configuration or its login with the same code; only the message differs,
+// and that is Codex's words, which are not read.
+func listError(err error) error {
+	if _, ok := errors.AsType[*RPCError](err); ok {
+		return adapter.ModelsError(adapter.ErrModelsRefused, "codex app-server refused model/list", nil)
+	}
+	return callError("model/list", err)
 }
 
 // errNotRegular is a path that is not a plain file.

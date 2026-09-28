@@ -885,7 +885,17 @@ for `codex`); the suite never runs a real harness.
   in again behind yad's back, whose environment is unchanged, shows its new
   plan's list within the hour. The harness's `models` merge every login's; each
   account carries its own. With no answer at all Claude reports the catalog's
-  aliases with `models_source: catalog`.
+  aliases with `models_source: catalog`. Why an ask failed is kept beside
+  the answer it leaves standing (DEV-146) — refused (too old for the
+  request, or for Codex a configuration it cannot load, which answers with
+  the same code), cut off at 15 s, would not start, stopped before
+  answering, or answered with no model yad can read — in yad's words with the next action, worded from the
+  adapter's kind of failure (`adapter.ErrModels*`) and never from anything
+  the harness printed. It is the owner's, not the hub's: the daemon logs it
+  at warn when it appears or changes, and `yad doctor` asks the daemon for
+  it over the control socket (`status`'s `models_failures`) and shows it
+  beside the harness and account. The capability document carries only
+  `models_source`.
 - **Hub login** ([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)):
   any connected hub may log in an account `config.toml` lists, or a harness's
   own default login — and, with `add`, a new account, unless the owner has

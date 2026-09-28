@@ -2,12 +2,15 @@ package claude
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/skkap/yad/internal/adapter"
 )
 
 // modelsFixture is the list_models answer recorded from a real login.
@@ -101,11 +104,14 @@ func TestListModelsFailures(t *testing.T) {
 		lines []string
 		env   map[string]string
 		want  string
+		// kind is what the caller words its reason by (DEV-146); nil is a
+		// Claude that ended before it answered, which wraps none.
+		kind error
 	}{
 		{"refused", []string{`{"type":"control_response","response":{"subtype":"error","request_id":"yad-list-models","error":"Unsupported control request subtype: list_models at /Users/someone"}}`},
-			nil, "refused list_models"},
-		{"nothing listed", []string{answer(`{"value":"claude-x","disabled":true}`)}, nil, "listed no models"},
-		{"died", []string{`{"type":"system","subtype":"init"}`}, map[string]string{"CLAUDE_TEST_MODE": "died"}, "without listing"},
+			nil, "refused list_models", adapter.ErrModelsRefused},
+		{"nothing listed", []string{answer(`{"value":"claude-x","disabled":true}`)}, nil, "listed no models", adapter.ErrModelsUnread},
+		{"died", []string{`{"type":"system","subtype":"init"}`}, map[string]string{"CLAUDE_TEST_MODE": "died"}, "without listing", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, _, err := list(t, fixtureOf(t, tc.lines...), tc.env, 20*time.Second)
@@ -115,7 +121,25 @@ func TestListModelsFailures(t *testing.T) {
 			if strings.Contains(err.Error(), "someone") {
 				t.Errorf("the error quotes Claude: %v", err)
 			}
+			for _, k := range []error{adapter.ErrModelsNoStart, adapter.ErrModelsRefused, adapter.ErrModelsUnread} {
+				if got, want := errors.Is(err, k), k == tc.kind; got != want {
+					t.Errorf("errors.Is(err, %v) = %v, want %v; err %v", k, got, want, err)
+				}
+			}
 		})
+	}
+}
+
+// A claude that cannot be started says so by its kind, and keeps the cause
+// for the log of whoever reads it.
+func TestListModelsNoStart(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(bin, []byte("not a program"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ListModels(context.Background(), bin, t.TempDir(), nil)
+	if !errors.Is(err, adapter.ErrModelsNoStart) || !strings.Contains(err.Error(), "would not start") {
+		t.Errorf("err = %v, want a start failure", err)
 	}
 }
 

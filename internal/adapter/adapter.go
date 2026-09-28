@@ -214,3 +214,47 @@ const (
 
 // ErrNotFirstClass is returned when a run targets a harness with no adapter.
 var ErrNotFirstClass = errors.New("no adapter for this harness — it is recognised, not first-class")
+
+// Why a harness could not list its models. An adapter's ListModels wraps one
+// of these, so its caller can say what went wrong in its own words, with the
+// next action, without reading the error's text — which would be the adapter's
+// wording today and a harness's the day someone wraps what it printed
+// (DEV-146). A ListModels error wrapping none of them is a harness that ended
+// or broke off before it answered; one that ran out of its context wraps the
+// context's error.
+var (
+	// ErrModelsNoStart is a harness that could not be started to ask.
+	ErrModelsNoStart = errors.New("the harness could not be started")
+	// ErrModelsRefused is a harness that refused the request for its models:
+	// one older than the request, or, for Codex, whose code cannot tell the
+	// two apart, one that could not load the configuration its answer needs.
+	ErrModelsRefused = errors.New("the harness refused the request for its models")
+	// ErrModelsUnread is an answer that named no model yad can report.
+	ErrModelsUnread = errors.New("the harness named no model yad can report")
+)
+
+// ModelsError is a ListModels failure of kind, one of the sentinels above,
+// that reads as msg and then cause, as fmt.Errorf("msg: %w", cause) would:
+// the kind is for the caller to match, not to print.
+func ModelsError(kind error, msg string, cause error) error {
+	return &modelsError{kind: kind, msg: msg, cause: cause}
+}
+
+type modelsError struct {
+	kind, cause error
+	msg         string
+}
+
+func (e *modelsError) Error() string {
+	if e.cause == nil {
+		return e.msg
+	}
+	return e.msg + ": " + e.cause.Error()
+}
+
+func (e *modelsError) Unwrap() []error {
+	if e.cause == nil {
+		return []error{e.kind}
+	}
+	return []error{e.kind, e.cause}
+}
