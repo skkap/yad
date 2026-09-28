@@ -54,8 +54,10 @@ _Avoid_: control plane, master, server, upstream, provider, dispatcher
 _Rules_: The owner trusts the hubs it connects: a hub writes the brief, and the
 brief can ask the harness for anything the machine allows, so YAD does not police
 what a hub sends ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)).
-What the owner configures (permission mode, sandbox, caps, accounts) no protocol
-field can set.
+What the owner configures (permission mode, sandbox, caps) no protocol field
+can set. Accounts are the one exception, by the owner's choice: a hub may add and
+remove them unless the owner turned that off for its connection
+([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
 _See_: [0003](docs/decisions/0003-hub-is-a-role-runner-is-multi-homed.md), `internal/hub`
 
 **Connection** — one runner's standing registration with one hub: the hub URL,
@@ -149,25 +151,33 @@ home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), logged in by the harness's own login �
 or, for Claude, a **token account**: a `claude setup-token` token the owner
 pipes in, which yad keeps in the home and hands to the account's runs. Every
 home shares the machine's own instructions, settings and skills from the
-harness's default home. Configured by the owner per harness; the free account
-whose window resets soonest takes the next run. Hubs see an account's label,
-state and reset time, never its credentials.
+harness's default home. Added by the owner at the machine, or by a hub the
+owner allows to (a **hub login** with `add`); either way it is the machine's,
+and every connected hub's runs rotate through it — the free account whose
+window resets soonest takes the next run. Hubs see an account's label, state
+and reset time, never its credentials.
+_Rules_: An account is listed only once its harness's own login check says yes;
+a login that does not take adds nothing. A harness with no accounts runs on its
+own default login, and the first account added takes that login's place.
 _Kinds_: free | limited | needs_login
 _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
 [0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md),
 [0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md),
-[0054](docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md)
+[0054](docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md),
+[0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)
 
 **Hub login** — an account's login started from a hub: by **link**, where the
-runner runs the harness's own login and the hub shows its URL and takes the
-code the owner got back, or by **token**, where the owner pastes a
+runner runs the harness's own login and the hub shows its URL — and takes the
+code the owner got back, for Claude, or shows the user code the owner types at
+the URL, for Codex's device code — or by **token**, where the owner pastes a
 `claude setup-token` token into the hub and the runner stores it as a token
 account. Either way the credential lives on the machine and yad's own login
-check decides whether it took. Only for an account the owner listed, or a
-harness's own default login.
+check decides whether it took. For an account already listed, a harness's own
+default login, or — with `add`, from a hub the owner allows — a new account,
+listed only once the login takes.
 _Avoid_: remote login (it says nothing about who drives it), OAuth (one of the
 ways, not the thing)
-_See_: [0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)
+_See_: [0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md), [0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)
 
 **Usage limit** — a subscription window an account has exhausted: Claude's
 five-hour and weekly limits, Codex's primary and secondary windows. Has a reset
