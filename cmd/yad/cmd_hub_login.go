@@ -32,16 +32,22 @@ var loginPoll = time.Second
 // deadlines, which end the login well inside this.
 const loginWait = 5 * time.Minute
 
+// deviceWait bounds the wait for a device-code login's end, which is the owner
+// typing the code: the runner's ten minutes for that, and loginWait's room
+// for syncs after.
+const deviceWait = 10*time.Minute + loginWait
+
 // cmdHubLogin is `yad hub login`: a hub login (decision 0055) through the
 // service API, as a hub's UI would do it — a link to sign in at and the code
-// pasted back, or a `claude setup-token` token.
+// pasted back, a link and Codex's device code to type there (0057), or a
+// `claude setup-token` token.
 func cmdHubLogin(ctx context.Context, g global, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(hubLoginUsage)
 	}
 	fs := flag.NewFlagSet("hub login "+args[0], flag.ContinueOnError)
 	hf := addHubFlags(fs, g)
-	code := fs.String("code", "", "with start: `-` reads the code from stdin without asking for it, for a script")
+	code := fs.String("code", "", "with start: `-` reads the code from stdin without asking for it, for a script; a Codex login reads none")
 	add := fs.Bool("add", false, "with start or token: add the account to the runner, which lists it once the login takes")
 	pos, err := parseInterleaved(fs, args[1:])
 	if err != nil {
@@ -117,7 +123,8 @@ func (lc loginCLI) verb(sub string) []string {
 }
 
 // start is the link way: the login started, its link printed once the runner
-// has it, the code read and sent, and the end waited for.
+// has it, the code read and sent, and the end waited for — or, for a
+// device-code login, the link and its code printed and nothing read.
 func (lc loginCLI) start(ctx context.Context, runnerID, harness, label string, quiet bool) error {
 	l, err := lc.c.StartLogin(ctx, runnerID, hubapi.LoginRequest{Harness: harness, Account: label, Add: lc.add})
 	if err != nil {
@@ -125,12 +132,15 @@ func (lc loginCLI) start(ctx context.Context, runnerID, harness, label string, q
 	}
 	fmt.Fprintf(lc.stderr, "login %s: %s on runner %s hears of it at its next sync, and reports the link to sign in at\n",
 		cleanLine(l.LoginID), lc.what(l), cleanLine(l.RunnerID))
-	l, err = lc.await(ctx, l, func(l hubapi.Login) bool { return l.State == hubapi.LoginState(v1.LoginWaiting) && l.URL != "" })
+	l, err = lc.await(ctx, l, loginWait, func(l hubapi.Login) bool { return l.State == hubapi.LoginState(v1.LoginWaiting) && l.URL != "" })
 	if err != nil {
 		return err
 	}
 	if l.State.Terminal() {
-		return lc.ended(l)
+		return lc.outcome(l)
+	}
+	if l.UserCode != "" {
+		return lc.device(ctx, l)
 	}
 	// The link alone on stdout, so a script can hand it on; it is the
 	// harness's output, and data.
@@ -152,6 +162,23 @@ func (lc loginCLI) start(ctx context.Context, runnerID, harness, label string, q
 	}
 	fmt.Fprintf(lc.stderr, "code sent; runner %s hands it to %s's login at its next sync and checks whether it took\n", cleanLine(l.RunnerID), cleanLine(l.Harness))
 	return lc.finish(ctx, l)
+}
+
+// device is a device-code login waiting on its owner: the link and the code
+// shown, and nothing to read — the code is typed at the link, and the runner
+// says whether it took.
+func (lc loginCLI) device(ctx context.Context, l hubapi.Login) error {
+	// The link and the code alone on stdout, a line each, so a script can
+	// hand them on; both are the harness's output, and data.
+	fmt.Fprintln(lc.stdout, cleanLine(l.URL))
+	fmt.Fprintln(lc.stdout, cleanLine(l.UserCode))
+	fmt.Fprintf(lc.stderr, "open the link, sign in, and enter the code above there; runner %s reports whether it took once %s's own check says so\n",
+		cleanLine(l.RunnerID), cleanLine(l.Harness))
+	l, err := lc.await(ctx, l, deviceWait, func(hubapi.Login) bool { return false })
+	if err != nil {
+		return err
+	}
+	return lc.outcome(l)
 }
 
 // token is the token way: read from stdin, never from argv, sent once.
@@ -176,10 +203,15 @@ func (lc loginCLI) token(ctx context.Context, runnerID, harness, label string) e
 // finish waits for the end and says what it was: exit 0 only for a login
 // that took.
 func (lc loginCLI) finish(ctx context.Context, l hubapi.Login) error {
-	l, err := lc.await(ctx, l, func(hubapi.Login) bool { return false })
+	l, err := lc.await(ctx, l, loginWait, func(hubapi.Login) bool { return false })
 	if err != nil {
 		return err
 	}
+	return lc.outcome(l)
+}
+
+// outcome says how an ended login ended: exit 0 only for one that took.
+func (lc loginCLI) outcome(l hubapi.Login) error {
 	if l.State != hubapi.LoginState(v1.LoginSucceeded) {
 		return lc.ended(l)
 	}
@@ -191,14 +223,15 @@ func (lc loginCLI) finish(ctx context.Context, l hubapi.Login) error {
 	return nil
 }
 
-// await polls until done says so or the login ends. Interrupted, it cancels
-// the login on its way out: nobody is left to paste a code into it.
-func (lc loginCLI) await(ctx context.Context, l hubapi.Login, done func(hubapi.Login) bool) (hubapi.Login, error) {
-	deadline := time.Now().Add(loginWait)
+// await polls until done says so or the login ends, for at most within.
+// Interrupted, it cancels the login on its way out: nobody is left to paste a
+// code into it.
+func (lc loginCLI) await(ctx context.Context, l hubapi.Login, within time.Duration, done func(hubapi.Login) bool) (hubapi.Login, error) {
+	deadline := time.Now().Add(within)
 	for !done(l) && !l.State.Terminal() {
 		if time.Now().After(deadline) {
 			return l, fmt.Errorf("runner %s has not moved login %s past %s in %s — is it syncing? `%s` shows where it stands",
-				cleanLine(l.RunnerID), cleanLine(l.LoginID), l.State, loginWait, lc.statusCommand(l))
+				cleanLine(l.RunnerID), cleanLine(l.LoginID), l.State, within, lc.statusCommand(l))
 		}
 		select {
 		case <-ctx.Done():

@@ -1,0 +1,9 @@
+{">":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"yad","title":"YAD","version":"dev"}}}}
+{"id":1,"result":{"userAgent":"yad/0 (recorded)","codexHome":"/codex-home","platformFamily":"unix","platformOs":"macos"}}
+{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"host","installationId":"00000000-0000-0000-0000-000000000000","environmentId":null},"emittedAtMs":1789801316217}
+{">":{"jsonrpc":"2.0","method":"initialized"}}
+{">":{"jsonrpc":"2.0","id":2,"method":"account/login/start","params":{"type":"chatgptDeviceCode"}}}
+{"id":2,"result":{"type":"chatgptDeviceCode","loginId":"5f0d3c9e-7a41-4b8e-9d2a-1c6e8f3b2a70","verificationUrl":"https://auth.openai.com/codex/device","userCode":"K7QM-4XPD"}}
+{">":{"jsonrpc":"2.0","id":3,"method":"account/login/cancel","params":{"loginId":"5f0d3c9e-7a41-4b8e-9d2a-1c6e8f3b2a70"}}}
+{"id":3,"result":{"status":"canceled"}}
+{"method":"account/login/completed","params":{"loginId":"5f0d3c9e-7a41-4b8e-9d2a-1c6e8f3b2a70","success":false,"error":"Login was not completed"}}

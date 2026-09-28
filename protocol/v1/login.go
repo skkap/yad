@@ -31,7 +31,8 @@ const (
 	// LoginStarting is taken: the harness's login is starting, or a token
 	// is being stored.
 	LoginStarting LoginState = "starting"
-	// LoginWaiting has a URL, and waits for the code the owner gets there.
+	// LoginWaiting has a URL, and waits for the code the owner gets there —
+	// or, for a device-code login, for the owner to type its user code there.
 	LoginWaiting LoginState = "waiting"
 	// LoginChecking has its code or token, and is asking the harness
 	// whether the login took.
@@ -76,13 +77,14 @@ type LoginReport struct {
 	Harness string      `json:"harness,omitempty" doc:"The harness being logged in. Absent only when the runner never had this login: the answer to a login_code or cancel_login for an id it does not know."`
 	Account string      `json:"account,omitempty" doc:"The account label, as start_login or login_token named it. Absent for the harness's own default login, and when the runner never had this login."`
 	Method  LoginMethod `json:"method,omitempty" enum:"link,token" doc:"link: the runner ran the harness's own login and reports its URL. token: the runner stored a token the hub delivered. Absent only when the runner never had this login. A closed set for all of v1."`
-	State   LoginState  `json:"state" enum:"starting,waiting,checking,succeeded,failed,expired,cancelled" doc:"starting: taken, and not yet waiting. waiting: url (and for a device-code harness user_code) is ready; send the code with login_code. checking: the code or token is in, and the runner is asking the harness whether it took. succeeded: the harness's own check says the account is logged in, and it takes runs. failed: it did not take, and error says why. expired: no code arrived within the runner's limit (ten minutes for yad). cancelled: ended by cancel_login, or by a newer login for the same account. The last four are terminal. A closed set for all of v1."`
+	State   LoginState  `json:"state" enum:"starting,waiting,checking,succeeded,failed,expired,cancelled" doc:"starting: taken, and not yet waiting. waiting: url (and for a device-code harness user_code) is ready; send the code with login_code, unless user_code is set: then the owner types user_code at url, and no code is sent. checking: the code or token is in, or the device code was entered, and the runner is asking the harness whether it took. succeeded: the harness's own check says the account is logged in, and it takes runs. failed: it did not take, and error says why. expired: no code arrived, or the device code was not entered, within the runner's limit (ten minutes for yad). cancelled: ended by cancel_login, or by a newer login for the same account. The last four are terminal. A closed set for all of v1."`
 	// URL is harness output, and data: it is shown to the owner, never
 	// followed by the hub.
 	URL string `json:"url,omitempty" doc:"Where the owner signs in, while waiting: the harness's own authorize URL, as it printed it. Show it; never follow it. Absent until waiting, and for a token login."`
 	// UserCode is for a device-code harness — Codex's login gives a URL and a
-	// code to type there, and no code comes back. Unused by Claude.
-	UserCode string `json:"user_code,omitempty" doc:"For a device-code login: the code the owner types at url, after which nothing comes back through the hub. Absent for Claude, whose login instead waits for login_code."`
+	// code to type there, and no code comes back (decision 0057). Unused by
+	// Claude.
+	UserCode string `json:"user_code,omitempty" doc:"For a device-code login — Codex's — while waiting: the code the owner types at url. Show it beside url; nothing comes back through the hub, so send no login_code for a login that has one. Absent for Claude, whose login instead waits for login_code."`
 	Error    string `json:"error,omitempty" doc:"Why a login failed, expired or was cancelled, in the runner's words, with the next action. Never a path on the machine, never a credential."`
 	// UpdatedAt is the runner's clock, when the state last moved.
 	UpdatedAt time.Time `json:"updated_at" doc:"When the login last changed state, by the runner's clock."`

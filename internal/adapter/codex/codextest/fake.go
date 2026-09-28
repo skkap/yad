@@ -66,6 +66,12 @@ import (
 //     file it creates on reaching it. A turn/interrupt at the gate ends the
 //     turn interrupted, as codex does, unless the mode is "deaf".
 //   - CODEX_TEST_PID is a file the fake writes its pid to.
+//   - A device-code login (login-device*.jsonl) is held before its
+//     account/login/completed at CODEX_TEST_GATE, as the owner takes a while
+//     to type the code, and a completion saying success writes the stand-in
+//     credential into CODEX_HOME first, as codex writes auth.json —
+//     unless CODEX_TEST_LOGIN is "nocred", a codex whose login said yes and
+//     left nothing its own check finds.
 //   - CODEX_TEST_STARTS is a file the fake appends a line to per thread
 //     request: its working directory, its arguments, and the request with the
 //     thread it named.
@@ -285,6 +291,17 @@ play:
 				line = strings.ReplaceAll(line, quoted(answer.text), quoted(override))
 			}
 		}
+		if strings.HasPrefix(line, `{"method":"account/login/completed"`) {
+			out.Flush()
+			loginGate(in, &early, eof)
+			if strings.Contains(line, `"success":true`) && os.Getenv("CODEX_TEST_LOGIN") != "nocred" {
+				if home := os.Getenv("CODEX_HOME"); home != "" {
+					if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte(`{"stand_in":true}`), 0o600); err != nil {
+						os.Exit(4)
+					}
+				}
+			}
+		}
 		if strings.HasPrefix(line, `{"method":"turn/completed"`) {
 			out.Flush()
 			if id, ok := awaitGate(in, &early, mode == "deaf"); ok {
@@ -355,6 +372,32 @@ func awaitGate(in <-chan clientMsg, early *[]clientMsg, deaf bool) (json.RawMess
 	}
 	os.Exit(1)
 	return nil, false
+}
+
+// loginGate holds a login's completion until the test opens the gate. What
+// the adapter sends meanwhile is kept for later; input closing ends the fake,
+// as it ends the app-server.
+func loginGate(in <-chan clientMsg, early *[]clientMsg, eof <-chan struct{}) {
+	gate := os.Getenv("CODEX_TEST_GATE")
+	if gate == "" {
+		return
+	}
+	if at := os.Getenv("CODEX_TEST_AT_GATE"); at != "" {
+		os.WriteFile(at, nil, 0o600)
+	}
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
+		select {
+		case m := <-in:
+			*early = append(*early, m)
+		case <-eof:
+			os.Exit(0)
+		case <-time.After(10 * time.Millisecond):
+		}
+		if _, err := os.Stat(gate); err == nil {
+			return
+		}
+	}
+	os.Exit(1)
 }
 
 // started notes a thread request in CODEX_TEST_STARTS.

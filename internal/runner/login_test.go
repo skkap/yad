@@ -433,8 +433,8 @@ func TestALinkLoginOnATokenAccountKeepsTheTokenUnlessItTakes(t *testing.T) {
 
 // What a runner will not do, each ended failed at once with the reason and a
 // command for whoever walks to the machine, runnable as printed: log in an
-// account the owner did not list, store a token with no account, or log
-// Codex in from a hub. None of them makes a home.
+// account the owner did not list, store a token with no account, or store
+// one for Codex, which runs on none. None of them makes a home.
 func TestALoginTheRunnerRefusesSaysWhatToDoAtTheMachine(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -446,17 +446,17 @@ func TestALoginTheRunnerRefusesSaysWhatToDoAtTheMachine(t *testing.T) {
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "stranger"}},
 		{"a token with no account", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Token: "sk-ant-oat01-x"}, "names none",
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "<label>", "--token", "-"}},
-		{"codex", startLogin("lg1", "codex", "work"), "not built yet",
-			[]string{"yad", "--profile", "test", "account", "add", "codex", "work", "--device"}},
-		{"codex's own login", startLogin("lg1", "codex", ""), "not built yet",
-			[]string{"yad", "--profile", "test", "doctor"}},
+		{"a token for codex", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "codex", Account: "work", Token: "sk-proj-not-a-subscription"},
+			"does not run on a stored token", nil},
+		{"a codex account nobody listed", startLogin("lg1", "codex", "stranger"), "never adds",
+			[]string{"yad", "--profile", "test", "account", "add", "codex", "stranger"}},
 		{"a harness hub login does not log in", startLogin("lg1", "gemini", "work"), "logs in claude",
 			[]string{"yad", "--profile", "test", "doctor"}},
 		// A name the hub sent is quoted in the words, and a backtick in it
 		// must not read as the start of a second command.
 		{"a harness named with a backtick", startLogin("lg1", "x`yad account list`", ""), "logs in claude",
 			[]string{"yad", "--profile", "test", "doctor"}},
-		{"no harness at all", startLogin("lg1", "", "work"), "naming one: hub login logs in claude", nil},
+		{"no harness at all", startLogin("lg1", "", "work"), "naming one: hub login logs in claude and codex", nil},
 		{"a token that is not one", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Account: "work", Token: "two words"}, "not stored", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -671,4 +671,165 @@ func TestANewLoginWaitsForTheOldOneToLetGoOfTheHome(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A hub login makes the account's home before its harness can write there, and
+// an account with a home and no row reads free (account.Load). A login that
+// ended any way but succeeded therefore left an account listed by hand, never
+// logged in, free — ready in health, offered runs, failing each (DEV-138). How
+// the login ends must not decide the account's state: the harness's own check
+// does, as it does for one that took. Health is read after a sweep of the
+// login probe, which moves nothing to needs_login and so cannot hide the
+// state a login left; `yad account list` and `yad doctor` read the store
+// through account.Read.
+func TestALoginThatEndsWithoutTakingLeavesTheAccountAsItsCheckSays(t *testing.T) {
+	cancel := func(t *testing.T, r *loginRig) {
+		r.until(t, "lg1", v1.LoginWaiting)
+		r.Control("hub", v1.Control{Kind: v1.ControlCancelLogin, LoginID: "lg1"})
+	}
+	for _, tc := range []struct {
+		name string
+		// home is what the account had before the hub's login began: none,
+		// as for a label listed by hand, "empty" for a home whose login is
+		// gone, or "logged in" at the machine.
+		home string
+		// check is RUNNER_TEST_CLAUDE for the login's own check: "broken"
+		// cannot answer, and "once" answers the login and not the check
+		// that follows it.
+		check string
+		start v1.Control
+		then  func(t *testing.T, r *loginRig)
+		ends  v1.LoginState
+		want  v1.AccountState
+	}{
+		{"cancelled from the hub", "", "", startLogin("lg1", "claude", "work"), cancel, v1.LoginCancelled, v1.AccountNeedsLogin},
+		{"expired", "", "", startLogin("lg1", "claude", "work"), nil, v1.LoginExpired, v1.AccountNeedsLogin},
+		{"failed on a wrong code", "", "", startLogin("lg1", "claude", "work"), func(t *testing.T, r *loginRig) {
+			r.until(t, "lg1", v1.LoginWaiting)
+			r.Control("hub", loginCode("lg1", "not-the-code"))
+		}, v1.LoginFailed, v1.AccountNeedsLogin},
+		{"a token whose check cannot answer", "", "broken",
+			v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Account: "work", Token: "sk-ant-oat01-unchecked"},
+			nil, v1.LoginFailed, v1.AccountNeedsLogin},
+		{"taken", "", "", startLogin("lg1", "claude", "work"), func(t *testing.T, r *loginRig) {
+			r.until(t, "lg1", v1.LoginWaiting)
+			r.Control("hub", loginCode("lg1", fakeLoginCode))
+		}, v1.LoginSucceeded, v1.AccountFree},
+		{"taken, and the check after it cannot answer", "", "once",
+			v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Account: "work", Token: "sk-ant-oat01-checked-once"},
+			nil, v1.LoginSucceeded, v1.AccountFree},
+		// The check, not the end: an account already logged in keeps its
+		// login when a hub's attempt at another one is abandoned.
+		{"cancelled on an account logged in at the machine", "logged in", "", startLogin("lg1", "claude", "work"), cancel, v1.LoginCancelled, v1.AccountFree},
+		// A home with no login read free before the login, and its check
+		// says what a run would have found.
+		{"cancelled on a home whose login is gone", "empty", "", startLogin("lg1", "claude", "work"), cancel, v1.LoginCancelled, v1.AccountNeedsLogin},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			cfg := accountConfig("work")
+			lists := account.ListsOf(cfg)
+			r := newLoginRig(t, e, cfg, "")
+			r.CodeWait = time.Second
+			switch tc.home {
+			case "empty":
+				if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
+					t.Fatal(err)
+				}
+			case "logged in":
+				plantCredential(t, e.paths.Data, "work")
+			}
+			if tc.check != "" {
+				t.Setenv("RUNNER_TEST_CLAUDE", tc.check)
+			}
+			before := v1.AccountFree
+			if tc.home == "" {
+				before = v1.AccountNeedsLogin
+			}
+			if got := listed(t, e, lists); got != before {
+				t.Fatalf("before the login the account is %q, want %q", got, before)
+			}
+
+			r.Control("hub", tc.start)
+			if tc.then != nil {
+				tc.then(t, r)
+			}
+			r.until(t, "lg1", tc.ends)
+			// Close waits for the login to let go of the home.
+			r.Close()
+
+			probe := &LoginProbe{Store: e.store, Accounts: r.Accounts, Binary: r.Binary}
+			probe.Sweep(ctx)
+			l := healthLoop(t, e, "work")
+			l.Accounts = r.Accounts
+			h := l.health(ctx, heldNothing(l.Pool.Reserve(l.Connection)))
+			if len(h.Harnesses) != 1 || len(h.Harnesses[0].Accounts) != 1 {
+				t.Fatalf("health harnesses = %+v", h.Harnesses)
+			}
+			if got := h.Harnesses[0].Accounts[0].State; got != tc.want {
+				t.Errorf("health says the account is %q after a login %s, want %q", got, tc.ends, tc.want)
+			}
+			if ready := h.Harnesses[0].Ready; ready != (tc.want == v1.AccountFree) {
+				t.Errorf("health says the harness is ready: %v, with its one account %q", ready, tc.want)
+			}
+			if got := listed(t, e, lists); got != tc.want {
+				t.Errorf("`yad account list` says the account is %q, health %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A login still in flight is not over, and the account's state on disk must
+// already be the one it leaves if the daemon goes now. Killed while the link
+// waits for its code, a daemon unwinds nothing, so the needs_login a missing
+// home meant is written before the home is made. Stopped cleanly, the daemon
+// ends every login in flight through the same release as an end from the hub,
+// and the check decides: here a home whose login is gone, which read free
+// before the login, is found needing one.
+func TestALoginInFlightLeavesTheAccountAsItWouldBeFound(t *testing.T) {
+	t.Run("killed while the link waits", func(t *testing.T) {
+		e := newEnv(t)
+		cfg := accountConfig("work")
+		r := newLoginRig(t, e, cfg, "")
+		r.Control("hub", startLogin("lg1", "claude", "work"))
+		r.until(t, "lg1", v1.LoginWaiting)
+		if _, err := os.Stat(account.HomeDir(e.paths.Data, "claude", "work")); err != nil {
+			t.Fatalf("the login made no home (%v)", err)
+		}
+		if got := listed(t, e, account.ListsOf(cfg)); got != v1.AccountNeedsLogin {
+			t.Errorf("while the login waits the account reads %q; a daemon killed now restarts with it so", got)
+		}
+	})
+	t.Run("stopped while the link waits", func(t *testing.T) {
+		e := newEnv(t)
+		cfg := accountConfig("work")
+		r := newLoginRig(t, e, cfg, "")
+		if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
+			t.Fatal(err)
+		}
+		if got := listed(t, e, account.ListsOf(cfg)); got != v1.AccountFree {
+			t.Fatalf("before the login the account is %q, want free", got)
+		}
+		r.Control("hub", startLogin("lg1", "claude", "work"))
+		r.until(t, "lg1", v1.LoginWaiting)
+		r.Close()
+		if got := listed(t, e, account.ListsOf(cfg)); got != v1.AccountNeedsLogin {
+			t.Errorf("after the daemon stopped mid-login the account is %q, want needs_login", got)
+		}
+	})
+}
+
+// listed is the account's state as `yad account list` and `yad doctor` read
+// it: from state.db, read-only, through account.Read.
+func listed(t *testing.T, e *env, lists account.Lists) v1.AccountState {
+	t.Helper()
+	accounts, err := account.Read(context.Background(), e.paths, lists, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("account.Read = %+v, want the one account", accounts)
+	}
+	return accounts[0].State
 }

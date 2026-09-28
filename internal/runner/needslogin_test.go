@@ -14,6 +14,7 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter"
+	"github.com/skkap/yad/internal/adapter/codex/codextest"
 	"github.com/skkap/yad/internal/adapter/fake"
 
 	"context"
@@ -22,8 +23,13 @@ import (
 // The test binary doubles as claude for its login check: re-executed with
 // RUNNER_TEST_CLAUDE set, `auth status` answers in JSON the way claude
 // does, from the home it was pointed at. Nothing else about claude is faked
-// here — the turn itself is the in-memory adapter.
+// here — the turn itself is the in-memory adapter. Started under the name
+// codex, it is codextest's codex, for a hub's device-code login.
 func TestMain(m *testing.M) {
+	if codextest.Child() {
+		codextest.Main()
+		os.Exit(0)
+	}
 	if os.Getenv("RUNNER_TEST_CLAUDE") != "" {
 		os.Exit(fakeClaudeAuth(os.Args[1:]))
 	}
@@ -45,6 +51,19 @@ func fakeClaudeAuth(args []string) int {
 		return 1
 	}
 	home := os.Getenv("CLAUDE_CONFIG_DIR")
+	// A claude whose check answers once in this home and then cannot: the
+	// second of two checks timing out.
+	if os.Getenv("RUNNER_TEST_CLAUDE") == "once" {
+		asked := filepath.Join(home, ".yad-test-status-asked")
+		if _, err := os.Stat(asked); err == nil {
+			fmt.Fprintln(os.Stderr, "timed out")
+			return 1
+		}
+		if err := os.WriteFile(asked, nil, 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
 	_, err := os.Stat(filepath.Join(home, ".credentials.json"))
 	// As claude does: any CLAUDE_CODE_OAUTH_TOKEN is a login to its check.
 	in := err == nil || os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != ""
@@ -54,7 +73,8 @@ func fakeClaudeAuth(args []string) int {
 }
 
 // fakeClaudeBinary points the executor's login check at this test binary.
-// mode "broken" is a harness whose login check cannot answer at all.
+// mode "broken" is a harness whose login check cannot answer at all, and
+// "once" one that answers only the first time it is asked in a home.
 func fakeClaudeBinary(t *testing.T, x *Exec, mode ...string) {
 	t.Helper()
 	m := "1"

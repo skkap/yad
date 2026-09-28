@@ -129,8 +129,8 @@ each account in once; the login lives in the volume.
   login takes, and the hub can log it in again, or remove it, later. How that
   works, how to stop a hub doing it (`manage_accounts = false`), and the
   `yad hub` commands, are in
-  [machines/README.md](../machines/README.md#logging-in). Codex still logs
-  in with the device code above.
+  [machines/README.md](../machines/README.md#logging-in). For Codex the
+  hub shows a link and a code to type there instead.
 
 Then check:
 

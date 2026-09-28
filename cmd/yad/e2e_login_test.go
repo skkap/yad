@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -122,4 +124,66 @@ func TestHubLoginThroughTheCLI(t *testing.T) {
 			return nil
 		})
 	}
+}
+
+// stdinTripwire is a stdin that fails the test when it is read.
+type stdinTripwire struct{ t *testing.T }
+
+func (s stdinTripwire) Read([]byte) (int, error) {
+	s.t.Error("the command read stdin")
+	return 0, io.EOF
+}
+
+// Codex from the hub (decision 0057), through `yad hub login start` against a
+// running daemon: the link and the device code printed once the runner has
+// them, nothing read from stdin, and the command waiting until the owner has
+// typed the code — here, until the fake codex is let go — and the runner's own
+// check says the account is logged in.
+func TestHubCodexLoginThroughTheCLI(t *testing.T) {
+	m := newMachine(t, codexE2E)
+	old := loginPoll
+	loginPoll = 20 * time.Millisecond
+	t.Cleanup(func() { loginPoll = old })
+	m.listAccounts("codex", "work")
+	codexPlays(t, "login-device")
+	m.gated()
+	d := m.daemon()
+	id := m.runnerID()
+
+	oldIn := stdin
+	stdin = stdinTripwire{t}
+	t.Cleanup(func() { stdin = oldIn })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	var out, errs syncBuffer
+	done := make(chan int, 1)
+	go func() {
+		done <- run(ctx, []string{"hub", "login", "start", "--hub", m.service, id, "codex", "work"}, &out, &errs)
+	}()
+	eventually(t, "the device code is shown", func() bool { return strings.Contains(out.String(), "K7QM-4XPD") })
+	if home := account.HomeDir(m.p.data, "codex", "work"); fileExists(filepath.Join(home, "auth.json")) {
+		t.Fatal("the account was logged in before the code was entered")
+	}
+	m.open()
+	var code int
+	select {
+	case code = <-done:
+	case <-time.After(time.Minute):
+		t.Fatalf("the command did not end:\n%s\n%s\ndaemon:\n%s", out.String(), errs.String(), d.out.String())
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if code != 0 || len(lines) != 3 || lines[0] != "https://auth.openai.com/codex/device" || lines[1] != "K7QM-4XPD" || !strings.Contains(lines[2], "is logged in") {
+		t.Fatalf("exit %d, printed:\n%s\n%s\ndaemon:\n%s", code, out.String(), errs.String(), d.out.String())
+	}
+	if !strings.Contains(errs.String(), "enter the code above") {
+		t.Errorf("the command did not say what to do with the code: %s", errs.String())
+	}
+	if list := m.ok("account", "list", "--json"); !strings.Contains(strings.Join(strings.Fields(list), ""), `"label":"work","state":"free"`) {
+		t.Errorf("the account is not free after the login took:\n%s", list)
+	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

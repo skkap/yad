@@ -126,9 +126,6 @@ func TestAnAddTheRunnerRefusesSaysWhatToDo(t *testing.T) {
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "second"}},
 		{"a hub the owner has not let, and a bad label", addLogin(startLogin("lg1", "claude", "x`y")), false, "manage_accounts = false",
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "<label>"}},
-		// Until DEV-135: a Codex add is refused as any Codex hub login is.
-		{"codex", addLogin(startLogin("lg1", "codex", "second")), true, "not built yet",
-			[]string{"yad", "--profile", "test", "account", "add", "codex", "second", "--device"}},
 		// Without add, an unlisted label says how to add it, by the rule of
 		// the hub asking.
 		{"no add, from a hub that may", startLogin("lg1", "claude", "second"), true, "start the login again with add",

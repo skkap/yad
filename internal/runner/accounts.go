@@ -357,7 +357,7 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 		log.Info("the owner removed the account", "runs_still_on_it", len(runs))
 		return Changed{Runs: runs}, nil
 	}
-	state := a.checkAdded(ctx, st, r, log)
+	state := a.checkAdded(ctx, st, r, log, "")
 	log.Info("the owner added the account", "state", state)
 	return Changed{State: state}, nil
 }
@@ -451,15 +451,104 @@ func (a *Accounts) LoggedInAgain(ctx context.Context, r account.Ref) (v1.Account
 		return "", fmt.Errorf("%s account %q was removed while it was being logged in", r.Harness, r.Label)
 	}
 	log := a.log().With("harness", r.Harness, "account", r.Label)
-	state := a.checkAdded(ctx, st, r, log)
+	// The login's own check has just said yes. A second that cannot answer —
+	// a timeout, or the login cancelled between the two — is not a no, and
+	// must not leave the needs_login written before the login made the home
+	// (beforeLoginMakesHome).
+	state := a.checkAdded(ctx, st, r, log, v1.AccountFree)
 	log.Info("a hub logged the account in", "state", state)
 	return state, nil
 }
 
+// beforeLoginMakesHome records the needs_login an account with no home reads
+// as, before a hub login makes that home. Without the row, the home alone
+// reads free from the moment it exists, and a daemon killed while the login
+// waits for its code — before loginNotTaken can run — restarts with the
+// account free. An account that reads anything else is left as it is: a
+// limit keeps its reset.
+func (a *Accounts) beforeLoginMakesHome(r account.Ref) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	st := a.store
+	a.mu.Unlock()
+	if st == nil {
+		return
+	}
+	log := a.log().With("harness", r.Harness, "account", r.Label)
+	ctx := context.Background()
+	accounts, err := a.Load(ctx, st.Queries, time.Now())
+	if err != nil {
+		log.Warn("could not read the account's state before a hub login made its home; it is written when the login ends", "err", err)
+		return
+	}
+	i := slices.IndexFunc(accounts, func(acct account.Account) bool { return acct.Harness == r.Harness && acct.Label == r.Label })
+	if i < 0 || accounts[i].State != v1.AccountNeedsLogin {
+		return
+	}
+	if err := account.SetState(ctx, st.Queries, r.Harness, r.Label, v1.AccountNeedsLogin, time.Now()); err != nil {
+		log.Warn("could not record the account as needing login before a hub login made its home; it is written when the login ends", "err", err)
+	}
+}
+
+// loginNotTaken writes the state of an account a hub login ended on without
+// taking, once its process has stopped (DEV-138). Only ever towards
+// needs_login: a login that did not take is no reason to call an account
+// free, and a yes from the check means the login it had before is still
+// there, so its row stands — a limit keeps its reset, and a token account
+// parked on a refused token stays parked, since its check says yes to any
+// token (loginprobe.go).
+//
+// made is a home this login created. Before it the account read needs_login
+// by having none, so a check that cannot answer leaves it needs_login rather
+// than to the free that a home with no row reads as. On a home that was
+// already there, an unanswered check leaves the row as it is, as the probe
+// does.
+func (a *Accounts) loginNotTaken(r account.Ref, made bool) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	listed := a.lists.Has(r)
+	st := a.store
+	a.mu.Unlock()
+	// A removed account's rows go with its last hold, and a runner with no
+	// store yet has nothing to write.
+	if !listed || st == nil {
+		return
+	}
+	log := a.log().With("harness", r.Harness, "account", r.Label)
+	binary := a.Binary
+	if binary == nil {
+		binary = harness.Locate
+	}
+	in, err := false, errors.New("the harness cannot be asked")
+	if bin, ok := binary(r.Harness); ok && account.CanLogIn(r.Harness) {
+		// Not the login's context: a login cancelled, or a daemon stopping,
+		// has ended it, and the state it leaves must still be written.
+		// LoggedIn bounds itself.
+		in, err = account.LoggedIn(context.Background(), r.Harness, bin, account.HomeDir(a.data, r.Harness, r.Label))
+	}
+	switch {
+	case err == nil && in:
+		return
+	case err != nil && !made:
+		log.Warn("a hub login ended without taking, and whether the account is still logged in could not be read; it is left as it reads", "err", err)
+		return
+	}
+	if err := account.SetState(context.Background(), st.Queries, r.Harness, r.Label, v1.AccountNeedsLogin, time.Now()); err != nil {
+		log.Warn("a hub login ended without taking, and the account could not be recorded as needing login", "err", err)
+		return
+	}
+	log.Info("a hub login ended without taking; the account needs login")
+}
+
 // checkAdded asks the harness whether a newly added account is logged in,
 // records a definite answer, and returns the account's state as a run would
-// now read it.
-func (a *Accounts) checkAdded(ctx context.Context, st *store.Store, r account.Ref, log *slog.Logger) v1.AccountState {
+// now read it. unanswered is what a check that cannot answer records, "" for
+// nothing.
+func (a *Accounts) checkAdded(ctx context.Context, st *store.Store, r account.Ref, log *slog.Logger, unanswered v1.AccountState) v1.AccountState {
 	var q *db.Queries
 	if st != nil {
 		q = st.Queries
@@ -470,6 +559,13 @@ func (a *Accounts) checkAdded(ctx context.Context, st *store.Store, r account.Re
 	}
 	if bin, ok := binary(r.Harness); ok && q != nil && account.CanLogIn(r.Harness) {
 		switch in, err := account.LoggedIn(ctx, r.Harness, bin, account.HomeDir(a.data, r.Harness, r.Label)); {
+		case err != nil && unanswered != "":
+			log.Warn("could not check the account's login again; it is recorded as its login found it", "state", unanswered, "err", err)
+			// Not cancelled with ctx: a login cancelled or a daemon stopping
+			// between the two checks still took.
+			if err := account.SetState(context.WithoutCancel(ctx), q, r.Harness, r.Label, unanswered, time.Now()); err != nil {
+				log.Warn("could not record the account's state", "state", unanswered, "err", err)
+			}
 		case err != nil:
 			log.Warn("could not check the added account's login; it is left as it reads", "err", err)
 		default:

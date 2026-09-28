@@ -6,14 +6,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
+
+	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/harness"
 )
 
 func cmdVersion(w io.Writer) error {
@@ -39,6 +43,11 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	// that cannot be read is no reason to refuse the rest of the answer.
 	if cfg, err := config.Load(g.paths); err == nil {
 		capability.DefaultLogins(ctx, found, cfg)
+		// Read-only, as `yad account list` reads it (decision 0043). States
+		// that cannot be read change nothing here: `yad account list` says why.
+		if accounts, err := account.Read(ctx, g.paths, account.ListsOf(cfg), time.Now()); err == nil {
+			accountLogins(found, accounts, g.paths)
+		}
 	}
 	if *asJSON {
 		return writeJSON(w, found)
@@ -118,6 +127,26 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	}
 	fmt.Fprintf(w, "%d harness(es) this runner can be given work for.\n", ready)
 	return nil
+}
+
+// accountLogins reports a harness whose every account needs login as needing
+// one, as DefaultLogins does for a harness with none. Its runs never use the
+// default home, so only its accounts say whether it can take one, and health
+// already calls such a harness not ready; doctor calling it ready is how a
+// hub login that ended without taking went unseen on the machine (DEV-138).
+// A limited account still counts: it comes back on its own at its reset.
+func accountLogins(found []harness.Detected, accounts []account.Account, p config.Paths) {
+	for i, d := range found {
+		mine := account.For(accounts, d.ID)
+		if !d.Ready() || len(mine) == 0 || slices.ContainsFunc(mine, func(a account.Account) bool { return a.State != v1.AccountNeedsLogin }) {
+			continue
+		}
+		found[i].NeedsLogin = true
+		// AddArgs: a token account parked on a refused token is logged in
+		// again with a new token, never by a login it would outrank (0054).
+		found[i].Error = fmt.Sprintf("none of its accounts is logged in — `%s` logs %q in, and `%s` shows each",
+			p.Command(account.AddArgs(d.ID, mine[0].Label, mine[0].Home)...), mine[0].Label, p.Command("account", "list"))
+	}
 }
 
 // cmdHarnesses prints the capability document this runner registers with, so a
