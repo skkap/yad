@@ -763,14 +763,20 @@ for `codex`); the suite never runs a real harness.
   (DOMAIN.md). It travels to every hub by label and state, in the capability
   document and in every sync's health; the home and everything the harness
   wrote in it never leave the machine.
-- **Needs login**: entered two ways — a configured label whose harness home is
-  not on disk, which is a label written into `config.toml` by hand; and a turn
+- **Needs login**: entered three ways — a configured label whose harness home is
+  not on disk, which is a label written into `config.toml` by hand; a turn
   that fails for a reason the harness does not explain when the harness's own
   login check then says the home has no login —
   never by reading the failure's wording, because Claude reports a missing
   login and a bad model identically, both inside an object that says
-  `subtype: "success"`. A needs-login account is skipped for runs exactly as a
-  limited one is. The way back is the owner's login, by `yad account add` or by
+  `subtype: "success"`; and a hub login that ends any way but succeeded when
+  that same check then says the home has no login, or cannot answer for a home
+  the login itself made (`Accounts.loginNotTaken`, DEV-138) — making the home
+  is what would otherwise have turned a hand-listed label free, so its
+  `needs_login` is recorded before the home is made, for a daemon killed
+  mid-login. A needs-login
+  account is skipped for runs exactly as a limited one is, and `yad doctor`
+  shows a harness whose every account needs login as `needs login`. The way back is the owner's login, by `yad account add` or by
   the harness's own command in the home: the runner re-asks the harness's login
   check every few minutes (`internal/runner.LoginProbe`) and the account is back
   in service when it answers yes. A check that cannot answer — the command

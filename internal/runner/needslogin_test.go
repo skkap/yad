@@ -45,6 +45,19 @@ func fakeClaudeAuth(args []string) int {
 		return 1
 	}
 	home := os.Getenv("CLAUDE_CONFIG_DIR")
+	// A claude whose check answers once in this home and then cannot: the
+	// second of two checks timing out.
+	if os.Getenv("RUNNER_TEST_CLAUDE") == "once" {
+		asked := filepath.Join(home, ".yad-test-status-asked")
+		if _, err := os.Stat(asked); err == nil {
+			fmt.Fprintln(os.Stderr, "timed out")
+			return 1
+		}
+		if err := os.WriteFile(asked, nil, 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
 	_, err := os.Stat(filepath.Join(home, ".credentials.json"))
 	// As claude does: any CLAUDE_CODE_OAUTH_TOKEN is a login to its check.
 	in := err == nil || os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != ""
@@ -54,7 +67,8 @@ func fakeClaudeAuth(args []string) int {
 }
 
 // fakeClaudeBinary points the executor's login check at this test binary.
-// mode "broken" is a harness whose login check cannot answer at all.
+// mode "broken" is a harness whose login check cannot answer at all, and
+// "once" one that answers only the first time it is asked in a home.
 func fakeClaudeBinary(t *testing.T, x *Exec, mode ...string) {
 	t.Helper()
 	m := "1"

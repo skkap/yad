@@ -31,9 +31,10 @@ type Detected struct {
 	// checks capability.Detect adds beyond the version probe. The same rule as
 	// Error binds them.
 	Warnings []string `json:"warnings,omitempty"`
-	// NeedsLogin is an Error that is a missing login in the harness's own
-	// default home (capability.DefaultLogins): installed and working, and
-	// unable to take runs until someone logs it in.
+	// NeedsLogin is an Error that is a missing login: in the harness's own
+	// default home (capability.DefaultLogins), or, in `yad doctor`, in every
+	// account the owner gave it. Installed and working, and unable to take
+	// runs until someone logs it in.
 	NeedsLogin bool `json:"needs_login,omitempty"`
 }
 
