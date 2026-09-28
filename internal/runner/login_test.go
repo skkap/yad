@@ -94,6 +94,13 @@ func fakeClaudeLogin() int {
 	return 0
 }
 
+// rigLoginWait is each deadline of a rig's login. A working fake never comes
+// near it — it prints its link and exits at once, and a test sends its code as
+// soon as the link is reported — so it is a bound on a broken build, not a
+// budget for a busy machine; a test shortens only the deadline it means to
+// reach.
+const rigLoginWait = 20 * time.Second
+
 // loginRig is a Logins over the env with the fake claude, its log kept.
 type loginRig struct {
 	*Logins
@@ -139,7 +146,7 @@ func newLoginRig(t *testing.T, e *env, cfg config.Config, mode string) *loginRig
 		// As for a connection whose owner said nothing (decision 0057).
 		MayManage: func(string) bool { return true },
 		Log:       slog.New(slog.NewJSONHandler(r.log, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		URLWait:   20 * time.Second, CodeWait: 20 * time.Second, ExitWait: 20 * time.Second,
+		URLWait:   rigLoginWait, CodeWait: rigLoginWait, ExitWait: rigLoginWait,
 	}
 	// As Serve wires it: an account the owner removes ends its login.
 	accounts.onRemoved(r.accountRemoved)
@@ -282,31 +289,44 @@ func TestAWrongCodeFailsTheLogin(t *testing.T) {
 	}
 }
 
-// The deadlines: a login that prints no link fails saying so, and one whose
-// code never comes expires — each with its process gone.
+// The deadlines: a login that prints no link fails saying so, one whose code
+// never comes expires, and one still running after its code fails — each with
+// its process gone. Only the deadline under test is short. With all three
+// short, a spawn slowed by a loaded machine let the link deadline fire before
+// the one under test (DEV-141); the other two are the rig's, and an answer
+// that took as long as one of them came from the wrong deadline.
 func TestALinkLoginEndsAtItsDeadlines(t *testing.T) {
+	const short = 500 * time.Millisecond
 	for _, tc := range []struct {
 		name, mode string
 		code       bool
+		deadline   func(*Logins) *time.Duration
 		want       v1.LoginState
 		says       string
 	}{
-		{"no link", "nourl", false, v1.LoginFailed, "printed no link"},
-		{"no code", "", false, v1.LoginExpired, "no code arrived"},
-		{"no exit after the code", "hang", true, v1.LoginFailed, "had not finished"},
+		{"no link", "nourl", false, func(m *Logins) *time.Duration { return &m.URLWait }, v1.LoginFailed, "printed no link"},
+		{"no code", "", false, func(m *Logins) *time.Duration { return &m.CodeWait }, v1.LoginExpired, "no code arrived"},
+		{"no exit after the code", "hang", true, func(m *Logins) *time.Duration { return &m.ExitWait }, v1.LoginFailed, "had not finished"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
 			r := newLoginRig(t, e, accountConfig("work"), tc.mode)
-			r.URLWait, r.CodeWait, r.ExitWait = 500*time.Millisecond, 500*time.Millisecond, 500*time.Millisecond
+			*tc.deadline(r.Logins) = short
+			start := time.Now()
 			r.Control("hub", startLogin("lg1", "claude", "work"))
 			if tc.code {
 				r.until(t, "lg1", v1.LoginWaiting)
 				r.Control("hub", loginCode("lg1", fakeLoginCode))
 			}
 			rep := r.until(t, "lg1", tc.want)
-			if !strings.Contains(rep.Error, tc.says) {
-				t.Errorf("the error %q does not say %q", rep.Error, tc.says)
+			switch took := time.Since(start); {
+			case took < short:
+				t.Errorf("ended in %s, before its %s deadline", took, short)
+			case took >= rigLoginWait:
+				t.Errorf("ended after %s: the rig's %s deadline ended it, not the one under test", took, rigLoginWait)
+			}
+			if !strings.Contains(rep.Error, tc.says) || !strings.Contains(rep.Error, short.String()) {
+				t.Errorf("the error %q does not say %q within %s", rep.Error, tc.says, short)
 			}
 			// Close waits for the goroutine, which waits for the process.
 			r.Close()

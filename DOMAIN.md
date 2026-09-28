@@ -86,6 +86,10 @@ _See_: [0022](docs/decisions/0022-hub-service-api-beside-the-protocol.md), `inte
 OS, arch, labels, `yad` version, the harness list with versions and accounts,
 host tools, capacity, and the protocol features it supports. Public surface —
 every field is one somebody will depend on.
+_Rules_: Every connected hub reads it, so the runner writes it without a path
+on the machine and without quoting what a harness or tool printed (DEV-67). A
+run's error goes only to the hub that sent the run, and may name a path
+([0064](docs/decisions/0064-a-runs-error-may-name-a-path-on-the-runner.md)).
 _Avoid_: capabilities for anything else — yashiki's "capabilities" are its house
 tools, which here are **host tools**
 _See_: `internal/capability`, `protocol/v1`
@@ -309,7 +313,7 @@ the lease renewal for every run it holds, the health report and the ask for
 work; the answer carries new runs (never more than free capacity), control
 messages and the interval until the next sync.
 _Avoid_: poll and heartbeat as separate things — there is one call
-_See_: [0005](docs/decisions/0005-pull-by-periodic-sync.md)
+_See_: [0005](docs/decisions/0005-pull-by-periodic-sync.md), [0063](docs/decisions/0063-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)
 
 **Claim** — a runner taking a run offered in a sync. **Lease** — the hub's
 promise that an offered or claimed run is this runner's for now; each sync

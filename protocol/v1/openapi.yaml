@@ -839,7 +839,7 @@ components:
           description: The oldest yad this hub takes, as in the register response. Absent is no floor.
           type: string
         next_sync_ms:
-          description: Milliseconds until the next sync, 5000 to 60000 inclusive. A runner clamps a value outside that range, adds its own jitter, and syncs sooner when this response offered runs.
+          description: "Milliseconds until the next sync, 3000 to 60000 inclusive: 5000 or more as the hub's steady interval, and less only while the hub holds a queued run this runner would be offered once a run it holds ends. A runner clamps a value outside that range, adds its own jitter, and syncs sooner when this response offered runs."
           format: int64
           type: integer
         runs:

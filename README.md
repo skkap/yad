@@ -56,8 +56,8 @@ reports back.
   the task tracker; `yad hub`, the same binary in server mode; or your own —
   [HUB.md](HUB.md) is the whole contract.
 - **The runner** is `yad`, running as you. Every 5 to 60 seconds, as each hub
-  asks, it tells the hub what it holds, and the hub's answer carries the runs it
-  offers. It serves any number of hubs at once and shares its capacity fairly
+  asks — every 3 while a hub holds work waiting for it — it tells the hub what
+  it holds, and the hub's answer carries the runs it offers. It serves any number of hubs at once and shares its capacity fairly
   between them. Nothing ever connects to it.
 - **A harness** is the coding agent itself. YAD drives it headless with the
   logins already on the machine — it keeps no harness token of its own — in a

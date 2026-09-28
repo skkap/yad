@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/skkap/yad/internal/adapter"
 )
 
 // The test binary doubles as claude. Re-executed with CLAUDE_TEST_FIXTURE set,
@@ -136,7 +138,13 @@ func fakeClaude() {
 				RequestID string `json:"request_id"`
 			} `json:"response"`
 		}
-		if json.Unmarshal([]byte(line), &f) == nil {
+		// A line over the adapter's cap is played and never read: nothing
+		// the fake does turns on one, and reading it is what playing it
+		// cost. Two JSON parses of 32 MiB under -race were ten of
+		// TestOversizedLineIsSkipped's thirteen seconds, and a loaded
+		// machine stretched them past drive's bound (DEV-140).
+		oversized := len(strings.TrimSuffix(line, "\n")) > adapter.MaxLine
+		if !oversized && json.Unmarshal([]byte(line), &f) == nil {
 			switch {
 			case f.Type == "user" && f.IsReplay:
 				out.Flush()
@@ -173,7 +181,15 @@ func fakeClaude() {
 			time.Sleep(3 * time.Second)
 			warned = false
 		}
-		endsInResult = isResult(line)
+		endsInResult = !oversized && isResult(line)
+		// An oversized line goes through the pipe a piece at a time, each
+		// logged, so drive can tell a slow pipe from a stuck one: one write
+		// of it is tens of seconds of silence on a loaded machine.
+		for oversized && len(line) > 1<<20 {
+			out.WriteString(line[:1<<20])
+			line = line[1<<20:]
+			log("playing", 1<<20)
+		}
 		out.WriteString(line)
 		log("played", f.Type)
 	}

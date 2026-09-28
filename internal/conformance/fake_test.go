@@ -87,6 +87,8 @@ const (
 	flawTakesAnyEvents     = "events are taken for any run from anyone"
 	flawTakesAnyResult     = "a second, different terminal state replaces the first"
 	flawShortInterval      = "the sync interval named is a second"
+	flawQuickRegister      = "register names the 3 s only a sync's next_sync_ms may"
+	flawQuickSync          = "a sync names the 3 s a hub holding work for the runner may"
 	flawShortLease         = "the lease named is shorter than the interval named beside it"
 	flawStrictResultFields = "a result carrying an unknown field is refused"
 	// The token in the error code rather than the message: a place a check
@@ -327,9 +329,13 @@ func (f *fake) register(w http.ResponseWriter, r *http.Request) {
 			f.cred, f.ms(f.interval), int(f.lease/time.Millisecond)))
 		return
 	}
-	f.write(w, http.StatusOK, v1.RegisterResponse{
+	res := v1.RegisterResponse{
 		RunnerCredential: f.cred, SyncIntervalMS: f.ms(f.interval), LeaseMS: int(f.lease / time.Millisecond),
-	})
+	}
+	if f.flaw == flawQuickRegister {
+		res.SyncIntervalMS = 3000
+	}
+	f.write(w, http.StatusOK, res)
 }
 
 func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
@@ -364,8 +370,11 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	if f.flaw == flawShortLease {
 		res.LeaseMS = f.ms(f.interval) / 2
 	}
-	if f.flaw == flawShortInterval {
+	switch f.flaw {
+	case flawShortInterval:
 		res.NextSyncMS = 1000
+	case flawQuickSync:
+		res.NextSyncMS = 3000
 	}
 	// Only the first runner's fingerprint is kept: it is the one the suite
 	// moves, and the second runner's first sync carries its document.

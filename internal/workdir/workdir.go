@@ -230,7 +230,7 @@ func (m *Manager) plan(req Request) ([]item, error) {
 			if seen[r.key] {
 				// Both would want the one slot the session holds for the
 				// repository, and derive the same ports from it.
-				return nil, fmt.Errorf("sources[%d]: %s is named twice; a run checks out a repository once", i, src.Git.URL)
+				return nil, fmt.Errorf("sources[%d]: %s is named twice; a run checks out a repository once", i, shownURL(src.Git.URL))
 			}
 			seen[r.key] = true
 			it.git, it.base, it.branch = &r, src.Git.Base, src.Git.Branch
@@ -334,7 +334,9 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
-		return false, &Error{Class: ClassSourceFailed, Msg: err.Error()}
+		// The source whole first: redactURLs cuts a URL where its pattern
+		// stops, after which the source is no longer found whole.
+		return false, &Error{Class: ClassSourceFailed, Msg: redactURLs(redactSource(err.Error(), it.git.url))}
 	}
 	// The fetch, the ref the new worktree creates and a half-made worktree's
 	// removal are one repository's business at a time; the run that follows
@@ -372,7 +374,7 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 			return failed(err)
 		}
 	}
-	req.Emit(v1.Event{Kind: v1.EventStatus, Status: "fetching " + it.git.url})
+	req.Emit(v1.Event{Kind: v1.EventStatus, Status: "fetching " + shownURL(it.git.url)})
 	if err := m.fetch(ctx, cache, *it.git); err != nil {
 		return failed(err)
 	}
@@ -508,7 +510,7 @@ func (m *Manager) base(ctx context.Context, cache string, it item, has func(stri
 	if isHex(it.base) && has(it.base) {
 		return it.base, nil
 	}
-	return "", fmt.Errorf("base %q is not a branch, tag or commit of %s", it.base, it.git.url)
+	return "", fmt.Errorf("base %q is not a branch, tag or commit of %s", it.base, shownURL(it.git.url))
 }
 
 func isHex(s string) bool {

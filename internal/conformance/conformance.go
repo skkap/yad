@@ -240,6 +240,8 @@ type timing struct {
 	call     string
 	interval time.Duration
 	lease    time.Duration
+	// floor is the shortest interval the field carrying it may name.
+	floor time.Duration
 }
 
 // Run drives every check against the hub at opts.BaseURL and reports what it
@@ -469,7 +471,7 @@ func (s *session) syncWith(ctx context.Context, req v1.SyncRequest, raw []byte) 
 		}
 	}
 	s.offeredAtOnce = max(s.offeredAtOnce, len(res.Runs))
-	s.note(a.Call, res.NextSyncMS, res.LeaseMS)
+	s.note(a.Call, v1MinNextSync, res.NextSyncMS, res.LeaseMS)
 	return res, a, nil
 }
 
@@ -503,10 +505,10 @@ func (s *session) syncPath() string {
 }
 
 // note records the timings an answer named, for the check that judges them.
-func (s *session) note(call string, intervalMS, leaseMS int) {
+func (s *session) note(call string, floor time.Duration, intervalMS, leaseMS int) {
 	s.interval = time.Duration(intervalMS) * time.Millisecond
 	s.lease = time.Duration(leaseMS) * time.Millisecond
-	s.timings = append(s.timings, timing{call: call, interval: s.interval, lease: s.lease})
+	s.timings = append(s.timings, timing{call: call, interval: s.interval, lease: s.lease, floor: floor})
 }
 
 // hold adds a run to what every later sync lists; drop stops listing one.
