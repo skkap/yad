@@ -29,8 +29,8 @@ type Script struct {
 	IgnoreInterrupt bool
 	IgnoreTerm      bool
 	// AwaitInterrupt holds the turn after its events until an interrupt is
-	// delivered, whether or not it stops the turn, and then until Release
-	// is closed when there is one; then the turn ends with Outcome. With
+	// delivered and then, when Release is set, until Release is closed. A
+	// turn the interrupt did not stop then ends with Outcome: with
 	// IgnoreInterrupt it is a harness that is interrupted and carries on,
 	// with no clock to race the interrupt's delivery (DEV-147).
 	AwaitInterrupt bool
