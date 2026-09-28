@@ -388,19 +388,23 @@ func TestASessionIsBoundByItsFirstRun(t *testing.T) {
 }
 
 // With no [workdirs] roots configured, a path source under the owner's home
-// directory is taken — where decision 0033 refused every folder source, 0038
+// directory is taken — where decision 0033 refused every path source, 0038
 // makes the home directory the root. Outside it is still refused, and a runner
-// with no home to resolve reaches nothing rather than everything.
+// with no home to resolve reaches nothing rather than everything. With
+// path_sources = false even the home directory is refused, and the result says
+// which setting refused it (0062).
 func TestPathSourceDefaultsToTheOwnersHome(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		inHome  bool // the source is under the home directory
 		noHome  bool // the runner has no home directory
+		off     bool // the owner set path_sources = false
 		started bool
 	}{
 		{name: "under the owner's home", inHome: true, started: true},
 		{name: "outside the owner's home", inHome: false, started: false},
 		{name: "a runner with no home directory", inHome: true, noHome: true, started: false},
+		{name: "under the owner's home, with path sources off", inHome: true, off: true, started: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home, elsewhere := t.TempDir(), t.TempDir()
@@ -426,12 +430,18 @@ func TestPathSourceDefaultsToTheOwnersHome(t *testing.T) {
 			if len(x.Config.Workdirs.Roots) != 0 {
 				t.Fatalf("the test's own config lists roots: %v", x.Config.Workdirs.Roots)
 			}
+			if tc.off {
+				x.Config.Workdirs.PathSources = new(false)
+			}
 			runOne(t, e, l, x, run)
 
 			r := hubResult(t, e, "a")
 			if !tc.started {
 				if r.State != v1.RunFailed || r.Error == nil || r.Error.Class != workdir.ClassSourceRefused {
 					t.Fatalf("result %+v (error %+v), want the source refused", r, r.Error)
+				}
+				if tc.off && !strings.Contains(r.Error.Message, "path_sources = false") {
+					t.Errorf("the refusal %q does not name the setting that refused it", r.Error.Message)
 				}
 				if len(h.Starts) != 0 {
 					t.Errorf("the harness started for a refused source: %v", h.Starts)

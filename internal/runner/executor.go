@@ -267,7 +267,7 @@ func (e *Exec) init() {
 		if e.Workdirs == nil {
 			w := e.Config.Workdirs
 			e.Workdirs = &workdir.Manager{
-				Data: e.Data, Roots: w.EffectiveRoots(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
+				Data: e.Data, Roots: w.EffectiveRoots(), PathSourcesOff: !w.AllowsPathSources(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
 				Slots: e.Store,
 			}
 		}

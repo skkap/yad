@@ -59,7 +59,7 @@ const (
 // the hub five syncs where it had one — for that runner, only while the run
 // waits, and nothing for an idle fleet. It sits below MinSyncInterval, which
 // bounds the steady interval; the protocol lets next_sync_ms go to 3 s for
-// this (decision 0061).
+// this (decision 0063).
 const QuickSyncInterval = 3 * time.Second
 
 // quickInterval is never longer than the configured interval: sooner must not
@@ -422,7 +422,9 @@ func (h *Hub) register(api huma.API) {
 			"here was never received: it goes back in the queue at this sync, and may be offered again in this answer. An offer carries the same lease_ms as a claim: one not claimed within it " +
 			"goes back in the queue, for this runner or any other, and a claim listed after that is refused with a cancel, as a lapsed " +
 			"claim is. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — " +
-			"is answered with a cancel control for that run. A runner that does not sync for longer than the hub's abandon-after " +
+			"is answered with a cancel control for that run. A claim the hub was asked to cancel that a sync leaves out was withdrawn " +
+			"by the runner, which heard the cancel before any answer confirmed the claim; it ends cancelled, as it does when its lease " +
+			"lapses, not lost. A runner that does not sync for longer than the hub's abandon-after " +
 			"(yad hub: 24 h, --abandon-after) has every session bound to it closed and the runs queued in them ended, and keeps its " +
 			"credential: its next sync is answered normally, with close_session for each of those sessions until it reports the close.",
 		Security: security, Errors: []int{400, 401, 403, 413, 426},
@@ -452,7 +454,8 @@ func (h *Hub) register(api huma.API) {
 	protocolOp(api, huma.Operation{
 		OperationID: "deregister", Method: http.MethodPost, Path: "/runners/{runner}/deregister",
 		Summary: "Retire this runner's credential",
-		Description: "Runs the runner still holds become lost on the hub's side; runs offered to it and never claimed go back in the queue. " +
+		Description: "Runs the runner still holds become lost on the hub's side, but for a claim the hub was asked to cancel, which ends cancelled; " +
+			"runs offered to it and never claimed go back in the queue. " +
 			"Every session bound to that runner closes, and the runs still queued in them fail: a session is resumable only on the " +
 			"runner that holds it, so a run left in one would be offerable to no runner at all. The binding is never cleared instead — " +
 			"the session's state is on that machine. The credential stops working at once. The runner's id and its history stay, so " +

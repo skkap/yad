@@ -105,6 +105,22 @@ func TestNextSyncIsSoonerWhileARunWaitsForThisRunner(t *testing.T) {
 			want: normal,
 		},
 		{
+			name: "a session opening on a path, for a runner whose owner switched those off",
+			queue: func(t *testing.T, f *fixture) {
+				b := run("b", "s2")
+				b.Sources = []v1.Source{{Path: "/srv/repo"}}
+				f.enqueue(t, b)
+			},
+			held: v1.RunRunning,
+			sync: func(r v1.SyncRequest) v1.SyncRequest {
+				d := doc("r1")
+				d.PathSources = new(false)
+				r.Capabilities, r.Fingerprint = &d, "fp-r1-no-paths"
+				return r
+			},
+			want: normal,
+		},
+		{
 			name:  "a draining runner",
 			queue: func(t *testing.T, f *fixture) { f.enqueue(t, run("b", "s2")) },
 			held:  v1.RunRunning,

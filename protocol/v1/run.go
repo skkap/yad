@@ -31,7 +31,7 @@ type Run struct {
 	// harness's default, and nothing would say so (decision 0049).
 	Effort  string   `json:"effort,omitempty" doc:"How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. It must still look like a level — at most 64 bytes of letters, digits, - and _ — or the run is refused whole. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort."`
 	Brief   Brief    `json:"brief" doc:"What the run is told."`
-	Sources []Source `json:"sources,omitempty" doc:"What the session's workdir is built from, used by the run that opens the session; a run continuing it names the same sources or none. Absent: the workdir starts empty. Each source sets exactly one of git, a repository checked out as a worktree, or path, an absolute directory on the runner's machine worked in place, taken only inside the directories its owner allows (their home unless they listed others) and otherwise failed with class source_refused."`
+	Sources []Source `json:"sources,omitempty" doc:"What the session's workdir is built from, used by the run that opens the session; a run continuing it names the same sources or none. Absent: the workdir starts empty. Each source sets exactly one of git, a repository checked out as a worktree, or path, an absolute directory on the runner's machine worked in place, taken only inside the directories its owner allows (their home unless they listed others), never at a runner whose capability document says path_sources is false, and otherwise failed with class source_refused."`
 	Grants  []Grant  `json:"grants,omitempty" doc:"Short-lived secrets for this run alone, delivered to the harness process and deleted when the run ends. Names follow rules the schema cannot state; a run breaking one is refused whole."`
 	// StartAt is a one-shot moment the run must not start before, like an email
 	// API's send_at. There is no recurrence anywhere in the protocol. A hub
@@ -81,7 +81,7 @@ type Source struct {
 
 // GitSource is a repository to check out as a worktree on Branch, cut from Base.
 type GitSource struct {
-	URL    string `json:"url" doc:"The repository: an https or ssh URL, fetched with the machine's own credentials and never with a password in the URL, or an absolute path or file:// URL of a repository on the runner's machine, inside the directories its owner allows. Required."`
+	URL    string `json:"url" doc:"The repository: an https or ssh URL, fetched with the machine's own credentials and never with a password in the URL, or an absolute path or file:// URL of a repository on the runner's machine, inside the directories its owner allows and never at a runner whose capability document says path_sources is false. Required."`
 	Base   string `json:"base,omitempty" doc:"The ref a new branch is cut from. Absent: the repository's default branch."`
 	Branch string `json:"branch,omitempty" doc:"The branch the run works on, checked out as a worktree of the repository. Absent: yad/<connection>/<session>, named after the session."`
 }

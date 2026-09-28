@@ -30,6 +30,7 @@ func TestParseRemote(t *testing.T) {
 	for _, tc := range []struct {
 		url   string
 		roots []string
+		off   bool
 		name  string // want accepted, with this WT_REPO; "" wants refused
 		fetch string // what git is given, when not the URL itself
 		why   string // a word the refusal must carry
@@ -65,8 +66,14 @@ func TestParseRemote(t *testing.T) {
 		{url: escape, roots: roots, why: "outside"},
 		{url: filepath.Join(root, "..", filepath.Base(outside), "other.git"), roots: roots, why: "outside"},
 		{url: filepath.Join(root, "missing.git"), roots: roots, why: "no such file"},
+		// Switched off, a local repository inside the roots is refused, naming
+		// the setting that refused it; one on the network is not a source on
+		// the machine and still goes.
+		{url: repo, roots: roots, off: true, why: "path_sources = false"},
+		{url: "file://" + repo, roots: roots, off: true, why: "path_sources = false"},
+		{url: "https://github.com/skkap/yad.git", roots: roots, off: true, name: "yad"},
 	} {
-		r, err := parseRemote(tc.url, tc.roots)
+		r, err := parseRemote(tc.url, (&Manager{Roots: tc.roots, PathSourcesOff: tc.off}).reach)
 		if tc.name == "" {
 			if err == nil {
 				t.Errorf("%q was accepted", tc.url)

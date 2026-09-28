@@ -262,6 +262,23 @@ func TestEveryEndForgetsTheGrantValues(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, "lost", true},
+		{"a cancelled claim its runner withdrew", func(t *testing.T, f *fixture) {
+			cred := held(t, f, "x")
+			if code, e := f.api(t, "POST", "/runs/x/cancel", f.admin(t, "cli"), nil, nil); code != http.StatusOK {
+				t.Fatalf("cancel: %d %s", code, e.Message)
+			}
+			f.mustSync(t, "r1", cred, req("r1", 1))
+		}, "cancelled", true},
+		{"a cancelled claim whose lease lapsed", func(t *testing.T, f *fixture) {
+			held(t, f, "x")
+			if code, e := f.api(t, "POST", "/runs/x/cancel", f.admin(t, "cli"), nil, nil); code != http.StatusOK {
+				t.Fatalf("cancel: %d %s", code, e.Message)
+			}
+			f.clock.Advance(time.Hour)
+			if err := f.hub.Sweep(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}, "cancelled", true},
 		{"its runner deregistering while it held it", func(t *testing.T, f *fixture) {
 			cred := held(t, f, "x")
 			if code, env := f.deregister(t, "r1", cred, ""); code != http.StatusOK {

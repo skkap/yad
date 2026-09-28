@@ -128,7 +128,7 @@ Contract: [HUB.md §3](HUB.md#3-the-calls), one call at a time, and
 | `POST /runners/{runner}/sync` | the periodic call: state and health in; runs, control messages and the next interval out |
 | `POST /runs/{run}/events` | a batch of events, idempotent by `(run, seq)`; answers `acked_through` |
 | `POST /runs/{run}/result` | the terminal state, idempotent; retried from the outbox until acknowledged |
-| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost, requeues its offers, and closes its sessions, ending the runs queued in them |
+| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost (a claim it has asked to cancel, cancelled — 0061), requeues its offers, and closes its sessions, ending the runs queued in them |
 
 Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
@@ -213,7 +213,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   in the run's claim to the executor rather than arriving ahead of it (DEV-113).
   A cancel in that answer withdraws the claim; an interrupt starts the run
   already stopped, so it ends `cancelled` with a result, and a steer waits
-  for the harness.
+  for the harness. A withdrawn claim leaves the next listing, and the hub
+  ends it `cancelled` — at that sync, or when its lease lapses — rather than
+  `lost`: a lost answer can put a claim the hub counts as held in that state
+  ([0061](docs/decisions/0061-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
 - **Drain** — [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md).
   A hub sends `drain` only to a runner advertising the `drain` feature, and
   repeats it until a sync's health says `draining`. A draining runner declares
@@ -300,7 +303,8 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
 - **Sessions stay put.** The first claim in a session binds it to that runner;
   its later runs are offered to that runner alone, one at a time.
 - **Lease.** Every sync renews the lease on every run it lists. A run whose lease
-  lapses (default: four missed intervals) is **lost** on the hub's side. The
+  lapses (default: four missed intervals) is **lost** on the hub's side — a
+  claim the hub has asked to cancel, **cancelled** (0061). The
   lease a hub names is never shorter than the interval it names beside it: a
   shorter one lapses on a runner that synced exactly when it was asked to, so
   the hub takes back the runs of a runner doing everything right. The four
@@ -319,7 +323,7 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   runner adds ±10 % jitter and backs off 1 s → 30 s on errors. A hub may answer
   `next_sync_ms` as low as 3 s while it holds a queued run the runner would
   take once a run it holds ends, and `yad hub` does
-  ([0061](docs/decisions/0061-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)).
+  ([0063](docs/decisions/0063-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)).
 
 ### Run
 
@@ -434,7 +438,10 @@ ahead only to a runner that will hold it back rather than start it at once —
 once the moment has passed there is nothing to hold, and the run goes to any
 runner, or it would wait for ever on a fleet without the feature. A run
 carrying an `effort` goes only to a runner advertising `effort`, for as long
-as that takes: any other would run the harness at its default and say nothing. A runner
+as that takes: any other would run the harness at its default and say nothing. A run
+opening a session with a source on the machine does not go to a runner whose
+document says `path_sources: false`, which would refuse it
+([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)). A runner
 whose fingerprint moved without the document it promised is treated as
 advertising neither, until the document it is asked for arrives. `yad hub` advertises no
 `hub_features` of its own — it has nothing beyond the v1 baseline.
@@ -703,7 +710,8 @@ for `codex`); the suite never runs a real harness.
   several lie side by side under the workdir. No sources → an empty directory.
   Hub strings are checked before git sees them, git never prompts, and a local
   source must resolve inside the owner's `[workdirs] roots` — with none
-  configured, the owner's home directory
+  configured, the owner's home directory; with `path_sources = false`, nowhere
+  ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md))
   ([0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md),
   [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)). A
   runner with no home directory to resolve reaches nothing.
@@ -1047,6 +1055,7 @@ wait = "30m"   # how long a drain lets runs finish before cancelling them — 00
 
 [workdirs]
 roots         = ["/home/me/src"]  # where path sources and local git URLs may point — 0033; unset = your home directory (0038)
+path_sources  = false             # refuse path sources and local git URLs altogether, whatever roots says; absent = take them — 0062
 git_timeout   = "10m"
 setup_timeout = "15m"
 ```
@@ -1327,7 +1336,8 @@ line here is a reviewed change.
 - A run's sources are argv, never a shell: https and ssh only, no remote
   helpers, no leading `-`, no password in a URL, and nothing on the machine
   outside the owner's `[workdirs] roots`, which default to the owner's home
-  directory when unset —
+  directory when unset, and nothing on it at all with `path_sources = false`
+  ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)) —
   [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md),
   [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md). Those
   guards prevent bugs, not attacks: the trust boundary is the machine and its

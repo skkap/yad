@@ -38,8 +38,9 @@ The two conditions are what keep a runner from being asked back for nothing:
   codex run held back by codex's.
 - **The queued run must be one it would take.** A harness it cannot drive or
   has capped at zero, a session bound to another runner or closing, a start
-  moment it cannot hold, an effort it does not take: none shortens anything,
-  so an idle fleet and a run no runner here can take keep the normal interval.
+  moment it cannot hold, an effort it does not take, a source on the machine
+  its owner has switched off: none shortens anything, so an idle fleet and a
+  run no runner here can take keep the normal interval.
 
 The price is a runner at capacity for the length of a long run syncing five
 times as often for that long. Against a single-writer SQLite hub serving a

@@ -147,9 +147,31 @@ WHERE id = ? AND runner_id = ?;
 UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = sqlc.arg(now)
 WHERE state = 'offered' AND lease_expires_at <= sqlc.arg(now);
 
+-- A claim the hub was asked to cancel ends cancelled when its lease lapses,
+-- not lost (decision 0061): the runner may have withdrawn it on hearing the
+-- cancel before the answer confirming it, and owes no result for it. Runs
+-- before LoseLapsedRuns, which would otherwise take it.
+-- name: CancelLapsedClaims :execrows
+UPDATE runs SET state = 'cancelled', reason = 'cancelled before its runner started it; the runner stopped syncing and its lease lapsed',
+  lease_expires_at = NULL, updated_at = sqlc.arg(now)
+WHERE state = 'claimed' AND lease_expires_at <= sqlc.arg(now)
+  AND EXISTS (SELECT 1 FROM run_controls c WHERE c.run_id = runs.id AND c.kind = 'cancel');
+
 -- name: LoseLapsedRuns :execrows
 UPDATE runs SET state = 'lost', reason = 'the runner stopped syncing and its lease lapsed', updated_at = sqlc.arg(now)
 WHERE state IN ('claimed', 'preparing', 'running', 'waiting') AND lease_expires_at <= sqlc.arg(now);
+
+-- A claim the hub was asked to cancel that its runner no longer holds, left
+-- out of a sync or held by a runner deregistering, was withdrawn, and ends
+-- cancelled (decision 0061). A runner lists every run it holds until its
+-- result is taken, so a claimed run it leaves out with no result is one it
+-- never started. listed_json is the sync's run ids; empty for a runner
+-- holding nothing.
+-- name: CancelWithdrawnClaims :execrows
+UPDATE runs SET state = 'cancelled', reason = sqlc.arg(reason), lease_expires_at = NULL, updated_at = sqlc.arg(now)
+WHERE runner_id = sqlc.arg(runner_id) AND state = 'claimed'
+  AND id NOT IN (SELECT value FROM json_each(sqlc.arg(listed_json)))
+  AND EXISTS (SELECT 1 FROM run_controls c WHERE c.run_id = runs.id AND c.kind = 'cancel');
 
 -- name: AppendEvent :execrows
 INSERT INTO events (run_id, seq, body, received_at) VALUES (?, ?, ?, ?)
