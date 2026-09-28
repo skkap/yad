@@ -46,6 +46,10 @@ type Reporter struct {
 	// Now is the clock for the outbox's retry schedule; nil is time.Now.
 	Now func() time.Time
 	Log *slog.Logger
+	// Settled hears that a flush took a result out of the outbox — the hub
+	// has it, or never will — so the connection's sync loop can ask for the
+	// next run now rather than an interval later. Nil tells nobody.
+	Settled func()
 
 	wake chan struct{}
 	// replayed is closed once the first flush has run: what a previous
@@ -125,6 +129,12 @@ func (r *Reporter) Flush(ctx context.Context) { r.flush(ctx, false) }
 // flush is Flush; all sends every result owed, due or not.
 func (r *Reporter) flush(ctx context.Context, all bool) {
 	r.init()
+	settled := false
+	defer func() {
+		if settled && r.Settled != nil {
+			r.Settled()
+		}
+	}()
 	runs, err := r.Store.RunsWithUnackedEvents(ctx, r.Connection)
 	if err != nil {
 		r.Log.Error("spool not read", "connection", r.Connection, "err", err)
@@ -158,8 +168,8 @@ func (r *Reporter) flush(ctx context.Context, all bool) {
 			r.Log.Error("spool not read", "connection", r.Connection, "run", o.RunID, "err", err)
 			continue
 		}
-		if !behind {
-			r.deliver(ctx, o)
+		if !behind && r.deliver(ctx, o) {
+			settled = true
 		}
 	}
 }
@@ -230,14 +240,14 @@ func (r *Reporter) upload(ctx context.Context, runID string) {
 
 // deliver sends one result. It leaves the outbox only on an answer that
 // settles it: accepted, a different terminal state the hub already holds, or a
-// refusal no retry can change.
-func (r *Reporter) deliver(ctx context.Context, o db.Outbox) {
+// refusal no retry can change. It reports whether it settled.
+func (r *Reporter) deliver(ctx context.Context, o db.Outbox) bool {
 	log := r.Log.With("connection", r.Connection, "run", o.RunID)
 	var res v1.Result
 	if err := json.Unmarshal([]byte(o.Body), &res); err != nil {
 		log.Error("outbox entry unreadable; dropping it", "err", err)
 		r.remove(ctx, o)
-		return
+		return true
 	}
 	err := r.Hub.Result(ctx, o.RunID, res)
 	var se *hubclient.StatusError
@@ -259,9 +269,10 @@ func (r *Reporter) deliver(ctx context.Context, o db.Outbox) {
 		}); err != nil {
 			log.Error("outbox not updated", "err", err)
 		}
-		return
+		return false
 	}
 	r.remove(ctx, o)
+	return true
 }
 
 func (r *Reporter) remove(ctx context.Context, o db.Outbox) {

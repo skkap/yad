@@ -1,0 +1,339 @@
+package runner
+
+import (
+	"context"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/adapter"
+	"github.com/skkap/yad/internal/adapter/fake"
+	"github.com/skkap/yad/internal/hubclient"
+	"github.com/skkap/yad/internal/store/db"
+)
+
+// heldClock lets a wait of zero through at once and holds every other until
+// the test fires it. A loop that syncs only when its interval runs out never
+// syncs again on this clock, so every sync after the first wait is one
+// something brought forward.
+type heldClock struct {
+	mu    sync.Mutex
+	now   time.Time
+	waits []time.Duration
+	held  []chan time.Time
+	// asked hears every wait that is held, in order.
+	asked chan time.Duration
+}
+
+func newHeldClock() *heldClock {
+	return &heldClock{now: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), asked: make(chan time.Duration, 16)}
+}
+
+func (c *heldClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *heldClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	c.waits = append(c.waits, d)
+	ch := make(chan time.Time, 1)
+	if d == 0 {
+		ch <- c.now
+		c.mu.Unlock()
+		return ch
+	}
+	c.held = append(c.held, ch)
+	c.mu.Unlock()
+	c.asked <- d
+	return ch
+}
+
+// fire lets the last held wait run out.
+func (c *heldClock) fire(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+	c.held[len(c.held)-1] <- c.now
+}
+
+// advance moves time on without firing anything: the loop is still waiting.
+func (c *heldClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+func (c *heldClock) recorded() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.waits)
+}
+
+// earlyRig is a runner as Serve wires it — a real executor on the fake
+// harness, a reporter that wakes the loop when a result is settled — against
+// yad hub in process, on a heldClock. Each run's turn waits in the harness
+// for its gate, so the test says when a run ends.
+type earlyRig struct {
+	e       *env
+	l       *Loop
+	x       *Exec
+	clock   *heldClock
+	gates   map[string]chan struct{}
+	started chan string
+	// settled hears every flush that took a result out of the outbox, after
+	// the loop has been woken for it.
+	settled chan struct{}
+}
+
+func newEarlyRig(t *testing.T, capacity int, runs ...v1.Run) *earlyRig {
+	t.Helper()
+	g := &earlyRig{e: newEnv(t), clock: newHeldClock(), gates: map[string]chan struct{}{},
+		started: make(chan string, 16), settled: make(chan struct{}, 16)}
+	for _, r := range runs {
+		g.gates[r.RunID] = make(chan struct{})
+	}
+	g.l = g.e.loop(t, capacity)
+	g.l.Clock = g.clock
+	g.x = g.e.executor(&fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+		g.started <- s.RunID
+		<-g.gates[s.RunID]
+		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
+	}})
+	g.l.Executor = g.x
+	g.e.enqueue(t, runs...)
+	return g
+}
+
+// run runs the loop and its reporter until drive returns, then lets every
+// run still in the harness go and waits for it.
+func (g *earlyRig) run(t *testing.T, drive func(ctx context.Context, cancel context.CancelFunc)) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := NewReporter(g.l.Connection, g.l.Hub.(*hubclient.Client), g.e.store, nil)
+	r.Settled = func() {
+		g.l.Wake()
+		g.settled <- struct{}{}
+	}
+	g.x.Report = func(string) { r.Wake() }
+	var bg sync.WaitGroup
+	bg.Go(func() { r.Run(ctx) })
+	done := make(chan error, 1)
+	go func() { done <- g.l.Run(ctx) }()
+	drive(ctx, cancel)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	// Before any run still held ends and wakes it again: a wake left over
+	// here is a second early sync the burst was meant to fold into one.
+	if n := len(g.l.wakes()); n != 0 {
+		t.Errorf("%d wake left pending once the loop stopped", n)
+	}
+	cancel()
+	bg.Wait()
+	for _, ch := range g.gates {
+		select {
+		case <-ch:
+		default:
+			close(ch)
+		}
+	}
+	g.x.Wait()
+}
+
+// next is the next wait the loop holds, or a failure if it never asks: a loop
+// that would sit out its interval asks for nothing more on this clock.
+func (g *earlyRig) next(t *testing.T) time.Duration {
+	t.Helper()
+	select {
+	case d := <-g.clock.asked:
+		return d
+	case <-time.After(10 * time.Second):
+		t.Fatalf("the loop asked for no wait after %v; it is sitting out an interval", g.clock.recorded())
+		return 0
+	}
+}
+
+// delivered waits until the hub holds a result for every one of ids.
+func (g *earlyRig) delivered(t *testing.T, ids ...string) {
+	t.Helper()
+	for {
+		missing := false
+		for _, id := range ids {
+			if _, err := g.e.hubStore.GetResult(context.Background(), id); err != nil {
+				missing = true
+			}
+		}
+		if !missing {
+			return
+		}
+		select {
+		case <-g.settled:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("results for %v never reached the hub", ids)
+		}
+	}
+}
+
+// Against yad hub: once the run a runner holds ends, the runner syncs as soon
+// as the hub has the result, and the next turn of the session starts — not
+// after the 3 s the hub asked for, which on this clock never passes. The early
+// sync keeps earlySyncGap from the last one, and no more once that much has
+// gone by. The run then going on, the runner waits the hub's interval again.
+func TestARunEndingBringsTheNextSyncForward(t *testing.T) {
+	later := testRun("a2", "s1")
+	later.Session.New = false
+	for _, tc := range []struct {
+		name string
+		// ran is how long a ran for, from the sync that started it.
+		ran  time.Duration
+		want []time.Duration
+	}{
+		{"ending at once", 0, []time.Duration{0, 3 * time.Second, earlySyncGap, 0, 15 * time.Second}},
+		{"ending 2 s in", 2 * time.Second, []time.Duration{0, 3 * time.Second, 0, 15 * time.Second}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newEarlyRig(t, 1, testRun("a", "s1"), later)
+			g.run(t, func(_ context.Context, cancel context.CancelFunc) {
+				if d := g.next(t); d != 3*time.Second {
+					t.Fatalf("waited %s with a2 queued behind a, want 3s", d)
+				}
+				g.clock.advance(tc.ran)
+				close(g.gates["a"])
+				d := g.next(t)
+				if d == earlySyncGap {
+					g.delivered(t, "a")
+					g.clock.fire(d)
+					d = g.next(t)
+				}
+				if d != 15*time.Second {
+					t.Errorf("waited %s once a2 started, want the hub's 15s", d)
+				}
+				cancel()
+			})
+			if got := g.clock.recorded(); !slices.Equal(got, tc.want) {
+				t.Errorf("waits %v, want %v", got, tc.want)
+			}
+			if got := g.e.hubState(t, "a2"); got != "running" && got != "claimed" {
+				t.Errorf("a2 is %s at the hub, want it started", got)
+			}
+		})
+	}
+}
+
+// Three runs ending together bring one sync forward, not three: the wakes
+// they leave fold into it, and the run it takes then waits out the hub's
+// interval.
+func TestRunsEndingTogetherBringOneSyncForward(t *testing.T) {
+	ids := []string{"a", "b", "c"}
+	g := newEarlyRig(t, 3, testRun("a", "s1"), testRun("b", "s2"), testRun("c", "s3"), testRun("d", "s4"))
+	g.run(t, func(_ context.Context, cancel context.CancelFunc) {
+		if d := g.next(t); d != 3*time.Second {
+			t.Fatalf("waited %s with d queued behind a, b and c, want 3s", d)
+		}
+		for range ids {
+			<-g.started
+		}
+		for _, id := range ids {
+			close(g.gates[id])
+		}
+		if d := g.next(t); d != earlySyncGap {
+			t.Fatalf("waited %s once the runs ended, want %s", d, earlySyncGap)
+		}
+		// Every run has ended and every result is in before the early sync
+		// goes: what each of them woke is already waiting.
+		g.delivered(t, ids...)
+		g.clock.fire(earlySyncGap)
+		if d := g.next(t); d != 15*time.Second {
+			t.Errorf("waited %s once d started, want the hub's 15s", d)
+		}
+		cancel()
+	})
+	want := []time.Duration{0, 3 * time.Second, earlySyncGap, 0, 15 * time.Second}
+	if got := g.clock.recorded(); !slices.Equal(got, want) {
+		t.Errorf("waits %v, want %v", got, want)
+	}
+	if got := g.e.hubState(t, "d"); got != "running" && got != "claimed" {
+		t.Errorf("d is %s at the hub, want it started", got)
+	}
+}
+
+// syncSpy tells the test of every sync the loop sends.
+type syncSpy struct {
+	Hub
+	synced chan struct{}
+}
+
+func (s syncSpy) Sync(ctx context.Context, runnerID string, req v1.SyncRequest) (v1.SyncResponse, error) {
+	s.synced <- struct{}{}
+	return s.Hub.Sync(ctx, runnerID, req)
+}
+
+// A run's capacity comes back before its result reaches the hub, and a sync
+// in between would list the run as still running: its session's next turn
+// would not be offered, and the hub would answer 3 s again. So a run ending
+// brings no sync forward while its result is waiting to go; the result going
+// does.
+func TestAnEarlySyncWaitsForTheResult(t *testing.T) {
+	e := newEnv(t)
+	l := e.loop(t, 1)
+	clock := newHeldClock()
+	spy := syncSpy{Hub: l.Hub, synced: make(chan struct{}, 16)}
+	l.Clock, l.Hub = clock, spy
+	later := testRun("a2", "s1")
+	later.Session.New = false
+	e.enqueue(t, testRun("a", "s1"), later)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- l.Run(ctx) }()
+	g := &earlyRig{e: e, l: l, clock: clock}
+	if d := g.next(t); d != 3*time.Second {
+		t.Fatalf("waited %s with a2 queued behind a, want 3s", d)
+	}
+	for range 2 {
+		<-spy.synced
+	}
+	clock.advance(2 * time.Second)
+
+	// What the executor does as a run ends: its terminal state and its
+	// result in one write, then its capacity back.
+	if err := e.store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.SetRunState(ctx, db.SetRunStateParams{State: string(v1.RunSucceeded), UpdatedAt: time.Now().UnixMilli(), Connection: "hub", ID: "a"}); err != nil {
+			return err
+		}
+		return q.PutOutbox(ctx, db.PutOutboxParams{Connection: "hub", RunID: "a", Body: `{"state":"succeeded"}`, NextAttemptAt: time.Now().UnixMilli()})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.exec.started[0].Release()
+	// Absence has no event to wait for; this bounds how long it is looked
+	// for. A loop that syncs on the release does so within microseconds.
+	select {
+	case <-spy.synced:
+		t.Fatal("synced while a's result had not reached the hub")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	r := NewReporter("hub", spy.Hub.(*hubclient.Client), e.store, nil)
+	r.Settled = l.Wake
+	r.Flush(ctx)
+	if d := g.next(t); d != 15*time.Second {
+		t.Errorf("waited %s once a2 started, want the hub's 15s", d)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if want := []time.Duration{0, 3 * time.Second, 0, 15 * time.Second}; !slices.Equal(clock.recorded(), want) {
+		t.Errorf("waits %v, want %v", clock.recorded(), want)
+	}
+	if got := e.exec.ids(); !slices.Equal(got, []string{"a", "a2"}) {
+		t.Errorf("started %v, want [a a2]", got)
+	}
+}
