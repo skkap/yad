@@ -772,7 +772,9 @@ for `codex`); the suite never runs a real harness.
   `subtype: "success"`; and a hub login that ends any way but succeeded when
   that same check then says the home has no login, or cannot answer for a home
   the login itself made (`Accounts.loginNotTaken`, DEV-138) — making the home
-  is what would otherwise have turned a hand-listed label free. A needs-login
+  is what would otherwise have turned a hand-listed label free, so its
+  `needs_login` is recorded before the home is made, for a daemon killed
+  mid-login. A needs-login
   account is skipped for runs exactly as a limited one is, and `yad doctor`
   shows a harness whose every account needs login as `needs login`. The way back is the owner's login, by `yad account add` or by
   the harness's own command in the home: the runner re-asks the harness's login

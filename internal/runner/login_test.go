@@ -769,6 +769,46 @@ func TestALoginThatEndsWithoutTakingLeavesTheAccountAsItsCheckSays(t *testing.T)
 	}
 }
 
+// A login still in flight is not over, and the account's state on disk must
+// already be the one it leaves if the daemon goes now. Killed while the link
+// waits for its code, a daemon unwinds nothing, so the needs_login a missing
+// home meant is written before the home is made. Stopped cleanly, the daemon
+// ends every login in flight through the same release as an end from the hub,
+// and the check decides: here a home whose login is gone, which read free
+// before the login, is found needing one.
+func TestALoginInFlightLeavesTheAccountAsItWouldBeFound(t *testing.T) {
+	t.Run("killed while the link waits", func(t *testing.T) {
+		e := newEnv(t)
+		cfg := accountConfig("work")
+		r := newLoginRig(t, e, cfg, "")
+		r.Control("hub", startLogin("lg1", "claude", "work"))
+		r.until(t, "lg1", v1.LoginWaiting)
+		if _, err := os.Stat(account.HomeDir(e.paths.Data, "claude", "work")); err != nil {
+			t.Fatalf("the login made no home (%v)", err)
+		}
+		if got := listed(t, e, account.ListsOf(cfg)); got != v1.AccountNeedsLogin {
+			t.Errorf("while the login waits the account reads %q; a daemon killed now restarts with it so", got)
+		}
+	})
+	t.Run("stopped while the link waits", func(t *testing.T) {
+		e := newEnv(t)
+		cfg := accountConfig("work")
+		r := newLoginRig(t, e, cfg, "")
+		if _, err := account.Ensure(e.paths.Data, "claude", "work"); err != nil {
+			t.Fatal(err)
+		}
+		if got := listed(t, e, account.ListsOf(cfg)); got != v1.AccountFree {
+			t.Fatalf("before the login the account is %q, want free", got)
+		}
+		r.Control("hub", startLogin("lg1", "claude", "work"))
+		r.until(t, "lg1", v1.LoginWaiting)
+		r.Close()
+		if got := listed(t, e, account.ListsOf(cfg)); got != v1.AccountNeedsLogin {
+			t.Errorf("after the daemon stopped mid-login the account is %q, want needs_login", got)
+		}
+	})
+}
+
 // listed is the account's state as `yad account list` and `yad doctor` read
 // it: from state.db, read-only, through account.Read.
 func listed(t *testing.T, e *env, lists account.Lists) v1.AccountState {

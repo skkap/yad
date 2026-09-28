@@ -464,10 +464,11 @@ var errRemoved = errors.New("removed")
 // home goes when release lets go of it, with whatever the login wrote there.
 //
 // Making the home is itself a change of state: an account with a home and no
-// row reads free (account.Load). So release, on a login that ended any way but
-// succeeded, has the account's state written from the harness's own check
-// before the hold goes (DEV-138) — in every login's one way out, whichever
-// method drove it and however it ended, a daemon stopping included.
+// row reads free (account.Load). So the needs_login the missing home meant is
+// written down before the home is made, and release, on a login that ended any
+// way but succeeded, has the account's state written from the harness's own
+// check before the hold goes (DEV-138) — in every login's one way out,
+// whichever method drove it and however it ended, a daemon stopping included.
 func (m *Logins) claim(l *hubLogin) (home string, release func(), err error) {
 	if l.ref.Label == "" {
 		return "", func() {}, nil
@@ -478,6 +479,9 @@ func (m *Logins) claim(l *hubLogin) (home string, release func(), err error) {
 	}
 	_, statErr := os.Stat(account.HomeDir(m.Data, l.ref.Harness, l.ref.Label))
 	made := errors.Is(statErr, os.ErrNotExist)
+	if made {
+		m.Accounts.beforeLoginMakesHome(l.ref)
+	}
 	release = func() {
 		m.mu.Lock()
 		took := l.state == v1.LoginSucceeded

@@ -359,6 +359,38 @@ func (a *Accounts) LoggedInAgain(ctx context.Context, r account.Ref) (v1.Account
 	return state, nil
 }
 
+// beforeLoginMakesHome records the needs_login an account with no home reads
+// as, before a hub login makes that home. Without the row, the home alone
+// reads free from the moment it exists, and a daemon killed while the login
+// waits for its code — before loginNotTaken can run — restarts with the
+// account free. An account that reads anything else is left as it is: a
+// limit keeps its reset.
+func (a *Accounts) beforeLoginMakesHome(r account.Ref) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	st := a.store
+	a.mu.Unlock()
+	if st == nil {
+		return
+	}
+	log := a.log().With("harness", r.Harness, "account", r.Label)
+	ctx := context.Background()
+	accounts, err := a.Load(ctx, st.Queries, time.Now())
+	if err != nil {
+		log.Warn("could not read the account's state before a hub login made its home; it is written when the login ends", "err", err)
+		return
+	}
+	i := slices.IndexFunc(accounts, func(acct account.Account) bool { return acct.Harness == r.Harness && acct.Label == r.Label })
+	if i < 0 || accounts[i].State != v1.AccountNeedsLogin {
+		return
+	}
+	if err := account.SetState(ctx, st.Queries, r.Harness, r.Label, v1.AccountNeedsLogin, time.Now()); err != nil {
+		log.Warn("could not record the account as needing login before a hub login made its home; it is written when the login ends", "err", err)
+	}
+}
+
 // loginNotTaken writes the state of an account a hub login ended on without
 // taking, once its process has stopped (DEV-138). Only ever towards
 // needs_login: a login that did not take is no reason to call an account
