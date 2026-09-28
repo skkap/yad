@@ -19,9 +19,16 @@ import (
 // way of growing the protocol would fail its own gate on every release that
 // used it.
 //
-// x-extensible-enum is the one form the pinned oasdiff (v1.32.1) reads as a set
-// meant to grow, and only *in place of* enum: a schema carrying both is still
-// checked on its enum, and still fails. That was measured, not read.
+// These fields pass the pinned oasdiff (v1.32.1) because they no longer carry
+// `enum`. Its response rules read only that keyword, and none of them reads
+// x-extensible-enum. So a schema that keeps enum and adds the extension still
+// fails; this was measured. The values go under x-extensible-enum rather than
+// being dropped for three reasons. oasdiff's own message recommends that name
+// for a set meant to grow. It keeps the list machine-readable. And oasdiff
+// does check a value removed from it on the request side. The consequence is
+// that oasdiff guards neither growth nor removal of these values in a
+// response. TestTheV1EnumsAreClosed pins each set exactly, so removing a value
+// fails there.
 //
 // The rule is by direction and document, not a list of names, because the
 // direction is what makes the growth safe:

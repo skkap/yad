@@ -51,8 +51,20 @@ Every row below compares a document with the real `v0.1.0` tag at `--fail-on WAR
 | `proof_new_state` added to hubapi's run `state` | exit 1, six `response-property-enum-value-added`, one per operation returning a run |
 | `proof_new_state` added to v1's `HeldRun.state` (a runner sends it) | exit 0 from oasdiff; `TestTheV1EnumsAreClosed` fails |
 
-The rows show that oasdiff honours `x-extensible-enum` only *instead of*
-`enum`, as Zalando's convention defines it, and not beside it. The last row
+What lets these fields pass is that `enum` is gone. oasdiff's response rules
+read only that keyword, and no response rule reads `x-extensible-enum`
+(v1.32.1 reads the extension only in its two request-side removal checks). The
+values still go under the extension, for three reasons:
+
+- oasdiff's own message recommends it for a set meant to grow;
+- it is Zalando's convention, and it keeps the list machine-readable;
+- it would catch a removed value if the field ever moved into a request.
+
+In a response, then, oasdiff guards neither growth nor removal of these
+values. Removal is caught by `TestTheV1EnumsAreClosed`, which pins each set
+exactly.
+
+The last row
 shows that the request side was never oasdiff's to guard. Growth there is
 caught by the Go pin test, which names 0047's rule. A feature-gated control
 kind still fails that pin test too. That is intended: the failure is where the
