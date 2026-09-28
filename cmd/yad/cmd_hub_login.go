@@ -19,7 +19,7 @@ import (
 	"github.com/skkap/yad/internal/hubapiclient"
 )
 
-const hubLoginUsage = "usage: yad hub login start <runner> <harness> [account] [--code -] | token <runner> <harness> <account> | status <runner> <login> | cancel <runner> <login>"
+const hubLoginUsage = "usage: yad hub login start <runner> <harness> [account] [--add] [--code -] | token <runner> <harness> <account> [--add] | status <runner> <login> | cancel <runner> <login>"
 
 // loginPoll is how often a waiting `yad hub login` asks the hub how its login
 // stands. The runner moves it only at its own syncs, seconds apart, so a
@@ -42,6 +42,7 @@ func cmdHubLogin(ctx context.Context, g global, args []string, stdout, stderr io
 	fs := flag.NewFlagSet("hub login "+args[0], flag.ContinueOnError)
 	hf := addHubFlags(fs, g)
 	code := fs.String("code", "", "with start: `-` reads the code from stdin without asking for it, for a script")
+	add := fs.Bool("add", false, "with start or token: add the account to the runner, which lists it once the login takes")
 	pos, err := parseInterleaved(fs, args[1:])
 	if err != nil {
 		return err
@@ -57,12 +58,16 @@ func cmdHubLogin(ctx context.Context, g global, args []string, stdout, stderr io
 		// A code is short-lived, but the rule for secrets in argv is one
 		// rule: every account on the machine can read them while it runs.
 		return errors.New("--code takes only -, which reads the code from stdin; it belongs to start")
+	case *add && args[0] != "start" && args[0] != "token":
+		return errors.New("--add belongs to start and token: it adds the account the login is for")
+	case *add && args[0] == "start" && len(pos) < 3:
+		return errors.New("--add creates an account, and names it: " + hubLoginUsage)
 	}
 	c, err := hf.client()
 	if err != nil {
 		return err
 	}
-	lc := loginCLI{c: c, hf: hf, stdout: stdout, stderr: stderr}
+	lc := loginCLI{c: c, hf: hf, add: *add, stdout: stdout, stderr: stderr}
 	switch args[0] {
 	case "start":
 		account := ""
@@ -95,15 +100,26 @@ func cmdHubLogin(ctx context.Context, g global, args []string, stdout, stderr io
 }
 
 type loginCLI struct {
-	c              *hubapiclient.Client
-	hf             hubFlags
+	c  *hubapiclient.Client
+	hf hubFlags
+	// add is --add: the login creates its account (decision 0057).
+	add            bool
 	stdout, stderr io.Writer
+}
+
+// verb is the command a next action repeats, with --add if this one had it.
+func (lc loginCLI) verb(sub string) []string {
+	v := []string{"hub", "login", sub}
+	if lc.add {
+		v = append(v, "--add")
+	}
+	return v
 }
 
 // start is the link way: the login started, its link printed once the runner
 // has it, the code read and sent, and the end waited for.
 func (lc loginCLI) start(ctx context.Context, runnerID, harness, label string, quiet bool) error {
-	l, err := lc.c.StartLogin(ctx, runnerID, hubapi.LoginRequest{Harness: harness, Account: label})
+	l, err := lc.c.StartLogin(ctx, runnerID, hubapi.LoginRequest{Harness: harness, Account: label, Add: lc.add})
 	if err != nil {
 		return err
 	}
@@ -129,7 +145,7 @@ func (lc loginCLI) start(ctx context.Context, runnerID, harness, label string, q
 	}
 	if code == "" {
 		lc.giveUp(l)
-		return fmt.Errorf("no code was read, so the login is cancelled — run `%s` again and paste the code", lc.hf.command([]string{"hub", "login", "start"}, runnerID, harness, label))
+		return fmt.Errorf("no code was read, so the login is cancelled — run `%s` again and paste the code", lc.hf.command(lc.verb("start"), runnerID, harness, label))
 	}
 	if l, err = lc.c.SendLoginCode(ctx, l.RunnerID, l.LoginID, code); err != nil {
 		return err
@@ -146,9 +162,9 @@ func (lc loginCLI) token(ctx context.Context, runnerID, harness, label string) e
 	}
 	tok := strings.TrimSpace(string(b))
 	if err := account.CheckToken(tok); err != nil {
-		return fmt.Errorf("%s — pipe it in: `%s`", err, lc.hf.command([]string{"hub", "login", "token"}, runnerID, harness, label))
+		return fmt.Errorf("%s — pipe it in: `%s`", err, lc.hf.command(lc.verb("token"), runnerID, harness, label))
 	}
-	l, err := lc.c.StartLogin(ctx, runnerID, hubapi.LoginRequest{Harness: harness, Account: label, Token: tok})
+	l, err := lc.c.StartLogin(ctx, runnerID, hubapi.LoginRequest{Harness: harness, Account: label, Token: tok, Add: lc.add})
 	if err != nil {
 		return err
 	}
@@ -166,6 +182,10 @@ func (lc loginCLI) finish(ctx context.Context, l hubapi.Login) error {
 	}
 	if l.State != hubapi.LoginState(v1.LoginSucceeded) {
 		return lc.ended(l)
+	}
+	if l.Add {
+		fmt.Fprintf(lc.stdout, "%s is added to runner %s, logged in, and takes runs\n", lc.what(l), cleanLine(l.RunnerID))
+		return nil
 	}
 	fmt.Fprintf(lc.stdout, "%s on runner %s is logged in, and takes runs\n", lc.what(l), cleanLine(l.RunnerID))
 	return nil

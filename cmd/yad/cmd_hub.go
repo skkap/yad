@@ -45,8 +45,10 @@ func cmdHub(ctx context.Context, g global, args []string, stdout, stderr io.Writ
 		return cmdHubCloseSession(ctx, g, args[1:], stdout)
 	case "login":
 		return cmdHubLogin(ctx, g, args[1:], stdout, stderr)
+	case "account":
+		return cmdHubAccount(ctx, g, args[1:], stdout)
 	default:
-		return fmt.Errorf("unknown hub subcommand %q — use serve, token, admin-token, submit, watch, cancel, interrupt, steer, runners, drain, close-session or login", args[0])
+		return fmt.Errorf("unknown hub subcommand %q — use serve, token, admin-token, submit, watch, cancel, interrupt, steer, runners, drain, close-session, login or account", args[0])
 	}
 }
 

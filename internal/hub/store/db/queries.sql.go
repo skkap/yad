@@ -10,6 +10,38 @@ import (
 	"database/sql"
 )
 
+const accountRemovals = `-- name: AccountRemovals :many
+SELECT runner_id, harness, account, requested_at FROM account_removals WHERE runner_id = ? ORDER BY requested_at, harness, account
+`
+
+func (q *Queries) AccountRemovals(ctx context.Context, runnerID string) ([]AccountRemoval, error) {
+	rows, err := q.db.QueryContext(ctx, accountRemovals, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AccountRemoval{}
+	for rows.Next() {
+		var i AccountRemoval
+		if err := rows.Scan(
+			&i.RunnerID,
+			&i.Harness,
+			&i.Account,
+			&i.RequestedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const addControl = `-- name: AddControl :exec
 
 INSERT INTO run_controls (run_id, kind, text, created_at) VALUES (?, ?, ?, ?)
@@ -180,19 +212,20 @@ func (q *Queries) CreateAdminToken(ctx context.Context, arg CreateAdminTokenPara
 
 const createLogin = `-- name: CreateLogin :exec
 
-INSERT INTO logins (id, runner_id, harness, account, method, token, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO logins (id, runner_id, harness, account, method, token, add_account, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateLoginParams struct {
-	ID        string
-	RunnerID  string
-	Harness   string
-	Account   string
-	Method    string
-	Token     string
-	CreatedAt int64
-	UpdatedAt int64
+	ID         string
+	RunnerID   string
+	Harness    string
+	Account    string
+	Method     string
+	Token      string
+	AddAccount int64
+	CreatedAt  int64
+	UpdatedAt  int64
 }
 
 // Hub logins (decision 0055).
@@ -204,6 +237,7 @@ func (q *Queries) CreateLogin(ctx context.Context, arg CreateLoginParams) error 
 		arg.Account,
 		arg.Method,
 		arg.Token,
+		arg.AddAccount,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -286,6 +320,21 @@ type DeleteSteersThroughParams struct {
 
 func (q *Queries) DeleteSteersThrough(ctx context.Context, arg DeleteSteersThroughParams) error {
 	_, err := q.db.ExecContext(ctx, deleteSteersThrough, arg.RunID, arg.ID)
+	return err
+}
+
+const endAccountRemoval = `-- name: EndAccountRemoval :exec
+DELETE FROM account_removals WHERE runner_id = ? AND harness = ? AND account = ?
+`
+
+type EndAccountRemovalParams struct {
+	RunnerID string
+	Harness  string
+	Account  string
+}
+
+func (q *Queries) EndAccountRemoval(ctx context.Context, arg EndAccountRemovalParams) error {
+	_, err := q.db.ExecContext(ctx, endAccountRemoval, arg.RunnerID, arg.Harness, arg.Account)
 	return err
 }
 
@@ -570,6 +619,28 @@ func (q *Queries) FirstControl(ctx context.Context, arg FirstControlParams) (Run
 	return i, err
 }
 
+const getAccountRemoval = `-- name: GetAccountRemoval :one
+SELECT runner_id, harness, account, requested_at FROM account_removals WHERE runner_id = ? AND harness = ? AND account = ?
+`
+
+type GetAccountRemovalParams struct {
+	RunnerID string
+	Harness  string
+	Account  string
+}
+
+func (q *Queries) GetAccountRemoval(ctx context.Context, arg GetAccountRemovalParams) (AccountRemoval, error) {
+	row := q.db.QueryRowContext(ctx, getAccountRemoval, arg.RunnerID, arg.Harness, arg.Account)
+	var i AccountRemoval
+	err := row.Scan(
+		&i.RunnerID,
+		&i.Harness,
+		&i.Account,
+		&i.RequestedAt,
+	)
+	return i, err
+}
+
 const getAdminToken = `-- name: GetAdminToken :one
 SELECT hash, name, created_at FROM admin_tokens WHERE hash = ?
 `
@@ -582,7 +653,7 @@ func (q *Queries) GetAdminToken(ctx context.Context, hash string) (AdminToken, e
 }
 
 const getLogin = `-- name: GetLogin :one
-SELECT id, runner_id, harness, account, method, state, url, user_code, error, code, token, cancel_requested_at, sent_at, hub_ended, created_at, updated_at FROM logins WHERE id = ?
+SELECT id, runner_id, harness, account, method, state, url, user_code, error, code, token, cancel_requested_at, sent_at, hub_ended, created_at, updated_at, add_account FROM logins WHERE id = ?
 `
 
 func (q *Queries) GetLogin(ctx context.Context, id string) (Login, error) {
@@ -605,6 +676,7 @@ func (q *Queries) GetLogin(ctx context.Context, id string) (Login, error) {
 		&i.HubEnded,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AddAccount,
 	)
 	return i, err
 }
@@ -974,7 +1046,7 @@ func (q *Queries) OfferRun(ctx context.Context, arg OfferRunParams) error {
 }
 
 const openLogins = `-- name: OpenLogins :many
-SELECT id, runner_id, harness, account, method, state, url, user_code, error, code, token, cancel_requested_at, sent_at, hub_ended, created_at, updated_at FROM logins WHERE runner_id = ? AND state IN ('requested', 'starting', 'waiting', 'checking')
+SELECT id, runner_id, harness, account, method, state, url, user_code, error, code, token, cancel_requested_at, sent_at, hub_ended, created_at, updated_at, add_account FROM logins WHERE runner_id = ? AND state IN ('requested', 'starting', 'waiting', 'checking')
 ORDER BY created_at, id
 `
 
@@ -1005,6 +1077,7 @@ func (q *Queries) OpenLogins(ctx context.Context, runnerID string) ([]Login, err
 			&i.HubEnded,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AddAccount,
 		); err != nil {
 			return nil, err
 		}
@@ -1020,7 +1093,7 @@ func (q *Queries) OpenLogins(ctx context.Context, runnerID string) ([]Login, err
 }
 
 const openLoginsFor = `-- name: OpenLoginsFor :many
-SELECT id, runner_id, harness, account, method, state, url, user_code, error, code, token, cancel_requested_at, sent_at, hub_ended, created_at, updated_at FROM logins WHERE runner_id = ?1 AND harness = ?2 AND account = ?3
+SELECT id, runner_id, harness, account, method, state, url, user_code, error, code, token, cancel_requested_at, sent_at, hub_ended, created_at, updated_at, add_account FROM logins WHERE runner_id = ?1 AND harness = ?2 AND account = ?3
   AND state IN ('requested', 'starting', 'waiting', 'checking')
 ORDER BY created_at, id
 `
@@ -1059,6 +1132,7 @@ func (q *Queries) OpenLoginsFor(ctx context.Context, arg OpenLoginsForParams) ([
 			&i.HubEnded,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AddAccount,
 		); err != nil {
 			return nil, err
 		}
@@ -1230,6 +1304,32 @@ func (q *Queries) RenewRun(ctx context.Context, arg RenewRunParams) error {
 		arg.UpdatedAt,
 		arg.ID,
 		arg.RunnerID,
+	)
+	return err
+}
+
+const requestAccountRemoval = `-- name: RequestAccountRemoval :exec
+
+INSERT INTO account_removals (runner_id, harness, account, requested_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT (runner_id, harness, account) DO NOTHING
+`
+
+type RequestAccountRemovalParams struct {
+	RunnerID    string
+	Harness     string
+	Account     string
+	RequestedAt int64
+}
+
+// Removing a runner's accounts (decision 0057).
+// A repeat keeps the first request's time: it is the same removal.
+func (q *Queries) RequestAccountRemoval(ctx context.Context, arg RequestAccountRemovalParams) error {
+	_, err := q.db.ExecContext(ctx, requestAccountRemoval,
+		arg.RunnerID,
+		arg.Harness,
+		arg.Account,
+		arg.RequestedAt,
 	)
 	return err
 }

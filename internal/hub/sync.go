@@ -208,11 +208,17 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 
 		// Logins before the early return below: a draining runner still
 		// reports them, and still takes a cancel or a code.
-		logins, err := syncLogins(ctx, q, runner.ID, req.Logins, described && advertises(doc, capability.FeatureLogin), now)
+		logins, err := syncLogins(ctx, q, runner.ID, req.Logins, described && advertises(doc, capability.FeatureLogin),
+			described && advertises(doc, capability.FeatureAccounts), described, now)
 		if err != nil {
 			return err
 		}
 		out.Controls = append(out.Controls, logins...)
+		removals, err := syncRemovals(ctx, q, runner.ID, req.Health, doc, described)
+		if err != nil {
+			return err
+		}
+		out.Controls = append(out.Controls, removals...)
 
 		// Whatever is still offered to this runner was in the last response
 		// and missing from this list: never received. Back in the queue.

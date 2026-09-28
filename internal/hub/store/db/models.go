@@ -8,6 +8,13 @@ import (
 	"database/sql"
 )
 
+type AccountRemoval struct {
+	RunnerID    string
+	Harness     string
+	Account     string
+	RequestedAt int64
+}
+
 type AdminToken struct {
 	Hash      string
 	Name      string
@@ -38,6 +45,7 @@ type Login struct {
 	HubEnded          int64
 	CreatedAt         int64
 	UpdatedAt         int64
+	AddAccount        int64
 }
 
 type RegistrationToken struct {

@@ -170,6 +170,13 @@ usage: yad [--profile name] <command> [flags]
   hub close-session <session>
                       the session takes no new run, and its runner deletes
                       its workdir
+  hub login start|token <runner> <harness> [account] [--add]
+                      log a runner's account in from here: by the link its
+                      harness prints and the code you paste back, or by a
+                      token on stdin. --add creates the account
+  hub account remove <runner> <harness> <account>
+                      the runner removes the account, as its own
+                      yad account remove does
   service install|uninstall|status [--profile name]
                       run this profile's runner as a launchd agent or a
                       systemd user unit, as you, restarted after a crash
