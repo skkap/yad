@@ -166,7 +166,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		// the runner heard the cancel before any answer confirmed the claim —
 		// that answer lost in transit — and owes no result (decision 0019).
 		// The hub asked for this end, so the run is cancelled now rather than
-		// lost when its lease lapses (decision 0060).
+		// lost when its lease lapses (decision 0061).
 		if err := cancelWithdrawn(ctx, q, runner.ID, req.Runs,
 			fmt.Sprintf("cancelled before runner %s started it; the runner withdrew its claim", runner.ID), now); err != nil {
 			return err
@@ -421,7 +421,7 @@ func (h *Hub) SweepEvery() time.Duration { return h.interval }
 // a claim does: one not claimed within it goes back in the queue for any
 // runner, and a claim arriving after that is answered with a cancel, because
 // the run may already be another runner's. Then the runs whose leases lapsed
-// end: cancelled for a claim the hub was asked to cancel (decision 0060),
+// end: cancelled for a claim the hub was asked to cancel (decision 0061),
 // lost for every other. Last the runners silent past abandon-after are given
 // up — after the leases, so that by then nothing they held is still leased.
 func (h *Hub) sweep(ctx context.Context, q *db.Queries, now time.Time) error {

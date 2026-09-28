@@ -204,7 +204,7 @@ func TestLapsedLeaseLosesTheRun(t *testing.T) {
 // A claim the hub was asked to cancel ends cancelled once the runner no longer
 // holds it — the next sync leaves it out, the lease lapses, or the runner
 // deregisters — because the runner withdraws a claim it hears cancelled before
-// any answer confirmed it, and owes no result (decisions 0019, 0060). Every
+// any answer confirmed it, and owes no result (decisions 0019, 0061). Every
 // other way a held run ends unreported is still lost: nobody asked for it to
 // end, or the run had started and a result was owed.
 func TestAWithdrawnCancelledClaimEndsCancelled(t *testing.T) {

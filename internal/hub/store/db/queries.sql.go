@@ -134,7 +134,7 @@ WHERE state = 'claimed' AND lease_expires_at <= ?1
 `
 
 // A claim the hub was asked to cancel ends cancelled when its lease lapses,
-// not lost (decision 0060): the runner may have withdrawn it on hearing the
+// not lost (decision 0061): the runner may have withdrawn it on hearing the
 // cancel before the answer confirming it, and owes no result for it. Runs
 // before LoseLapsedRuns, which would otherwise take it.
 func (q *Queries) CancelLapsedClaims(ctx context.Context, now int64) (int64, error) {
@@ -161,7 +161,7 @@ type CancelWithdrawnClaimsParams struct {
 
 // A claim the hub was asked to cancel that its runner no longer holds, left
 // out of a sync or held by a runner deregistering, was withdrawn, and ends
-// cancelled (decision 0060). A runner lists every run it holds until its
+// cancelled (decision 0061). A runner lists every run it holds until its
 // result is taken, so a claimed run it leaves out with no result is one it
 // never started. listed_json is the sync's run ids; empty for a runner
 // holding nothing.

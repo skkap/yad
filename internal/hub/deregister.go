@@ -94,7 +94,7 @@ func (h *Hub) deregister(ctx context.Context, in *deregisterInput) (*ackOutput, 
 //     was never a run held — and one in a session of its own is then ended
 //     with that session below, rather than re-offered to nobody;
 //   - a claim a cancel was asked for ends cancelled, as a sync leaving it out
-//     would end it (decision 0060): no sync said it started, and that end is
+//     would end it (decision 0061): no sync said it started, and that end is
 //     the one asked for;
 //   - the other runs it held are lost, because nobody is left to report them;
 //   - its open sessions close, and the runs waiting in them end. Such a run

@@ -390,7 +390,7 @@ runner's listing is answered never starts, and the runner drops it without
 reporting anything.
 
 **A claim you cancel that the runner withdraws ends `cancelled`, never `lost`**
-([0060](docs/decisions/0060-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
+([0061](docs/decisions/0061-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
 If the answer that acknowledged a claim is lost in transit, you hold the run
 as claimed while the runner is still waiting to hear so. A cancel you ask for
 then reaches it first, so it withdraws the claim — the run never starts and no
