@@ -136,7 +136,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 
 // accountVariableWarnings tells the owner about each variable in env that
 // chooses a harness's credential, which supervise.Scrub removes from every
-// child (decision 0058). An owner who exported ANTHROPIC_API_KEY expecting
+// child (decision 0059). An owner who exported ANTHROPIC_API_KEY expecting
 // runs to bill it would otherwise see them use the account and never learn
 // why. A warning and never a failure: the runner works as it should either
 // way, and this is only what it does with what it found.
@@ -150,7 +150,7 @@ func accountVariableWarnings(env []string) []string {
 	for _, name := range supervise.AccountVariables(env) {
 		why, _ := v1.AccountVariable(name)
 		out = append(out, fmt.Sprintf("%s is set in this environment, and yad removes it from every harness it starts: %s %s — "+
-			"a run uses its account's login instead, or the harness's own login when it has no accounts (decision 0058). "+
+			"a run uses its account's login instead, or the harness's own login when it has no accounts (decision 0059). "+
 			"To bill runs that way, add an account logged in with it; for a project's own use, a hub sends the value as a grant under another name", name, name, why))
 	}
 	return out

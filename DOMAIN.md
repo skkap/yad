@@ -170,7 +170,7 @@ _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
 [0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md),
 [0054](docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md),
 [0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md),
-[0058](docs/decisions/0058-the-owners-own-account-variables-are-removed-from-every-run.md)
+[0059](docs/decisions/0059-the-owners-own-account-variables-are-removed-from-every-run.md)
 
 **Hub login** — an account's login started from a hub: by **link**, where the
 runner runs the harness's own login and the hub shows its URL — and takes the

@@ -118,7 +118,7 @@ wanted any of this could simply ask the harness for it.
   `ANTHROPIC_API_KEY`, `ANTHROPIC_PROFILE`, `OPENAI_API_KEY`, base URL or any
   other name on it that is set where the daemon starts is removed from every
   harness, setup hook and git it runs, and `yad doctor` names each one it finds
-  ([0058](decisions/0058-the-owners-own-account-variables-are-removed-from-every-run.md)).
+  ([0059](decisions/0059-the-owners-own-account-variables-are-removed-from-every-run.md)).
   `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are the exception: with no accounts they
   are the harness's own login, and an account's home replaces them. To bill
   runs through an API key, log an account in with it; for a project that

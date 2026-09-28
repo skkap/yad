@@ -72,7 +72,7 @@ func privateDir(t *testing.T) string {
 
 // noAccountVariables empties every account variable the shell running the
 // tests exported, for a test that wants doctor to print no warning at all:
-// doctor warns about each one set (decision 0058), and a developer's own
+// doctor warns about each one set (decision 0059), and a developer's own
 // OPENAI_API_KEY is none of the test's business. Empty is enough, since an
 // empty one chooses nothing and doctor says nothing about it.
 func noAccountVariables(t *testing.T) {
@@ -414,7 +414,7 @@ func TestDoctorWarnsAboutAnExposedProfile(t *testing.T) {
 }
 
 // A variable that would choose a harness's credential over its account's is
-// removed from every run (decision 0058), and an owner who exported one meaning
+// removed from every run (decision 0059), and an owner who exported one meaning
 // runs to use it hears so from doctor: by name, never by value, as a warning
 // that stops nothing. The harness's own home is not one of them — with no
 // accounts it is the login runs use.
@@ -429,7 +429,7 @@ func TestDoctorWarnsAboutAnAccountVariable(t *testing.T) {
 	for _, want := range []string{
 		"warning: ANTHROPIC_PROFILE is set in this environment, and yad removes it from every harness it starts: ANTHROPIC_PROFILE names an Anthropic profile",
 		"warning: OPENAI_API_KEY is set in this environment",
-		"decision 0058",
+		"decision 0059",
 		"add an account logged in with it",
 		"No drivable harness",
 	} {

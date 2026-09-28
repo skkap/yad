@@ -613,7 +613,7 @@ for `codex`); the suite never runs a real harness.
   that chooses a harness's credential — `v1.AccountVariable`, the list a grant
   is refused by, but for the harness home variables, which are the harness's
   own login when it has no accounts —
-  [0058](docs/decisions/0058-the-owners-own-account-variables-are-removed-from-every-run.md)),
+  [0059](docs/decisions/0059-the-owners-own-account-variables-are-removed-from-every-run.md)),
   and a stderr tail kept at 2 KiB. A run's grants and its account's home and
   token are added after the scrub, which is why a grant may not name
   `ANTHROPIC_API_KEY` or any other variable that chooses the harness's
@@ -1342,7 +1342,7 @@ line here is a reviewed change.
   It also warns, by name and never by value, about each variable in its
   environment that would choose a harness's credential over an account's —
   removed from every run, so an owner who exported one meaning runs to use it
-  hears why they do not (0058). The daemon logs the same about its own
+  hears why they do not (0059). The daemon logs the same about its own
   environment at start, which a service manager may have set differently.
 - The operator-facing version of this section is
   [docs/run-it-safely.md](docs/run-it-safely.md).
