@@ -25,6 +25,15 @@ agent no longer names the terminal it ran in.
 | `steer` | `turn/steer` sent at the first tool call, answered in the same turn |
 | `approval` | `approval = "untrusted"`, `sandbox = "read-only"`: a command approval, declined |
 
+Recorded on 0.157.1 only, the one release installed when forks arrived
+(DEV-48, decision 0064); 0.147.0's schema has the same `thread/fork`, and its
+surface hash covers it, but no conversation of it was recorded:
+
+| Fixture | The run |
+|---|---|
+| `fork` | `thread/fork` of a thread asked to remember a word, with a context injected as on a resume, then a turn in the new thread answering with the word; the recorder checked the forked thread's rollout was not written to |
+| `fork-missing` | `thread/fork` of a thread Codex has no rollout for: the same `no rollout found` as a resume |
+
 Written by hand from `plain`, because they cannot be recorded without
 exhausting an account or a context window:
 

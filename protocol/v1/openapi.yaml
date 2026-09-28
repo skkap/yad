@@ -104,7 +104,7 @@ components:
           description: "false: this runner's owner has switched sources on the machine off, so a run with a path source, or a git source whose url is a path or file:// URL, fails with source_refused. Offer a run opening a session (session.new) with one to another runner; a run in a session already bound to this runner can go nowhere else, so offer it, and the refusal names the setting. Absent: the runner takes them inside the directories its owner allows. Never sent as true."
           type: boolean
         protocol_features:
-          description: "The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session, effort, login and accounts; live_sessions is reserved. accounts is per hub: a runner lists it only to a hub its owner lets add and remove accounts, and only beside login, so two hubs of one runner may be sent different lists and fingerprints. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."
+          description: "The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session, effort, fork, login and accounts; live_sessions is reserved. accounts is per hub: a runner lists it only to a hub its owner lets add and remove accounts, and only beside login, so two hubs of one runner may be sent different lists and fingerprints. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."
           items:
             type: string
           type: array
@@ -740,6 +740,9 @@ components:
     SessionRef:
       additionalProperties: true
       properties:
+        fork_from:
+          description: "Only with new true: open this session as a fork of the session named here — a new conversation that starts from a copy of that session's, as far as the harness has written it, and diverges from there, while the session forked goes on unchanged. Offer the run only to the runner that holds that session, and only while it advertises fork; the runner refuses it (class refused) for a session it does not hold for this hub, of another harness, or closed or closing. The fork gets its own workdir from its own sources, as any new session does; nothing of the forked session's workdir comes with it. Absent: the session starts with an empty conversation."
+          type: string
         id:
           description: The session's id, chosen by the hub. A session lives on the runner that claimed its first run and is continued only there.
           type: string

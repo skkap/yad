@@ -24,6 +24,13 @@ Under `claude-2.1.280/`:
 |---|---|
 | `tool-outcomes` | a Bash command that exits 3, one that succeeds, and a `Read` of no file: each result's `is_error` as Claude reports it |
 
+Under `claude-2.1.284/`, recorded for forks (DEV-48, decision 0064):
+
+| Fixture | The turn |
+|---|---|
+| `fork` | `--resume` of a session asked to remember a word, `--fork-session` and a new `--session-id`: the answer is the word, in the new session; the recorder checked the forked session's transcript was not written to |
+| `fork-missing` | the same flags naming a session that does not exist: `No conversation found` for the forked id, under the new one |
+
 A dead process, a truncated or garbled stream, an oversized line and a
 mismatched session are not recordable on demand; the tests derive them from
 these files (`derive` in `claude_test.go`).

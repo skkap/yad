@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -155,11 +156,19 @@ func fakeClaude() {
 		fakeClaudeAuth(args[1])
 		return
 	}
-	session, resume := "", false
+	session, resume, forked := "", false, ""
 	for i, a := range args {
 		if (a == "--session-id" || a == "--resume") && i+1 < len(args) {
 			session, resume = args[i+1], a == "--resume"
+			if resume {
+				forked = session
+			}
 		}
+	}
+	// --resume <forked> --fork-session --session-id <new>: the conversation
+	// forked is read, and the new one starts as a copy of it.
+	if !slices.Contains(args, "--fork-session") {
+		forked = ""
 	}
 	if f := os.Getenv(fakeClaudePID); f != "" {
 		os.WriteFile(f, []byte(strconv.Itoa(os.Getpid())), 0o600)
@@ -184,10 +193,17 @@ func fakeClaude() {
 	var earlier []byte
 	if dir := os.Getenv(fakeClaudeTranscripts); dir != "" {
 		var err error
-		earlier, err = os.ReadFile(filepath.Join(dir, session))
-		if resume && err != nil {
-			os.Stdout.WriteString(`{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["No conversation found with session ID: ` + session + `"],"session_id":` + strconv.Quote(session) + `}` + "\n")
+		read := session
+		if forked != "" {
+			read = forked
+		}
+		earlier, err = os.ReadFile(filepath.Join(dir, read))
+		if (resume || forked != "") && err != nil {
+			os.Stdout.WriteString(`{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["No conversation found with session ID: ` + read + `"],"session_id":` + strconv.Quote(session) + `}` + "\n")
 			os.Exit(1)
+		}
+		if forked != "" {
+			os.WriteFile(filepath.Join(dir, session), earlier, 0o600)
 		}
 	}
 	users, eof := make(chan struct{}, 16), make(chan struct{})
@@ -936,6 +952,81 @@ func testE2ESessionContinues(t *testing.T, h *e2eHarness) {
 	}
 	if res := result("e2e-third"); res.State != v1.RunFailed || res.Error == nil || res.Error.Class != "resume_rejected" {
 		t.Errorf("result = %+v (%+v)", res, res.Error)
+	}
+}
+
+// A fork, end to end (decision 0064): `yad hub submit --fork` opens a new
+// session whose first run has the forked session's conversation, the forked
+// session's next run has its own conversation and nothing of the fork's, and
+// each goes on as its own session afterwards — in two workdirs.
+func TestE2EForkedSessionDiverges(t *testing.T) { eachHarness(t, testE2EForkedSessionDiverges) }
+
+func testE2EForkedSessionDiverges(t *testing.T, h *e2eHarness) {
+	m := newMachine(t, h)
+	h.remember(t, t.TempDir())
+	argsFile := filepath.Join(t.TempDir(), "harness.starts")
+	t.Setenv(h.starts, argsFile)
+	d := m.daemon()
+	run := func(runID string, session []string, instruction, want string) {
+		t.Helper()
+		args := m.submitArgs(append(append([]string{"--run-id", runID}, session...), instruction)...)
+		if out := m.ok(args...); strings.TrimSpace(out) != runID {
+			t.Fatalf("submit printed %q", out)
+		}
+		if code, out, errs := m.watch(runID); code != 0 {
+			t.Fatalf("%s: watch exit %d: %s\n%s\ndaemon:\n%s", runID, code, errs, out, d.out.String())
+		}
+		r, err := m.client().Run(context.Background(), runID)
+		if err != nil || r.Result == nil {
+			t.Fatalf("run %s: %+v, %v", runID, r, err)
+		}
+		if r.Result.FinalText != want {
+			t.Errorf("%s answered %q, want %q", runID, r.Result.FinalText, want)
+		}
+	}
+
+	run("fork-a1", []string{"--new-session", "fork-a"}, "alpha", "earlier: nothing")
+	// A fork of a session the hub has never seen is refused at submit.
+	if code, _, errs := m.p.yad("", m.submitArgs("--fork", "fork-nowhere", "beta")...); code == 0 || !strings.Contains(errs, "fork-nowhere") {
+		t.Errorf("a fork of an unknown session: exit %d: %s", code, errs)
+	}
+	run("fork-b1", []string{"--new-session", "fork-b", "--fork", "fork-a"}, "beta", "earlier: alpha")
+	run("fork-a2", []string{"--session", "fork-a"}, "gamma", "earlier: alpha")
+	run("fork-b2", []string{"--session", "fork-b"}, "delta", "earlier: alpha | beta")
+
+	b, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(starts) != 4 || !strings.Contains(starts[1], h.forked) {
+		t.Fatalf("starts:\n%s\nwant the second one a fork (%q)", b, h.forked)
+	}
+	dirA, _, _ := strings.Cut(starts[0], " ")
+	dirB, _, _ := strings.Cut(starts[1], " ")
+	if dirA == dirB {
+		t.Errorf("the fork ran in the forked session's workdir %s", dirA)
+	}
+	var list []session
+	if err := json.Unmarshal([]byte(m.ok("sessions", "--json")), &list); err != nil {
+		t.Fatal(err)
+	}
+	natives := map[string]string{}
+	for _, s := range list {
+		natives[s.ID] = s.NativeID
+		if s.ID == "fork-b" && s.ForkFrom != "fork-a" {
+			t.Errorf("session fork-b lists fork_from %q", s.ForkFrom)
+		}
+	}
+	if len(list) != 2 || natives["fork-a"] == "" || natives["fork-b"] == "" || natives["fork-a"] == natives["fork-b"] {
+		t.Errorf("sessions = %+v: want two, each with its own conversation", list)
+	}
+	if !strings.Contains(starts[1], natives["fork-a"]) || !strings.Contains(starts[3], h.resumed(natives["fork-b"])) {
+		t.Errorf("starts:\n%s\nwant the fork to name %s and the fork's next run to resume %s", b, natives["fork-a"], natives["fork-b"])
+	}
+	s, err := m.client().Session(context.Background(), "fork-b")
+	if err != nil || s.ForkFrom != "fork-a" {
+		t.Errorf("the hub's session fork-b: %+v, %v", s, err)
 	}
 }
 

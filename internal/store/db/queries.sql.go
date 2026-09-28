@@ -842,7 +842,7 @@ func (q *Queries) ListReportingRuns(ctx context.Context, connection string) ([]R
 
 const listSessions = `-- name: ListSessions :many
 SELECT s.connection, s.id, s.harness, s.native_id, s.workdir, s.state, s.created_at, s.last_used_at,
-  s.close_reason, s.close_requested_at, s.closed_at, s.reclaimed_at, s.reported_at,
+  s.close_reason, s.close_requested_at, s.closed_at, s.reclaimed_at, s.reported_at, s.fork_from,
   CAST(COALESCE((SELECT r.id FROM runs r
     WHERE r.connection = s.connection AND r.session_id = s.id
       AND r.state IN ('claimed', 'preparing', 'running', 'waiting')), '') AS TEXT) AS live_run,
@@ -865,6 +865,7 @@ type ListSessionsRow struct {
 	ClosedAt         sql.NullInt64
 	ReclaimedAt      sql.NullInt64
 	ReportedAt       sql.NullInt64
+	ForkFrom         sql.NullString
 	LiveRun          string
 	Runs             int64
 }
@@ -894,6 +895,7 @@ func (q *Queries) ListSessions(ctx context.Context) ([]ListSessionsRow, error) {
 			&i.ClosedAt,
 			&i.ReclaimedAt,
 			&i.ReportedAt,
+			&i.ForkFrom,
 			&i.LiveRun,
 			&i.Runs,
 		); err != nil {

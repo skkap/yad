@@ -569,6 +569,96 @@ func TestResumeMismatch(t *testing.T) {
 	}
 }
 
+// A fork, recorded from 0.157.1 (decision 0064): thread/fork of the thread
+// forked, then the run's turn in the new thread Codex answered with, which
+// becomes the session's; the answer ("plum") comes from the forked thread's
+// history. The context is injected as on a resume. The recorder checked the
+// forked thread's rollout was left as it was.
+func TestFork(t *testing.T) {
+	h := &harness{fixture: fixture("fork")}
+	spec := h.spec(t)
+	spec.ForkFrom = "01a0e96e-93de-7143-a6cb-78e4214b4825"
+	spec.Brief.Context = "You are terse."
+	evs, out, tr := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunSucceeded || out.FinalText != "plum" {
+		t.Fatalf("outcome = %+v (%+v)", out, out.Error)
+	}
+	const fork = "01a0e96e-9e8d-77a2-8dcc-34ea72e844ec"
+	if out.NativeSessionID != fork || tr.NativeSessionID() != fork {
+		t.Errorf("native = %q, %q; want the new thread %s", out.NativeSessionID, tr.NativeSessionID(), fork)
+	}
+	s := h.seen(t)
+	p := s.params(t, "thread/fork")
+	if p["threadId"] != spec.ForkFrom || p["approvalPolicy"] != "never" || p["developerInstructions"] != spec.Brief.Context {
+		t.Errorf("thread/fork = %v", p)
+	}
+	if len(s.sent("thread/start")) != 0 || len(s.sent("thread/resume")) != 0 {
+		t.Error("a fork started or resumed a thread as well")
+	}
+	if len(s.sent("thread/inject_items")) != 1 {
+		t.Error("a fork's context was not injected before its turn")
+	}
+	if got := text(evs); got != "plum" {
+		t.Errorf("text = %q: something replayed reached the run", got)
+	}
+}
+
+// A fork of a thread Codex has no rollout for, recorded from 0.157.1:
+// session_not_found, which the executor names resume_rejected; no turn.
+func TestForkMissing(t *testing.T) {
+	h := &harness{fixture: fixture("fork-missing")}
+	spec := h.spec(t)
+	spec.ForkFrom = "01a0b86e-0000-7000-8000-000000000000"
+	_, out, tr := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassSessionNotFound {
+		t.Fatalf("outcome = %+v (%+v)", out, out.Error)
+	}
+	if !strings.Contains(out.Error.Message, "to fork") {
+		t.Errorf("message = %q, want the fork's next action", out.Error.Message)
+	}
+	if tr.NativeSessionID() != "" {
+		t.Errorf("native = %q: a fork that never happened has no thread", tr.NativeSessionID())
+	}
+	if len(h.seen(t).sent("turn/start")) != 0 {
+		t.Error("a turn was started after a failed fork")
+	}
+}
+
+// Codex answering thread/fork with the thread it was to fork is a fork that
+// did not take: the turn would run in the original. Stopped before it starts.
+func TestForkMismatch(t *testing.T) {
+	h := &harness{fixture: fixture("fork")}
+	spec := h.spec(t)
+	spec.ForkFrom = "01a0e96e-9e8d-77a2-8dcc-34ea72e844ec" // the thread the recording answered with
+	evs, out, tr := drive(t, context.Background(), spec, nil)
+	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassSessionMismatch {
+		t.Fatalf("outcome = %+v (%+v)", out, out.Error)
+	}
+	if !strings.Contains(out.Error.Message, "the fork did not take") || !slices.Contains(errorClasses(evs), adapter.ClassSessionMismatch) {
+		t.Errorf("message %q, events %v", out.Error.Message, errorClasses(evs))
+	}
+	if tr.NativeSessionID() != "" || out.NativeSessionID != "" {
+		t.Errorf("native = %q, %q: the forked thread must not become the session's", tr.NativeSessionID(), out.NativeSessionID)
+	}
+	if len(h.seen(t).sent("turn/start")) != 0 {
+		t.Error("a turn was started in the forked thread")
+	}
+}
+
+// A session past its fork resumes its own thread.
+func TestAForkWithItsOwnThreadResumesIt(t *testing.T) {
+	h := &harness{fixture: fixture("resume")}
+	spec := h.spec(t)
+	spec.NativeSessionID = "01a0b879-aaaa-7050-84ee-d1a30d4b696d"
+	spec.ForkFrom = "01a0e96e-93de-7143-a6cb-78e4214b4825"
+	if _, out, _ := drive(t, context.Background(), spec, nil); out.State != v1.RunSucceeded {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(h.seen(t).sent("thread/fork")) != 0 {
+		t.Error("a session with its own thread forked again")
+	}
+}
+
 // A malformed stored id is refused before anything starts.
 func TestDamagedThreadID(t *testing.T) {
 	h := &harness{fixture: fixture("plain")}

@@ -48,6 +48,8 @@ type e2eHarness struct {
 	// shows the resume of native.
 	fresh   string
 	resumed func(native string) string
+	// forked is how a start line shows a fork of another conversation.
+	forked string
 }
 
 var claudeE2E = &e2eHarness{
@@ -67,6 +69,7 @@ var claudeE2E = &e2eHarness{
 	remember: func(t *testing.T, dir string) { t.Setenv(fakeClaudeTranscripts, dir) },
 	fresh:    "--session-id ",
 	resumed:  func(native string) string { return "--resume " + native },
+	forked:   "--fork-session",
 }
 
 var codexE2E = &e2eHarness{
@@ -92,6 +95,7 @@ var codexE2E = &e2eHarness{
 	},
 	fresh:   "thread/start",
 	resumed: func(native string) string { return "thread/resume " + native },
+	forked:  "thread/fork",
 }
 
 var e2eHarnesses = []*e2eHarness{claudeE2E, codexE2E}

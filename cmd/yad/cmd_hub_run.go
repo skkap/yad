@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -73,7 +74,7 @@ func (f hubFlags) watchCommand(runID string) string {
 	return f.command([]string{"hub", "watch"}, runID)
 }
 
-const submitUsage = "usage: yad hub submit --harness h --model m [--effort level] [--context text | --context-file f] [--session id | --new-session id] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
+const submitUsage = "usage: yad hub submit --harness h --model m [--effort level] [--context text | --context-file f] [--session id | [--new-session id] [--fork session]] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
 
 // cmdHubSubmit queues a run and prints its id — alone on stdout, so a script
 // can capture it — or, with --watch, follows it to its end.
@@ -87,6 +88,7 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 	contextFile := fs.String("context-file", "", "read the context from this file")
 	session := fs.String("session", "", "continue this session, which the hub already has")
 	newSession := fs.String("new-session", "", "start a session with this id (default: a new one with a generated id)")
+	fork := fs.String("fork", "", "start the new session as a fork of this one: its conversation begins as a copy of that session's, which goes on unchanged; it runs on that session's runner, which must advertise the fork feature")
 	runID := fs.String("run-id", "", "the run's id, to make a retried submit safe (default: generated)")
 	watch := fs.Bool("watch", false, "follow the run until it ends, as `yad hub watch` does")
 	gitURL := fs.String("git", "", "a repository the run works in, checked out as a worktree on the runner")
@@ -102,6 +104,9 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 	}
 	if *session != "" && *newSession != "" {
 		return errors.New("--session continues a session and --new-session starts one — pass one of them")
+	}
+	if *session != "" && *fork != "" {
+		return errors.New("--fork starts a new session from another's conversation, and --session continues one — pass --fork, with --new-session to choose the new session's id")
 	}
 	if *contextText != "" && *contextFile != "" {
 		return errors.New("pass --context or --context-file, not both")
@@ -141,8 +146,14 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 	switch {
 	case *session != "":
 		req.Session = &hubapi.SessionChoice{ID: *session}
-	case *newSession != "":
-		req.Session = &hubapi.SessionChoice{ID: *newSession, New: true}
+	case *newSession != "" || *fork != "":
+		id := *newSession
+		if id == "" {
+			// The service API names a fork's session only when it is given
+			// one, so the id a hub would have generated is made here.
+			id = "ses_" + strings.ToLower(rand.Text())
+		}
+		req.Session = &hubapi.SessionChoice{ID: id, New: true, ForkFrom: *fork}
 	}
 	c, err := hf.client()
 	if err != nil {
