@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -503,5 +504,94 @@ func TestAFailedInterruptIsRetried(t *testing.T) {
 	}
 	if !slices.Equal(classes, []string{ClassInterrupt}) {
 		t.Errorf("error events %v", classes)
+	}
+}
+
+// losesAnswer is a hub whose answer to the armed sync never reaches the
+// runner: the hub handles the sync in full, and the runner hears only that it
+// failed.
+type losesAnswer struct {
+	Hub
+	mu    sync.Mutex
+	armed bool
+}
+
+func (h *losesAnswer) Sync(ctx context.Context, runnerID string, req v1.SyncRequest) (v1.SyncResponse, error) {
+	out, err := h.Hub.Sync(ctx, runnerID, req)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.armed && err == nil {
+		h.armed = false
+		return v1.SyncResponse{}, errors.New("the answer was lost in transit")
+	}
+	return out, err
+}
+
+func (h *losesAnswer) arm() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.armed = true
+}
+
+// DEV-114: the hub claims a run, the answer saying so is lost, and the hub
+// is asked to cancel the run it counts as claimed. The runner hears the
+// cancel before any acknowledgement, so it withdraws the claim and owes no
+// result (decision 0019). The hub asked for this ending, so it records the
+// run cancelled, not lost, whether it learns of the withdrawal from the next
+// sync leaving the run out or from the lease lapsing with no sync at all.
+func TestACancelledClaimWhoseAnswerWasLostEndsCancelled(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		settle func(t *testing.T, e *env, l *Loop)
+	}{
+		{"the next sync leaves it out", func(t *testing.T, e *env, l *Loop) {
+			if res := mustSync(t, l); len(cancels(res)) != 0 {
+				t.Errorf("cancels %v for a run the runner no longer lists", cancels(res))
+			}
+		}},
+		{"its lease lapses", func(t *testing.T, e *env, l *Loop) {
+			e.skew.Store(int64(10 * time.Minute))
+			if err := e.hub.Sweep(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			l := e.loop(t, 1)
+			h := &losesAnswer{Hub: l.Hub}
+			l.Hub = h
+			e.enqueue(t, testRun("a", "s1"))
+			ad := fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}})
+			l.Executor = e.executor(ad)
+			mustSync(t, l) // offered, and claimed here
+			h.arm()
+			if _, err := l.SyncOnce(context.Background()); err == nil {
+				t.Fatal("the armed sync's answer arrived")
+			}
+			if got := e.hubState(t, "a"); got != "claimed" {
+				t.Fatalf("hub state %s after the listing, want claimed", got)
+			}
+			if _, err := e.api(t).Cancel(context.Background(), "a"); err != nil {
+				t.Fatal(err)
+			}
+			if res := mustSync(t, l); !slices.Equal(cancels(res), []string{"a"}) {
+				t.Fatalf("cancels %v", cancels(res))
+			}
+			if l.isPending("a") || l.Pool.Free() != 1 {
+				t.Fatalf("the claim was not withdrawn: free %d", l.Pool.Free())
+			}
+			tc.settle(t, e, l)
+
+			if got := e.hubState(t, "a"); got != "cancelled" {
+				t.Errorf("hub state %s, want cancelled", got)
+			}
+			if len(ad.Starts) != 0 {
+				t.Errorf("the harness was started: %+v", ad.Starts)
+			}
+			if res, ok := outboxResult(t, e, "a"); ok {
+				t.Errorf("a withdrawn claim owes no result, and one is queued: %+v", res)
+			}
+		})
 	}
 }

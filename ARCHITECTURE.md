@@ -128,7 +128,7 @@ Contract: [HUB.md §3](HUB.md#3-the-calls), one call at a time, and
 | `POST /runners/{runner}/sync` | the periodic call: state and health in; runs, control messages and the next interval out |
 | `POST /runs/{run}/events` | a batch of events, idempotent by `(run, seq)`; answers `acked_through` |
 | `POST /runs/{run}/result` | the terminal state, idempotent; retried from the outbox until acknowledged |
-| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost, requeues its offers, and closes its sessions, ending the runs queued in them |
+| `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost (a claim it has asked to cancel, cancelled — 0061), requeues its offers, and closes its sessions, ending the runs queued in them |
 
 Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
@@ -213,7 +213,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   in the run's claim to the executor rather than arriving ahead of it (DEV-113).
   A cancel in that answer withdraws the claim; an interrupt starts the run
   already stopped, so it ends `cancelled` with a result, and a steer waits
-  for the harness.
+  for the harness. A withdrawn claim leaves the next listing, and the hub
+  ends it `cancelled` — at that sync, or when its lease lapses — rather than
+  `lost`: a lost answer can put a claim the hub counts as held in that state
+  ([0061](docs/decisions/0061-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
 - **Drain** — [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md).
   A hub sends `drain` only to a runner advertising the `drain` feature, and
   repeats it until a sync's health says `draining`. A draining runner declares
@@ -300,7 +303,8 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
 - **Sessions stay put.** The first claim in a session binds it to that runner;
   its later runs are offered to that runner alone, one at a time.
 - **Lease.** Every sync renews the lease on every run it lists. A run whose lease
-  lapses (default: four missed intervals) is **lost** on the hub's side. The
+  lapses (default: four missed intervals) is **lost** on the hub's side — a
+  claim the hub has asked to cancel, **cancelled** (0061). The
   lease a hub names is never shorter than the interval it names beside it: a
   shorter one lapses on a runner that synced exactly when it was asked to, so
   the hub takes back the runs of a runner doing everything right. The four
@@ -612,10 +616,18 @@ for `codex`); the suite never runs a real harness.
 
 - **One spawn point.** Every child — harness, git, setup hook, `--version` probe —
   starts through `supervise.Start`: its own process group, a scrubbed environment
-  (`CLAUDECODE`, every `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY` unless configured,
-  anything `YAD_*`), and a stderr tail kept at 2 KiB. A run's grants are added
-  after the scrub, which is why a grant may not name `ANTHROPIC_API_KEY` or any
-  other variable that chooses the harness's credential (0040). git and setup hooks start
+  (`CLAUDECODE`, every `CLAUDE_CODE_*`, anything `YAD_*`, and every variable
+  that chooses a harness's credential — `v1.AccountVariable`, the list a grant
+  is refused by, but for the harness home variables, which are the harness's
+  own login when it has no accounts —
+  [0060](docs/decisions/0060-the-owners-own-account-variables-are-removed-from-every-run.md)),
+  and a stderr tail kept at 2 KiB. A run's grants and its account's home and
+  token are added after the scrub, which is why a grant may not name
+  `ANTHROPIC_API_KEY` or any other variable that chooses the harness's
+  credential (0040). The check that decides whether an account can take a run
+  (`account.LoggedIn`) gets the environment the run gets, or it answers about a
+  different credential (DEV-26; the rule, and `OwnLogin`'s one deliberate
+  difference, are on `Spec.KeepEnv`). git and setup hooks start
   with `NoTTY` — a session of their own, no controlling terminal — so nothing
   they run can prompt. A host tool a run uses is the one detection resolved
   ([0045](docs/decisions/0045-runs-use-the-host-tools-detection-resolved.md)):
@@ -1344,6 +1356,11 @@ line here is a reviewed change.
   an exposed **data** directory before binding the socket. Nothing refuses an
   exposed `state.db`, `hub.db` or `config.toml`, and nothing else looks at the
   config directory — which is why doctor is where an owner hears about those.
+  It also warns, by name and never by value, about each variable in its
+  environment that would choose a harness's credential over an account's —
+  removed from every run, so an owner who exported one meaning runs to use it
+  hears why they do not (0060). The daemon logs the same about its own
+  environment at start, which a service manager may have set differently.
 - The operator-facing version of this section is
   [docs/run-it-safely.md](docs/run-it-safely.md).
 

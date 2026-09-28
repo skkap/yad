@@ -126,6 +126,58 @@ func (q *Queries) BurnRegistrationToken(ctx context.Context, arg BurnRegistratio
 	return result.RowsAffected()
 }
 
+const cancelLapsedClaims = `-- name: CancelLapsedClaims :execrows
+UPDATE runs SET state = 'cancelled', reason = 'cancelled before its runner started it; the runner stopped syncing and its lease lapsed',
+  lease_expires_at = NULL, updated_at = ?1
+WHERE state = 'claimed' AND lease_expires_at <= ?1
+  AND EXISTS (SELECT 1 FROM run_controls c WHERE c.run_id = runs.id AND c.kind = 'cancel')
+`
+
+// A claim the hub was asked to cancel ends cancelled when its lease lapses,
+// not lost (decision 0061): the runner may have withdrawn it on hearing the
+// cancel before the answer confirming it, and owes no result for it. Runs
+// before LoseLapsedRuns, which would otherwise take it.
+func (q *Queries) CancelLapsedClaims(ctx context.Context, now int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelLapsedClaims, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const cancelWithdrawnClaims = `-- name: CancelWithdrawnClaims :execrows
+UPDATE runs SET state = 'cancelled', reason = ?1, lease_expires_at = NULL, updated_at = ?2
+WHERE runner_id = ?3 AND state = 'claimed'
+  AND id NOT IN (SELECT value FROM json_each(?4))
+  AND EXISTS (SELECT 1 FROM run_controls c WHERE c.run_id = runs.id AND c.kind = 'cancel')
+`
+
+type CancelWithdrawnClaimsParams struct {
+	Reason     sql.NullString
+	Now        int64
+	RunnerID   sql.NullString
+	ListedJson interface{}
+}
+
+// A claim the hub was asked to cancel that its runner no longer holds, left
+// out of a sync or held by a runner deregistering, was withdrawn, and ends
+// cancelled (decision 0061). A runner lists every run it holds until its
+// result is taken, so a claimed run it leaves out with no result is one it
+// never started. listed_json is the sync's run ids; empty for a runner
+// holding nothing.
+func (q *Queries) CancelWithdrawnClaims(ctx context.Context, arg CancelWithdrawnClaimsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelWithdrawnClaims,
+		arg.Reason,
+		arg.Now,
+		arg.RunnerID,
+		arg.ListedJson,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const clearDrain = `-- name: ClearDrain :exec
 UPDATE runners SET drain_requested_at = NULL WHERE id = ?
 `

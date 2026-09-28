@@ -160,13 +160,19 @@ window resets soonest takes the next run. Hubs see an account's label, state
 and reset time, never its credentials.
 _Rules_: An account is listed only once its harness's own login check says yes;
 a login that does not take adds nothing. A harness with no accounts runs on its
-own default login, and the first account added takes that login's place.
+own default login, and the first account added takes that login's place. A
+run's credential is its account's and nothing else: a variable that would
+choose another — an API key, a profile, a base URL — refuses the run when a
+hub sends it as a grant, and is removed from every run when the owner's
+environment holds it; a harness is asked whether an account can take a run in
+the environment its runs get.
 _Kinds_: free | limited | needs_login
 _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
 [0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md),
 [0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md),
 [0054](docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md),
-[0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)
+[0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md),
+[0060](docs/decisions/0060-the-owners-own-account-variables-are-removed-from-every-run.md)
 
 **Hub login** — an account's login started from a hub: by **link**, where the
 runner runs the harness's own login and the hub shows its URL — and takes the
@@ -308,7 +314,10 @@ _See_: [0005](docs/decisions/0005-pull-by-periodic-sync.md)
 **Claim** — a runner taking a run offered in a sync. **Lease** — the hub's
 promise that an offered or claimed run is this runner's for now; each sync
 renews a claimed run's, and a lease that lapses puts an unclaimed offer back in
-the queue and makes a claimed run **lost** from the hub's side.
+the queue and makes a claimed run **lost** from the hub's side — or
+**cancelled**, for a claim the hub had asked to cancel, which the runner may
+have withdrawn unstarted
+([0061](docs/decisions/0061-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
 **Abandon-after** — how long a hub lets a runner go without a sync before it
 closes that runner's sessions; the runner keeps its credential.
 _See_: [0046](docs/decisions/0046-a-silent-runner-loses-its-offers-with-the-lease-and-its-sessions-after-a-day.md)

@@ -201,6 +201,81 @@ func TestLapsedLeaseLosesTheRun(t *testing.T) {
 	}
 }
 
+// A claim the hub was asked to cancel ends cancelled once the runner no longer
+// holds it — the next sync leaves it out, the lease lapses, or the runner
+// deregisters — because the runner withdraws a claim it hears cancelled before
+// any answer confirmed it, and owes no result (decisions 0019, 0061). Every
+// other way a held run ends unreported is still lost: nobody asked for it to
+// end, or the run had started and a result was owed.
+func TestAWithdrawnCancelledClaimEndsCancelled(t *testing.T) {
+	type step func(t *testing.T, f *fixture, cred string)
+	var (
+		leftOut step = func(t *testing.T, f *fixture, cred string) {
+			if res := f.mustSync(t, "r1", cred, req("r1", 1)); len(cancels(res)) != 0 {
+				t.Errorf("cancels %v for a run the runner no longer lists", cancels(res))
+			}
+		}
+		lapses step = func(t *testing.T, f *fixture, cred string) {
+			f.clock.Advance(4 * DefaultSyncInterval)
+			if err := f.hub.Sweep(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		deregisters step = func(t *testing.T, f *fixture, cred string) {
+			if code, env := f.deregister(t, "r1", cred, ""); code != http.StatusOK {
+				t.Fatalf("deregister: %d %+v", code, env)
+			}
+		}
+	)
+	for _, tc := range []struct {
+		name   string
+		held   v1.RunState
+		cancel bool
+		end    step
+		state  string
+		reason string
+	}{
+		{"cancelled, and the next sync leaves it out", v1.RunClaimed, true, leftOut, "cancelled", "the runner withdrew its claim"},
+		{"cancelled, and its lease lapses", v1.RunClaimed, true, lapses, "cancelled", "its lease lapsed"},
+		{"cancelled, and its runner deregisters", v1.RunClaimed, true, deregisters, "cancelled", "the runner deregistered"},
+		// Nobody asked: a claim left out stays held until its lease says
+		// otherwise, and then it is lost.
+		{"not cancelled, and the next sync leaves it out", v1.RunClaimed, false, leftOut, "claimed", ""},
+		{"not cancelled, and its lease lapses", v1.RunClaimed, false, lapses, "lost", "lease lapsed"},
+		{"not cancelled, and its runner deregisters", v1.RunClaimed, false, deregisters, "lost", "deregistered"},
+		// Started: the runner owed a result, and none came.
+		{"running and cancelled, and its lease lapses", v1.RunRunning, true, lapses, "lost", "lease lapsed"},
+		{"running and cancelled, and its runner deregisters", v1.RunRunning, true, deregisters, "lost", "deregistered"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			cred := f.register(t, "r1")
+			f.enqueue(t, run("a", "s1"))
+			f.mustSync(t, "r1", cred, first("r1", 1))
+			f.mustSync(t, "r1", cred, req("r1", 0, v1.HeldRun{RunID: "a", State: tc.held}))
+			if tc.cancel {
+				if code, e := f.api(t, "POST", "/runs/a/cancel", f.admin(t, "cli"), nil, nil); code != http.StatusOK {
+					t.Fatalf("cancel: %d %s", code, e.Message)
+				}
+				// The answer that carries the cancel: a runner that heard no
+				// acknowledgement withdraws the claim on reading it.
+				res := f.mustSync(t, "r1", cred, req("r1", 0, v1.HeldRun{RunID: "a", State: tc.held}))
+				if got := cancels(res); !slices.Equal(got, []string{"a"}) {
+					t.Fatalf("cancels %v, want [a]", got)
+				}
+			}
+			tc.end(t, f, cred)
+			r, err := f.store.GetRun(context.Background(), "a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.State != tc.state || !strings.Contains(r.Reason.String, tc.reason) {
+				t.Errorf("state %s, reason %q; want %s, with %q", r.State, r.Reason.String, tc.state, tc.reason)
+			}
+		})
+	}
+}
+
 // Each sync renews the lease, so a runner that keeps syncing keeps its runs
 // however long they take.
 func TestSyncRenewsTheLease(t *testing.T) {

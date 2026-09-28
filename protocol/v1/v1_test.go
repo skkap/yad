@@ -333,6 +333,40 @@ func TestGrantNames(t *testing.T) {
 	}
 }
 
+// AccountVariable is the list Grant.Validate refuses, entry for entry, and the
+// Grant.Name doc a hub author reads names every entry. The runner removes the
+// same names from the owner's environment through AccountVariable, and
+// internal/account reads them back from that doc to check it (DEV-62) — so a
+// name added to the list and not to the doc would be refused and never
+// checked there.
+func TestAccountVariableIsTheGrantList(t *testing.T) {
+	f, _ := reflect.TypeFor[Grant]().FieldByName("Name")
+	doc := f.Tag.Get("doc")
+	for name, want := range accountGrantNames {
+		for _, n := range []string{name, strings.ToLower(name)} {
+			if why, ok := AccountVariable(n); !ok || why != want {
+				t.Errorf("AccountVariable(%s) = %q, %v; want the list's reason", n, why, ok)
+			}
+		}
+		if !strings.Contains(doc, name) {
+			t.Errorf("the Grant.Name doc does not name %s", name)
+		}
+	}
+	for _, d := range accountGrantPrefixes {
+		if why, ok := AccountVariable(d.prefix + "NEXT"); !ok || why != d.why {
+			t.Errorf("AccountVariable(%sNEXT) = %q, %v; want the prefix's reason", d.prefix, why, ok)
+		}
+		if !strings.Contains(doc, d.prefix) {
+			t.Errorf("the Grant.Name doc does not name the prefix %s", d.prefix)
+		}
+	}
+	for _, name := range []string{"PATH", "HOME", "LD_PRELOAD", "ANTHROPIC_MODEL", "MY_OPENAI_API_KEY", "ANTHROPIC_BEDROCK_BASE_URL", "CLAUDE_CODE_USER", ""} {
+		if why, ok := AccountVariable(name); ok {
+			t.Errorf("AccountVariable(%q) = %q, true; it moves no account", name, why)
+		}
+	}
+}
+
 // Two file grants whose names differ only by case are one file where the
 // filesystem folds case, and the second would silently overwrite the first.
 // Two env grants by those names are two variables, and both arrive: the

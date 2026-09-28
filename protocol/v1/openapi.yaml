@@ -821,7 +821,7 @@ components:
             $ref: "#/components/schemas/Control"
           type: array
         lease_ms:
-          description: "How long the hub holds each run named in this answer for this runner without hearing from it, measured on the hub from when it handled this sync: every run offered here, and every run the request listed. A listed run the lease lapses on is lost. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."
+          description: "How long the hub holds each run named in this answer for this runner without hearing from it, measured on the hub from when it handled this sync: every run offered here, and every run the request listed. A listed run the lease lapses on is lost, except a claim the hub has asked to cancel, which ends cancelled: the runner may have withdrawn it unstarted. An offered run the lease lapses on, never claimed, goes back in the queue and may be offered to any runner; a claim listed after that is answered with a cancel. Never shorter than next_sync_ms."
           format: int64
           type: integer
         min_version:
@@ -983,7 +983,7 @@ paths:
       summary: Exchange a registration token for a runner credential
   /runners/{runner}/deregister:
     post:
-      description: "Runs the runner still holds become lost on the hub's side; runs offered to it and never claimed go back in the queue. Every session bound to that runner closes, and the runs still queued in them fail: a session is resumable only on the runner that holds it, so a run left in one would be offerable to no runner at all. The binding is never cleared instead — the session's state is on that machine. The credential stops working at once. The runner's id and its history stay, so registering again with a token issued for that runner brings it back, with new sessions."
+      description: "Runs the runner still holds become lost on the hub's side, but for a claim the hub was asked to cancel, which ends cancelled; runs offered to it and never claimed go back in the queue. Every session bound to that runner closes, and the runs still queued in them fail: a session is resumable only on the runner that holds it, so a run left in one would be offerable to no runner at all. The binding is never cleared instead — the session's state is on that machine. The credential stops working at once. The runner's id and its history stay, so registering again with a token issued for that runner brings it back, with new sessions."
       operationId: deregister
       parameters:
         - description: The protocol major version.
@@ -1062,7 +1062,7 @@ paths:
       summary: Retire this runner's credential
   /runners/{runner}/sync:
     post:
-      description: "Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed here was never received: it goes back in the queue at this sync, and may be offered again in this answer. An offer carries the same lease_ms as a claim: one not claimed within it goes back in the queue, for this runner or any other, and a claim listed after that is refused with a cancel, as a lapsed claim is. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — is answered with a cancel control for that run. A runner that does not sync for longer than the hub's abandon-after (yad hub: 24 h, --abandon-after) has every session bound to it closed and the runs queued in them ended, and keeps its credential: its next sync is answered normally, with close_session for each of those sessions until it reports the close."
+      description: "Every run listed is claimed or has its lease renewed. A run offered in the previous response and not listed here was never received: it goes back in the queue at this sync, and may be offered again in this answer. An offer carries the same lease_ms as a claim: one not claimed within it goes back in the queue, for this runner or any other, and a claim listed after that is refused with a cancel, as a lapsed claim is. A listed run this runner does not hold — never offered to it, offered to another, or already finished or lost — is answered with a cancel control for that run. A claim the hub was asked to cancel that a sync leaves out was withdrawn by the runner, which heard the cancel before any answer confirmed the claim; it ends cancelled, as it does when its lease lapses, not lost. A runner that does not sync for longer than the hub's abandon-after (yad hub: 24 h, --abandon-after) has every session bound to it closed and the runs queued in them ended, and keeps its credential: its next sync is answered normally, with close_session for each of those sessions until it reports the close."
       operationId: sync
       parameters:
         - description: The protocol major version.
