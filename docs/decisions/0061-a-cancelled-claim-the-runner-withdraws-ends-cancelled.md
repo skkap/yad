@@ -47,6 +47,22 @@ a close asked for is closed on the runner rather than deleted, and the hub is
 waiting for that report; a lapsed lease cannot tell a withdrawal from silence,
 and a departed runner's sessions close. Each of those stays bound.
 
+**So does a lapsed claim the runner comes back listing as `claimed`**
+(DEV-148): the answer acknowledging it was lost, and then the runner was
+silent past the lease, so the hub ended the run — `lost`, or `cancelled`
+under the rule above — and answers the listing with a cancel. A claim still
+listed as `claimed` is one no answer acknowledged, and the hub will never
+send one now, so the runner withdraws it, and the session it opened, at
+whichever cancel it hears first. `yad hub` unbinds the session at that
+answer, under the same rules as the withdrawal above, rather than waiting
+for a sync to leave the claim out, which would add nothing. A run listed
+`preparing` or later started, and keeps its session; so does a run with a
+start moment, whose acknowledged claim the runner lists as `claimed` until
+the moment, where the listing cannot tell a lost answer from a kept session.
+The answer carrying such a cancel offers nothing in the run's session: a
+runner stops a run it is executing only after claiming the offers beside the
+cancel, and refuses a second live run in a session.
+
 No protocol shape changes. Conformance cannot check it — only a hub's own API
 asks for a cancel — so it joins the controls on the suite's not-checked list.
 

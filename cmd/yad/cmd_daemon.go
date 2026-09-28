@@ -148,13 +148,16 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	// document built before it exists must still name the owner's accounts.
 	// A read that fails is not a reason not to start — the labels are still
 	// reported, free, which is what a runner with no limits would say.
+	noted := modelsNoted{}
 	build := func() v1.Capabilities {
 		now := lists.Lists()
 		accounts, err := account.Read(runCtx, g.paths, now, time.Now())
 		if err != nil {
 			log.Warn("could not read account states; reporting the owner's accounts as free", "err", err)
 		}
-		return capability.Build(runCtx, id, now.Apply(cfg), accounts)
+		doc := capability.Build(runCtx, id, now.Apply(cfg), accounts)
+		noted.note(log, capability.ModelsFailures())
+		return doc
 	}
 	doc := build()
 	last := capability.Fingerprint(doc)
@@ -289,6 +292,34 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	}
 }
 
+// modelsNoted is the reason the daemon last logged for each login, by harness
+// and account label, whose harness would not say which models it offers. The
+// document is rebuilt every interval and a failed ask is retried every few
+// minutes, so a harness that stays too old would otherwise say so all day:
+// a reason is logged when it appears or changes, and its clearing once.
+type modelsNoted map[[2]string]string
+
+func (n modelsNoted) note(log *slog.Logger, failing []capability.ModelsFailure) {
+	now := map[[2]string]bool{}
+	for _, f := range failing {
+		k := [2]string{f.Harness, f.Account}
+		now[k] = true
+		if n[k] == f.Reason {
+			continue
+		}
+		n[k] = f.Reason
+		// The reason is an attribute, so it stays on the machine: a hub's
+		// health hears this message and nothing else (healthErrors).
+		log.Warn("a harness did not say which models it offers, so hubs are sent the last list it gave, the catalog's, or none", "harness", f.Harness, "account", f.Account, "reason", f.Reason)
+	}
+	for k := range n {
+		if !now[k] {
+			delete(n, k)
+			log.Info("a harness that did not say which models it offers has answered, or is no longer asked", "harness", k[0], "account", k[1])
+		}
+	}
+}
+
 // shownOnlyToAPerson is w when a person can be reading it, and io.Discard
 // when it is a file or pipe a supervisor captures. A writer that is not an
 // *os.File is the caller's own, kept as it is.
@@ -365,6 +396,9 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 	st.Sessions, st.SpoolDepth, st.OutboxDepth = snap.Sessions, snap.Spool, snap.Outbox
 	for _, r := range recent.Records() {
 		st.Errors = append(st.Errors, control.LogRecord{Time: r.Time, Level: r.Level.String(), Message: r.Message, Attrs: r.Attrs})
+	}
+	for _, f := range capability.ModelsFailures() {
+		st.ModelsFailures = append(st.ModelsFailures, control.ModelsFailure{Harness: f.Harness, Account: f.Account, Reason: f.Reason, Since: f.Since})
 	}
 	if err != nil {
 		st.Errors = append(st.Errors, control.LogRecord{Time: time.Now(), Level: slog.LevelError.String(),

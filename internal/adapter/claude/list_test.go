@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -111,17 +113,20 @@ func TestListModelsFailures(t *testing.T) {
 		lines []string
 		env   map[string]string
 		want  string
+		// kind is what the caller words its reason by (DEV-146); nil is a
+		// Claude that ended before it answered, which wraps none.
+		kind error
 		// exitFirst holds the request until Claude has exited.
 		exitFirst bool
 		// asked is how many list_models requests Claude read; -1 is either.
 		asked int
 	}{
 		{"refused", []string{`{"type":"control_response","response":{"subtype":"error","request_id":"yad-list-models","error":"Unsupported control request subtype: list_models at /Users/someone"}}`},
-			nil, "refused list_models", false, 1},
-		{"nothing listed", []string{answer(`{"value":"claude-x","disabled":true}`)}, nil, "listed no models", false, 1},
-		{"died", startup, map[string]string{"CLAUDE_TEST_MODE": "died"}, died, false, -1},
-		{"died before it was asked", startup, map[string]string{"CLAUDE_TEST_MODE": "died"}, died, true, 0},
-		{"died when asked", startup, map[string]string{"CLAUDE_TEST_MODE": "died-when-asked"}, died, false, 1},
+			nil, "refused list_models", adapter.ErrModelsRefused, false, 1},
+		{"nothing listed", []string{answer(`{"value":"claude-x","disabled":true}`)}, nil, "listed no models", adapter.ErrModelsUnread, false, 1},
+		{"died", startup, map[string]string{"CLAUDE_TEST_MODE": "died"}, died, nil, false, -1},
+		{"died before it was asked", startup, map[string]string{"CLAUDE_TEST_MODE": "died"}, died, nil, true, 0},
+		{"died when asked", startup, map[string]string{"CLAUDE_TEST_MODE": "died-when-asked"}, died, nil, false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.exitFirst {
@@ -141,7 +146,25 @@ func TestListModelsFailures(t *testing.T) {
 			if n := len(s.frames("control_request")); tc.asked >= 0 && n != tc.asked {
 				t.Errorf("claude read %d list_models requests, want %d", n, tc.asked)
 			}
+			for _, k := range []error{adapter.ErrModelsNoStart, adapter.ErrModelsRefused, adapter.ErrModelsUnread} {
+				if got, want := errors.Is(err, k), k == tc.kind; got != want {
+					t.Errorf("errors.Is(err, %v) = %v, want %v; err %v", k, got, want, err)
+				}
+			}
 		})
+	}
+}
+
+// A claude that cannot be started says so by its kind, and keeps the cause
+// for the log of whoever reads it.
+func TestListModelsNoStart(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(bin, []byte("not a program"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ListModels(context.Background(), bin, t.TempDir(), nil)
+	if !errors.Is(err, adapter.ErrModelsNoStart) || !strings.Contains(err.Error(), "would not start") {
+		t.Errorf("err = %v, want a start failure", err)
 	}
 }
 
