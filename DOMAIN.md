@@ -227,11 +227,15 @@ its hub is told why ([0035](docs/decisions/0035-a-runner-reports-every-close-in-
 When its runner deregisters, the hub closes it on its own and ends the runs
 still queued in it: the session is never handed to another runner, since it is
 resumable only on the one that went.
+A session may be opened as a **fork** of another on the same runner: its
+conversation starts as the harness's copy of that one's, and the two diverge —
+the one forked goes on untouched. A fork is a session like any other from its
+first run on, with its own workdir.
 _States_: open | closed (its hub or its owner closed it) | expired (the idle TTL
 or disk pressure did)
 _Avoid_: thread, conversation, chat — as names for this; Codex's "thread" is the
 native id underneath
-_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), `internal/store`
+_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), [0064](docs/decisions/0064-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md), `internal/store`
 
 **Run** — one turn executed against one session, by one harness, on one model:
 one prompt in, one terminal state out. The unit of work claimed, streamed and

@@ -508,7 +508,9 @@ explicitly — a runner infers none of them — and carries a `brief` (the
 an optional `effort` (how hard the harness thinks, in its own terms,
 as `model` is), optional `sources` to build the session's working directory
 from, optional `grants` (§9), and optional timings: `start_at`, `max_wait_ms`,
-`wall_clock_ms` and `inactivity_ms`. The document describes each field and its
+`wall_clock_ms` and `inactivity_ms`. A run opening a session may also name,
+in `session.fork_from`, a session whose conversation the new one starts from
+(§8). The document describes each field and its
 absent case.
 
 There is deliberately no permission, sandbox or tool-policy field. A hub
@@ -569,6 +571,8 @@ and not your input. Here is all of it:
 - `run_id`, `session.id`, `harness`, `model` and `brief.instruction` are each
   non-empty.
 - `session.mode`, when given, is `per_run` or `live`.
+- `session.fork_from`, when given, rides on a run with `session.new: true` and
+  names another session than `session.id`.
 - `effort`, when given, is at most 64 bytes of letters, digits, `-` and `_`.
   Which levels exist is the harness's business; the shape is the runner's,
   because a harness's refusal quotes the word, and a long one hides it (§7).
@@ -666,6 +670,13 @@ advertises none the run stays queued, and a run continuing a session bound to
 a runner that does not advertise it (§8) is never offered at all — tell
 whoever submitted it, or submit it without the effort.
 
+**A fork only to the runner holding what it forks.** A run opening a session
+with `session.fork_from` goes only to the runner the forked session is bound
+to — the transcript it copies is there and nowhere else — and only while that
+runner advertises `fork`. Like an `effort`, it never lapses, and it can go
+nowhere else: hold it until that runner advertises the feature, and end it
+when that runner goes (§5, §8).
+
 **Only sources the runner takes.** A runner whose owner has switched sources
 on the machine off says so in its capability document, `path_sources: false`;
 absent, it takes them, and no runner sends `true`. Such a runner fails a run
@@ -723,7 +734,7 @@ these are the ones worth acting on:
 
 | class | state | what it means for you |
 |---|---|---|
-| `refused` | failed | the runner would not take the run — invalid, a harness it cannot drive, a session rule broken, an `effort` for a harness whose effort it cannot set. Retrying the same run changes nothing; the message says why |
+| `refused` | failed | the runner would not take the run — invalid, a harness it cannot drive, a session rule broken (a fork of a session it cannot fork among them), an `effort` for a harness whose effort it cannot set. Retrying the same run changes nothing; the message says why |
 | `session_closed` | failed | the run names a session the runner has closed or is closing. Start a new session |
 | `resume_rejected` | failed | the harness had no conversation to continue: the transcript is gone. Start a new session |
 | `session_mismatch` | failed | the harness ran under another session id; the conversation's context is lost |
@@ -818,8 +829,10 @@ runner that calls `deregister` is not coming back under that credential, so:
 the runs it holds become `lost` (a claim you have asked to cancel,
 `cancelled`, §3); the runs offered to it and not yet claimed go back in the
 queue; and **every session bound to it closes, with the runs still
-queued in those sessions ending** — `yad hub` fails them with a reason that
-says to submit the work to a new session. **Do not unbind the sessions
+queued in those sessions ending**, and so does every fork of one of them
+that no claim has bound (§8), which only this runner could have opened —
+`yad hub` fails them with a reason that says to submit the work to a new
+session. **Do not unbind the sessions
 instead.** A session is resumable only on the runner that holds it, because its
 transcript is on that runner's disk; offering it to another runner offers a
 resume that cannot work. And do not leave them open and bound: a queued run
@@ -1031,6 +1044,7 @@ asked for it.
 | `close_session` | the `close_session` control. A runner advertising it also reports every close in `closed_sessions`; one that does not advertise it may report closes too, and each is believed all the same (§8) |
 | `start_at` | a run carrying `start_at` — offer one only to a runner that advertises it |
 | `effort` | a run carrying `effort` — offer one only to a runner that advertises it, however long it waits |
+| `fork` | a run carrying `session.fork_from` — offer one only to the runner holding the session it forks, and only while that runner advertises it (§8) |
 | `login` | the four login controls. A runner advertising it reports each login in `logins` |
 | `accounts` | `add` on `start_login` and `login_token`, and the `remove_account` control. Per hub: a runner advertises it only to a hub its owner lets add and remove accounts, and only beside `login`, so its fingerprint for you may differ from another hub's |
 | `live_sessions` | a run whose `session.mode` is `live` — offer one only to a runner that advertises it. The spec lists `live` as an enum value and connects it to no feature, so this pairing exists only here |
@@ -1248,6 +1262,29 @@ A close from any other runner changes nothing: it has no claim to the session,
 and a session is closed only by the one whose disk it would be on. Nor does a
 close of a session you never heard of: `yad hub` ignores both, and answers the
 sync that carried them as it would any other.
+
+**Forks** ([0064](docs/decisions/0064-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md)). A run with `session.new: true` may name
+another session in `session.fork_from`: the new session's conversation starts
+as the harness's copy of that one's, as far as the harness has written it,
+and the two diverge from there — the session forked goes on resuming its own
+conversation, untouched, and may even have a run live while it is forked.
+The fork is otherwise a new session like any other: its own id, its own
+workdir built from the run's own `sources` (nothing of the forked session's
+workdir comes with it — name the same repository on a branch of its own if the
+fork should see the same code), bound by its claim.
+
+- Offer the run only to the runner the forked session is bound to, and only
+  while it advertises `fork` (§7). A fork of a session no claim has bound has
+  no conversation anywhere to copy; `yad hub` refuses one at submit.
+- Send `fork_from` on whichever run opens the session — decided at offer, as
+  `session.new` is: if the fork's first run never bound it, its next run goes
+  out `new: true` with the same `fork_from` — and on no later run.
+- The runner refuses the run, class `refused`, for a forked session it does
+  not hold for your connection, one of another harness, or one closed or
+  closing. A forked session with no conversation yet, or one whose transcript
+  the harness cannot find, ends the run `resume_rejected`, as a resume does.
+- When the forked session's runner goes, close the forks of it no claim has
+  bound, with its own sessions: no other runner can open them.
 
 **A session whose runner has gone** — deregistered, or silent past your
 abandon-after — is covered in §5: close it and end its queued runs; never hand
@@ -1481,7 +1518,7 @@ is something **your hub still has to get right** with nothing to catch you:
 |---|---|
 | `POST /runners/{runner}/deregister` — held runs lost (a claim you cancelled, `cancelled`), offers requeued, the runner's sessions closed and their queued runs ended | deregistering retires the runner every other check is made as; the second runner `--second-token` registers could carry it, and does not yet. `yad hub` implements it; implement it in yours |
 | The controls — `cancel`, `interrupt`, `steer`, `close_session`, `drain` — their repetition until the runner acts, a `steer` being delivered once, a cancelled claim the runner withdraws recorded `cancelled` rather than `lost`, and nothing offered to a runner draining or asked to drain | nothing in v1 lets a *runner* ask for a control, so the suite can only wait for one it cannot cause |
-| `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, `effort`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
+| `start_at`, `min_version`, the feature gates on `drain`, `steer`, `interrupt`, `close_session`, `start_at`, `effort`, `fork`, and holding every gated control and run back while a moved fingerprint's document has not arrived | each needs a run or control the protocol gives a runner no way to request. The other half *is* checked: that a hub sends no control it should have gated, and asks with `report_capabilities` when the fingerprint moves |
 | Hub logins — `start_login` and `login_token` repeated until the runner reports the login, `login_code` while it reports it `waiting`, `cancel_login` until it reports it over; a token held only until the runner reports its login; a login the runner reported and then leaves out ended `failed`; a login ended on the hub's word only while never sent, and a sent one unheard for thirty minutes ended `failed` with its token blanked, a runner's later report still replacing that end | only your own API starts a login, outside v1, and the suite advertises no `login` feature to be sent one. What is checked: that no login control reaches it, and that a sync carrying `logins` is taken |
 | Adding and removing accounts — `add` and `remove_account` only while the runner advertises `accounts` to you, and `remove_account` repeated until neither its capability document nor its health lists the account, or `accounts` is no longer advertised | only your own API adds or removes an account, outside v1, and the suite advertises no `accounts` feature to be sent either. What is checked: that neither reaches it |
 | Sessions staying put — first claim binds the session to that runner, later runs to that runner alone, one at a time — and `session.new` set right | needs two runs in one session, which only your own queueing can arrange |
@@ -1542,7 +1579,7 @@ checks; the rest is yours to get right.
 - [ ] Offers within `free_capacity`, both `total` and each `by_harness`, as sent — [§4](#who-may-be-offered-what) (C)
 - [ ] Offers only for harnesses that are first-class, present and error-free — [§4](#who-may-be-offered-what)
 - [ ] Every offered run passes the rules the schema cannot state — [§4](#rules-the-schema-cannot-state) (C)
-- [ ] `start_at` still ahead, `effort`, and `live` sessions only to runners advertising them — [§7](#7-controls-and-features) (C)
+- [ ] `start_at` still ahead, `effort`, `fork_from` and `live` sessions only to runners advertising them — [§7](#7-controls-and-features) (C)
 - [ ] A run opening a session with a source on the machine not offered to a runner whose document says `path_sources: false` — [§4](#who-may-be-offered-what)
 - [ ] `report_capabilities` when the fingerprint moves without a document — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync refused when its body's `runner_id` or its capability document's differs from the path, or its credential is another runner's — [§3](#post-runnersrunnersync) (C)
