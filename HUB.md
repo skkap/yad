@@ -1297,6 +1297,16 @@ close reason goes only to a hub advertising one in `hub_features`. So an older
 side never sees a value it cannot validate, and may refuse one it was sent
 anyway as `invalid`.
 
+The three enums you send, a control's `kind`, a grant's `as` and a session's
+`mode`, appear in the document as `x-extensible-enum` rather than `enum`
+([0058](docs/decisions/0058-an-enum-a-hub-sends-is-written-as-x-extensible-enum.md)).
+The values listed are still the whole set as of the document you hold. The
+spelling says that the set grows within v1 behind a runner's
+`protocol_features`, and it keeps a breaking-change check from rejecting that
+growth. A generator that does not read the extension types these fields as
+plain strings. Every enum a runner sends you stays `enum`, and you may
+validate it strictly.
+
 **Features, both ways.** The runner advertises `protocol_features` in its
 capability document; the hub may advertise `hub_features` at register. Nothing
 is used that the other side did not advertise (§7). v1 defines no hub

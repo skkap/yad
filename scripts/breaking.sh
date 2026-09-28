@@ -20,14 +20,14 @@
 # load is the input a check most wants to be loud about, and calling it a
 # breaking change would send the reader hunting a rename that does not exist.
 #
-# ONE KNOWN FALSE ALARM, before you switch this off: adding a value to an enum
-# the hub *returns* — a new control kind is the case that will come up — fails
-# here, and ARCHITECTURE.md §2 Versioning says growing that one is safe,
-# because a hub sends a control only to a runner that advertised it. oasdiff
-# cannot see feature advertisement. That collision is DEV-87, with the
-# measurement and three options in it — read it before reaching for an ignore
-# rule, because the obvious rule also hides the enum growth that really would
-# break somebody.
+# A GROWN ENUM, before you switch this off. An enum the hub sends to a runner,
+# such as a new control kind, may grow within v1 because a hub sends a new value
+# only to a runner that advertised it (ARCHITECTURE.md §2 Versioning). oasdiff
+# cannot see feature advertisement, so the generator writes those enums as
+# x-extensible-enum, and they pass here by construction
+# (docs/decisions/0058). Any other enum that fails here has a real victim. The
+# usual one is protocol/hubapi's, where no feature exists to protect a service.
+# An ignore rule for the oasdiff check would hide that failure too.
 set -euo pipefail
 
 # The documents people generate clients from. Both, deliberately: hubapi is
@@ -122,10 +122,10 @@ for doc in "${docs[@]}"; do
 	#
 	# Adding a property stays clean at either level, so the stricter one is
 	# free: a new optional field was measured on both documents and reported
-	# no breaking change. Not every additive change is clean, though — the
-	# grown enum at the top of this file is additive and fails at *both*
-	# levels, being an ERR-level rule. So WARN costs nothing there either, and
-	# relaxing this to ERR would not buy DEV-87 back.
+	# no breaking change. Not every additive change is clean, though. A grown
+	# response enum is additive and fails at *both* levels, because it is an
+	# ERR-level rule. So WARN costs nothing there either, and relaxing this to
+	# ERR would not let it through. 0058 handles it in the document instead.
 	set +e
 	go tool oasdiff breaking "$was" "$doc" --fail-on WARN
 	status=$?
