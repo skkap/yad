@@ -359,6 +359,58 @@ func (a *Accounts) LoggedInAgain(ctx context.Context, r account.Ref) (v1.Account
 	return state, nil
 }
 
+// loginNotTaken writes the state of an account a hub login ended on without
+// taking, once its process has stopped (DEV-138). Only ever towards
+// needs_login: a login that did not take is no reason to call an account
+// free, and a yes from the check means the login it had before is still
+// there, so its row stands — a limit keeps its reset, and a token account
+// parked on a refused token stays parked, since its check says yes to any
+// token (loginprobe.go).
+//
+// made is a home this login created. Before it the account read needs_login
+// by having none, so a check that cannot answer leaves it needs_login rather
+// than to the free that a home with no row reads as. On a home that was
+// already there, an unanswered check leaves the row as it is, as the probe
+// does.
+func (a *Accounts) loginNotTaken(r account.Ref, made bool) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	listed := a.lists.Has(r)
+	st := a.store
+	a.mu.Unlock()
+	// A removed account's rows go with its last hold, and a runner with no
+	// store yet has nothing to write.
+	if !listed || st == nil {
+		return
+	}
+	log := a.log().With("harness", r.Harness, "account", r.Label)
+	binary := a.Binary
+	if binary == nil {
+		binary = harness.Locate
+	}
+	in, err := false, errors.New("the harness cannot be asked")
+	if bin, ok := binary(r.Harness); ok && account.CanLogIn(r.Harness) {
+		// Not the login's context: a login cancelled, or a daemon stopping,
+		// has ended it, and the state it leaves must still be written.
+		// LoggedIn bounds itself.
+		in, err = account.LoggedIn(context.Background(), r.Harness, bin, account.HomeDir(a.data, r.Harness, r.Label))
+	}
+	switch {
+	case err == nil && in:
+		return
+	case err != nil && !made:
+		log.Warn("a hub login ended without taking, and whether the account is still logged in could not be read; it is left as it reads", "err", err)
+		return
+	}
+	if err := account.SetState(context.Background(), st.Queries, r.Harness, r.Label, v1.AccountNeedsLogin, time.Now()); err != nil {
+		log.Warn("a hub login ended without taking, and the account could not be recorded as needing login", "err", err)
+		return
+	}
+	log.Info("a hub login ended without taking; the account needs login")
+}
+
 // checkAdded asks the harness whether a newly added account is logged in,
 // records a definite answer, and returns the account's state as a run would
 // now read it.
