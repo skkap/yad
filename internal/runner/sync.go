@@ -231,7 +231,7 @@ type Loop struct {
 	// control is never delivered before the run it names can receive it.
 	answered map[string][]v1.Control
 	// wake brings the next sync forward: a run this loop started let its
-	// capacity go, or the reporter settled a result. One buffered signal,
+	// capacity go, or the reporter handled a result. One buffered signal,
 	// so any number of runs ending before the loop looks is one early sync.
 	wake     chan struct{}
 	wakeOnce sync.Once
@@ -356,7 +356,8 @@ func (l *Loop) Run(ctx context.Context) error {
 					// not from a sync: one that goes first still lists
 					// the run as running, so the session's next turn
 					// is not offered. The reporter wakes this loop
-					// again once the result is in.
+					// again once the result is in, or put off to a
+					// retry.
 					continue
 				}
 				wake = nil

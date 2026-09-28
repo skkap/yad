@@ -13,7 +13,8 @@ that knows the moment a run ends, so it closes the gap for every hub, whatever
 the hub answers (DEV-145).
 
 **When a run a connection's loop started gives its capacity back, or that
-connection's reporter settles a result, the loop syncs early** — at once, or
+connection's reporter has handled a result — the hub has it, never will, or
+it waits for a retry — the loop syncs early** — at once, or
 `earlySyncGap` (1 s) after its last sync if that was sooner. The hub's
 interval is still the gap between ordinary syncs. Nothing on the wire
 changes.
@@ -26,9 +27,9 @@ changes.
   not from a sync: until then the sync lists the run as running, so the
   session's next turn is not offered and the early sync is spent. A wake while
   one of the connection's results is due is let go, and the reporter's wake
-  once it settles is the one that syncs. A result in backoff does not hold it:
-  that hub is failing, and it would hold the early sync until the hub came
-  back.
+  once it is handled is the one that syncs. A result in backoff does not hold
+  it: that hub is failing, and it would hold the early sync until the hub came
+  back. So a delivery that fails wakes the loop as well.
 - **Not while a hub is failing.** During the error backoff no wake is heard:
   the backoff is what spares the hub.
 - **`earlySyncGap` is 1 s.** It bounds a queue of runs that each fail the

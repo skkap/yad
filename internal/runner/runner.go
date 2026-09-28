@@ -168,8 +168,9 @@ func Serve(ctx context.Context, o Options) error {
 			ManageAccounts: manage[conn.Name], Paths: o.Paths, AccountsChanged: o.AccountsChanged,
 		}
 		// A result the hub now has is a session's live run ended there,
-		// and the next turn in it can be offered at the next sync.
-		r.Settled = l.Wake
+		// and the next turn in it can be offered at the next sync. One put
+		// off to a retry no longer holds that sync back either.
+		r.Handled = l.Wake
 		sv.loops = append(sv.loops, l)
 	}
 	return sv.run(ctx)

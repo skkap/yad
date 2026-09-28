@@ -46,10 +46,12 @@ type Reporter struct {
 	// Now is the clock for the outbox's retry schedule; nil is time.Now.
 	Now func() time.Time
 	Log *slog.Logger
-	// Settled hears that a flush took a result out of the outbox — the hub
-	// has it, or never will — so the connection's sync loop can ask for the
-	// next run now rather than an interval later. Nil tells nobody.
-	Settled func()
+	// Handled hears that a flush has done what it can with a result that
+	// was due: the hub has it, never will, or it waits for a retry. The
+	// connection's sync loop holds a run's early sync while its result is
+	// due (Loop.Wake), and this is what lets it go — to ask for the next
+	// run now rather than an interval later. Nil tells nobody.
+	Handled func()
 
 	wake chan struct{}
 	// replayed is closed once the first flush has run: what a previous
@@ -129,10 +131,10 @@ func (r *Reporter) Flush(ctx context.Context) { r.flush(ctx, false) }
 // flush is Flush; all sends every result owed, due or not.
 func (r *Reporter) flush(ctx context.Context, all bool) {
 	r.init()
-	settled := false
+	handled := false
 	defer func() {
-		if settled && r.Settled != nil {
-			r.Settled()
+		if handled && r.Handled != nil {
+			r.Handled()
 		}
 	}()
 	runs, err := r.Store.RunsWithUnackedEvents(ctx, r.Connection)
@@ -169,7 +171,7 @@ func (r *Reporter) flush(ctx context.Context, all bool) {
 			continue
 		}
 		if !behind && r.deliver(ctx, o) {
-			settled = true
+			handled = true
 		}
 	}
 }
@@ -240,7 +242,8 @@ func (r *Reporter) upload(ctx context.Context, runID string) {
 
 // deliver sends one result. It leaves the outbox only on an answer that
 // settles it: accepted, a different terminal state the hub already holds, or a
-// refusal no retry can change. It reports whether it settled.
+// refusal no retry can change. It reports whether the result is no longer
+// due: settled, or put off to its next attempt.
 func (r *Reporter) deliver(ctx context.Context, o db.Outbox) bool {
 	log := r.Log.With("connection", r.Connection, "run", o.RunID)
 	var res v1.Result
@@ -268,8 +271,9 @@ func (r *Reporter) deliver(ctx context.Context, o db.Outbox) bool {
 			Connection: r.Connection, RunID: o.RunID,
 		}); err != nil {
 			log.Error("outbox not updated", "err", err)
+			return false
 		}
-		return false
+		return true
 	}
 	r.remove(ctx, o)
 	return true

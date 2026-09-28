@@ -75,7 +75,7 @@ func (c *heldClock) recorded() []time.Duration {
 }
 
 // earlyRig is a runner as Serve wires it — a real executor on the fake
-// harness, a reporter that wakes the loop when a result is settled — against
+// harness, a reporter that wakes the loop when it has handled a result — against
 // yad hub in process, on a heldClock. Each run's turn waits in the harness
 // for its gate, so the test says when a run ends.
 type earlyRig struct {
@@ -85,9 +85,11 @@ type earlyRig struct {
 	clock   *heldClock
 	gates   map[string]chan struct{}
 	started chan string
-	// settled hears every flush that took a result out of the outbox, after
-	// the loop has been woken for it.
+	// settled hears every flush that handled a result, after the loop has
+	// been woken for it.
 	settled chan struct{}
+	// reportTo is the hub the reporter delivers to; nil is the loop's.
+	reportTo ReportHub
 }
 
 func newEarlyRig(t *testing.T, capacity int, runs ...v1.Run) *earlyRig {
@@ -115,8 +117,12 @@ func (g *earlyRig) run(t *testing.T, drive func(ctx context.Context, cancel cont
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	r := NewReporter(g.l.Connection, g.l.Hub.(*hubclient.Client), g.e.store, nil)
-	r.Settled = func() {
+	to := g.reportTo
+	if to == nil {
+		to = g.l.Hub.(*hubclient.Client)
+	}
+	r := NewReporter(g.l.Connection, to, g.e.store, nil)
+	r.Handled = func() {
 		g.l.Wake()
 		g.settled <- struct{}{}
 	}
@@ -321,7 +327,7 @@ func TestAnEarlySyncWaitsForTheResult(t *testing.T) {
 	}
 
 	r := NewReporter("hub", spy.Hub.(*hubclient.Client), e.store, nil)
-	r.Settled = l.Wake
+	r.Handled = l.Wake
 	r.Flush(ctx)
 	if d := g.next(t); d != 15*time.Second {
 		t.Errorf("waited %s once a2 started, want the hub's 15s", d)
@@ -335,5 +341,36 @@ func TestAnEarlySyncWaitsForTheResult(t *testing.T) {
 	}
 	if got := e.exec.ids(); !slices.Equal(got, []string{"a", "a2"}) {
 		t.Errorf("started %v, want [a a2]", got)
+	}
+}
+
+// A result the hub fails to take waits for its retry, and a result waiting
+// for a retry holds no early sync: the delivery that failed brings it. The
+// hub, still holding a as running, keeps the session's next turn and asks
+// the runner back in 3 s.
+func TestAResultPutOffToARetryStillBringsTheSyncForward(t *testing.T) {
+	later := testRun("a2", "s1")
+	later.Session.New = false
+	g := newEarlyRig(t, 1, testRun("a", "s1"), later)
+	failing := &tap{next: g.l.Hub.(*hubclient.Client), resultErr: status(503)}
+	g.reportTo = failing
+	g.run(t, func(_ context.Context, cancel context.CancelFunc) {
+		if d := g.next(t); d != 3*time.Second {
+			t.Fatalf("waited %s with a2 queued behind a, want 3s", d)
+		}
+		g.clock.advance(2 * time.Second)
+		close(g.gates["a"])
+		if d := g.next(t); d != 3*time.Second {
+			t.Errorf("waited %s after the early sync, want the hub's 3s", d)
+		}
+		cancel()
+	})
+	if want := []time.Duration{0, 3 * time.Second, 3 * time.Second}; !slices.Equal(g.clock.recorded(), want) {
+		t.Errorf("waits %v, want %v: the failed delivery brought no sync forward", g.clock.recorded(), want)
+	}
+	failing.mu.Lock()
+	defer failing.mu.Unlock()
+	if failing.results == 0 {
+		t.Error("the result was never tried")
 	}
 }
