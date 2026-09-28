@@ -62,11 +62,15 @@ docs=(protocol/v1/openapi.yaml protocol/hubapi/openapi.yaml)
 # the people downstream actually hold. scripts/release-guard.sh refuses to
 # publish that last one at all.
 #
-# An untagged HEAD, a pull request or an old commit, is compared with the
-# newest release that does not contain it: the newest one it builds on. For a
-# commit older than every release that leaves nothing, which is right,
-# because there is no earlier spec. scripts/breaking_test.go runs every one of
-# these topologies.
+# An untagged HEAD (a pull request, a branch, an old commit) is compared with
+# the newest release in its own history, the newest one it builds on. That
+# means `--merged HEAD`, not the older `--no-contains HEAD`. The two agree on a
+# straight line. They differ on a branch: a fix on top of v0.1.1 must not be
+# held against a v0.2.0 on master that it never contained. A pull request in
+# CI is checked out as its merge commit, so it builds on master's newest
+# release. For a commit older than every release this leaves nothing, which is
+# right, because there is no earlier spec. scripts/breaking_test.go runs every
+# one of these topologies.
 own=$(git tag --list 'v[0-9]*' --points-at HEAD --sort=-v:refname | head -n1)
 tag=
 if [ -n "$own" ]; then
@@ -83,7 +87,7 @@ if [ -n "$own" ]; then
 		break
 	done < <(git tag --list 'v[0-9]*' --sort=-v:refname)
 else
-	tag=$(git tag --list 'v[0-9]*' --sort=-v:refname --no-contains HEAD | head -n1)
+	tag=$(git tag --list 'v[0-9]*' --sort=-v:refname --merged HEAD | head -n1)
 fi
 
 if [ -z "$tag" ]; then
@@ -105,7 +109,7 @@ if [ -z "$tag" ]; then
 		echo "check-breaking: INERT — HEAD is release $own, and there is no earlier release on another commit to compare it against."
 		echo "check-breaking: nothing was compared, and this is not evidence that ${docs[*]} are compatible with anything."
 	else
-		echo "check-breaking: INERT — every v[0-9]* tag contains HEAD: this commit is older than every release (newest is $newest), so it has no earlier spec."
+		echo "check-breaking: INERT — no v[0-9]* tag is in the history of HEAD (newest is $newest): this commit builds on no release, so there is no earlier spec to compare it with."
 		echo "check-breaking: nothing was compared, and this is not evidence that ${docs[*]} are compatible with anything."
 	fi
 	exit 0

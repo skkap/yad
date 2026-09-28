@@ -67,7 +67,7 @@ func TestTheBreakingCheckComparesAgainstTheReleaseBeforeThisOne(t *testing.T) {
 				r.git("tag", "v0.2.0", r.commit("D"))
 				return old
 			},
-			inert: "older than every release",
+			inert: "builds on no release",
 		},
 		{
 			// A bisect lands on a tagged commit as readily as on any other.
@@ -117,6 +117,32 @@ func TestTheBreakingCheckComparesAgainstTheReleaseBeforeThisOne(t *testing.T) {
 				return h
 			},
 			want: "v0.1.0",
+		},
+		{
+			// --no-contains HEAD would pick v0.2.0 here, which this branch
+			// never contained, and fail on everything 0.2.0 added.
+			name: "a fix on a hotfix branch compares against the release it builds on",
+			build: func(r *repo) string {
+				p := r.commit("P")
+				r.git("tag", "v0.1.0", p)
+				r.git("tag", "v0.2.0", r.commit("D"))
+				r.git("checkout", "-q", "--detach", p)
+				r.git("tag", "v0.1.1", r.commit("H"))
+				return r.commit("fix")
+			},
+			want: "v0.1.1",
+		},
+		{
+			// Not older than every release, and not a descendant of any: the
+			// inert message must not claim either.
+			name: "a branch that forked before the first release is inert",
+			build: func(r *repo) string {
+				root := r.commit("R")
+				r.git("tag", "v0.1.0", r.commit("P"))
+				r.git("checkout", "-q", "--detach", root)
+				return r.commit("side")
+			},
+			inert: "builds on no release",
 		},
 		{
 			name: "the first release is inert",

@@ -38,7 +38,7 @@ shellcheck -x scripts/*.sh machines/…   # the install script and the work-mach
 CGO_ENABLED=1 go test -race ./...
 go build ./cmd/yad
 make check-generated             # make check-openapi, then sqlc: git diff --exit-code over every generated file
-scripts/breaking.sh              # oasdiff, both OpenAPI documents, against the last release tag
+scripts/breaking.sh              # oasdiff, both OpenAPI documents, against the release before this commit
 GOOS=… GOARCH=… go build ./...   # linux/amd64, linux/arm64, darwin/arm64, darwin/amd64
 GOOS=… GOARCH=… go vet ./...     # the same four — type-checks the tests for each target
 ```
@@ -166,4 +166,8 @@ document is not on that list: CI's `check-openapi` fails it by name.
   earlier release already contains, because that would publish older code
   under a newer version. It runs only on the tag push. Nothing local stops such
   a tag from being made, and the guard is tested against throwaway
-  repositories in `scripts/release_guard_test.go`.
+  repositories in `scripts/release_guard_test.go`. A tag push runs the
+  `release.yml` of the tagged commit, so a commit older than the guard,
+  v0.1.0 included, publishes without it. Before tagging one, create the tag
+  locally and run `scripts/release-guard.sh <tag>` from a current master
+  checkout.

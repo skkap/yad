@@ -37,6 +37,17 @@ func TestTheReleaseGuardRefusesOnlyOlderCode(t *testing.T) {
 			says: "which v0.2.0",
 		},
 		{
+			// Two tags pushed at once start two runs, and in the lower one's
+			// run the higher tag already contains it.
+			name: "a release a higher release already contains",
+			build: func(r *repo) string {
+				r.git("tag", "v0.2.0", r.commit("B"))
+				r.git("tag", "v0.3.0", r.commit("C"))
+				return "v0.2.0"
+			},
+			says: "not older than any release",
+		},
+		{
 			name: "a patch release on a side branch",
 			build: func(r *repo) string {
 				p := r.commit("P")
