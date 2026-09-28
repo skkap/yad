@@ -20,9 +20,10 @@ unit=yad-runner-default.service
 # rather than in a variable: an up that stops between changing something and
 # restarting the runner — a dropped connection, a failed install — leaves it
 # here, and the next up makes the restart though it changes nothing itself.
-# root.sh writes to it too, before it replaces yad, and at this same path:
-# neither sets XDG_STATE_HOME.
-state=${XDG_STATE_HOME:-$HOME/.local/state}/yad-machine
+# root.sh writes to it too, before it replaces yad, from the agent's passwd
+# home — so this is the home's own path, never XDG_STATE_HOME, which a spec's
+# dotfiles could set for one of the two and not the other.
+state=$HOME/.local/state/yad-machine
 owed=$state/restart-owed
 # config.toml's checksum from before an apply, there only while one runs.
 applying=$state/applying

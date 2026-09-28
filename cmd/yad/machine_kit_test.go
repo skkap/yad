@@ -24,7 +24,7 @@ type kitMachine struct {
 	down     string // exists while the stub systemctl says the unit is down
 	failing  string // exists while `yad service install` fails
 	old      string // exists while yad is one from before `yad config apply`
-	state    string // runner.sh's and root.sh's yad-machine state
+	state    string // where root.sh owes a restart: under the home, as root.sh finds it
 	p        config.Paths
 }
 
@@ -45,7 +45,7 @@ func newKitMachine(t *testing.T) *kitMachine {
 		down:     filepath.Join(dir, "down"),
 		failing:  filepath.Join(dir, "failing"),
 		old:      filepath.Join(dir, "old"),
-		state:    filepath.Join(dir, "state", "yad-machine"),
+		state:    filepath.Join(dir, ".local", "state", "yad-machine"),
 		p:        config.Paths{Profile: config.DefaultProfile, Config: filepath.Join(dir, "config"), Data: filepath.Join(dir, "data")},
 	}
 	bin := filepath.Join(dir, "bin")
@@ -78,7 +78,9 @@ echo "stub systemctl: unexpected $*" >&2; exit 1
 	m.env = append(os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"HOME="+dir,
-		"XDG_STATE_HOME="+filepath.Join(dir, "state"),
+		// Set, to prove runner.sh ignores it: root.sh writes the restart
+		// it owes under the home, and cannot see this.
+		"XDG_STATE_HOME="+filepath.Join(dir, "elsewhere"),
 		"YAD_CONFIG_DIR="+m.p.Config,
 		"YAD_DATA_DIR="+m.p.Data,
 		"KIT_SELF="+self,
