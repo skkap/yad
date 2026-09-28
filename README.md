@@ -22,6 +22,29 @@ it keeps on disk, streams everything that happens, and reports how it ended.
 It survives restarts and usage limits, fails over between your accounts, and
 never opens a port.
 
+## Why YAD
+
+YAD is for work you want a coding agent to do unattended: your own software
+hands out the task, and a machine you prepared for it does the work and
+reports back.
+
+- **Work comes from your own projects.** Add the hub side of the protocol to
+  anything that needs tasks run — a tracker, a bot, a pipeline, an internal
+  service — and it can hand work to runners. [HUB.md](HUB.md) is the whole
+  contract, and `yad hub` is a ready-made hub if you would rather not build one.
+- **It runs in an environment you prepared.** A runner lives on a machine you
+  set up for the job: a VM or a remote box with the tools, repositories, data
+  access and credentials that work needs, and nothing it does not.
+  [`machines/`](machines/README.md) builds such a machine from a spec you keep
+  in a repository, and [docs/containers.md](docs/containers.md) does the same
+  with a container.
+- **Not tied to one harness or one account.** A run says which harness it
+  wants — Claude Code or Codex today — and a runner can hold several accounts
+  for each, moving to the next when one hits its usage limit.
+- **Control stays with the machine's owner.** Runners connect out and never
+  listen, and what a harness may do on a machine is decided there, never by a
+  hub. [docs/run-it-safely.md](docs/run-it-safely.md) says where the edges are.
+
 ## How it works
 
 <p align="center">
@@ -105,6 +128,36 @@ there to answer them. Whoever sets YAD up decides what access its harnesses get:
 
 **[docs/run-it-safely.md](docs/run-it-safely.md)** is the full guide.
 
+## Where to run it
+
+Give a runner a machine of its own, holding the tools and access its work
+needs and nothing it does not:
+
+- **A VM.** [`machines/`](machines/README.md) builds one Lima VM per runner
+  from a spec you keep in a repository — its size, tools, harnesses and home
+  files — with the runner's user shut out of the host, the LAN and the
+  tailnet. It is the strongest boundary, and the one for hubs that are not
+  fully yours.
+- **A container.** [docs/containers.md](docs/containers.md) is a tested Docker
+  recipe: one image with yad and its harnesses, and one volume that holds the
+  runner's identity, its hub credentials and its logins.
+- **A server you already trust**, as an OS user of its own, kept running by
+  `yad service install`.
+
+**Logging in.** Each harness account is logged in once, on the machine:
+`yad account add claude main --token -` with a token from `claude setup-token`,
+made on any computer with a browser, or `yad account add codex main --device`
+with a code entered anywhere. Add more accounts under other labels and the
+runner uses them in turn.
+
+When the machine has no convenient shell — a VM, a container, a box somewhere
+else — **the hub can do it instead**, if it supports it. It shows **Log in**
+beside an account the runner reports as needing one: follow the link and
+paste the code back, or paste a token, and the login lands on the runner
+without anyone opening a terminal there
+([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)).
+Claude logs in this way today; Codex logs in on the machine.
+
 ## Install
 
 ```bash
@@ -185,6 +238,8 @@ Cursor Agent, which `yad doctor` recognises but will not run.
 |---|---|
 | **[docs/install.md](docs/install.md)** | installing, pinning, upgrading, forks, and running as a service |
 | **[docs/run-it-safely.md](docs/run-it-safely.md)** | what a run can do on the machine you give it, and how to limit that |
+| **[machines/README.md](machines/README.md)** | building a VM for one runner from a spec, and logging it in — at the machine or from the hub |
+| **[docs/containers.md](docs/containers.md)** | running a runner in a Docker container: the image, the volume, connecting, logging in, upgrading |
 | **[docs/trial.md](docs/trial.md)** | running YAD for real on one machine, and removing it cleanly |
 | **[docs/setup-hooks.md](docs/setup-hooks.md)** | making a repository ready for a run: `.worktree/setup` and the `WT_*` variables |
 | **[HUB.md](HUB.md)** | building a hub: every call, the run state machine, leases, sessions, grants, errors, and `yad conformance` |
