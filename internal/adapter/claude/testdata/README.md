@@ -24,6 +24,13 @@ Under `claude-2.1.280/`:
 |---|---|
 | `tool-outcomes` | a Bash command that exits 3, one that succeeds, and a `Read` of no file: each result's `is_error` as Claude reports it |
 
+Under `claude-2.1.284/`, recorded by `TestRecordModels` and spending nothing —
+no user message is sent, so no turn runs (DEV-50):
+
+| Fixture | What Claude said |
+|---|---|
+| `list-models` | its answer to the `list_models` control request, on a subscription login |
+
 A dead process, a truncated or garbled stream, an oversized line and a
 mismatched session are not recordable on demand; the tests derive them from
 these files (`derive` in `claude_test.go`).
