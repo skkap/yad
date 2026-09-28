@@ -62,10 +62,8 @@ type RPCError struct {
 
 func (e *RPCError) Error() string { return fmt.Sprintf("%s (code %d)", e.Message, e.Code) }
 
-// JSON-RPC's own error codes: for answering a server request we cannot serve,
-// and for reading which of ours Codex did not know.
+// JSON-RPC's own error codes, for answering a server request we cannot serve.
 const (
-	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
 )
 

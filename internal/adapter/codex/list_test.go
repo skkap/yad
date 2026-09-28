@@ -122,15 +122,15 @@ func TestListModelsFailures(t *testing.T) {
 		{"refused", func(t *testing.T) string {
 			return derived(t, asked(2, ""), `{"id":2,"error":{"code":-32601,"message":"secret at /Users/someone"}}`)
 		}, nil, "refused model/list", adapter.ErrModelsRefused},
-		// How Codex itself refuses a method it does not know: an unknown
-		// variant of its request enum (login-device-unsupported.jsonl).
+		// How Codex itself refuses a method it does not know, an unknown
+		// variant of its request enum (login-device-unsupported.jsonl) — and
+		// how model/list fails to load its configuration, with the same code.
 		{"unknown to it", func(t *testing.T) string {
 			return derived(t, asked(2, ""), `{"id":2,"error":{"code":-32600,"message":"Invalid request: unknown variant `+"`model/list`"+` at /Users/someone"}}`)
 		}, nil, "refused model/list", adapter.ErrModelsRefused},
-		// Any other error is not an old Codex, and upgrading it is not the fix.
 		{"failed inside", func(t *testing.T) string {
 			return derived(t, asked(2, ""), `{"id":2,"error":{"code":-32603,"message":"secret at /Users/someone"}}`)
-		}, nil, "answered model/list with an error", adapter.ErrModelsUnread},
+		}, nil, "refused model/list", adapter.ErrModelsRefused},
 		{"nothing listed", func(t *testing.T) string {
 			return derived(t, asked(2, ""), `{"id":2,"result":{"data":[],"nextCursor":null}}`)
 		}, nil, "listed no models", adapter.ErrModelsUnread},

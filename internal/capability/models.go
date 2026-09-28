@@ -305,10 +305,13 @@ func modelsReason(d harness.Detected, err error, timedOut bool) string {
 		// not recorded anywhere yad can read.
 		return fmt.Sprintf("%s refused %s, as a Claude Code older than the request does (2.1.283 answers it) — %s", d.Binary, req, f.Do(f.Command("update"), "upgrade it"))
 	case errors.Is(err, adapter.ErrModelsRefused):
-		// Every Codex the adapter is pinned to answers it (decision 0037),
-		// so this one is older than those, and how it was installed — npm,
-		// Homebrew, a release binary — is how it is upgraded.
-		return fmt.Sprintf("%s refused %s, which every %s this yad was built against answers — upgrade %s the way it was installed", d.Binary, req, d.Label, d.Label)
+		// Codex refuses with one code both a request older than it and its
+		// own failure to load the configuration or login the answer needs
+		// (listError), so both are named, the likelier first: every Codex
+		// the adapter is pinned to answers it (decision 0037), and one that
+		// is not is warned about beside it.
+		return fmt.Sprintf("%s refused %s, and what it said is not kept — a configuration or login it cannot load does this, and so does a %s older than the releases this yad was built against; %s",
+			d.Binary, req, d.Label, f.Try(f.Command("login", "status"), "whether its login loads"))
 	case errors.Is(err, adapter.ErrModelsUnread):
 		return fmt.Sprintf("%s answered %s with no model this yad can read — a %s newer than this yad may answer in a shape it does not know, and upgrading yad is the fix", d.Binary, req, d.Label)
 	}

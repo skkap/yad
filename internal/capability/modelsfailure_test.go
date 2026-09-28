@@ -63,7 +63,7 @@ func TestModelsFailureSaysWhy(t *testing.T) {
 			0o755, "as a Claude Code older than the request does (2.1.283 answers it)", []string{"update"}},
 		{"codex too old", "codex", "read line\n" + `echo '{"id":1,"result":{}}'` + "\nread line\nread line\n" +
 			`echo '{"id":2,"error":{"code":-32601,"message":"no model/list for /Users/someone"}}'` + "\n/bin/cat >/dev/null\n",
-			0o755, "refused model/list, which every Codex this yad was built against answers", nil},
+			0o755, "refused model/list, and what it said is not kept — a configuration or login it cannot load", []string{"login", "status"}},
 		{"timeout", "claude", "echo 'waiting on /Users/someone' >&2\n/bin/cat >/dev/null\n", 0o755,
 			"did not answer list_models within", []string{"--version"}},
 		{"failed start", "claude", "echo someone\n", 0o644,

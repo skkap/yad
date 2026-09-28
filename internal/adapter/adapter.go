@@ -205,7 +205,8 @@ var (
 	// ErrModelsNoStart is a harness that could not be started to ask.
 	ErrModelsNoStart = errors.New("the harness could not be started")
 	// ErrModelsRefused is a harness that refused the request for its models:
-	// one older than the request.
+	// one older than the request, or, for Codex, whose code cannot tell the
+	// two apart, one that could not load the configuration its answer needs.
 	ErrModelsRefused = errors.New("the harness refused the request for its models")
 	// ErrModelsUnread is an answer that named no model yad can report.
 	ErrModelsUnread = errors.New("the harness named no model yad can report")

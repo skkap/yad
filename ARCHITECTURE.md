@@ -860,9 +860,10 @@ for `codex`); the suite never runs a real harness.
   plan's list within the hour. The harness's `models` merge every login's; each
   account carries its own. With no answer at all Claude reports the catalog's
   aliases with `models_source: catalog`. Why an ask failed is kept beside
-  the answer it leaves standing (DEV-146) — too old for the request, cut off
-  at 15 s, would not start, stopped before answering, or answered with no
-  model yad can read — in yad's words with the next action, worded from the
+  the answer it leaves standing (DEV-146) — refused (too old for the
+  request, or for Codex a configuration it cannot load, which answers with
+  the same code), cut off at 15 s, would not start, stopped before
+  answering, or answered with no model yad can read — in yad's words with the next action, worded from the
   adapter's kind of failure (`adapter.ErrModels*`) and never from anything
   the harness printed. It is the owner's, not the hub's: the daemon logs it
   at warn when it appears or changes, and `yad doctor` asks the daemon for
