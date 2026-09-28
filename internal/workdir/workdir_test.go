@@ -17,6 +17,8 @@ import (
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // Every git here — the test's own and the one under test — reads no config of
@@ -365,6 +367,97 @@ func TestRefusedSources(t *testing.T) {
 	f.m.Roots = nil
 	if _, _, err := f.prepare("s9", v1.Source{Path: f.root}); class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "may reach none") {
 		t.Errorf("a path with no roots configured: %v", err)
+	}
+}
+
+// A hub-sent URL with a token for its user is fetched, and the token reaches
+// neither the run's events nor its error — not in the status that names the
+// fetch, not in git's own reason when the fetch fails, and not in the refusal
+// of a source named twice (decision 0064). git here is a wrapper that fails
+// every fetch as a git that quotes the whole URL would, so nothing leaves the
+// machine.
+func TestAGitURLsTokenStaysOutOfTheRun(t *testing.T) {
+	f := newFixture(t)
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "ghp_FAKEt0kenFAKEt0ken"
+	url := "https://" + token + "@example.invalid/acme.git"
+	wrapper := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = fetch ] && { echo \"fatal: unable to access '" + url + "/': Could not resolve host: example.invalid\" >&2; exit 128; }; done\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.m.Git = wrapper
+
+	_, ev, err := f.prepare("s1", gitSource(url, "", ""))
+	if class(err) != ClassSourceFailed || !strings.Contains(err.Error(), "https://redacted@example.invalid/acme.git/") {
+		t.Fatalf("err = %v, want git's reason with the URL's user taken out", err)
+	}
+	if strings.Contains(err.Error(), "FAKEt0ken") {
+		t.Errorf("the run's error carries the token: %v", err)
+	}
+	if s := ev.statuses(); strings.Contains(s, "FAKEt0ken") || !strings.Contains(s, "fetching https://redacted@example.invalid/acme.git") {
+		t.Errorf("status events = %q, want the fetch named without the token", s)
+	}
+
+	_, _, err = f.prepare("s2", gitSource(url, "", "a"), gitSource(url, "", "b"))
+	if class(err) != ClassSourceRefused || !strings.Contains(err.Error(), "named twice") || strings.Contains(err.Error(), "FAKEt0ken") {
+		t.Errorf("a source named twice: %v", err)
+	}
+
+	// Shapes the URL pattern alone cannot take apart: a quote inside the URL
+	// ends the pattern's match early, and an scp-like address has no scheme.
+	// The source itself is known, so it is replaced whole.
+	for i, src := range []string{
+		"https://example.invalid/acme.git?access_token='" + token,
+		"https://example.invalid/acme'.git?access_token=" + token,
+		token + "@example.invalid:acme.git",
+	} {
+		line := filepath.Join(t.TempDir(), "line")
+		if err := os.WriteFile(line, []byte("fatal: unable to access '"+src+"/': Could not resolve host\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = fetch ] && { cat " + line + " >&2; exit 128; }; done\nexec " + real + " \"$@\"\n"
+		if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := f.prepare(fmt.Sprintf("q%d", i), gitSource(src, "", ""))
+		if class(err) != ClassSourceFailed || strings.Contains(err.Error(), "FAKEt0ken") || !strings.Contains(err.Error(), "Could not resolve host") {
+			t.Errorf("%s: err = %v, want git's reason without the token", src, err)
+		}
+	}
+}
+
+// git's reason is taken from the last StderrTail bytes it wrote. When those
+// begin partway into a long URL, the scheme redactURLs looks for is gone, so
+// the cut line is never quoted — whatever the URL's query carried.
+func TestACutReasonIsNotQuoted(t *testing.T) {
+	f := newFixture(t)
+	const token = "FAKEt0kenFAKEt0ken"
+	long := "https://example.invalid/" + strings.Repeat("a", supervise.StderrTail) + "?access_token=" + token
+	for _, tc := range []struct {
+		name, stderr, want string
+	}{
+		{"one cut line", "fatal: unable to access '" + long + "/': Could not resolve host", "exit status 128"},
+		{"a whole line after a cut one", "fatal: unable to access '" + long + "/'\nfatal: the last line", "fatal: the last line"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := filepath.Join(t.TempDir(), "stderr")
+			if err := os.WriteFile(body, []byte(tc.stderr+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			wrapper := filepath.Join(t.TempDir(), "git")
+			if err := os.WriteFile(wrapper, []byte("#!/bin/sh\ncat "+body+" >&2\nexit 128\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			f.m.Git = wrapper
+			_, err := f.m.git(context.Background(), "", "fetch")
+			if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want %q and no token", err, tc.want)
+			}
+		})
 	}
 }
 

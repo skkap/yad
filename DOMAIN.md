@@ -86,6 +86,10 @@ _See_: [0022](docs/decisions/0022-hub-service-api-beside-the-protocol.md), `inte
 OS, arch, labels, `yad` version, the harness list with versions and accounts,
 host tools, capacity, and the protocol features it supports. Public surface —
 every field is one somebody will depend on.
+_Rules_: Every connected hub reads it, so the runner writes it without a path
+on the machine and without quoting what a harness or tool printed (DEV-67). A
+run's error goes only to the hub that sent the run, and may name a path
+([0064](docs/decisions/0064-a-runs-error-may-name-a-path-on-the-runner.md)).
 _Avoid_: capabilities for anything else — yashiki's "capabilities" are its house
 tools, which here are **host tools**
 _See_: `internal/capability`, `protocol/v1`

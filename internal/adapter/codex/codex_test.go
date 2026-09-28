@@ -856,8 +856,8 @@ func TestStartRefusals(t *testing.T) {
 	if _, err := (Adapter{}).Start(context.Background(), adapter.Spec{}); err == nil || !strings.Contains(err.Error(), "yad doctor") {
 		t.Errorf("no binary: %v", err)
 	}
-	// The exec error names the binary under the owner's home; the run's error
-	// goes to a hub, so the path travels only as the cause (DEV-67).
+	// The runner words the run's error; the exec error, with the binary's path,
+	// is the cause it logs and quotes only as an OS error (0064).
 	const bin = "/Users/someone/bin/codex"
 	_, err := (Adapter{}).Start(context.Background(), adapter.Spec{Binary: bin, Workdir: t.TempDir()})
 	le, ok := errors.AsType[*adapter.LocalError](err)

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/skkap/yad/internal/config"
 )
 
 // Hub input that git would read as an option, a program or a place the owner
@@ -92,6 +94,88 @@ func TestParseRemote(t *testing.T) {
 		}
 		if r.name != tc.name || r.url != fetch {
 			t.Errorf("%q = %+v, want name %q fetched from %q", tc.url, r, tc.name, fetch)
+		}
+	}
+}
+
+// fakeToken stands for a credential a hub put in a git source's URL.
+const fakeToken = "ghp_FAKEt0kenFAKEt0ken"
+
+// A refused git URL goes back to the hub that sent it, in the run's error,
+// and never with the credential it carried: its userinfo, query and fragment
+// are taken out, and a URL that cannot be taken apart is not repeated at all
+// (decision 0064, as DEV-91 for a hub's own URL). Every shape here is refused,
+// each by a different check.
+func TestARefusedGitURLNeverCarriesItsCredential(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		url string
+		why string // a word the refusal must still carry
+	}{
+		{"http://user:" + fakeToken + "@example.com/a.git", "http://"},
+		{"git://" + fakeToken + "@example.com/a.git", "git://"},
+		{"https::https://" + fakeToken + "@example.com/a", "remote helper"},
+		{"file://" + fakeToken + "@evil.example/a", "another host"},
+		{"https://" + fakeToken + "@/a", "no host"},
+		{"https://" + fakeToken + "@-oProxyCommand=x/a", "'-'"},
+		{fakeToken + "@-oProxyCommand=x:a", "'-'"},
+		{"https://" + fakeToken + "@example.com/a b", "whitespace"},
+		{"-https://" + fakeToken + "@example.com/a", "'-'"},
+		{"https://" + fakeToken + "@example.com:" + fakeToken + "/a", "not a URL"},
+		{"https://x:" + fakeToken + "@example.com:bad/a", "not a URL"},
+		{fakeToken + "@example.com/a", "neither"},
+		{"http://example.com/a.git?access_token=" + fakeToken, "http://"},
+		{"http://example.com/a.git#" + fakeToken, "http://"},
+		{"http://" + strings.Replace(fakeToken, "_", "%40", 1) + "%40x@example.com/a", "http://"},
+	} {
+		_, err := parseRemote(tc.url, (&Manager{Roots: []string{root}}).reach)
+		if err == nil {
+			t.Errorf("%s was accepted", tc.url)
+			continue
+		}
+		if strings.Contains(err.Error(), "FAKEt0ken") {
+			t.Errorf("the refusal carries the token: %v", err)
+		}
+		if !strings.Contains(err.Error(), tc.why) {
+			t.Errorf("refused as %q; want it to say %q", err, tc.why)
+		}
+	}
+}
+
+// What a refusal or an event prints of a source: nothing to take out leaves
+// it exactly as the hub wrote it, so the hub can find it.
+func TestShownURL(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"https://github.com/skkap/yad.git", "https://github.com/skkap/yad.git"},
+		{"git@github.com:skkap/yad.git", "redacted@github.com:skkap/yad.git"},
+		{"github.com:skkap/yad", "github.com:skkap/yad"},
+		{"/home/someone/src/yad", "/home/someone/src/yad"},
+		{"/home/someone/go/pkg/mod/example.com/yad@v2.0.0", "/home/someone/go/pkg/mod/example.com/yad@v2.0.0"},
+		{"https://" + fakeToken + "@github.com/skkap/yad", "https://redacted@github.com/skkap/yad"},
+		{"ssh://" + fakeToken + "@github.com/skkap/yad", "ssh://redacted@github.com/skkap/yad"},
+		{"a@b@github.com:skkap/yad", config.UnprintableURL},
+		{"github.com:skkap/" + fakeToken + "@yad", config.UnprintableURL},
+		{fakeToken + "@github.com", config.UnprintableURL},
+	} {
+		if got := shownURL(tc.raw); got != tc.want {
+			t.Errorf("shownURL(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
+// git's reason quotes the remote it could not reach, whatever credential the
+// URL carried; the reason reaches the hub in the run's error.
+func TestRedactURLsInGitsReason(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{"fatal: unable to access 'https://" + fakeToken + "@github.com/a/b.git/': Could not resolve host: github.com",
+			"fatal: unable to access 'https://redacted@github.com/a/b.git/': Could not resolve host: github.com"},
+		{"fatal: repository https://x:" + fakeToken + "@github.com/a/b/ not found",
+			"fatal: repository https://redacted@github.com/a/b/ not found"},
+		{"fatal: couldn't find remote ref main", "fatal: couldn't find remote ref main"},
+		{"fatal: 'https://github.com/a/b.git?t=" + fakeToken + "' not found", "fatal: 'https://github.com/a/b.git?redacted' not found"},
+	} {
+		if got := redactURLs(tc.line); got != tc.want {
+			t.Errorf("redactURLs(%q)\n = %q\nwant %q", tc.line, got, tc.want)
 		}
 	}
 }
