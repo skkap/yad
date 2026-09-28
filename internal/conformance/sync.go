@@ -309,7 +309,7 @@ const (
 // implement self-update ignores it (decision 0018), so a hub sending one has
 // broken no rule of HUB.md's.
 var gated = []v1.ControlKind{v1.ControlDrain, v1.ControlCloseSession, v1.ControlSteer, v1.ControlInterrupt,
-	v1.ControlStartLogin, v1.ControlLoginCode, v1.ControlLoginToken, v1.ControlCancelLogin}
+	v1.ControlStartLogin, v1.ControlLoginCode, v1.ControlLoginToken, v1.ControlCancelLogin, v1.ControlRemoveAccount}
 
 func checkControlsAreGated(_ context.Context, s *session) error {
 	for _, seen := range s.syncs {
@@ -318,17 +318,26 @@ func checkControlsAreGated(_ context.Context, s *session) error {
 				return brokenf("answering %s the hub sent a %q control, which goes only to a runner whose capability document advertises %q; this one advertises no protocol feature at all",
 					seen.call, c.Kind, gatedBy(c.Kind))
 			}
+			// Whatever the kind: add is decision 0057's, and a runner without
+			// accounts would drop the field and log in a label it does not list.
+			if c.Add {
+				return brokenf("answering %s the hub sent a %q control carrying add, which goes only to a runner whose capability document advertises \"accounts\"; this one advertises no protocol feature at all",
+					seen.call, c.Kind)
+			}
 		}
 	}
 	return nil
 }
 
 // gatedBy is the feature a gated control needs: its own name, but for the
-// four hub-login controls, which share the "login" feature (decision 0055).
+// four hub-login controls, which share the "login" feature (decision 0055),
+// and remove_account, which is "accounts" (decision 0057).
 func gatedBy(k v1.ControlKind) string {
 	switch k {
 	case v1.ControlStartLogin, v1.ControlLoginCode, v1.ControlLoginToken, v1.ControlCancelLogin:
 		return "login"
+	case v1.ControlRemoveAccount:
+		return "accounts"
 	}
 	return string(k)
 }

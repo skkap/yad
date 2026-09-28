@@ -98,6 +98,8 @@ const (
 	flawRegistersAnyone  = "anyone registers, and the credential comes back under a name of the hub's own"
 	flawUngatedControl   = "a steer goes to a runner that never advertised one"
 	flawUngatedLogin     = "a start_login goes to a runner that never advertised login"
+	flawUngatedRemoval   = "a remove_account goes to a runner that never advertised accounts"
+	flawUngatedAdd       = "a control carrying add goes to a runner that never advertised accounts"
 	flawRefusesLogins    = "a sync reporting a login the hub never started is refused"
 	flawNoNextAction     = "errors say what went wrong and not what to do"
 	flawRenewsEverything = "every run's lease is renewed, listed or not"
@@ -380,6 +382,13 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	}
 	if f.flaw == flawUngatedLogin {
 		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlStartLogin, LoginID: "fake-login", Harness: "claude"})
+	}
+	// On an ungated kind, so only add can be what the check finds.
+	if f.flaw == flawUngatedAdd {
+		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlReportCapabilities, Add: true})
+	}
+	if f.flaw == flawUngatedRemoval {
+		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlRemoveAccount, Harness: "claude", Account: "work"})
 	}
 	// Reserved, and gated on nothing: a runner that does not implement
 	// self-update ignores it (decision 0018), so this must not be a finding.
