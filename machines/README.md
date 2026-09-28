@@ -169,13 +169,35 @@ no shell on the machine is needed. A hub shows **Log in** beside an account
 its runner reports as `needs_login`: follow the link and paste the code back,
 or paste a `claude setup-token` token. The runner runs Claude's own login in
 the account's home, or stores the token there, and the account is back in
-service once Claude's own check says so. A hub logs in only accounts listed in
-`config.toml`, never adds one, and Codex still logs in here. With `yad hub` as
-the hub:
+service once Claude's own check says so. Codex still logs in here.
+
+A hub can also **add** an account — a second subscription, say — and
+**remove** one ([0057](../docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
+An add is a login for a new label: the runner writes it into the machine's
+`config.toml` only once the login takes, and a login that does not take adds
+nothing. A removal is `yad account remove`'s: runs already on the account
+finish there, and its login is deleted when the last one ends. An account a
+hub added is the machine's like any other — every hub the runner syncs with
+runs on it, and `yad account list` shows it. The first account added to a
+harness takes over from that harness's own login on the machine. With `yad
+hub` as the hub:
 
 ```bash
 yad hub login start <runner> claude main    # prints the link, then reads the code
 yad hub login token <runner> claude main < token.txt
+yad hub login start --add <runner> claude second   # adds an account, by link
+yad hub account remove <runner> claude second
+```
+
+Every hub the runner connects to may do this unless you say otherwise, per
+connection, in `config.toml` — read when the daemon starts, so restart it
+after a change:
+
+```toml
+[[connection]]
+name = "work-hub"
+url  = "https://hub.example.com/yad/v1"
+manage_accounts = false   # this hub may log accounts in, but not add or remove them
 ```
 
 ## Rebuilding

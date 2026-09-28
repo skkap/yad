@@ -123,18 +123,12 @@ each account in once; the login lives in the volume.
   ```
 
 - **From the hub**, with no shell into the container at all, if your hub
-  supports it. List the accounts in the `config.toml` you put in the volume
-  before connecting:
-
-  ```toml
-  [harness.claude]
-  accounts = ["main"]
-  ```
-
-  The runner then reports `main` as needing a login, and the hub shows
-  **Log in** beside it: a link to follow and a code to paste back, or a
-  `claude setup-token` token to paste. How that works, and the
-  `yad hub login` commands for `yad hub`, are in
+  supports it. The hub adds the account and logs it in, in one step: a link
+  to follow and a code to paste back, or a `claude setup-token` token to
+  paste. The runner lists it in the `config.toml` in the volume once the
+  login takes, and the hub can log it in again, or remove it, later. How that
+  works, how to stop a hub doing it (`manage_accounts = false`), and the
+  `yad hub` commands, are in
   [machines/README.md](../machines/README.md#logging-in). Codex still logs
   in with the device code above.
 

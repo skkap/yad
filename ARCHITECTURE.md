@@ -200,8 +200,9 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   did not mention keeps its last value rather than reading zero.
 - **Control kinds**: `cancel`, `interrupt`, `steer`, `close_session`, `drain`,
   `report_capabilities`, `update` (reserved —
-  [0018](docs/decisions/0018-no-self-update-in-v1.md)), and the four of hub
-  login: `start_login`, `login_code`, `login_token`, `cancel_login`.
+  [0018](docs/decisions/0018-no-self-update-in-v1.md)), the four of hub
+  login: `start_login`, `login_code`, `login_token`, `cancel_login`, and
+  `remove_account`.
 - **Controls are not acknowledged**, so a hub repeats `cancel` and `interrupt`
   in every response to a sync listing the run, until the run ends; the runner
   acts on the first. A `steer` is sent once — twice, the harness would read it
@@ -244,6 +245,16 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   token held by the hub only until the runner reports its login. `user_code`
   is for a device-code login — Codex's, which a runner answers `failed` for
   until its side is built.
+- **Managing accounts** — [0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md).
+  A runner advertises `accounts` per connection: only to a hub whose
+  connection the owner has not set `manage_accounts = false` on, and only
+  beside `login`, so each hub's fingerprint is its own. To such a hub alone,
+  `start_login` and `login_token` may carry `add`, which creates the account:
+  the runner lists it once the login takes, and a login that ends any other
+  way lists nothing. `remove_account {harness, account}` removes one as `yad
+  account remove` does; a hub repeats it until a sync's health names the
+  harness without the account, or the runner stops advertising `accounts`.
+  An added account is the machine's, and every hub's runs rotate through it.
 - **Claim by listing.** A run offered in a sync response is claimed when the
   runner lists it in its next sync. An offered run that the next sync does not
   list was never received, and the hub offers it again. The runner takes the
@@ -410,6 +421,8 @@ strings — the runner in its capability document, the hub in its register
 response — and nothing is used that the other side did not advertise: a hub
 sends `drain`, `close_session`, `steer` and `interrupt` only to a runner
 advertising each, the four login controls only to one advertising `login`,
+`remove_account` and a login carrying `add` only to one advertising
+`accounts` — which a runner advertises per connection,
 and offers a run carrying `start_at` whose moment is still
 ahead only to a runner that will hold it back rather than start it at once —
 once the moment has passed there is nothing to hold, and the run goes to any
@@ -467,10 +480,12 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `POST /runners/{runner}/drain` | a `drain` control, repeated until the runner says it is draining; 409 for a runner without the `drain` feature |
 | `GET /sessions/{session}` | the session: its runner, and `open`, `closing` or `closed` with the reason |
 | `POST /sessions/{session}/close` | a session no runner holds closes here, its unstarted runs cancelled; a held one gets `close_session` until its runner reports it closed; 409 for a runner without the `close_session` feature. A closing or closed session takes no new run |
-| `POST /runners/{runner}/logins` | a hub login for `{harness, account?}`: by link, or by token with `token` — `requested` until the runner's next sync takes it; 409 for a runner without the `login` feature. A newer login for the account replaces an older one |
+| `POST /runners/{runner}/logins` | a hub login for `{harness, account?, add?}`: by link, or by token with `token` — `requested` until the runner's next sync takes it; 409 for a runner without the `login` feature, and for an `add` to one without `accounts`. A newer login for the account replaces an older one |
 | `GET /runners/{runner}/logins/{login}` | the login's state, its `url` while `waiting`, and the runner's `error` at an end; never its code or token |
 | `POST /runners/{runner}/logins/{login}/code` | `{code}` for a `waiting` link login, delivered at the next sync; 409 before the link is out or after the end |
 | `POST /runners/{runner}/logins/{login}/cancel` | a `cancel_login` until the runner reports the login over |
+| `POST /runners/{runner}/accounts/{harness}/{account}/remove` | a `remove_account` until the runner's health names the harness without the account, or it stops advertising `accounts`; 409 for a runner without the `accounts` feature |
+| `GET /runners/{runner}/accounts/{harness}/{account}` | whether the runner's last health names the account and in what state, and a removal still waiting |
 
 ## §3 Running a harness
 
@@ -751,6 +766,16 @@ for `codex`); the suite never runs a real harness.
   last such run lets go (at once when there is none). With no daemon running
   nothing is written: `remove` deletes the home itself, and the daemon prunes
   rows for accounts `config.toml` no longer lists when it starts.
+- **`config.toml` has two writers**
+  ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)):
+  the CLI, and the daemon for an account a hub adds or removes. Every write —
+  `yad account add` and `remove`, `yad connect`, the daemon's — goes through
+  `config.Update`: an exclusive `flock` on `config.toml.lock` beside the file
+  (not the file itself, which a save replaces by rename), the file read fresh,
+  one thing changed, written back before the lock is let go. So neither
+  overwrites the other or a hand edit made since the daemon started; the
+  daemon never writes back its own copy. Comments in the file do not survive
+  a write, as they did not before.
 - Each harness's transcripts live once, in `<data>/transcripts/<harness>/`,
   linked into every account home (`projects/` for Claude, `sessions/` for Codex),
   so any account can resume any session. Measured on claude 2.1.278 and
@@ -776,7 +801,7 @@ for `codex`); the suite never runs a real harness.
   in service when it answers yes. A check that cannot answer — the command
   missing, a home it could not read, a timeout — leaves the state exactly as it
   is; an unanswered question is not an answer either way. A hub can finish
-  the login too — see hub login below.
+  the login too — see hub login below — and add or remove an account.
 - **No accounts is a state.** A harness the owner configured none for runs on
   the harness's own default home and reports no accounts. It is never an error
   that stops a runner registering. That home's login is checked as an
@@ -786,7 +811,8 @@ for `codex`); the suite never runs a real harness.
   ([0053](docs/decisions/0053-a-harness-on-its-own-login-is-checked-like-an-account.md)).
 - **Hub login** ([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)):
   any connected hub may log in an account `config.toml` lists, or a harness's
-  own default login, and never adds an account. `internal/runner.Logins`,
+  own default login — and, with `add`, a new account, unless the owner has
+  set `manage_accounts = false` on its connection (0057). `internal/runner.Logins`,
   owned by the daemon and bound to `Serve`, drives it. A login holds its
   account as a run does (`Accounts.takeForLogin`): taking the hold is the
   check that the label is still listed, made after any login it replaced has
@@ -811,7 +837,18 @@ for `codex`); the suite never runs a real harness.
   seconds for the link, ten minutes for the code (`expired`), a minute to
   exit; one login per account, a newer one superseding. Codex, a token with no
   account and an unlisted account end `failed` with the command that does it
-  at the machine. Logins are memory only — nothing in `state.db`, the code and
+  at the machine.
+  An add holds a label nothing lists yet (`Accounts.takeForAdd`, which also
+  keeps a home a removal left waiting to be deleted), and is refused before
+  anything is touched for a label already listed, one `config.ValidName`
+  refuses, none, or a hub not allowed to add. On a yes it goes through
+  `Accounts.Add` — the label into `config.toml` under its lock, then the
+  lists reloaded as `accounts_changed` reloads them — instead of
+  `LoggedInAgain`; on anything else nothing is listed and the home is kept
+  for a retry. `remove_account` goes through `Accounts.Remove`, the same
+  removal as `accounts_changed`'s after the same locked write; a label
+  neither the file nor the lists name is nothing to do, and one from a hub
+  not allowed to is ignored. Logins are memory only — nothing in `state.db`, the code and
   the token in no log, report or error — so a restart forgets those in flight.
   `yad hub` keeps them in `hub.db` and blanks the token once the runner has
   reported its login, and the code once it has taken it. It ends a login on
@@ -960,6 +997,7 @@ accounts = ["personal"]
 name = "yashiki"
 url  = "https://ashikaga.tail.ts.net/yad/v1"
 cap  = 2   # at most this many runs held for this hub at once; absent = only capacity limits it
+manage_accounts = false   # this hub may not add or remove accounts; absent = it may — 0057. Read at start
 
 [sessions]
 idle_ttl   = "336h"   # close sessions idle this long; "0s" keeps them — 0035
@@ -1003,6 +1041,10 @@ has carried it and `hub_ended` for an end the hub wrote itself; the
 `logins_forget_token` and
 `logins_forget_code` triggers blank a token once the runner has reported its
 login and a code once the login has moved past `waiting`, whoever moves it.
+A login's `add_account` marks one that creates its account, and
+`account_removals` holds each removal asked for until the runner's health
+leaves the account out
+([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
 Both databases are opened with `secure_delete`, so freed bytes are zeroed
 rather than left in the file.
 
@@ -1058,12 +1100,15 @@ yad hub drain <runner>             the runner takes no new runs, finishes those 
                                    holds and exits
 yad hub close-session <session>    the session takes no new run; its runner deletes
                                    its workdir
-yad hub login start <runner> <harness> [account] [--code -]
+yad hub login start <runner> <harness> [account] [--add] [--code -]
                                    log an account in on a runner by link: prints the
-                                   link once the runner has it, reads the code on stdin
-yad hub login token <runner> <harness> <account>
+                                   link once the runner has it, reads the code on stdin;
+                                   --add creates the account
+yad hub login token <runner> <harness> <account> [--add]
                                    log it in with a setup-token token read from stdin
 yad hub login status|cancel <runner> <login>
+yad hub account remove <runner> <harness> <account>
+                                   the runner removes the account; waits until it has
 yad hub admin-token create|list|revoke
                                    the service API's tokens; create saves to a 0600
                                    file and prints nothing secret (--out - prints once)

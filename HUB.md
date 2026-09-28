@@ -1474,6 +1474,7 @@ checks; the rest is yours to get right.
 
 - [ ] `cancel` and `interrupt` repeated until the run ends; `steer` sent once; `drain` and `close_session` repeated until answered — [§7](#7-controls-and-features)
 - [ ] Login controls only to a runner advertising `login`, each repeated until `logins` answers it; a sync carrying `logins` taken; a token held only until the runner reports its login; a login ended on your word only while never sent; a sent login unheard for thirty minutes ended `failed` and its token blanked; a login reported and then left out ended `failed` — [§7](#7-controls-and-features) (C, as far as the gate and taking the reports)
+- [ ] `add` and `remove_account` only to a runner advertising `accounts` to you; `remove_account` repeated until health names the harness without the account, or `accounts` is no longer advertised — [§7](#7-controls-and-features) (C, as far as the gate)
 - [ ] No gated control to a runner that does not advertise its feature — [§7](#7-controls-and-features) (C, as far as a runner advertising none)
 - [ ] Sessions bound by their first claim, later runs to that runner only, one at a time; `session.new` set right — [§8](#8-sessions)
 - [ ] Nothing offered in a session you have sent `close_session` for until its close is reported — [§8](#8-sessions)
