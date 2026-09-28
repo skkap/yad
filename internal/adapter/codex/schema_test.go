@@ -95,6 +95,28 @@ func TestSchemaHashCoversTheSurface(t *testing.T) {
 			}
 			cr["oneOf"] = kept
 		}},
+		// A codex without the hub login's methods is one yad doctor warns
+		// about, before a hub's login finds out (DEV-135).
+		{name: "the login's completion removed", moves: true, change: func(doc map[string]any) {
+			sn := top(doc)["ServerNotification"].(map[string]any)
+			var kept []any
+			for _, e := range sn["oneOf"].([]any) {
+				if !strings.Contains(mustJSON(e), `"account/login/completed"`) {
+					kept = append(kept, e)
+				}
+			}
+			sn["oneOf"] = kept
+		}},
+		{name: "device code removed from the login's start", moves: true, change: func(doc map[string]any) {
+			params := v2(doc)["LoginAccountParams"].(map[string]any)
+			var kept []any
+			for _, e := range params["oneOf"].([]any) {
+				if !strings.Contains(mustJSON(e), `"chatgptDeviceCode"`) {
+					kept = append(kept, e)
+				}
+			}
+			params["oneOf"] = kept
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sum, err := SchemaHash(edit(t, tc.change))
