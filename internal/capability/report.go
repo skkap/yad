@@ -70,9 +70,12 @@ const FeatureEffort = "effort"
 // thread/fork (decision 0065). A hub offers a run carrying fork_from only to
 // such a runner, and it is always the one holding the session forked, so a
 // fork waits on that runner rather than going elsewhere. Advertised because
-// every first-class adapter forks, on every harness version the runner will
-// drive: Claude's flags probe asks for --fork-session, and both pinned Codex
-// protocols have thread/fork — a test holds the two together.
+// every first-class adapter forks: Claude's flags probe asks for
+// --fork-session, so a Claude without it is driven not at all, and every
+// pinned Codex protocol has thread/fork — a test holds the two together. A
+// Codex whose protocol drifted from the pinned ones is still driven, with a
+// warning, for forks as for every other method it may have changed (decision
+// 0037); a fork it cannot do fails with Codex's own refusal.
 const FeatureFork = "fork"
 
 // FeatureLogin is a runner that acts on the hub-login controls —

@@ -599,7 +599,7 @@ Each of those is answered within 30 s. Codex's models, for the capability
 document, are an app-server of their own: `initialize` → `initialized` →
 `model/list`, and no thread; where it cannot answer, the `models_cache.json`
 Codex keeps in that login's home stands in. The thread id is
-the native session id, exposed the moment `thread/start` answers. Codex writes
+the native session id, exposed the moment `thread/start` or `thread/fork` answers. Codex writes
 subagents' threads to the same pipe and a resume replays the thread's history,
 so only notifications naming the run's thread and, once it has started, the
 run's own turn are read. Only `turn/completed` decides the run; a steer is
@@ -612,7 +612,7 @@ with `session_mismatch`. The rest is
 [0037](docs/decisions/0037-a-codex-run-is-its-own-turn-and-its-protocol-is-pinned.md).
 
 The approval policy and sandbox are the owner's `approval` and `sandbox`, sent
-with every `thread/start` and `thread/resume`, and `never` and
+with every `thread/start`, `thread/resume` and `thread/fork`, and `never` and
 `danger-full-access` when unset — unattended, and the owner's machine is the
 boundary, as for Claude. A request for approval that still arrives is declined
 ([0036](docs/decisions/0036-codex-runs-unsandboxed-and-never-asks-unless-the-owner-says.md)).

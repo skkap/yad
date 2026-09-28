@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -75,6 +77,20 @@ func (f hubFlags) watchCommand(runID string) string {
 }
 
 const submitUsage = "usage: yad hub submit --harness h --model m [--effort level] [--context text | --context-file f] [--session id | [--new-session id] [--fork session]] [--git url [--base ref] [--branch name] | --path dir] [--run-id id] [--watch] <instruction | ->"
+
+// forkSessionID names the session a fork opens when the caller named none.
+// The service API names a fork's session only when it is given one, so the
+// id a hub would have generated is made here — from the run id when there is
+// one, so that a retried submit with the same --run-id sends the same session
+// and is answered with the run already queued rather than refused as
+// different.
+func forkSessionID(runID string) string {
+	if runID == "" {
+		return "ses_" + strings.ToLower(rand.Text())
+	}
+	sum := sha256.Sum256([]byte("fork\x00" + runID))
+	return "ses_" + hex.EncodeToString(sum[:12])
+}
 
 // cmdHubSubmit queues a run and prints its id — alone on stdout, so a script
 // can capture it — or, with --watch, follows it to its end.
@@ -149,9 +165,7 @@ func cmdHubSubmit(ctx context.Context, g global, args []string, stdout, stderr i
 	case *newSession != "" || *fork != "":
 		id := *newSession
 		if id == "" {
-			// The service API names a fork's session only when it is given
-			// one, so the id a hub would have generated is made here.
-			id = "ses_" + strings.ToLower(rand.Text())
+			id = forkSessionID(*runID)
 		}
 		req.Session = &hubapi.SessionChoice{ID: id, New: true, ForkFrom: *fork}
 	}

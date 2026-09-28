@@ -95,7 +95,7 @@ func TestSubmittingAFork(t *testing.T) {
 		says    string
 	}{
 		{"unknown", hubapi.SessionChoice{ID: "f1", New: true, ForkFrom: "s-nowhere"}, "claude", http.StatusNotFound, "no session \"s-nowhere\" to fork"},
-		{"on no runner yet", hubapi.SessionChoice{ID: "f2", New: true, ForkFrom: "s-unbound"}, "claude", http.StatusConflict, "once one of its runs has started"},
+		{"on no runner yet", hubapi.SessionChoice{ID: "f2", New: true, ForkFrom: "s-unbound"}, "claude", http.StatusConflict, "hub watch"},
 		{"on a runner without fork", hubapi.SessionChoice{ID: "f3", New: true, ForkFrom: "s-o"}, "claude", http.StatusConflict, "upgrade yad on that runner"},
 		{"closed", hubapi.SessionChoice{ID: "f4", New: true, ForkFrom: "s-closed"}, "claude", http.StatusConflict, "closed"},
 		{"another harness", hubapi.SessionChoice{ID: "f5", New: true, ForkFrom: "s-a"}, "codex", http.StatusConflict, "claude session"},
@@ -109,11 +109,19 @@ func TestSubmittingAFork(t *testing.T) {
 		})
 	}
 	var view hubapi.Run
-	if code, e := f.api(t, "POST", "/runs", tok, hubapi.SubmitRequest{
+	ok := hubapi.SubmitRequest{
+		RunID:   "fork-ok",
 		Session: &hubapi.SessionChoice{ID: "f-ok", New: true, ForkFrom: "s-a"}, Harness: "claude", Model: "opus",
 		Brief: v1.Brief{Instruction: "fork it"},
-	}, &view); code != http.StatusCreated {
+	}
+	if code, e := f.api(t, "POST", "/runs", tok, ok, &view); code != http.StatusCreated {
 		t.Fatalf("a fork of an open session on a runner advertising fork: %d %+v", code, e)
+	}
+	// A retry is answered with the run queued, as every retry is, even once
+	// the forked session's runner no longer advertises fork.
+	f.mustSync(t, "r1", cred, downgraded("r1", 1, capability.FeatureFork))
+	if code, e := f.api(t, "POST", "/runs", tok, ok, &view); code != http.StatusCreated || view.RunID != "fork-ok" {
+		t.Fatalf("a retried fork: %d %+v %+v", code, e, view)
 	}
 	var s hubapi.Session
 	if code, e := f.api(t, "GET", "/sessions/f-ok", tok, nil, &s); code != http.StatusOK || s.ForkFrom != "s-a" {

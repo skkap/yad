@@ -137,8 +137,15 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 	if err := run.Validate(); err != nil {
 		return nil, Fail(http.StatusBadRequest, v1.CodeInvalid, err.Error(), "fix the request to match protocol/hubapi/openapi.yaml")
 	}
+	// Only for a run the hub does not have yet: a retry of one it queued is
+	// answered with that run, as every other retry is, whatever the forked
+	// session's runner advertises by now.
 	if run.Session.ForkFrom != "" {
-		if err := h.refuseUnforkable(ctx, run.Session.ForkFrom); err != nil {
+		if _, err := h.store.GetRun(ctx, run.RunID); errors.Is(err, sql.ErrNoRows) {
+			if err := h.refuseUnforkable(ctx, run.Session.ForkFrom); err != nil {
+				return nil, err
+			}
+		} else if err != nil {
 			return nil, err
 		}
 	}
@@ -171,7 +178,7 @@ func (h *Hub) submitRun(ctx context.Context, in *submitInput) (*runOutput, error
 			"check session.fork_from against an earlier run's session_id")
 	case errors.Is(err, store.ErrForkUnbound):
 		return nil, Fail(http.StatusConflict, v1.CodeConflict, fmt.Sprintf("session %q is on no runner yet, so there is no conversation to fork", run.Session.ForkFrom),
-			"fork it once one of its runs has started: `"+serviceCommand("run", "<run>")+"` shows a run's state")
+			"fork it once one of its runs has started: `"+serviceCommand("watch", "<run>")+"` follows one of its runs")
 	case err != nil:
 		return nil, err
 	default:
