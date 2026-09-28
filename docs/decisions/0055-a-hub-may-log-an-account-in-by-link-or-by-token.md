@@ -1,4 +1,5 @@
 ---
+status: amended by 0057 — a hub may add and remove accounts, unless the owner turns it off for its connection; Codex logs in from a hub by device code
 date: 2026-09-25
 ---
 
