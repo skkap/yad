@@ -59,7 +59,7 @@ const (
 // the hub five syncs where it had one — for that runner, only while the run
 // waits, and nothing for an idle fleet. It sits below MinSyncInterval, which
 // bounds the steady interval; the protocol lets next_sync_ms go to 3 s for
-// this (decision 0060).
+// this (decision 0061).
 const QuickSyncInterval = 3 * time.Second
 
 // quickInterval is never longer than the configured interval: sooner must not

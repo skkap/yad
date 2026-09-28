@@ -299,7 +299,7 @@ func checkLeaseOutlastsTheInterval(_ context.Context, s *session) error {
 // The interval a hub may name (HUB.md §5). The default of 15 s is the
 // hub's business; the bounds are the protocol's. A sync's next_sync_ms may go
 // lower than register's sync_interval_ms, for a hub asking a runner back
-// sooner while it holds work for it (decision 0060); whether it names that
+// sooner while it holds work for it (decision 0061); whether it names that
 // only then is not something a runner can see, so only the bound is checked.
 const (
 	v1MinInterval = 5 * time.Second

@@ -317,7 +317,7 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 // waitsForThisRunner is whether a queued run waits for this runner and for
 // nothing but a run it is executing — full capacity, or its session's live
 // run — which is when the answer asks it back after quickInterval (decision
-// 0060). A run submitted to an idle runner is not helped and cannot be: the
+// 0061). A run submitted to an idle runner is not helped and cannot be: the
 // answer that would have to change was sent before the run existed (DEV-49).
 //
 // A runner listing only waiting runs, or none, is left at the configured

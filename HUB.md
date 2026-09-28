@@ -728,7 +728,7 @@ no help to a runner holding nothing — the run submitted a moment after an idle
 runner's sync still waits one interval, since the answer that would have to
 change was sent before the run existed. `yad hub` answers 3 s when **all** of
 these hold, and its configured interval otherwise
-([0060](docs/decisions/0060-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)):
+([0061](docs/decisions/0061-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)):
 
 - the runner lists a run that is not `waiting`. A waiting run gives its
   capacity back at an account's reset, hours off, and a runner listing nothing

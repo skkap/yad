@@ -29,7 +29,7 @@ import (
 //
 // The floor is next_sync_ms's, 3 s, below the 5 s that bounds a hub's steady
 // interval: a hub holding a queued run for this runner may ask it back that
-// soon so the run starts once the one ahead of it ends (decision 0060). A
+// soon so the run starts once the one ahead of it ends (decision 0061). A
 // runner that clamped to 5 s would still work, only later.
 const (
 	defaultInterval = 15 * time.Second
