@@ -10,8 +10,8 @@
 #
 #   scripts/breaking.sh        make check-breaking
 #
-# Each document is compared against itself at the last release tag that is not
-# this commit's own. Exit 1 with oasdiff's report on a breaking change; exit 0
+# Each document is compared against itself at the release before this commit
+# (below, for what "before" means). Exit 1 with oasdiff's report on a breaking change; exit 0
 # otherwise, and see below for what "otherwise" is allowed to mean.
 #
 # When oasdiff cannot do the comparison at all it exits neither 0 nor 1 — 102
@@ -39,43 +39,78 @@ docs=(protocol/v1/openapi.yaml protocol/hubapi/openapi.yaml)
 # could have taken rather than merely a tag someone wrote. Version sort,
 # because refname sort puts v0.9.0 above v0.10.0.
 #
-# --no-contains HEAD is what keeps that true during a release. release.yml runs
-# `make check` on a tag push, with HEAD detached at the tag being released, so
-# the newest tag is this commit's own: without this the baseline would be the
-# working tree, oasdiff would compare a file to itself, and the release job's
-# copy of the gate would pass on every release while printing a reassuring
-# "against v0.2.0". That is the run release.yml's own comment exists for — a
-# tag can sit on a commit CI never saw — and it is the one run where this check
-# must not be vacuous. Excluding tags that contain HEAD leaves the previous
-# release, which is the spec the people downstream actually hold.
-tag=$(git tag --list 'v[0-9]*' --sort=-v:refname --no-contains HEAD | head -n1)
+# Which release is "the last one" depends on whether this commit is one.
+#
+# A tagged HEAD is a release being cut. release.yml runs `make check` on a tag
+# push, detached at the tag. The baseline is the release just below it in
+# version order, on another commit. The release job's run of this gate is the
+# one that must not be vacuous: a tag can sit on a commit CI never saw. If the
+# commit's own tag were the baseline, oasdiff would compare a file with itself
+# and every release would pass while printing a reassuring "against v0.2.0".
+#
+# Version order, not ancestry, because the two disagree exactly where a
+# release is unusual:
+#   - Tag v0.3.0 on a strict ancestor of v0.2.0, and every tag contains HEAD.
+#     An ancestry rule then finds nothing, and the gate goes inert on the one
+#     run that must not be vacuous (DEV-90).
+#   - "Newest tag not on HEAD" would hold a v0.1.1 patch on a side branch
+#     against v0.2.0, and fail it on everything 0.2.0 added.
+#   - The same rule would hold a bisect that lands on the v0.1.0 commit against
+#     v0.2.0.
+# By version order, v0.1.1 is compared with v0.1.0, v0.1.0 with whatever came
+# before it (as its own release run did), and v0.3.0 with v0.2.0: the specs
+# the people downstream actually hold. scripts/release-guard.sh refuses to
+# publish that last one at all.
+#
+# An untagged HEAD (a pull request, a branch, an old commit) is compared with
+# the newest release in its own history, the newest one it builds on. That
+# means `--merged HEAD`, not the older `--no-contains HEAD`. The two agree on a
+# straight line. They differ on a branch: a fix on top of v0.1.1 must not be
+# held against a v0.2.0 on master that it never contained. A pull request in
+# CI is checked out as its merge commit, so it builds on master's newest
+# release. For a commit older than every release this leaves nothing, which is
+# right, because there is no earlier spec. scripts/breaking_test.go runs every
+# one of these topologies.
+own=$(git tag --list 'v[0-9]*' --points-at HEAD --sort=-v:refname | head -n1)
+tag=
+if [ -n "$own" ]; then
+	head=$(git rev-parse HEAD)
+	below=
+	while IFS= read -r t; do
+		if [ -z "$below" ]; then
+			[ "$t" = "$own" ] && below=1
+			continue
+		fi
+		# A second name for this same commit is not an earlier release.
+		[ "$(git rev-parse "$t^{commit}")" = "$head" ] && continue
+		tag=$t
+		break
+	done < <(git tag --list 'v[0-9]*' --sort=-v:refname)
+else
+	tag=$(git tag --list 'v[0-9]*' --sort=-v:refname --merged HEAD | head -n1)
+fi
 
 if [ -z "$tag" ]; then
 	# Absence is data, and this is the absence that matters most: a check with
 	# no baseline passes every time, and a silent pass is indistinguishable
 	# from a real one. So it says what it did not do.
 	#
-	# Two different absences reach this branch and they must not print the same
-	# sentence. Nothing tagged at all is the ordinary one. The other is every
-	# tag being excluded by --no-contains, where "nothing has been released"
-	# would be flatly untrue with the tags sitting right there.
-	#
-	# That second one has more than one cause, which is the trap: HEAD older
-	# than every release (a bisect, an old commit checked out) has genuinely no
-	# earlier spec, but a release published from a strict ancestor of an
-	# earlier release has one and is not comparing against it — DEV-90, left
-	# open because that topology is already shipping older code under a higher
-	# version and wants guarding above this script. So this message says what
-	# it did not do and stops, rather than explaining why: a sentence written
-	# for one topology is how the last two defects in this file got here, and
-	# it must be true in every topology that reaches it.
-	if [ -z "$(git tag --list 'v[0-9]*' | head -n1)" ]; then
+	# Three absences reach this branch, one per way of choosing, and each gets
+	# its own sentence. A sentence written for one topology and printed in
+	# another is how earlier defects in this file got here. With nothing
+	# tagged, "nothing has been released" is true. The other two have tags
+	# sitting right there, and that sentence would be flatly untrue for them.
+	newest=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1)
+	if [ -z "$newest" ]; then
 		echo "check-breaking: INERT — no v[0-9]* tag in this repository."
 		echo "check-breaking: nothing has been released, so there is no baseline to compare against and this check proves nothing about ${docs[*]}."
 		echo "check-breaking: it starts guarding the moment the owner pushes the first release tag; nothing else needs to change."
+	elif [ -n "$own" ]; then
+		echo "check-breaking: INERT — HEAD is release $own, and there is no earlier release on another commit to compare it against."
+		echo "check-breaking: nothing was compared, and this is not evidence that ${docs[*]} are compatible with anything."
 	else
-		echo "check-breaking: INERT — every v[0-9]* tag contains HEAD, so none was usable as a baseline (newest is $(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1))."
-		echo "check-breaking: nothing was compared, and this is not evidence that ${docs[*]} are compatible with anything. If this ran while publishing a release, see DEV-90."
+		echo "check-breaking: INERT — no v[0-9]* tag is in the history of HEAD (newest is $newest): this commit builds on no release, so there is no earlier spec to compare it with."
+		echo "check-breaking: nothing was compared, and this is not evidence that ${docs[*]} are compatible with anything."
 	fi
 	exit 0
 fi

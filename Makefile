@@ -64,9 +64,9 @@ check-openapi: generate-openapi
 	    echo "stale, and differing from what the Go types generate:"; echo "$$stale"; \
 	    echo "run 'make generate' and commit the result"; exit 1; fi
 
-# Compares both committed OpenAPI documents against themselves at the last
-# release tag and fails on a change that breaks a generated client. Inert, and
-# says so, until the owner pushes the first v[0-9]* tag. scripts/breaking.sh
+# Compares both committed OpenAPI documents against themselves at the release
+# before this commit, and fails on a change that breaks a generated client.
+# Inert, and says so, where there is no earlier release. scripts/breaking.sh
 # holds the reasoning; it runs after check-openapi, here and in CI, so the
 # documents it reads are known to match the Go types. An enum a hub sends grows
 # within v1 behind a feature, and the generator writes it so that oasdiff lets it
