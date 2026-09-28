@@ -26,7 +26,8 @@ import (
 )
 
 // Logins is the daemon's hub logins (decision 0055): an account's login a hub
-// started, by link or by token, and where each one is. The sync loops hand it
+// started, by link — Codex's by device code (0057) — or by token, and where
+// each one is. The sync loops hand it
 // the hub's login controls and report what it holds, per connection, until a
 // sync carrying a login's end is answered.
 //
@@ -123,6 +124,8 @@ type hubLogin struct {
 	method   v1.LoginMethod
 	state    v1.LoginState
 	url      string
+	// userCode is a device-code login's code, which the owner types at url.
+	userCode string
 	errMsg   string
 	updated  time.Time
 	// code carries the owner's code to the goroutine driving the login.
@@ -237,7 +240,7 @@ func (m *Logins) Reported(conn string, sent []v1.LoginReport) {
 func (l *hubLogin) report() v1.LoginReport {
 	return v1.LoginReport{
 		LoginID: l.id, Harness: l.ref.Harness, Account: l.ref.Label, Method: l.method,
-		State: l.state, URL: l.url, Error: l.errMsg, UpdatedAt: l.updated.UTC(),
+		State: l.state, URL: l.url, UserCode: l.userCode, Error: l.errMsg, UpdatedAt: l.updated.UTC(),
 	}
 }
 
@@ -298,11 +301,14 @@ func (m *Logins) start(conn string, c v1.Control, method v1.LoginMethod) {
 		if ctx.Err() != nil {
 			return
 		}
-		if method == v1.LoginByToken {
+		switch {
+		case method == v1.LoginByToken:
 			m.byToken(ctx, l, bin, token)
-			return
+		case byDeviceCode(ref.Harness):
+			m.byDevice(ctx, l, bin)
+		default:
+			m.byLink(ctx, l, bin)
 		}
-		m.byLink(ctx, l, bin)
 	}()
 }
 
@@ -314,14 +320,6 @@ func (m *Logins) refusal(ref account.Ref, method v1.LoginMethod, token string) (
 	h := ref.Harness
 	if h == "" {
 		return "", "the hub named no harness to log in — start the login again naming one: hub login logs in " + strings.Join(hubLoginHarnesses, " and ")
-	}
-	if h == "codex" {
-		// The wire carries Codex's device code (user_code); driving its login
-		// from here is the follow-up decision 0055 leaves open.
-		if ref.Label == "" {
-			return "", "logging Codex in from a hub is not built yet — at the machine, `" + m.Paths.RemoteCommand("doctor") + "` names Codex's own login command; with --device-auth it takes a code entered on any other machine"
-		}
-		return "", "logging Codex in from a hub is not built yet — at the machine, `" + m.Paths.RemoteCommand("account", "add", "codex", ref.Label, "--device") + "` logs it in with a code entered on any other machine"
 	}
 	if !slices.Contains(hubLoginHarnesses, h) {
 		return "", fmt.Sprintf("hub login logs in %s, and %s is not one of them — start the login again naming one, or see at the machine what this runner drives with `%s`",
@@ -366,7 +364,9 @@ func (m *Logins) takeCode(conn string, c v1.Control) {
 		m.echo(conn, c.LoginID, v1.LoginFailed, "this runner has no login "+c.LoginID+" in progress — it restarted since, and a login in flight does not survive that; start a new login")
 		return
 	}
-	if l.method != v1.LoginByLink || l.state != v1.LoginWaiting {
+	// A device-code login takes its code at the link, never through the hub:
+	// there is nothing to hand one to.
+	if l.method != v1.LoginByLink || l.state != v1.LoginWaiting || byDeviceCode(l.ref.Harness) {
 		return
 	}
 	code := strings.TrimSpace(c.Code)
@@ -439,7 +439,7 @@ func (m *Logins) endLocked(l *hubLogin, state v1.LoginState, msg string) {
 	l.state, l.errMsg, l.updated = state, msg, time.Now()
 	// The link is spent either way, and a stale one shown beside an end
 	// would invite the owner to follow it.
-	l.url = ""
+	l.url, l.userCode = "", ""
 	if l.cancel != nil {
 		l.cancel()
 	}
@@ -519,10 +519,12 @@ func (m *Logins) removedReason(r account.Ref) string {
 		r.Harness, r.Label, m.Paths.RemoteCommand("account", "add", r.Harness, r.Label))
 }
 
-// hubLoginHarnesses are the harnesses a hub login can log in here. Codex's
-// device code has its place on the wire and waits on its runner side
-// (decision 0055).
-var hubLoginHarnesses = []string{"claude"}
+// hubLoginHarnesses are the harnesses a hub login can log in here.
+var hubLoginHarnesses = []string{"claude", "codex"}
+
+// byDeviceCode says whether a harness's hub login is a device code (0057):
+// a link and a code the owner types there, and nothing back through the hub.
+func byDeviceCode(harness string) bool { return harness == "codex" }
 
 // named is a name a hub sent, fit to quote in words that go back to it: one
 // line, bounded, and with no backtick to be read as the start of a command.

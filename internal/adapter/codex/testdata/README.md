@@ -34,6 +34,21 @@ exhausting an account or a context window:
 | `usage-limit-unnamed` | the same with no snapshot: the adapter asks `account/rateLimits/read` |
 | `prompt-too-long` | the turn fails `contextWindowExceeded` |
 
+Written by hand from the schema, never measured: the device-code login a hub
+starts (DEV-135). Recording one needs a person to type the code at OpenAI, so
+until a login is recorded by hand on a machine with Codex, the order of the
+notifications after `account/login/start` — and whether `auth.json` is written
+before `account/login/completed` — is what the schema suggests, not what Codex
+was seen to do. The handshake is `plain`'s; Codex's error texts are invented,
+since the runner never reads them.
+
+| Fixture | The login |
+|---|---|
+| `login-device` | a link and a code, then `account/login/completed` with `success: true` and `account/updated` |
+| `login-device-refused` | the same, ending `success: false` — a ChatGPT workspace with device-code login off |
+| `login-device-cancel` | `account/login/cancel` while the code is out: `canceled`, then a completion with `success: false` |
+| `login-device-unsupported` | a codex whose `account/login/start` has no `chatgptDeviceCode`, answering with an error |
+
 `codex_app_server_protocol.schemas.json` is what `codex app-server
 generate-json-schema` wrote for that version. `schema.go` pins the hash of the
 part the adapter uses (decision 0037); `schema_test.go` checks the pin against

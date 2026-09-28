@@ -426,8 +426,8 @@ func TestALinkLoginOnATokenAccountKeepsTheTokenUnlessItTakes(t *testing.T) {
 
 // What a runner will not do, each ended failed at once with the reason and a
 // command for whoever walks to the machine, runnable as printed: log in an
-// account the owner did not list, store a token with no account, or log
-// Codex in from a hub. None of them makes a home.
+// account the owner did not list, store a token with no account, or store
+// one for Codex, which runs on none. None of them makes a home.
 func TestALoginTheRunnerRefusesSaysWhatToDoAtTheMachine(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -439,17 +439,17 @@ func TestALoginTheRunnerRefusesSaysWhatToDoAtTheMachine(t *testing.T) {
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "stranger"}},
 		{"a token with no account", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Token: "sk-ant-oat01-x"}, "names none",
 			[]string{"yad", "--profile", "test", "account", "add", "claude", "<label>", "--token", "-"}},
-		{"codex", startLogin("lg1", "codex", "work"), "not built yet",
-			[]string{"yad", "--profile", "test", "account", "add", "codex", "work", "--device"}},
-		{"codex's own login", startLogin("lg1", "codex", ""), "not built yet",
-			[]string{"yad", "--profile", "test", "doctor"}},
+		{"a token for codex", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "codex", Account: "work", Token: "sk-proj-not-a-subscription"},
+			"does not run on a stored token", nil},
+		{"a codex account nobody listed", startLogin("lg1", "codex", "stranger"), "never adds",
+			[]string{"yad", "--profile", "test", "account", "add", "codex", "stranger"}},
 		{"a harness hub login does not log in", startLogin("lg1", "gemini", "work"), "logs in claude",
 			[]string{"yad", "--profile", "test", "doctor"}},
 		// A name the hub sent is quoted in the words, and a backtick in it
 		// must not read as the start of a second command.
 		{"a harness named with a backtick", startLogin("lg1", "x`yad account list`", ""), "logs in claude",
 			[]string{"yad", "--profile", "test", "doctor"}},
-		{"no harness at all", startLogin("lg1", "", "work"), "naming one: hub login logs in claude", nil},
+		{"no harness at all", startLogin("lg1", "", "work"), "naming one: hub login logs in claude and codex", nil},
 		{"a token that is not one", v1.Control{Kind: v1.ControlLoginToken, LoginID: "lg1", Harness: "claude", Account: "work", Token: "two words"}, "not stored", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

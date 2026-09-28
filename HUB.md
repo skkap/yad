@@ -943,8 +943,8 @@ a rule for when to stop sending it:
 | `close_session` | `session_id` | closes the session and deletes its workdir; a session with a run held closes when that run ends; one it does not hold or already closed is reported closed | in every response until the session appears in the runner's `closed_sessions` (§8) |
 | `drain` | nothing | stops claiming, lets the runs it holds finish, then exits. Its health says `draining` and its free capacity is zero | in every response until a sync's health says `draining` |
 | `report_capabilities` | nothing | sends its capability document in the next sync | while the fingerprint differs from the document you hold |
-| `start_login` | `login_id`, `harness`, `account` (absent: the harness's own default login) | runs the harness's own login in that account's home and reports its link as `url` while the login is `waiting` | in every response until the runner reports the login in `logins` |
-| `login_code` | `login_id`, `code` | writes the code the owner got at the link to the login, which then moves to `checking` | in every response while the runner reports the login `waiting` |
+| `start_login` | `login_id`, `harness`, `account` (absent: the harness's own default login) | runs the harness's own login in that account's home and reports its link as `url` while the login is `waiting` — for Codex with `user_code`, the device code to type there | in every response until the runner reports the login in `logins` |
+| `login_code` | `login_id`, `code` | writes the code the owner got at the link to the login, which then moves to `checking` | in every response while the runner reports the login `waiting` with no `user_code`; never for one with a `user_code`, whose code is typed at the link |
 | `login_token` | `login_id`, `harness`, `account`, `token` | stores a `claude setup-token` token as the account's login | in every response until the runner reports the login — then forget the token |
 | `cancel_login` | `login_id` | ends the login `cancelled`; one it never had is reported `cancelled` all the same | in every response until the runner reports the login over |
 | `update` | — | reserved; never send it | never |
@@ -1011,6 +1011,14 @@ label the owner listed on that machine, which the runner's health names: a
 runner never adds one, and answers any other with `failed`. A token needs an
 account; a link login without one logs in the harness's own default login.
 
+**Codex logs in by device code**
+([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)),
+still a `link` login: its `waiting` report carries `user_code` beside `url`.
+Show both; the owner signs in at the link and types the code there, and
+nothing comes back through you — **never send `login_code` to a login that
+reported `user_code`**. It ends like any other, by the runner's own check.
+Codex takes no token: a `login_token` for it ends `failed`.
+
 Each login's `state` moves `starting` → `waiting` (`url` set) → `checking` →
 one of `succeeded`, `failed`, `expired`, `cancelled`, and the runner repeats
 it in every sync until one carrying the end is answered — take a repeat as the
@@ -1019,8 +1027,7 @@ same news, and a report for a login you never started as news you may ignore.
 action. Success is the harness's own login check on the machine, never its
 output. A newer login for the same account replaces the older one, which the
 runner reports `cancelled`. yad's runner gives a code ten minutes (`expired`
-after) and answers Codex with `failed` until its side is built; `user_code` is
-for that device-code login.
+after), whether it is pasted back or typed at the link.
 
 **The rules the reports cannot enforce for you.** The `code` and the `token`
 are secrets: never log them, never show them again, never return them from an

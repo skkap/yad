@@ -153,10 +153,11 @@ runner uses them in turn.
 When the machine has no convenient shell — a VM, a container, a box somewhere
 else — **the hub can do it instead**, if it supports it. It shows **Log in**
 beside an account the runner reports as needing one: follow the link and
-paste the code back, or paste a token, and the login lands on the runner
-without anyone opening a terminal there
-([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)).
-Claude logs in this way today; Codex logs in on the machine.
+paste the code back — for Codex, type the code the hub shows at the link — or
+paste a Claude token, and the login lands on the runner without anyone
+opening a terminal there
+([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md),
+[0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
 
 ## Install
 

@@ -33,7 +33,7 @@ import (
 // pinned maps each known surface hash to the Codex version it was recorded
 // from, in testdata/codex-<version>/codex_app_server_protocol.schemas.json.
 var pinned = map[string]string{
-	"e502eefe1909eaa70bbaa1e60f07c33b30c4a22c637ed593aaff4efb1efd5bde": "0.147.0",
+	"dc3dfab123e3a20ceb0cb58c017e853b354590c613b369b382d555e595df65b4": "0.147.0",
 }
 
 // schemaFile is the bundle generate-json-schema writes, holding every
@@ -52,12 +52,12 @@ var surface = struct {
 }{
 	methods: map[string][]string{
 		"ClientRequest": {"initialize", "thread/start", "thread/resume", "thread/inject_items", "turn/start", "turn/steer",
-			"turn/interrupt", "account/rateLimits/read"},
+			"turn/interrupt", "account/rateLimits/read", "account/login/start", "account/login/cancel"},
 		"ClientNotification": {"initialized"},
 		"ServerNotification": {"turn/started", "turn/completed", "item/started", "item/completed",
 			"item/agentMessage/delta", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta",
 			"thread/tokenUsage/updated", "account/rateLimits/updated", "error", "warning",
-			"model/rerouted", "thread/compacted"},
+			"model/rerouted", "thread/compacted", "account/login/completed"},
 		"ServerRequest": {"item/commandExecution/requestApproval", "item/fileChange/requestApproval",
 			"item/permissions/requestApproval", "mcpServer/elicitation/request",
 			"execCommandApproval", "applyPatchApproval"},
@@ -66,7 +66,7 @@ var surface = struct {
 		"TurnStartResponse", "TurnSteerResponse", "GetAccountRateLimitsResponse",
 		"CommandExecutionRequestApprovalResponse", "FileChangeRequestApprovalResponse",
 		"PermissionsRequestApprovalResponse", "McpServerElicitationRequestResponse",
-		"ExecCommandApprovalResponse", "ApplyPatchApprovalResponse"},
+		"ExecCommandApprovalResponse", "ApplyPatchApprovalResponse", "LoginAccountResponse", "CancelLoginAccountResponse"},
 }
 
 // SchemaHash hashes the adapter's surface of a generated schema bundle. What

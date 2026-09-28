@@ -1,4 +1,5 @@
 ---
+status: amended by 0057 — the daemon also writes config.toml's account lists, for an account a hub adds or removes, under a lock the CLI takes too
 date: 2026-09-22
 ---
 

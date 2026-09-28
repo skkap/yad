@@ -14,6 +14,7 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter"
+	"github.com/skkap/yad/internal/adapter/codex/codextest"
 	"github.com/skkap/yad/internal/adapter/fake"
 
 	"context"
@@ -22,8 +23,13 @@ import (
 // The test binary doubles as claude for its login check: re-executed with
 // RUNNER_TEST_CLAUDE set, `auth status` answers in JSON the way claude
 // does, from the home it was pointed at. Nothing else about claude is faked
-// here — the turn itself is the in-memory adapter.
+// here — the turn itself is the in-memory adapter. Started under the name
+// codex, it is codextest's codex, for a hub's device-code login.
 func TestMain(m *testing.M) {
+	if codextest.Child() {
+		codextest.Main()
+		os.Exit(0)
+	}
 	if os.Getenv("RUNNER_TEST_CLAUDE") != "" {
 		os.Exit(fakeClaudeAuth(os.Args[1:]))
 	}
