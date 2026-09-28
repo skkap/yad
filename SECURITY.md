@@ -26,7 +26,11 @@ These break a promise YAD makes, and are vulnerabilities:
 - A token, credential or grant that is printed, logged, sent in an event,
   passed in argv, or written anywhere other than a `0600` file.
 - A hub that can set or widen what a harness may do — its permission mode,
-  sandbox, accounts or caps — which YAD keeps as the owner's configuration.
+  sandbox or caps — which YAD keeps as the owner's configuration.
+- A hub that adds or removes an account on a connection whose owner set
+  `manage_accounts = false`, or that adds one without its harness's own login
+  check saying yes
+  ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
 - A grant that reaches the prompt, the logs, the events or the checkout, or
   outlives its run.
 - A source that reaches a directory outside the owner's `[workdirs] roots`.

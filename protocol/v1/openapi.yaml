@@ -13,7 +13,7 @@ components:
           format: date-time
           type: string
         state:
-          description: "free takes runs. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again at the machine. Absent from runners older than this field: the runner cannot say, which is not a fault."
+          description: "free takes runs. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again, at the machine or with a hub login (start_login or login_token). Absent from runners older than this field: the runner cannot say, which is not a fault."
           enum:
             - free
             - limited

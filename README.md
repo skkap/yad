@@ -40,7 +40,8 @@ reports back.
   with a container.
 - **Not tied to one harness or one account.** A run says which harness it
   wants — Claude Code or Codex today — and a runner can hold several accounts
-  for each, moving to the next when one hits its usage limit.
+  for each, moving to the next when one hits its usage limit. Accounts can be
+  added, logged in and removed from the machine or from the hub.
 - **Control stays with the machine's owner.** Runners connect out and never
   listen, and what a harness may do on a machine is decided there, never by a
   hub. [docs/run-it-safely.md](docs/run-it-safely.md) says where the edges are.
@@ -156,8 +157,12 @@ beside an account the runner reports as needing one: follow the link and
 paste the code back — for Codex, type the code the hub shows at the link — or
 paste a Claude token, and the login lands on the runner without anyone
 opening a terminal there
-([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md),
-[0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
+([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md)).
+The hub can also **add** another account — a second subscription — and
+**remove** one. An added account is listed only once its login takes, and
+every hub the runner serves uses it. Set `manage_accounts = false` on a
+connection to keep that hub from adding or removing accounts
+([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
 
 ## Install
 

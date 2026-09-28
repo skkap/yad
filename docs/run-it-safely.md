@@ -497,10 +497,19 @@ not as "only the workdir".
 Two things about this that are not negotiable by anyone else:
 
 - **A hub can never set or widen these.** Permission mode, sandbox, approval,
-  capacity, caps and accounts are runner configuration, and no protocol field
-  carries them ([0015](decisions/0015-owner-environment-is-the-trust-boundary.md)).
+  capacity and caps are runner configuration, and no protocol field carries
+  them ([0015](decisions/0015-owner-environment-is-the-trust-boundary.md)).
   This is about who decides the machine's settings, and it survives 0038
-  untouched.
+  untouched. Accounts are the one exception, and a deliberate one: a hub may
+  log an account in, add a new one and remove one
+  ([0055](decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md),
+  [0057](decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)),
+  because the person at the hub is the one holding the subscription. A new
+  account is listed only once its harness's own login check says yes, and
+  every hub's runs then use it. To keep one hub from adding or removing
+  accounts, set `manage_accounts = false` on its `[[connection]]` in
+  `config.toml` and restart the daemon; it may still log in the accounts
+  already listed.
 - **An approval request that arrives anyway is declined.** With a policy other
   than `never`, Codex asks before something it would not do on its own. Nobody
   is there, and you chose that policy meaning it, so the adapter answers no and
@@ -513,6 +522,8 @@ Two things about this that are not negotiable by anyone else:
 - [ ] An ordinary OS user, not root — one per profile
 - [ ] `yad doctor` shows the harnesses you expect, and no warning you have not
       decided about
+- [ ] `manage_accounts = false` on every connection whose hub should not add
+      or remove accounts (`yad status` shows each connection's setting)
 - [ ] Only hubs you would hand this machine to are in `config.toml`
 - [ ] `[workdirs] roots` set, if a hub should be able to check out less than
       your whole home directory

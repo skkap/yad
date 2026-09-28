@@ -62,7 +62,8 @@ const (
 	AccountLimited AccountState = "limited"
 	// AccountNeedsLogin cannot run a turn until the owner logs it in again:
 	// its harness home holds no working login, or the home is not there at
-	// all. The owner runs `yad account add` at the machine. Skipped for
+	// all. The owner runs `yad account add` at the machine, or logs it in
+	// from a hub advertising the login feature (decision 0055). Skipped for
 	// claiming exactly as a limited account is, and never an error that stops
 	// a runner registering.
 	AccountNeedsLogin AccountState = "needs_login"
@@ -85,7 +86,7 @@ type AccountReport struct {
 	// it. Hubs update centrally and runners sit on other people's machines,
 	// so that is the direction that matters, and §2's rule is that a field
 	// added within v1 never breaks an older runner.
-	State        AccountState `json:"state,omitempty" enum:"free,limited,needs_login" doc:"free takes runs. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again at the machine. Absent from runners older than this field: the runner cannot say, which is not a fault."`
+	State        AccountState `json:"state,omitempty" enum:"free,limited,needs_login" doc:"free takes runs. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again, at the machine or with a hub login (start_login or login_token). Absent from runners older than this field: the runner cannot say, which is not a fault."`
 	LimitedUntil *time.Time   `json:"limited_until,omitempty" doc:"When a limited account's usage limit resets. Absent for an account that is not limited."`
 	// Windows is every usage window the harness last told the runner about,
 	// whether or not the account is at a limit: a hub seeing one at 96% knows
