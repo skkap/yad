@@ -50,6 +50,15 @@ const (
 	// in the syncs after it. A sweep after a long absence may expire
 	// hundreds at once, and one sync's body should stay small.
 	closedPerSync = 64
+	// earlySyncGap is the least time between a sync and the early one a
+	// run's end brings forward (DEV-145). It bounds a queue of runs that
+	// each fail the moment they start, which would otherwise have the
+	// runner sync as fast as the hub answers. A second is what the
+	// runner already spends on a hub while a run streams — its reporter
+	// uploads every reportEvery — so a run ending adds nothing of a
+	// different order, and it is well under the 3 s floor a hub may ask
+	// for, so bringing a sync forward is never slower than waiting.
+	earlySyncGap = time.Second
 )
 
 // Executor runs claimed runs; Exec is the real one. The contract with the sync
@@ -58,7 +67,8 @@ const (
 //   - Start is called once per run, after the hub has acknowledged the claim,
 //     from the sync loop itself: it must hand the run off and return at once.
 //     The run's capacity is the executor's from then; it calls Claim.Release
-//     once the run's terminal state is in the store.
+//     once the run's terminal state is in the store, which also brings the
+//     connection's next sync forward (Loop.Wake).
 //   - The executor reports a held run's state by writing it to the store
 //     (store.SetRunState). The loop lists whatever the store holds on every
 //     sync; there is no other channel.
@@ -220,6 +230,14 @@ type Loop struct {
 	// before it starts, or to the executor once every start is done — so a
 	// control is never delivered before the run it names can receive it.
 	answered map[string][]v1.Control
+	// wake brings the next sync forward: a run this loop started let its
+	// capacity go, or the reporter handled a result. One buffered signal,
+	// so any number of runs ending before the loop looks is one early sync.
+	wake     chan struct{}
+	wakeOnce sync.Once
+	// lastSync is when the last sync ended, on Clock, which the early
+	// sync's gap is measured from.
+	lastSync time.Time
 }
 
 type pendingRun struct {
@@ -278,10 +296,17 @@ func (l *Loop) Run(ctx context.Context) error {
 		if l.mayClaim() {
 			replayed = nil
 		}
+		// A wake from before the sync reads the store is answered by this
+		// sync; one after it is left for the next.
+		select {
+		case <-l.wakes():
+		default:
+		}
 		res, err := l.SyncOnce(ctx)
 		if ctx.Err() != nil {
 			return nil
 		}
+		l.lastSync = l.Clock.Now()
 		if err == nil {
 			l.Monitor.synced(l.Connection, l.Clock.Now())
 		}
@@ -302,18 +327,78 @@ func (l *Loop) Run(ctx context.Context) error {
 			failures = 0
 			wait = interval(res.NextSyncMS)
 		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-drain:
-			// The hub hears at once that this runner is draining, and
-			// stops offering it work.
-			drain = nil
-		case <-replayed:
-			replayed = nil
-		case <-l.Clock.After(l.jitter(wait)):
+		wait = l.jitter(wait)
+		timer := l.Clock.After(wait)
+		wake := l.wakes()
+		if failures > 0 {
+			// A hub that is failing is not asked sooner because a run
+			// ended: the backoff is what spares it.
+			wake = nil
+		}
+	waiting:
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-drain:
+				// The hub hears at once that this runner is draining, and
+				// stops offering it work.
+				drain = nil
+				break waiting
+			case <-replayed:
+				replayed = nil
+				break waiting
+			case <-timer:
+				break waiting
+			case <-wake:
+				if l.resultDue(ctx) {
+					// The hub learns a run has ended from its result,
+					// not from a sync: one that goes first still lists
+					// the run as running, so the session's next turn
+					// is not offered. The reporter wakes this loop
+					// again once the result is in, or put off to a
+					// retry.
+					continue
+				}
+				wake = nil
+				now := l.Clock.Now()
+				early := l.lastSync.Add(earlySyncGap)
+				if !now.Before(early) {
+					break waiting
+				}
+				if early.Before(l.lastSync.Add(wait)) {
+					timer = l.Clock.After(early.Sub(now))
+				}
+			}
 		}
 	}
+}
+
+// Wake brings the loop's next sync forward, to no sooner than earlySyncGap
+// after the last: a run it holds has ended, so its hub can hear the result's
+// effect and offer the capacity it freed. It never blocks, and wakes before
+// the loop looks are one.
+func (l *Loop) Wake() {
+	select {
+	case l.wakes() <- struct{}{}:
+	default:
+	}
+}
+
+// wakes is the loop's wake channel, made on first use: the reporter may wake
+// the loop before Run has begun.
+func (l *Loop) wakes() chan struct{} {
+	l.wakeOnce.Do(func() { l.wake = make(chan struct{}, 1) })
+	return l.wake
+}
+
+// resultDue is whether a result of this connection's is waiting for the
+// reporter to send it now. One in backoff is not: its hub is failing, and
+// holding the early sync for it would hold it until the hub came back. The
+// outbox is stamped with the wall clock, so it is read against one.
+func (l *Loop) resultDue(ctx context.Context) bool {
+	due, err := l.Store.DueOutbox(ctx, db.DueOutboxParams{Connection: l.Connection, NextAttemptAt: time.Now().UnixMilli()})
+	return err == nil && len(due) > 0
 }
 
 // Quiesced is closed once the loop will start no more runs: it has begun a
@@ -595,6 +680,15 @@ func (l *Loop) stopUnstarted(ctx context.Context, id string, cs []v1.Control) bo
 func (l *Loop) start(ctx context.Context, c Claim) {
 	c.Controls = l.answered[c.Run.RunID]
 	delete(l.answered, c.Run.RunID)
+	// Every way a started run lets its capacity go — a result, a park on a
+	// usage limit, a stop — goes through its release, so this is the one
+	// place a run's end brings the next sync forward.
+	if release := c.Release; release != nil {
+		c.Release = func() {
+			release()
+			l.Wake()
+		}
+	}
 	l.Executor.Start(ctx, c)
 }
 

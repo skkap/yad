@@ -159,14 +159,19 @@ func Serve(ctx context.Context, o Options) error {
 		}
 		r := NewReporter(conn.Name, client, st, o.Log)
 		sv.reporters[conn.Name] = r
-		sv.loops = append(sv.loops, &Loop{
+		l := &Loop{
 			Connection: conn.Name, RunnerID: o.RunnerID, Hub: client, Store: st, Pool: pool,
 			Capabilities: o.Capabilities, Executor: executor, Drain: o.Drain,
 			Accounts:   o.Accounts,
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
 			RecentErrors: o.RecentErrors, Logins: logins,
 			ManageAccounts: manage[conn.Name], Paths: o.Paths, AccountsChanged: o.AccountsChanged,
-		})
+		}
+		// A result the hub now has is a session's live run ended there,
+		// and the next turn in it can be offered at the next sync. One put
+		// off to a retry no longer holds that sync back either.
+		r.Handled = l.Wake
+		sv.loops = append(sv.loops, l)
 	}
 	return sv.run(ctx)
 }

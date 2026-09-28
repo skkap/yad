@@ -324,6 +324,10 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   `next_sync_ms` as low as 3 s while it holds a queued run the runner would
   take once a run it holds ends, and `yad hub` does
   ([0063](docs/decisions/0063-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)).
+  The runner does not wait that long either: a run ending — its result at the
+  hub, or its capacity back with none owed — brings its connection's next sync
+  forward, to no sooner than 1 s after the last; runs ending together bring
+  one ([0065](docs/decisions/0065-a-run-ending-brings-its-connections-next-sync-forward.md)).
 
 ### Run
 
