@@ -35,7 +35,9 @@ if [[ -f $stage/yad-replaced ]]; then owe "yad was replaced"; fi
 checksum() { if [[ -f $cfg ]]; then cksum <"$cfg"; fi; }
 
 say "yad config.toml"
-if yad help 2>/dev/null | grep -q 'config apply'; then
+# Read whole, not piped into grep -q: under pipefail, grep leaving at its first
+# match can end the pipeline on yad's SIGPIPE and read as "no such command".
+if grep -q 'config apply' <<<"$(yad help 2>/dev/null)"; then
     # The spec owns every setting but the connections, and its accounts are
     # added to the machine's, never subtracted from them (decision 0058).
     # yad does the merge, under the lock its other writers take, so the

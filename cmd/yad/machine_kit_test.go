@@ -23,6 +23,7 @@ type kitMachine struct {
 	installs string // one line per `yad service install`
 	down     string // exists while the stub systemctl says the unit is down
 	failing  string // exists while `yad service install` fails
+	old      string // exists while yad is one from before `yad config apply`
 	p        config.Paths
 }
 
@@ -42,6 +43,7 @@ func newKitMachine(t *testing.T) *kitMachine {
 		installs: filepath.Join(dir, "installs"),
 		down:     filepath.Join(dir, "down"),
 		failing:  filepath.Join(dir, "failing"),
+		old:      filepath.Join(dir, "old"),
 		p:        config.Paths{Profile: config.DefaultProfile, Config: filepath.Join(dir, "config"), Data: filepath.Join(dir, "data")},
 	}
 	bin := filepath.Join(dir, "bin")
@@ -56,6 +58,7 @@ func newKitMachine(t *testing.T) *kitMachine {
 	}
 	writeExec(t, filepath.Join(m.stage, "guest", "runner.sh"), string(script))
 	writeExec(t, filepath.Join(bin, "yad"), `#!/bin/sh
+if [ "$1" = help ] && [ -e "$KIT_OLD" ]; then echo "usage: yad connect | service"; exit 0; fi
 if [ "$1" = service ]; then
   [ -e "$KIT_FAILING" ] && { echo "yad: systemctl said no" >&2; exit 1; }
   echo "$*" >>"$KIT_INSTALLS"
@@ -80,6 +83,7 @@ echo "stub systemctl: unexpected $*" >&2; exit 1
 		"KIT_INSTALLS="+m.installs,
 		"KIT_DOWN="+m.down,
 		"KIT_FAILING="+m.failing,
+		"KIT_OLD="+m.old,
 	)
 	return m
 }
@@ -241,5 +245,29 @@ func TestKitUpRestartsForANewYadAStoppedRunnerAndARestartItOwes(t *testing.T) {
 	}
 	if out, n := m.mustUp(); n != 0 {
 		t.Errorf("the owed restart was made twice:\n%s", out)
+	}
+}
+
+// A yad from before `config apply` — an old YAD_VERSION — gets the kit's old
+// behaviour: the spec seeded once, then left alone with a note, and no
+// restart for a spec it did not apply.
+func TestKitUpWithAYadThatCannotApplySeedsOnce(t *testing.T) {
+	m := newKitMachine(t)
+	m.set(m.old, true)
+	m.spec("# the spec's own words\ncapacity = 2\n")
+	m.set(m.down, true)
+	if out, n := m.mustUp(); n != 1 {
+		t.Fatalf("first up restarted %d times:\n%s", n, out)
+	}
+	if b, _ := os.ReadFile(m.p.ConfigFile()); !strings.HasPrefix(string(b), "# the spec's own words") {
+		t.Errorf("first up did not copy the spec in:\n%s", b)
+	}
+	m.spec("capacity = 3\n")
+	out, n := m.mustUp()
+	if n != 0 || !strings.Contains(out, "has no `yad config apply`") {
+		t.Errorf("an up with an old yad restarted %d times and said:\n%s", n, out)
+	}
+	if c := m.config(); c.Capacity != 2 {
+		t.Errorf("an old yad's up changed capacity to %d", c.Capacity)
 	}
 }
