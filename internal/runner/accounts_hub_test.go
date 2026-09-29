@@ -235,7 +235,7 @@ func TestAHubRemovesAnAccount(t *testing.T) {
 func TestTheAccountsFeatureIsPerConnection(t *testing.T) {
 	e := newEnv(t)
 	base := drivableDoc("r1", 1)
-	base.ProtocolFeatures = capability.Features()
+	base.ProtocolFeatures = capability.Features(base.Harnesses)
 	noLogin := base
 	noLogin.ProtocolFeatures = slices.DeleteFunc(slices.Clone(base.ProtocolFeatures), func(f string) bool { return f == capability.FeatureLogin })
 	for _, tc := range []struct {

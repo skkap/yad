@@ -9,7 +9,6 @@ import (
 	"github.com/skkap/yad/internal/adapter/claude"
 	"github.com/skkap/yad/internal/adapter/codex"
 	"github.com/skkap/yad/internal/adapter/opencode"
-	"github.com/skkap/yad/internal/harness"
 )
 
 // FeatureHarnessFeatures is a runner whose harness reports each carry
@@ -17,7 +16,7 @@ import (
 // list, absent meaning none. A hub reading it gates a run's effort and fork,
 // and its steer and interrupt controls, on the list of the harness the run
 // targets rather than on the runner-wide strings — which a runner lists only
-// while every first-class harness supports them, so that one harness without
+// while every harness it can drive supports them — so that one harness without
 // a feature cannot switch it off for every other (decision 0069).
 const FeatureHarnessFeatures = "harness_features"
 
@@ -67,15 +66,23 @@ func HarnessFeatures(id string) []string {
 	return out
 }
 
-// everyFirstClass is whether every first-class harness in the catalog may use
-// feature, which is when the runner-wide string may say so.
-func everyFirstClass(feature string) bool {
-	for _, h := range harness.Catalog() {
-		if h.Kind == harness.FirstClass && !slices.Contains(HarnessFeatures(h.ID), feature) {
+// everyDrivable is whether there is a harness in reports that can take a run
+// on this machine, and every one lists feature. Drivable's rule decides which
+// count, so a first-class harness that is not present, or whose probe
+// failed, takes nothing from the rest. It reads each report's own list, so
+// the runner-wide string and the lists in one document cannot disagree.
+func everyDrivable(reports []v1.HarnessReport, feature string) bool {
+	found := false
+	for _, h := range reports {
+		if !drivable(h) {
+			continue
+		}
+		if !slices.Contains(h.Features, feature) {
 			return false
 		}
+		found = true
 	}
-	return true
+	return found
 }
 
 // RunMayUse is whether a run on harness id may use feature on the runner doc

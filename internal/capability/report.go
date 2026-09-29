@@ -28,20 +28,27 @@ import (
 	"github.com/skkap/yad/internal/probe"
 )
 
-// Features is what this build of the runner supports beyond the v1 baseline.
-// A hub must not use a feature the runner did not advertise, so "live_sessions"
-// is absent until it is built.
+// Features is what this runner supports beyond the v1 baseline, given the
+// harness reports of the document it goes in. A hub must not use a feature the
+// runner did not advertise, so "live_sessions" is absent until it is built.
 //
 // A per-run feature — one a run's harness decides, RunFeatures — is listed
-// here only while every first-class harness's adapter supports it, as it was
-// before harnesses carried their own lists: a hub that reads only these
-// strings must never be told a run may use one its harness cannot. Each
-// harness's own list, beside FeatureHarnessFeatures, is the whole answer for
-// a hub that reads it (decision 0069).
-func Features() []string {
+// here only while every harness this machine can drive (Drivable: first-class,
+// present, no error) lists it: a hub that reads only these strings must never
+// be told a run may use one its harness cannot. It is over the harnesses
+// detected here, not the build's catalog, so that a harness this machine does
+// not have — OpenCode, which takes no steer — takes nothing from those it
+// does. The strings come from the reports they are sent beside, so a change
+// to either moves the one fingerprint and a hub re-reads both. With no harness to drive
+// none is listed: there is no run for one to apply to, and a hub reading only
+// these strings then sees a feature appear when the first harness is installed
+// rather than vanish when it is one that lacks it. Each harness's own list,
+// beside FeatureHarnessFeatures, is the whole answer for a hub that reads it
+// (decision 0069).
+func Features(reports []v1.HarnessReport) []string {
 	out := []string{FeatureStartAt}
 	for _, f := range RunFeatures() {
-		if everyFirstClass(f) {
+		if everyDrivable(reports, f) {
 			out = append(out, f)
 		}
 	}
@@ -76,7 +83,7 @@ const FeatureCloseSession = "close_session"
 // field it does not know and run the harness at its default, and the run
 // would succeed saying nothing of it (decision 0049). A per-run feature:
 // listed for each harness whose adapter applies it, and runner-wide only
-// while every first-class adapter does (decision 0069).
+// while every harness this machine can drive does (decision 0069).
 const FeatureEffort = "effort"
 
 // FeatureFork is a runner that opens a session as a fork of another it holds
@@ -152,6 +159,7 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []a
 			caps.ByHarness[id] = h.Cap
 		}
 	}
+	reports := Harnesses(found, cfg, accounts)
 	return v1.Capabilities{
 		RunnerID:         runnerID,
 		Name:             name,
@@ -159,10 +167,10 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []a
 		OS:               goos,
 		Arch:             goarch,
 		Labels:           sortedCopy(cfg.Labels),
-		Harnesses:        Harnesses(found, cfg, accounts),
+		Harnesses:        reports,
 		HostTools:        HostTools(tools),
 		Capacity:         caps,
-		ProtocolFeatures: Features(),
+		ProtocolFeatures: Features(reports),
 		PathSources:      PathSources(cfg.Workdirs),
 		ObservedAt:       time.Now().UTC(),
 	}
@@ -307,8 +315,12 @@ func sortedCopy(xs []string) []string {
 func Drivable(doc v1.Capabilities, harnessID string) bool {
 	for _, h := range doc.Harnesses {
 		if h.ID == harnessID {
-			return h.Kind == string(harness.FirstClass) && h.Present && h.Error == ""
+			return drivable(h)
 		}
 	}
 	return false
+}
+
+func drivable(h v1.HarnessReport) bool {
+	return h.Kind == string(harness.FirstClass) && h.Present && h.Error == ""
 }

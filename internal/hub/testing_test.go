@@ -57,14 +57,15 @@ func (f *fixture) tokenFor(t *testing.T, ttl time.Duration, runner string) strin
 // "claude", as a first-class one would be advertised, and that advertises
 // everything this build of the runner acts on — what a current yad sends.
 func doc(id string) v1.Capabilities {
+	harnesses := []v1.HarnessReport{
+		{ID: "claude", Label: "Claude Code", Kind: "first-class", Present: true, Version: "2.1.276", Features: capability.HarnessFeatures("claude")},
+		{ID: "codex", Label: "Codex", Kind: "recognised", Present: true, Version: "0.1"},
+	}
 	return v1.Capabilities{
 		RunnerID: id, Name: id, YadVersion: "dev", OS: "linux", Arch: "amd64",
-		ProtocolFeatures: capability.Features(),
-		Harnesses: []v1.HarnessReport{
-			{ID: "claude", Label: "Claude Code", Kind: "first-class", Present: true, Version: "2.1.276", Features: capability.HarnessFeatures("claude")},
-			{ID: "codex", Label: "Codex", Kind: "recognised", Present: true, Version: "0.1"},
-		},
-		Capacity: v1.Capacity{Total: 4},
+		ProtocolFeatures: capability.Features(harnesses),
+		Harnesses:        harnesses,
+		Capacity:         v1.Capacity{Total: 4},
 	}
 }
 

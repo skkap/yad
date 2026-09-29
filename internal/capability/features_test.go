@@ -1,6 +1,7 @@
 package capability
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -11,12 +12,10 @@ import (
 	"github.com/skkap/yad/internal/harness"
 )
 
-// A harness's list says what its adapter does, and the runner-wide string
-// says what every first-class harness's does: a hub reading only the strings
-// must never be told a run may use a feature its harness cannot, and one
-// harness without a feature must not take it from the others' lists
-// (decision 0069).
-func TestEachHarnessListsWhatItsAdapterDoesAndTheRunnerWhatAllDo(t *testing.T) {
+// A harness's list says what its adapter does, whatever else the machine has
+// installed: one harness without a feature must not take it from the others'
+// lists (decision 0069).
+func TestEachHarnessListsWhatItsAdapterDoes(t *testing.T) {
 	does := map[string]func(adapter.Adapter) bool{
 		FeatureSteer:     adapter.Steers,
 		FeatureInterrupt: func(adapter.Adapter) bool { return true },
@@ -25,10 +24,6 @@ func TestEachHarnessListsWhatItsAdapterDoesAndTheRunnerWhatAllDo(t *testing.T) {
 	}
 	if len(does) != len(RunFeatures()) {
 		t.Fatalf("this test knows %d per-run features and RunFeatures lists %v: teach it the new one", len(does), RunFeatures())
-	}
-	every := map[string]bool{}
-	for _, f := range RunFeatures() {
-		every[f] = true
 	}
 	for _, h := range harness.Catalog() {
 		if h.Kind != harness.FirstClass {
@@ -46,16 +41,117 @@ func TestEachHarnessListsWhatItsAdapterDoesAndTheRunnerWhatAllDo(t *testing.T) {
 			if slices.Contains(got, f) != does[f](a) {
 				t.Errorf("harness %s lists %v, and its adapter's answer for %q is %v", h.ID, got, f, does[f](a))
 			}
-			every[f] = every[f] && does[f](a)
 		}
 	}
-	for _, f := range RunFeatures() {
-		if slices.Contains(Features(), f) != every[f] {
-			t.Errorf("runner-wide %q advertised = %v, and every first-class adapter supports it = %v", f, slices.Contains(Features(), f), every[f])
+}
+
+// machine is the harness reports of a machine where the harnesses named are
+// installed and pass their probes, and the rest of the catalog is absent —
+// what Build puts in the document, from detection onwards.
+func machine(installed ...string) []v1.HarnessReport {
+	var found []harness.Detected
+	for _, h := range harness.Catalog() {
+		found = append(found, harness.Detected{Harness: h, Present: slices.Contains(installed, h.ID), Version: "1.0.0"})
+	}
+	return Harnesses(found, config.Default(), nil)
+}
+
+func perRun(features []string) []string {
+	return slices.DeleteFunc(slices.Clone(features), func(f string) bool { return !slices.Contains(RunFeatures(), f) })
+}
+
+// The runner-wide strings say what every harness this machine can drive may
+// use, not what every harness the build knows may: a runner without OpenCode
+// advertises steer, so a hub reading only the strings steers its Claude and
+// Codex runs, and one with OpenCode does not, since a run there may target a
+// harness with no steer. A harness that is present but cannot take a run,
+// or is only recognised, takes nothing from the rest; a machine that can
+// drive nothing advertises no per-run feature (decision 0069).
+func TestTheRunnerWideStringsAreWhatEveryDrivableHarnessMayUse(t *testing.T) {
+	all := RunFeatures()
+	brokenOpenCode := machine("claude", "opencode")
+	for i := range brokenOpenCode {
+		if brokenOpenCode[i].ID == "opencode" {
+			brokenOpenCode[i].Error = "not logged in on this machine"
 		}
 	}
-	if !slices.Contains(Features(), FeatureHarnessFeatures) {
-		t.Errorf("features %v do not say the harnesses carry their own lists", Features())
+	for _, tc := range []struct {
+		name    string
+		reports []v1.HarnessReport
+		want    []string
+	}{
+		{"claude and codex, no opencode", machine("claude", "codex"), all},
+		{"claude alone", machine("claude"), all},
+		{"with opencode", machine("claude", "codex", "opencode"), HarnessFeatures("opencode")},
+		{"opencode alone", machine("opencode"), HarnessFeatures("opencode")},
+		{"opencode present and unable to take a run", brokenOpenCode, all},
+		{"a recognised harness beside claude", machine("claude", "gemini", "cursor"), all},
+		{"nothing to drive", machine(), nil},
+		{"only recognised harnesses", machine("gemini"), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Features(tc.reports)
+			if !slices.Equal(perRun(got), tc.want) {
+				t.Errorf("runner-wide per-run features %v, want %v", perRun(got), tc.want)
+			}
+			if !slices.Contains(got, FeatureHarnessFeatures) {
+				t.Errorf("features %v do not say the harnesses carry their own lists", got)
+			}
+			// A hub reading only the strings is never told a run may use
+			// what its harness cannot.
+			for _, h := range tc.reports {
+				for _, f := range perRun(got) {
+					if drivable(h) && !slices.Contains(h.Features, f) {
+						t.Errorf("runner-wide %q, and drivable %s lists %v", f, h.ID, h.Features)
+					}
+				}
+			}
+		})
+	}
+	// The case the ticket is about, said plainly: OpenCode has no steer in
+	// ACP v1, and without it installed the runner-wide steer is back.
+	if slices.Contains(HarnessFeatures("opencode"), FeatureSteer) {
+		t.Fatal("opencode now steers: this test's with-opencode cases no longer show a harness taking a feature away")
+	}
+	if !slices.Contains(Features(machine("claude", "codex")), FeatureSteer) || slices.Contains(Features(machine("claude", "codex", "opencode")), FeatureSteer) {
+		t.Error("steer runner-wide should follow whether opencode is installed")
+	}
+}
+
+// Installing or removing a first-class harness changes the document's
+// runner-wide strings with its harness reports, so the fingerprint moves and a
+// hub re-reads both together; each harness's own list is the same either way.
+func TestInstallingAHarnessMovesTheDocumentAndLeavesTheOtherListsAlone(t *testing.T) {
+	doc := func(reports []v1.HarnessReport) v1.Capabilities {
+		return v1.Capabilities{RunnerID: "r1", Harnesses: reports, ProtocolFeatures: Features(reports)}
+	}
+	without, with := doc(machine("claude", "codex")), doc(machine("claude", "codex", "opencode"))
+	if Fingerprint(without) == Fingerprint(with) {
+		t.Error("installing opencode left the fingerprint where it was")
+	}
+	if slices.Equal(without.ProtocolFeatures, with.ProtocolFeatures) {
+		t.Errorf("installing opencode left the runner-wide strings at %v", with.ProtocolFeatures)
+	}
+	for _, id := range []string{"claude", "codex"} {
+		if !slices.Equal(harnessReport(without.Harnesses, id).Features, harnessReport(with.Harnesses, id).Features) {
+			t.Errorf("%s lists %v without opencode and %v with it", id, harnessReport(without.Harnesses, id).Features, harnessReport(with.Harnesses, id).Features)
+		}
+	}
+}
+
+// Build hands Features the reports it sends: on a machine with no harness at
+// all the document advertises no per-run feature, and still every one of the
+// runner's own.
+func TestBuildAdvertisesThePerRunFeaturesOfWhatIsInstalled(t *testing.T) {
+	noTools(t)
+	got := Build(context.Background(), "r1", config.Default(), nil).ProtocolFeatures
+	if len(perRun(got)) != 0 {
+		t.Errorf("a machine with no harness advertises %v runner-wide", perRun(got))
+	}
+	for _, f := range []string{FeatureStartAt, FeatureDrain, FeatureCloseSession, FeatureLogin, FeatureHarnessFeatures} {
+		if !slices.Contains(got, f) {
+			t.Errorf("features %v leave out the runner's own %q", got, f)
+		}
 	}
 }
 

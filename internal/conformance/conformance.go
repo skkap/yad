@@ -386,8 +386,9 @@ func (s *session) missing(need requirement) string {
 // runner-wide strings would offer this runner an effort or a fork and send it
 // a steer; one gating on the harness's list, as HUB.md §7 asks of a runner
 // advertising harness_features, sends none (decision 0069). No yad runner
-// sends this — its runner-wide strings only ever say what every harness may
-// use — which is what makes it a probe rather than a document to route on.
+// sends this — its runner-wide strings only ever say what every harness it
+// can drive may use, with OpenCode installed or without it — which is what
+// makes it a probe rather than a document to route on.
 func (s *session) doc() v1.Capabilities {
 	return v1.Capabilities{
 		RunnerID:   s.runner,

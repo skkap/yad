@@ -100,7 +100,7 @@ run's error goes only to the hub that sent the run, and may name a path
 ([0064](docs/decisions/0064-a-runs-error-may-name-a-path-on-the-runner.md)).
 A **per-run feature** — steer, interrupt, effort, fork — is the harness's:
 each harness lists its own, and the runner-wide string says only what every
-harness it drives supports
+harness this machine can drive supports
 ([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).
 _Avoid_: capabilities for anything else — yashiki's "capabilities" are its house
 tools, which here are **host tools**

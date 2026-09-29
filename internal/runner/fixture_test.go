@@ -94,10 +94,11 @@ func (e *executor) ids() []string {
 // drivableDoc is a document for a runner that drives claude, as it will be
 // once its adapter lands.
 func drivableDoc(id string, capacity int) v1.Capabilities {
+	harnesses := []v1.HarnessReport{{ID: "claude", Label: "Claude Code", Kind: "first-class", Present: true, Version: "2.1.276", Features: capability.HarnessFeatures("claude")}}
 	return v1.Capabilities{
 		RunnerID: id, Name: id, YadVersion: "dev", OS: "linux", Arch: "amd64",
-		Harnesses: []v1.HarnessReport{{ID: "claude", Label: "Claude Code", Kind: "first-class", Present: true, Version: "2.1.276", Features: capability.HarnessFeatures("claude")}},
-		Capacity:  v1.Capacity{Total: capacity}, ProtocolFeatures: capability.Features(),
+		Harnesses: harnesses,
+		Capacity:  v1.Capacity{Total: capacity}, ProtocolFeatures: capability.Features(harnesses),
 	}
 }
 
