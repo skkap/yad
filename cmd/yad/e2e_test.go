@@ -22,6 +22,7 @@ import (
 	"github.com/skkap/yad/protocol/hubapi"
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/adapter/acp/acptest"
 	"github.com/skkap/yad/internal/adapter/codex/codextest"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/harness"
@@ -86,6 +87,10 @@ func TestMain(m *testing.M) {
 	// apart by the name each was started under.
 	if codextest.Child() {
 		codextest.Main()
+		return
+	}
+	if acptest.Child("opencode") {
+		acptest.Main()
 		return
 	}
 	if os.Getenv(fakeClaudeFixture) != "" {

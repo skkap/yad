@@ -16,7 +16,7 @@ GENERATED := $(SQLC) $(OPENAPI)
 
 TARGETS := linux/amd64 linux/arm64 darwin/arm64 darwin/amd64
 
-.PHONY: fmt lint test build generate generate-sqlc generate-openapi check-generated check-openapi check-breaking cross check ci install dist clean smoke smoke-codex
+.PHONY: fmt lint test build generate generate-sqlc generate-openapi check-generated check-openapi check-breaking cross check ci install dist clean smoke smoke-codex smoke-opencode
 
 fmt:
 	gofmt -w .
@@ -125,7 +125,7 @@ ci:
 	go test ./...
 	$(MAKE) check-breaking
 
-# One real run through yad hub (scripts/smoke.sh), with Claude or with Codex.
+# One real run through yad hub (scripts/smoke.sh), with Claude, Codex or OpenCode.
 # Each spends a few cents of the logged-in account, so they are run by hand and
 # never by CI or make check.
 smoke: build
@@ -133,6 +133,9 @@ smoke: build
 
 smoke-codex: build
 	./scripts/smoke.sh codex
+
+smoke-opencode: build
+	./scripts/smoke.sh opencode
 
 install: build
 	install -m 0755 bin/yad $(HOME)/.local/bin/yad

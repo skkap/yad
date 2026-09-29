@@ -8,6 +8,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/claude"
 	"github.com/skkap/yad/internal/adapter/codex"
+	"github.com/skkap/yad/internal/adapter/opencode"
 	"github.com/skkap/yad/internal/harness"
 )
 
@@ -31,7 +32,7 @@ func RunFeatures() []string {
 // harness. Held here so that what the document advertises for a harness and
 // the adapter that drives its runs cannot come apart.
 func Adapters() []adapter.Adapter {
-	return []adapter.Adapter{claude.Adapter{}, codex.Adapter{}}
+	return []adapter.Adapter{claude.Adapter{}, codex.Adapter{}, opencode.Adapter{}}
 }
 
 func adapterFor(id string) (adapter.Adapter, bool) {

@@ -153,7 +153,7 @@ func listModels(ctx context.Context, bin, dir string, env []string, raw io.Write
 	}
 	conn := NewConn(p.Stdin())
 	if raw != nil {
-		conn.trace = transcript(raw)
+		conn.Trace = transcript(raw)
 	}
 	eof := make(chan struct{})
 	go func() {

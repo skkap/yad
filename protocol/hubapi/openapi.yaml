@@ -709,7 +709,7 @@ components:
             $ref: "#/components/schemas/Grant"
           type: array
         harness:
-          description: "The harness to run, by its id in a runner's capability document: claude or codex."
+          description: "The harness to run, by its id in a runner's capability document: claude, codex or opencode."
           minLength: 1
           type: string
         inactivity_ms:

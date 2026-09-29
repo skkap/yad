@@ -145,29 +145,12 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 	t.in = newInput(p.Stdin())
 	t.conn = NewConn(t.in)
 	if a.Raw != nil {
-		t.conn.trace = transcript(a.Raw(spec))
+		t.conn.Trace = transcript(a.Raw(spec))
 	}
 	go t.q.Pump(ctx)
 	go t.run()
 	go t.reap()
 	return t, nil
-}
-
-// transcript writes both directions of the conversation to w, ours wrapped.
-func transcript(w io.Writer) func(bool, []byte) {
-	var mu sync.Mutex
-	return func(out bool, line []byte) {
-		mu.Lock()
-		defer mu.Unlock()
-		if out {
-			w.Write([]byte(`{">":`))
-			w.Write(line)
-			w.Write([]byte("}\n"))
-			return
-		}
-		w.Write(line)
-		w.Write([]byte{'\n'})
-	}
 }
 
 type turn struct {

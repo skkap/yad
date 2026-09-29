@@ -1,0 +1,10 @@
+{">":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}
+{">":{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s1","configOptions":[{"id":"m","category":"model","currentValue":"a","options":[{"value":"a"}]}]}}
+{">":{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","messageId":"m1","content":{"type":"text","text":"about to run"}}}}
+{">":{"jsonrpc":"2.0","method":"session/cancel","params":{}}}
+{"jsonrpc":"2.0","id":0,"method":"session/request_permission","params":{"sessionId":"s1","toolCall":{"toolCallId":"c1","title":"rm -rf build"},"options":[{"optionId":"once","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]}}
+{">":{"jsonrpc":"2.0","id":0,"result":{}}}
+{"jsonrpc":"2.0","id":3,"result":{"stopReason":"cancelled"}}
