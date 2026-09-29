@@ -19,7 +19,7 @@ agent no longer names the terminal it ran in.
 | `effort` | `plain` with `effort: low` on the `turn/start` |
 | `effort-rejected` | an effort the model does not take: the turn fails with Codex's own message |
 | `resume-missing` | `thread/resume` of a thread Codex has no rollout for |
-| `resume` | a second turn in a thread; Codex replays the first turn's usage before it |
+| `resume` | a second turn in a thread, resumed with `excludeTurns: true` (DEV-139); Codex still replays the first turn's usage before it |
 | `resume-context` | a second turn whose context the first did not have, injected before it as a developer message |
 | `interrupt` | `turn/interrupt` sent at the first text |
 | `steer` | `turn/steer` sent at the first tool call, answered in the same turn |
