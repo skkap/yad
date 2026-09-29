@@ -146,7 +146,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 					continue
 				}
 				cancelled[run.SessionID] = true
-				if err := unbindLateClaim(ctx, q, run, held, runner.ID); err != nil {
+				if err := unbindLateClaim(ctx, q, run, held, runner.ID, now); err != nil {
 					return err
 				}
 				continue
@@ -187,9 +187,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			return err
 		}
 		for _, w := range withdrawn {
-			if _, err := q.UnbindWithdrawnSession(ctx, db.UnbindWithdrawnSessionParams{
-				ID: w.SessionID, RunnerID: me, RunID: sql.NullString{String: w.ID, Valid: true},
-			}); err != nil {
+			if err := unbindWithdrawn(ctx, q, w.SessionID, w.ID, runner.ID, now); err != nil {
 				return err
 			}
 		}
@@ -224,6 +222,9 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 				continue
 			}
 			if err := endSessionRuns(ctx, q, c.SessionID, closedByRunner(runner.ID, c.Reason), now); err != nil {
+				return err
+			}
+			if err := endForksOf(ctx, q, c.SessionID, sourceClosed(c.SessionID), now); err != nil {
 				return err
 			}
 		}
@@ -664,7 +665,7 @@ func cancelWithdrawn(ctx context.Context, q *db.Queries, runnerID string, held [
 // start moment: its runner holds an acknowledged claim as claimed until the
 // moment, so listing one says nothing about a lost answer, and a runner that
 // kept the session would refuse the next run sent as opening it.
-func unbindLateClaim(ctx context.Context, q *db.Queries, run db.Run, held v1.HeldRun, runnerID string) error {
+func unbindLateClaim(ctx context.Context, q *db.Queries, run db.Run, held v1.HeldRun, runnerID string, now time.Time) error {
 	if held.State != v1.RunClaimed {
 		return nil
 	}
@@ -675,10 +676,44 @@ func unbindLateClaim(ctx context.Context, q *db.Queries, run db.Run, held v1.Hel
 	if r.StartAt != nil {
 		return nil
 	}
-	_, err = q.UnbindWithdrawnSession(ctx, db.UnbindWithdrawnSessionParams{
-		ID: run.SessionID, RunnerID: sql.NullString{String: runnerID, Valid: true}, RunID: sql.NullString{String: run.ID, Valid: true},
+	return unbindWithdrawn(ctx, q, run.SessionID, run.ID, runnerID, now)
+}
+
+// unbindWithdrawn unbinds a session whose binding claim the runner withdrew,
+// by UnbindWithdrawnSession's rules. The runner deleted the session before
+// any turn ran there, so a fork of it waiting to open has nothing to copy and
+// ends now (DEV-151), rather than waiting for a run to bind the session again
+// — one that may never come, and whose conversation would not be the one the
+// fork was asked of.
+func unbindWithdrawn(ctx context.Context, q *db.Queries, session, runID, runnerID string, now time.Time) error {
+	n, err := q.UnbindWithdrawnSession(ctx, db.UnbindWithdrawnSessionParams{
+		ID: session, RunnerID: sql.NullString{String: runnerID, Valid: true}, RunID: sql.NullString{String: runID, Valid: true},
 	})
-	return err
+	if err != nil || n == 0 {
+		return err
+	}
+	if err := endForksOf(ctx, q, session, sourceUnbound(session), now); err != nil {
+		return err
+	}
+	// The session unbound may itself be a fork, bound when its source went
+	// unbound or closing and spared then, as a fork with a conversation of
+	// its own. It has none now, and opens only from a source that can still
+	// be forked; one that cannot would leave it offered only to be refused.
+	sess, err := q.GetSession(ctx, session)
+	if err != nil || !sess.ForkFrom.Valid {
+		return err
+	}
+	src, err := q.GetSession(ctx, sess.ForkFrom.String)
+	if err != nil {
+		return err
+	}
+	switch {
+	case src.ClosedAt.Valid || src.CloseRequestedAt.Valid:
+		return closeHere(ctx, q, session, v1.SessionClosed, sourceClosed(src.ID), now)
+	case !src.RunnerID.Valid:
+		return closeHere(ctx, q, session, v1.SessionClosed, sourceUnbound(src.ID), now)
+	}
+	return nil
 }
 
 // holdable is whether a listed run is this runner's: offered to it and not yet

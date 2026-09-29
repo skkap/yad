@@ -78,6 +78,21 @@ to the forked session's runner, and a runner that goes away — deregistered or
 silent past abandon-after — closes the unbound forks of its sessions with its
 own, since no other runner could ever open them.
 
+**Nor does a fork wait on a source that can no longer be forked** (DEV-151,
+decided 2026-09-29 by the manager of that night's run, owner asleep; cheap to
+reverse). A source bound at submit can later be unbound — the claim that bound
+it withdrawn, and the session deleted with it on the runner (decision 0061) —
+or closed, by the hub's word or its runner's. A fork of it would then be
+offered to no runner, or to one that refuses it, and a queued run holds no
+lease for the sweep to end. So at that moment `yad hub` closes every fork of
+the source that no claim has bound and fails the runs waiting in them, with a
+reason saying the source has no conversation to copy: the `resume_rejected`
+end above, in the hub's words, since a run the hub ends carries no class. A
+close asked for is enough, since the runner refuses a fork of a session it is
+closing. Waiting for the source to be bound again was weighed and rejected: a
+run that binds it opens a new conversation, not the one the fork asked for,
+and the run may never come.
+
 ## Measured
 
 - **Claude Code 2.1.284** (`claude --help`): `--fork-session`, "When

@@ -1332,6 +1332,20 @@ fork should see the same code), bound by its claim.
   the harness cannot find, ends the run `resume_rejected`, as a resume does.
 - When the forked session's runner goes, close the forks of it no claim has
   bound, with its own sessions: no other runner can open them.
+- **Never leave a fork waiting on a session that can no longer be forked**
+  (DEV-151). When you unbind the forked session — its binding claim was
+  withdrawn (above), so the runner deleted it before any turn ran — it has
+  no conversation to copy; when you ask to close it, or a runner reports it
+  closed, the runner would refuse the fork. Either way the fork can go to no
+  runner, and a queued run holds no lease for anything to end it. `yad hub`
+  closes each fork of it no claim has bound, at that moment, and fails the
+  runs waiting in them with a reason saying the source has no conversation to
+  copy — 0065's `resume_rejected` end, in words, since a run a hub ends
+  carries no class. It does not wait for the source to be bound again: a
+  later run there opens a new conversation, not the one the fork was asked of.
+  A fork a claim has bound has its own conversation, and is left alone —
+  until you unbind it because that claim was withdrawn: then it has none,
+  and if its source can no longer be forked it closes the same way.
 
 **A session whose runner has gone** — deregistered, or silent past your
 abandon-after — is covered in §5: close it and end its queued runs; never hand

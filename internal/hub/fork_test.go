@@ -66,6 +66,109 @@ func TestAnUnboundForkClosesWithItsSessionsRunner(t *testing.T) {
 	}
 }
 
+// A fork waiting to open ends when the session it forks closes, or is asked
+// to close, however that happens: the runner refuses to fork a session it has
+// closed or is closing, and the fork can go to no other runner, so it would
+// otherwise be offered to be refused or wait for ever (DEV-151). It ends
+// failed, with nothing to copy, and its session closes. A fork a claim has
+// already bound has its own conversation, and stays open.
+func TestAForkWaitingToOpenEndsWhenItsSourceCloses(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		close func(t *testing.T, f *fixture, cred string)
+	}{
+		{"asked to close through the service API", func(t *testing.T, f *fixture, cred string) {
+			if code, e := f.api(t, "POST", "/sessions/s-a/close", f.admin(t, "closer"), nil, nil); code != http.StatusOK {
+				t.Fatalf("close: %d %+v", code, e)
+			}
+		}},
+		{"closed by the runner's owner", func(t *testing.T, f *fixture, cred string) {
+			if code, env := f.result(t, cred, "a", v1.Result{State: v1.RunSucceeded}); code != http.StatusOK {
+				t.Fatalf("result: %d %+v", code, env.Error)
+			}
+			report := req("r1", 0, claimed("c")...)
+			report.ClosedSessions = []v1.ClosedSession{{SessionID: "s-a", Reason: v1.SessionClosedByOwner, ClosedAt: f.clock.Now()}}
+			f.mustSync(t, "r1", cred, report)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			cred := f.register(t, "r1")
+			f.held(t, "r1", cred, "a", first("r1", 1))
+			// c opens fork s-c and is claimed; b waits to open fork s-b.
+			f.enqueue(t, forkRun("c", "s-c", "s-a"))
+			if got := ids(f.mustSync(t, "r1", cred, req("r1", 1, claimed("a")...)).Runs); !slices.Equal(got, []string{"c"}) {
+				t.Fatalf("offered %v, want [c]", got)
+			}
+			f.mustSync(t, "r1", cred, req("r1", 0, claimed("a", "c")...))
+			f.enqueue(t, forkRun("b", "s-b", "s-a"))
+			tc.close(t, f, cred)
+
+			r, err := f.store.GetRun(t.Context(), "b")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.State != string(v1.RunFailed) || !strings.Contains(r.Reason.String, "no conversation to copy") {
+				t.Errorf("the waiting fork is %s (%q), want failed with nothing to copy", r.State, r.Reason.String)
+			}
+			if s, err := f.store.GetSession(t.Context(), "s-b"); err != nil || !s.ClosedAt.Valid {
+				t.Errorf("the waiting fork's session = %+v, %v; want it closed", s, err)
+			}
+			if s, err := f.store.GetSession(t.Context(), "s-c"); err != nil || s.ClosedAt.Valid || s.CloseRequestedAt.Valid {
+				t.Errorf("the bound fork's session = %+v, %v; want it open", s, err)
+			}
+			if got := f.state(t, "c"); got != "claimed" {
+				t.Errorf("the bound fork's run is %s, want claimed", got)
+			}
+		})
+	}
+}
+
+// A fork its claim bound is spared when its source is asked to close, since it
+// has a conversation of its own — until that claim is withdrawn and the hub
+// unbinds it. Then it has none, and its source can no longer be forked, so it
+// closes and the run waiting in it ends rather than being offered to a runner
+// that would refuse it (DEV-151).
+func TestAForkUnboundAfterItsSourceClosesEnds(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	f.held(t, "r1", cred, "a", first("r1", 1))
+	f.enqueue(t, forkRun("c", "s-c", "s-a"))
+	if got := ids(f.mustSync(t, "r1", cred, req("r1", 1, claimed("a")...)).Runs); !slices.Equal(got, []string{"c"}) {
+		t.Fatalf("offered %v, want [c]", got)
+	}
+	f.mustSync(t, "r1", cred, req("r1", 0, claimed("a", "c")...))
+	d := run("d", "s-c")
+	d.Session.New = false
+	f.enqueue(t, d)
+	tok := f.admin(t, "cli")
+	if code, e := f.api(t, "POST", "/sessions/s-a/close", tok, nil, nil); code != http.StatusOK {
+		t.Fatalf("close: %d %+v", code, e)
+	}
+	if s, err := f.store.GetSession(t.Context(), "s-c"); err != nil || s.ClosedAt.Valid {
+		t.Fatalf("the bound fork = %+v, %v; want it open while its claim stands", s, err)
+	}
+	if code, e := f.api(t, "POST", "/runs/c/cancel", tok, nil, nil); code != http.StatusOK {
+		t.Fatalf("cancel: %d %+v", code, e)
+	}
+	// The runner withdraws the claim on hearing the cancel, and leaves it out.
+	f.mustSync(t, "r1", cred, req("r1", 0, claimed("a")...))
+
+	if got := f.state(t, "c"); got != "cancelled" {
+		t.Fatalf("c is %s, want cancelled", got)
+	}
+	if s, err := f.store.GetSession(t.Context(), "s-c"); err != nil || !s.ClosedAt.Valid {
+		t.Errorf("the fork unbound after its source closed = %+v, %v; want it closed", s, err)
+	}
+	r, err := f.store.GetRun(t.Context(), "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.State != string(v1.RunFailed) || !strings.Contains(r.Reason.String, "no conversation to copy") {
+		t.Errorf("the run waiting in it is %s (%q), want failed with nothing to copy", r.State, r.Reason.String)
+	}
+}
+
 // yad hub refuses at submit a fork that could never be offered, each with
 // what to do instead, and queues one that can.
 func TestSubmittingAFork(t *testing.T) {
