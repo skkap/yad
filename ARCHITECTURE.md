@@ -605,8 +605,8 @@ run's environment, which carries the hub's grants.
 (`internal/adapter/codex/rpc.go`): `initialize` → `initialized` →
 `thread/start`, `thread/resume` with the stored thread id, or `thread/fork` of
 the forked session's thread for a fork, whose answer names the new thread —
-both with `excludeTurns: true`, since only the thread's id is read from the
-answer and its history would grow with the session (DEV-139) →
+both with `excludeTurns: true`, since the answer's thread id and model are
+read and its turns never are, and they would grow with the session (DEV-139) →
 one `turn/start`
 with the instruction and the run's `effort`, when it has one; the brief's
 context is the thread's `developerInstructions`, and on a resume or a fork it is also

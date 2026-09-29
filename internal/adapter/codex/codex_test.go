@@ -472,9 +472,9 @@ func TestResume(t *testing.T) {
 	if p["threadId"] != spec.NativeSessionID || p["approvalPolicy"] != "never" {
 		t.Errorf("thread/resume = %v", p)
 	}
-	// Only the thread's id is read from the answer; its history would be a
-	// deprecation notice today and a line toward adapter.MaxLine on a long
-	// session (DEV-139).
+	// The answer's turns are never read; asking for them earns a deprecation
+	// notice today and a line toward adapter.MaxLine on a long session
+	// (DEV-139).
 	if p["excludeTurns"] != true {
 		t.Errorf("thread/resume = %v: asked for the thread's whole history", p)
 	}
