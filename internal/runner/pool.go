@@ -304,6 +304,13 @@ func (p *Pool) Free() int {
 	return p.total - p.used
 }
 
+// Total is the runner's capacity: every unit, free or not.
+func (p *Pool) Total() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.total
+}
+
 // Held is how many runs this connection holds, and the owner's cap on it.
 // `yad status` shows both: a cap nobody can see is one nobody can trust.
 func (p *Pool) Held(conn string) (held, cap int) {

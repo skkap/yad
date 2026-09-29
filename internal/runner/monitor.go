@@ -21,6 +21,7 @@ type Monitor struct {
 	pool     *Pool
 	store    *store.Store
 	sessions *Collector
+	logins   *Logins
 	ready    bool
 }
 
@@ -72,6 +73,34 @@ func (m *Monitor) CloseSession(ctx context.Context, connection, id string) (Clos
 		return CloseResult{}, ErrNoSessions
 	}
 	return sessions.Close(ctx, connection, id, v1.SessionClosedByOwner)
+}
+
+func (m *Monitor) attachLogins(l *Logins) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logins = l
+}
+
+// Idle is whether nothing is in progress: the runner is set up, every unit
+// of capacity is free — no run holds one, no claim awaits its hub's
+// acknowledgement, no sync holds any to offer — and no hub login is waiting
+// on a person. A self-update takes over only then, or after its drain
+// (decision 0069). A parked run holds no unit until it is due, and survives
+// a restart in state.db, so it does not keep the runner busy.
+func (m *Monitor) Idle() bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	p, logins, ready := m.pool, m.logins, m.ready
+	m.mu.Unlock()
+	if !ready || p == nil {
+		return false
+	}
+	return p.Free() == p.Total() && !logins.Busy()
 }
 
 func (m *Monitor) markReady() {

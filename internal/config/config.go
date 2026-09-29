@@ -30,6 +30,7 @@ type Config struct {
 	Supervise   SuperviseConfig          `toml:"supervise"`
 	Drain       DrainConfig              `toml:"drain"`
 	Workdirs    WorkdirsConfig           `toml:"workdirs"`
+	Update      UpdateConfig             `toml:"update"`
 }
 
 // HarnessConfig is the owner's settings for one harness.
@@ -90,6 +91,17 @@ type DrainConfig struct {
 	// Wait is how long a drain lets the runs held finish on their own before
 	// cancelling them down the cancel ladder. "0s" cancels them at once.
 	Wait Duration `toml:"wait"`
+}
+
+// UpdateConfig is the owner's opt-in to self-update (decision 0069). It is
+// config.toml's and nobody else's: no protocol field reaches it, so no hub can
+// turn it on, and `yad config apply` carries it like any other setting, which
+// is how a work machine's spec decides it.
+type UpdateConfig struct {
+	// Auto has the runner check for a newer release every six hours, install
+	// it as `yad upgrade` would, and re-execute itself at an idle moment.
+	// Off unless set.
+	Auto bool `toml:"auto"`
 }
 
 // WorkdirsConfig governs how a run's sources become its workdir (decisions

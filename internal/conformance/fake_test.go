@@ -400,8 +400,9 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	if f.flaw == flawUngatedRemoval {
 		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlRemoveAccount, Harness: "claude", Account: "work"})
 	}
-	// Reserved, and gated on nothing: a runner that does not implement
-	// self-update ignores it (decision 0018), so this must not be a finding.
+	// Reserved, and gated on nothing: a runner ignores it — self-update is
+	// its owner's to turn on, never a hub's (decision 0069) — so this must
+	// not be a finding.
 	if f.flaw == flawSendsUpdate {
 		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlUpdate})
 	}

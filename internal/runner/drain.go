@@ -29,19 +29,69 @@ type Drain struct {
 	asked      int
 	draining   chan struct{}
 	cancelling chan struct{}
+	// update is a drain begun by a self-update and by nobody since (decision
+	// 0069): it has no drain wait, so no run it waits on is ever cancelled,
+	// and the process re-executes at its end rather than exiting. bounded
+	// closes when anyone else asks for a drain or a stop, which makes it an
+	// ordinary one from then on.
+	update  bool
+	bounded chan struct{}
 }
 
 // NewDrain returns a runner that is serving.
 func NewDrain() *Drain {
-	return &Drain{draining: make(chan struct{}), cancelling: make(chan struct{})}
+	return &Drain{draining: make(chan struct{}), cancelling: make(chan struct{}), bounded: make(chan struct{})}
 }
 
 // Begin starts draining, and reports whether this call did. Once draining a
-// runner never serves again: the process exits at the end of it.
+// runner never serves again: the process exits at the end of it. A drain a
+// self-update began becomes this one — this call started the exit.
 func (d *Drain) Begin(reason string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.climb(d.draining, reason)
+	return d.ordinary(reason) || d.climb(d.draining, reason)
+}
+
+// Update starts the drain a self-update ends in, and reports whether this
+// call did. It is the one drain with no drain wait: it stops claiming and
+// waits for every run held to end however long that takes, because a run is
+// never interrupted for an update. A runner already draining for any other
+// reason is on its way out, and exits as it was going to.
+func (d *Drain) Update(reason string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.climb(d.draining, reason) {
+		return false
+	}
+	d.update = true
+	return true
+}
+
+// ForUpdate reports whether the drain under way is a self-update's and nobody
+// has asked for a drain or a stop since: its end is a re-exec, not an exit.
+func (d *Drain) ForUpdate() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.update
+}
+
+// Bounded is closed once the drain under way is an ordinary one, with the
+// owner's drain wait: a self-update's drain until someone else asks for one
+// too. A drain that was ordinary from its start never waits on it.
+func (d *Drain) Bounded() <-chan struct{} { return d.bounded }
+
+// ordinary turns a self-update's drain into an ordinary one, and reports
+// whether it did. The owner's stop and a hub's drain both mean exit: the
+// runner must not come back as the new binary and claim again, and the drain
+// wait they expect applies from now.
+func (d *Drain) ordinary(reason string) bool {
+	if !d.update {
+		return false
+	}
+	d.update = false
+	d.reason = reason
+	close(d.bounded)
+	return true
 }
 
 // Cancel moves to the second step — draining first if not already — and
@@ -49,6 +99,7 @@ func (d *Drain) Begin(reason string) bool {
 func (d *Drain) Cancel(reason string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.ordinary(reason)
 	d.climb(d.draining, reason)
 	return d.climb(d.cancelling, reason)
 }
@@ -74,6 +125,7 @@ func (d *Drain) Step(reason string) int {
 }
 
 func (d *Drain) step(reason string) int {
+	d.ordinary(reason)
 	d.asked++
 	switch d.asked {
 	case 1:

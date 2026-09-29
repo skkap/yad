@@ -41,7 +41,7 @@ If `yad` is not found afterwards, `~/.local/bin` is not on your `PATH`.
 YAD_VERSION=v0.3.1 sh yad-install.sh   # the file the command above left behind
 ```
 
-Later, on your command and never on its own:
+Later, on your command — or on its own, if you turn that on (below):
 
 ```bash
 yad upgrade --check       # what the newest release is; changes nothing
@@ -64,9 +64,43 @@ install replaces the unit and starts it again, where a restart would leave an
 unsupervised process the service manager is no longer watching
 ([0028](decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)).
 The profile goes after `service install` but *before* `daemon` —
-`yad --profile work daemon restart` — because `daemon` has no flag of its own. Nothing in
-YAD updates itself on a schedule or on a hub's say-so
-([0018](decisions/0018-no-self-update-in-v1.md)).
+`yad --profile work daemon restart` — because `daemon` has no flag of its own.
+
+### Self-update
+
+A runner can keep itself on the newest release. It is off unless you turn it
+on in `config.toml`, and nothing a hub sends can turn it on or trigger it
+([0069](decisions/0069-a-runner-updates-itself-when-its-owner-turns-it-on.md)):
+
+```toml
+[update]
+auto = true
+```
+
+Read at start, like the rest of the file: restart the runner after the edit.
+Then, every six hours or so, the runner asks for the newest release — one
+anonymous request to github.com, the same `yad upgrade` makes — and a newer
+one is fetched and checked against its `checksums.txt` exactly as `yad
+upgrade` does, then asked which runner protocol versions it speaks. A release
+that no longer speaks the one your hubs use is refused, and the runner keeps
+its binary. One that passes is put in place of the binary, and the runner
+becomes it at the first moment it holds no run: it stops taking work, and
+re-executes itself in the same process, so a service manager sees nothing
+stop. If no such moment comes within a day, it stops taking work until the
+runs it holds have finished, however long that takes, then does the same. A
+run is never interrupted for an update.
+
+`yad status` shows it: when it last checked and what it found, when it checks
+next, and a release waiting to take over or refused, and why. A check that
+fails — no network, a release with a bad checksum, a directory yad cannot
+write to — is a warning there and in the log, and the runner carries on.
+
+The binary has to be one the runner's user can replace, as for `yad
+upgrade`; a build with no release version (`make install` from a checkout
+between tags, `go build`) is never replaced, and `yad status` says so. To roll
+back a bad release, turn self-update off first, or the runner puts the newest
+release back within hours. From a fork, set `YAD_REPO` when you run `yad
+service install`: the unit keeps it, and the runner fetches from the fork.
 
 Releases are built by CI on a `v*` tag: linux and darwin × amd64 and arm64,
 `CGO_ENABLED=0`, with a `checksums.txt` covering all four. To check a download

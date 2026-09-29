@@ -108,7 +108,8 @@ nft -f /etc/yad-machine/egress.nft
 
 say "yad"
 # Root-owned, so a run cannot replace the runner that runs it — nor the report
-# the host reads to say whether the machine is well.
+# the host reads to say whether the machine is well. The report always is;
+# yad is not when the spec turns self-update on, below.
 #
 # Only when it differs: the runner is restarted for a new binary, and a restart
 # drains the runs it holds. The restart is owed before the binary moves, and
@@ -116,13 +117,46 @@ say "yad"
 # up that fails after this — provision.sh, a harness download — must not
 # leave the old runner running under a new yad that the next up finds equal.
 # runner.sh reads the same file and makes the restart.
-if ! cmp -s "$stage/yad" /usr/local/bin/yad; then
+#
+# With self-update on in the spec (`yad-machine up` leaves self-update in the
+# stage), the runner has to be able to replace its own binary, so yad is the
+# agent's instead: ~/.local/bin/yad, with /usr/local/bin/yad a link to it.
+# That gives up the root-owned binary on this machine alone, and it guarded
+# less than it looks: a run as the agent can already rewrite the agent's
+# systemd unit, which names the binary the runner starts (decision 0069).
+agent_home=$(getent passwd "$AGENT_USER" | cut -d: -f6)
+owed_dir=$agent_home/.local/state/yad-machine
+agent_yad=$agent_home/.local/bin/yad
+owe_restart() {
     # As the agent, so the file stays its own; runuser keeps root's HOME, so
     # the agent's is looked up.
-    owed_dir=$(getent passwd "$AGENT_USER" | cut -d: -f6)/.local/state/yad-machine
     runuser -u "$AGENT_USER" -- mkdir -p "$owed_dir"
-    echo "yad was replaced" | runuser -u "$AGENT_USER" -- tee -a "$owed_dir/restart-owed" >/dev/null
-    install -m 0755 "$stage/yad" /usr/local/bin/yad
+    echo "$1" | runuser -u "$AGENT_USER" -- tee -a "$owed_dir/restart-owed" >/dev/null
+}
+if [[ -f $stage/self-update ]]; then
+    if ! cmp -s "$stage/yad" "$agent_yad"; then
+        owe_restart "yad was replaced"
+        runuser -u "$AGENT_USER" -- mkdir -p "$(dirname "$agent_yad")"
+        runuser -u "$AGENT_USER" -- install -m 0755 "$stage/yad" "$agent_yad"
+    fi
+    if [[ $(readlink /usr/local/bin/yad 2>/dev/null) != "$agent_yad" ]]; then
+        # The unit names the binary it starts, so the runner starts again
+        # from the agent's copy for its own updates to take.
+        owe_restart "self-update was turned on"
+        ln -sfn "$agent_yad" /usr/local/bin/yad
+    fi
+else
+    if [[ -L /usr/local/bin/yad ]]; then
+        # Self-update was on and is now off: yad is root's again, and the
+        # agent's copy goes, so no PATH finds a binary the runner may have
+        # updated past the spec's.
+        owe_restart "self-update was turned off"
+        rm -f /usr/local/bin/yad "$agent_yad"
+    fi
+    if ! cmp -s "$stage/yad" /usr/local/bin/yad; then
+        owe_restart "yad was replaced"
+        install -m 0755 "$stage/yad" /usr/local/bin/yad
+    fi
 fi
 install -m 0755 "$stage/guest/report.sh" /usr/local/bin/yad-machine-report
 

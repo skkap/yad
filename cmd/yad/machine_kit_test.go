@@ -298,3 +298,67 @@ func TestKitUpWithAYadThatCannotApplySeedsOnce(t *testing.T) {
 		t.Errorf("an old yad's up changed capacity to %d", c.Capacity)
 	}
 }
+
+// A spec that turns self-update on while YAD_VERSION pins a release is refused
+// before anything is built (decision 0069): the runner would replace the pin
+// within hours. Every way config.toml can write the setting is read; a spec
+// that leaves it off, or a YAD_VERSION of latest, goes on to look for Lima —
+// which is absent here, and is the next thing up needs.
+func TestKitUpRefusesSelfUpdateWithAPinnedVersion(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash on this machine")
+	}
+	kit, err := filepath.Abs(filepath.Join("..", "..", "machines", "yad-machine"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	for _, tool := range []string{"awk", "bash", "dirname", "readlink"} {
+		path, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skip(err)
+		}
+		if err := os.Symlink(path, filepath.Join(bin, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const refused = "turns self-update on ([update] auto = true), and YAD_VERSION pins yad at v0.3.0"
+	const noLima = "limactl is not on PATH"
+	for _, c := range []struct {
+		name, config, version string
+		on                    bool
+		want                  string
+	}{
+		{"a section", "capacity = 2\n\n[update]\nauto = true   # follow releases\n", "v0.3.0", true, refused},
+		{"a dotted key", "update.auto = true\n", "v0.3.0", true, refused},
+		{"an inline table", "update = { auto = true }\n", "v0.3.0", true, refused},
+		{"off", "[update]\nauto = false\n", "v0.3.0", false, noLima},
+		{"commented out", "[update]\n# auto = true\n", "v0.3.0", false, noLima},
+		{"not pinned", "[update]\nauto = true\n", "latest", true, noLima},
+		{"no version at all", "[update]\nauto = true\n", "", true, noLima},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			spec := t.TempDir()
+			for name, body := range map[string]string{"machine.env": "MACHINE_NAME=test\n", "config.toml": c.config} {
+				if err := os.WriteFile(filepath.Join(spec, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The kit reads it with awk, yad with its TOML parser: the two
+			// must agree on every spelling here.
+			cfg, err := config.ReadFile(filepath.Join(spec, "config.toml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Update.Auto != c.on {
+				t.Fatalf("yad reads update.auto as %v, want %v", cfg.Update.Auto, c.on)
+			}
+			cmd := exec.Command(filepath.Join(bin, "bash"), kit, "up", spec)
+			cmd.Env = []string{"PATH=" + bin, "HOME=" + t.TempDir(), "YAD_VERSION=" + c.version}
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), c.want) {
+				t.Errorf("up = %v, want it to stop saying %q:\n%s", err, c.want, out)
+			}
+		})
+	}
+}

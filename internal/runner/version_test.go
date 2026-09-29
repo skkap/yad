@@ -63,9 +63,9 @@ func TestAHubRefusesARunnerBelowItsMinVersion(t *testing.T) {
 	}
 }
 
-// Decision 0018: v1 has no self-update, and the reserved control must stay
-// inert — a runner that acted on one would be replacing its own binary on a
-// remote's say-so.
+// Decision 0069: self-update is the owner's opt-in in config.toml, and the
+// reserved control stays inert — a runner that acted on one would be
+// replacing its own binary on a remote's say-so.
 func TestTheUpdateControlIsIgnored(t *testing.T) {
 	e := newEnv(t)
 	l := e.loop(t, 1)

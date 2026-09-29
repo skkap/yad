@@ -33,9 +33,16 @@ func (m *machine) childDaemon() *child {
 	if err != nil {
 		m.t.Fatal(err)
 	}
+	return m.childDaemonAt(self)
+}
+
+// childDaemonAt is childDaemon started from the binary at path, with env
+// added to its environment.
+func (m *machine) childDaemonAt(path string, env ...string) *child {
+	m.t.Helper()
 	c := &child{out: &syncBuffer{}, done: make(chan error, 1), log: filepath.Join(m.p.data, "logs", "yad.log")}
-	c.cmd = exec.Command(self, "daemon", "start", "--foreground")
-	c.cmd.Env = append(os.Environ(), childYad+"=1", "YAD_CONFIG_DIR="+m.p.config, "YAD_DATA_DIR="+m.p.data)
+	c.cmd = exec.Command(path, "daemon", "start", "--foreground")
+	c.cmd.Env = append(append(os.Environ(), childYad+"=1", "YAD_CONFIG_DIR="+m.p.config, "YAD_DATA_DIR="+m.p.data), env...)
 	c.cmd.Stdout, c.cmd.Stderr = c.out, c.out
 	if err := c.cmd.Start(); err != nil {
 		m.t.Fatal(err)

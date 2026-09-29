@@ -113,7 +113,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawIgnoresHarnessCap, check: "sync/free-capacity", want: Failed},
 		{flaw: flawGuardsSyncOnly, check: "protocol-header/missing", want: Failed},
 		{flaw: flawGuardsSyncOnly, check: "events/credential-required", want: Failed},
-		// The reserved update control is gated on nothing (decision 0018), so
+		// The reserved update control is gated on nothing (decision 0069), so
 		// the rule about ungated controls must not fire on it.
 		{flaw: flawOverOffersWhenBusy, check: "sync/offers-within-capacity", want: Failed},
 		{flaw: flawResultUnguarded, check: "protocol-header/missing", want: Failed},
