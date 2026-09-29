@@ -162,12 +162,22 @@ func Disconnect(ctx context.Context, p config.Paths, name string, force bool, re
 	}
 	replaced := false
 	now, err := config.Update(ctx, p, func(c *config.Config) (bool, error) {
+		// Under the lock `yad connect` takes to add a connection, though a
+		// connect again under a listed name writes only its credential: so
+		// the credential is compared too.
+		if cred != "" {
+			if now, err := p.Credential(name); err == nil && now != cred {
+				replaced = true
+			}
+		}
 		n := len(c.Connections)
 		c.Connections = slices.DeleteFunc(c.Connections, func(k config.Connection) bool {
 			if k.Name != name {
 				return false
 			}
-			replaced = k.URL != out.Connection.URL
+			if k.URL != out.Connection.URL {
+				replaced = true
+			}
 			return !replaced
 		})
 		return len(c.Connections) != n, nil
@@ -177,7 +187,7 @@ func Disconnect(ctx context.Context, p config.Paths, name string, force bool, re
 			out.standing(shown), p.ConfigFile(), err, rerun, out.retry())
 	}
 	out.Remaining = len(now.Connections)
-	if now, err := p.Credential(name); replaced || (cred != "" && err == nil && now != cred) {
+	if replaced {
 		return out, fmt.Errorf("%s, but %q was connected again while this ran, and the new connection is left as it is — `%s` removes it too",
 			out.standing(shown), name, again)
 	}

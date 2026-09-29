@@ -278,6 +278,9 @@ type server struct {
 	// what they left may be ended — a claim the loop is still withdrawing,
 	// or a start it is making, is not a leftover yet.
 	removed, retired map[string]bool
+	// retirements are what each retired connection's loop goroutine did,
+	// for the removal that waits on it.
+	retirements map[string]retirement
 	// stops and endedBy are each running loop's stop and end, for a
 	// removal. Set before the control socket can ask for one.
 	stops   map[string]context.CancelFunc
@@ -387,14 +390,19 @@ func (s *server) run(ctx context.Context) error {
 			defer l.Pool.Pass(l.Connection)
 			err := l.Run(loopCtx)
 			switch {
-			case err == nil:
+			case err == nil || s.isRemoved(l.Connection):
 			case s.goneFromConfig(ctx, l.Connection, err):
-				s.removedByHub(ctx, l.Connection, err)
+				s.removedByHub(l.Connection, err)
 			case !s.isRemoved(l.Connection):
 				s.fail(l.Connection, err)
 			}
-			// A loop the owner's removal stopped, or that stopped in the
-			// moment before it arrived, leaves the rest to the removal.
+			// However the removal came — asked for, found by the refused
+			// sync, or asked for while the loop was stopping on its own —
+			// what the connection left is ended here, once the loop has
+			// stopped and before the loop counts as ended.
+			if s.isRemoved(l.Connection) {
+				s.retire(ctx, l.Connection)
+			}
 		})
 	}
 	// Once every loop's stop is known, and no sooner: a removal asked

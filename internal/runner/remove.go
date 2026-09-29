@@ -157,15 +157,48 @@ func (s *server) remove(ctx context.Context, conn string) (Removal, error) {
 	s.forget(conn)
 	stop, ended := s.stops[conn], s.endedBy[conn]
 	s.mu.Unlock()
-	if stop != nil {
-		stop()
-		select {
-		case <-ended:
-		case <-ctx.Done():
-			return out, fmt.Errorf("the connection's sync loop did not stop in time (%w); it stops at its next sync, when the hub refuses the credential", ctx.Err())
-		}
+	if stop == nil || out.Already {
+		// No loop of its own to wait for, or one already ended: the rest is
+		// safe to do again, and says what is left of it now.
+		return s.finishRemoval(ctx, conn, out)
 	}
-	return s.finishRemoval(ctx, conn, out)
+	// The loop's own goroutine ends what the connection left once the loop
+	// has stopped, so a loop slower than this request still has it done.
+	stop()
+	select {
+	case <-ended:
+	case <-ctx.Done():
+		return out, fmt.Errorf("the connection's sync loop did not stop in time (%w); what it left here is ended once it has", ctx.Err())
+	}
+	s.mu.Lock()
+	done := s.retirements[conn]
+	s.mu.Unlock()
+	done.Removal.Known, done.Removal.Already = out.Known, out.Already
+	return done.Removal, done.err
+}
+
+// retirement is what the loop's goroutine did when a removed connection's
+// loop stopped, for the removal waiting on it.
+type retirement struct {
+	Removal
+	err error
+}
+
+// retire ends what a removed connection left, from its loop's goroutine once
+// the loop has stopped, and keeps the answer for the removal that asked.
+func (s *server) retire(ctx context.Context, conn string) {
+	// Not the loop's context, which has ended; the store is open until the
+	// last loop has returned, and this runs inside one.
+	out, err := s.finishRemoval(context.WithoutCancel(ctx), conn, Removal{Known: true})
+	if err != nil {
+		s.log.Error("not everything a removed connection left here could be ended; the collector tries again at its next sweep", "connection", conn, "err", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retirements == nil {
+		s.retirements = map[string]retirement{}
+	}
+	s.retirements[conn] = retirement{out, err}
 }
 
 // finishRemoval is what follows a removed connection's loop stopping, however
@@ -196,21 +229,15 @@ func (s *server) finishRemoval(ctx context.Context, conn string, out Removal) (R
 
 // removedByHub is the removal a daemon nobody told makes for itself: its
 // loop was refused by the hub, and config.toml no longer lists the
-// connection (goneFromConfig).
-func (s *server) removedByHub(ctx context.Context, conn string, err error) {
+// connection (goneFromConfig). The loop's goroutine retires it next.
+func (s *server) removedByHub(conn string, err error) {
 	s.mu.Lock()
 	already := s.removed[conn]
 	s.removed[conn] = true
 	s.mu.Unlock()
-	if already {
-		return
-	}
-	s.log.Warn("the hub refused this connection's credential and config.toml no longer lists it: the owner disconnected it, so what it left here is ended",
-		"connection", conn, "err", err)
-	// Not the loop's context, which has ended; the store is open until the
-	// last loop has returned, and this runs inside one.
-	if _, err := s.finishRemoval(context.WithoutCancel(ctx), conn, Removal{Known: true}); err != nil {
-		s.log.Error("not everything a removed connection left here could be ended; the collector tries again at its next sweep", "connection", conn, "err", err)
+	if !already {
+		s.log.Warn("the hub refused this connection's credential and config.toml no longer lists it: the owner disconnected it, so what it left here is ended",
+			"connection", conn, "err", err)
 	}
 }
 

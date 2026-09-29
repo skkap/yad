@@ -12,6 +12,7 @@ import (
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/hostool"
 	"github.com/skkap/yad/internal/hubclient"
+	"github.com/skkap/yad/internal/store/db"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 )
@@ -82,6 +83,26 @@ func TestConnectRoundTrip(t *testing.T) {
 	}
 	if cfg, _ := config.Load(e.paths); len(cfg.Connections) != 1 {
 		t.Errorf("re-connect duplicated the connection: %+v", cfg.Connections)
+	}
+}
+
+// A name a removed connection's leftovers are still stored under is refused
+// before the token is spent: the store keys everything by that name, and a
+// new hub under it would be sent the old one's events (DEV-81 review).
+func TestConnectRefusesANameWithLeftovers(t *testing.T) {
+	noTools(t)
+	e := newEnv(t)
+	ctx := context.Background()
+	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "gone", ID: "s1", Harness: "claude", CreatedAt: 1, LastUsedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	tok := e.token(t)
+	_, _, _, err := Connect(ctx, e.paths, e.url, tok, "gone")
+	if err == nil || !strings.Contains(err.Error(), "not ended yet") || !strings.Contains(err.Error(), "daemon start") {
+		t.Fatalf("connect under a name with leftovers: %v", err)
+	}
+	if _, _, _, err := Connect(ctx, e.paths, e.url, tok, "fresh"); err != nil {
+		t.Errorf("the refusal spent the token: %v", err)
 	}
 }
 

@@ -79,6 +79,11 @@ removals it has been told of. So:
   crash left belonged to a loop that will never run again, and ending them is
   what lets their sessions close.
 
+**A name is not reused while its leftovers wait.** `state.db` keys everything
+by connection name, so `yad connect` refuses a new connection a name whose
+leftovers no daemon has ended yet — a new hub under it would be sent the old
+one's events — and says how to end them.
+
 **Failures stop with nothing half-removed, and the same command finishes the
 job.**
 
