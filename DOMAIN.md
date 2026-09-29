@@ -73,7 +73,7 @@ runs a crash left, reports owed — is ended there: at once when the daemon is
 told, at its loop's next refused sync when it is not, and at the next start
 when no daemon ran. Only the hub's own answer makes a credential dead; one
 that cannot be read here never is.
-_See_: [0069](docs/decisions/0069-disconnect-retires-at-the-hub-then-tells-the-daemon.md), `internal/config`, `internal/runner/disconnect.go`
+_See_: [0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md), `internal/config`, `internal/runner/disconnect.go`
 
 **Registration token** — the one-time, short-lived secret a hub issues so that
 `yad connect` can register a runner. Exchanged once for a **runner credential**,

@@ -591,7 +591,7 @@ func TestPruneFollowsAReclaimAndBlocksNothing(t *testing.T) {
 // no longer in config.toml left: the owner who disconnected their only hub
 // while no daemon ran left its sessions, a run parked with no max_wait, a
 // running row a crash left, and a result and events owed, and no hub will
-// come back for any of them (DEV-74, decision 0069). Serve used to return
+// come back for any of them (DEV-74, decision 0072). Serve used to return
 // before opening the store when there was no connection, so nothing was
 // reclaimed; and until the removal was ended at start, only that
 // connection's own loop could end the runs, so their sessions waited for

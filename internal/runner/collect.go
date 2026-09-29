@@ -110,7 +110,7 @@ func (c *Collector) expireWaits(ctx context.Context, now time.Time) error {
 // Collector closes sessions and reclaims their workdirs: on the hub's
 // close_session, the owner's `yad sessions close`, the idle TTL, and disk
 // pressure (decisions 0011 and 0035), and the removal of its connection
-// (decision 0069). A session with a run held — claimed,
+// (decision 0072). A session with a run held — claimed,
 // preparing, running, or waiting on a usage limit or its start time — is
 // never closed: its workdir is in use. The close is recorded first, in one
 // statement that also checks that, and the workdir is removed after, by the

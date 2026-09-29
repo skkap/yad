@@ -22,7 +22,7 @@ import (
 	"github.com/skkap/yad/internal/store/db"
 )
 
-// `yad disconnect` end to end (DEV-81, decision 0069): the hub first, then
+// `yad disconnect` end to end (DEV-81, decision 0072): the hub first, then
 // config.toml and the credential, then the daemon — told live, or ending
 // what is left at its next start.
 

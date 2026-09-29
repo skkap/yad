@@ -343,7 +343,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	}
 }
 
-// removeConnection is the daemon's half of `yad disconnect` (decision 0069).
+// removeConnection is the daemon's half of `yad disconnect` (decision 0072).
 // It acts only on a connection config.toml no longer lists, read as the file
 // is now: the CLI removes the entry once the hub has let the runner go, and
 // asks after. A request for one still listed is refused, so nothing can make

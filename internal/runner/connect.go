@@ -160,7 +160,7 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 // leftoverName refuses a new connection a name the state database still holds
 // leftovers under: a connection disconnected while no daemon ran, or before
 // the daemon was told, whose sessions, runs and owed reports the daemon has
-// not ended yet (decision 0069). The store keys everything by connection
+// not ended yet (decision 0072). The store keys everything by connection
 // name, so a new hub under that name would inherit them — its reporter would
 // send the old hub's events to the new one. Checked before the token is
 // spent, from the database read-only. A database that is not there holds

@@ -22,7 +22,7 @@ const disconnectUsage = "usage: yad disconnect <name> [--now] [--force]"
 // cmdDisconnect is `yad disconnect <name>`: in one fixed order, the hub
 // retires the runner, the connection leaves config.toml and its credential is
 // deleted, and a running daemon is told to let the connection go (decision
-// 0069). It never writes the state database (decision 0043): the daemon ends
+// 0072). It never writes the state database (decision 0043): the daemon ends
 // what the connection left, now if it is running and at its next start if
 // not.
 //

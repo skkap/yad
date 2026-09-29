@@ -63,7 +63,7 @@ type Options struct {
 // stops alone; the others carry on, and Serve reports it when it returns.
 // A connection the owner removes — `yad disconnect` telling the daemon over
 // the control socket, or its hub refusing a credential config.toml no longer
-// names — stops alone too, and what it leaves here is ended (decision 0069).
+// names — stops alone too, and what it leaves here is ended (decision 0072).
 //
 // Serve returns when a drain has run its course, when ctx ends, or when every
 // connection has stopped on its own — a fault the owner has to fix, not a

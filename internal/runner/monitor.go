@@ -225,7 +225,7 @@ var ErrNotRunningConnections = errors.New("the runner is still starting and has 
 // RemoveConnection is `yad disconnect` telling the daemon that config.toml no
 // longer lists a connection: its loop stops, its runs in hand are cancelled
 // and what it leaves here is ended, while the other connections carry on
-// (decision 0069).
+// (decision 0072).
 func (m *Monitor) RemoveConnection(ctx context.Context, conn string) (Removal, error) {
 	m.mu.Lock()
 	remove := m.remover

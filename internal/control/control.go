@@ -36,7 +36,7 @@ const OpAccountsChanged = "accounts_changed"
 
 // OpConnectionRemoved is `yad disconnect` telling the daemon that config.toml
 // no longer lists a connection, whose hub has already been told (decision
-// 0069). The daemon stops that connection's loop, cancels its runs in hand
+// 0072). The daemon stops that connection's loop, cancels its runs in hand
 // and ends what it leaves here, and answers once it has.
 const OpConnectionRemoved = "connection_removed"
 

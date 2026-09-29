@@ -19,7 +19,7 @@ import (
 // config.toml by hand — leaves what its own loop would have settled: open
 // sessions and their workdirs, parked runs, runs a crashed process held,
 // results and events owed. No loop of its runs again, so the runner ends
-// them itself (decision 0069): at once when a running daemon is told, at the
+// them itself (decision 0072): at once when a running daemon is told, at the
 // loop's next sync when it is not and the hub refuses the credential, and at
 // the next start when no daemon ran. The hub has already done its half —
 // deregister marks the runs it held lost and closes the sessions — so nothing

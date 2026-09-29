@@ -811,7 +811,7 @@ for `codex`); the suite never runs a real harness.
   as closed by the owner and are reported to nobody, and what it owed its hub
   is dropped — so a hub disconnected while no daemon ran, or while the daemon
   was not told, leaves nothing behind
-  ([0069](docs/decisions/0069-disconnect-retires-at-the-hub-then-tells-the-daemon.md)).
+  ([0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md)).
   A missing last-used timestamp is unknown, never ancient: the TTL counts from
   the sweep that first sees it. Every close goes to the session's hub in
   `closed_sessions`, but for those of a removed connection, which has no hub
@@ -1189,7 +1189,7 @@ writer: the CLI opens it read-only, and a change the CLI makes goes through the
 control socket
 ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md),
 [0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md),
-[0069](docs/decisions/0069-disconnect-retires-at-the-hub-then-tells-the-daemon.md)).
+[0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md)).
 
 ### `hub.db`
 
@@ -1227,7 +1227,7 @@ yad disconnect <name> [--now] [--force]
                                    credential lose the connection, then a running
                                    daemon lets it go live — its loop stops, its runs
                                    are cancelled, its sessions close — or the next
-                                   start ends what it left (0069). Refuses while its
+                                   start ends what it left (0072). Refuses while its
                                    runs are in progress; --now goes on and the hub
                                    records them lost; --force goes on past a hub
                                    that cannot be asked or will not agree

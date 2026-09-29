@@ -61,7 +61,7 @@ func (e *NotConnectedError) Error() string {
 
 // Disconnect retires this runner at one hub and removes the connection here:
 // the hub deregisters it — the runs it held there end lost, its sessions
-// there close and the runs queued in them end (decision 0069, DEV-77) — and
+// there close and the runs queued in them end (decision 0072, DEV-77) — and
 // then the connection goes from config.toml and its credential file is
 // deleted, in that order. What a running daemon holds of it is the caller's
 // to ask about: the CLI never writes the state database (decision 0043).
