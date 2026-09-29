@@ -126,13 +126,16 @@ func TestEnv(t *testing.T) {
 		harness, home string
 		want          []string
 	}{
-		{"claude", "/h", []string{"CLAUDE_CONFIG_DIR=/h"}},
+		// The login's storage is pointed at the home too, so an owner's own
+		// CLAUDE_SECURESTORAGE_CONFIG_DIR cannot put every account on one
+		// login (decision 0069).
+		{"claude", "/h", []string{"CLAUDE_CONFIG_DIR=/h", "CLAUDE_SECURESTORAGE_CONFIG_DIR=/h"}},
 		{"codex", "/h", []string{"CODEX_HOME=/h"}},
 		{"gemini", "/h", nil},
 		{"claude", "", nil},
 	} {
 		got := Env(c.harness, c.home)
-		if len(got) != len(c.want) || (len(got) == 1 && got[0] != c.want[0]) {
+		if !slices.Equal(got, c.want) {
 			t.Errorf("Env(%q, %q) = %v, want %v", c.harness, c.home, got, c.want)
 		}
 	}
@@ -175,6 +178,9 @@ func TestScrubRemovesWhatAGrantMayNotCarry(t *testing.T) {
 	}
 	homes := map[string]bool{}
 	for _, v := range homeVar {
+		homes[v] = true
+	}
+	for _, v := range storageVar {
 		homes[v] = true
 	}
 	for _, name := range names {

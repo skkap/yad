@@ -141,7 +141,11 @@ func LoginEnv(harness, home string) []string {
 	if !ok || home == "" {
 		return nil
 	}
-	return []string{v + "=" + home}
+	env := []string{v + "=" + home}
+	if sv, ok := storageVar[harness]; ok {
+		env = append(env, sv+"="+home)
+	}
+	return env
 }
 
 // LoggedIn asks the harness whether this home holds a login: the one a run

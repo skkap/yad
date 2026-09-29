@@ -4,7 +4,9 @@
 //
 // The one rule the package exists to keep: YAD stores no account credential of
 // its own but one. The harness logs itself in, inside its own home, and nothing
-// here reads, copies, moves or prints what that login writes. The exception is
+// here reads, copies, moves or prints what that login writes — on macOS Claude
+// writes it to the Keychain under the home's name, and yad only ever deletes
+// that item, with the home (keychain.go). The exception is
 // a token account (decision 0054): a `claude setup-token` token the owner
 // piped in, kept 0600 in the account's home and handed to that account's runs
 // in their environment — never printed, logged or sent anywhere. A label is
@@ -189,12 +191,27 @@ func (a Account) Report() v1.AccountReport {
 }
 
 // homeVar is the environment variable each harness reads its home from.
-// Verified per-home on macOS (DEV-24) and on Linux (DEV-26): on Linux Claude's
-// credential is a plain file inside the home and no keyring is consulted, so
-// the isolation is a property of the path rather than of the platform.
+// Verified per-home on macOS (DEV-24) and on Linux (DEV-26). The isolation is
+// a property of the path either way, but where the login lives is not: on
+// Linux Claude's is a plain file inside the home, and on macOS it is a
+// Keychain item named after the home's path, which outlives the directory
+// unless yad deletes it (keychain.go, decision 0069).
 var homeVar = map[string]string{
 	"claude": "CLAUDE_CONFIG_DIR",
 	"codex":  "CODEX_HOME",
+}
+
+// storageVar is the variable a harness reads where it keeps its login from,
+// when that is not the home: Claude's CLAUDE_SECURESTORAGE_CONFIG_DIR, which
+// it hashes into its Keychain item's name on macOS and under which it writes
+// .credentials.json elsewhere, in place of CLAUDE_CONFIG_DIR (decision 0069).
+// Every account sets it to its own home, the same path as the home variable,
+// so the login is where it would be without it. It is set rather than only
+// removed because the owner's copy passes supervise.Scrub as the home
+// variable's does: with no accounts it is where the harness's own login is,
+// and with one the account's value comes after it and wins.
+var storageVar = map[string]string{
+	"claude": "CLAUDE_SECURESTORAGE_CONFIG_DIR",
 }
 
 // transcriptDir is the directory inside a harness home that holds its
@@ -229,8 +246,9 @@ func TranscriptDir(data, harness string) string {
 func HomeVar(harness string) string { return homeVar[harness] }
 
 // Env is what points a harness at an account, ready to append to a child's
-// environment: the variable naming the account's home, first, and for a token
-// account the token after it (decision 0054). Empty for a harness with no
+// environment: the variable naming the account's home, first, then the one
+// naming where its login is kept, set to the same home (storageVar), and for
+// a token account the token after them (decision 0054). Empty for a harness with no
 // home of its own, whose runs use the harness's default.
 //
 // The home variable is first because suggest prints exactly that one: the
@@ -249,6 +267,9 @@ func TurnEnv(harness, home string) (env []string, tokenID string) {
 		return nil, ""
 	}
 	env = []string{v + "=" + home}
+	if sv, ok := storageVar[harness]; ok {
+		env = append(env, sv+"="+home)
+	}
 	if CanUseToken(harness) {
 		if t := token(home); t != "" {
 			env = append(env, tokenVar+"="+t)
@@ -264,10 +285,39 @@ func TurnEnv(harness, home string) (env []string, tokenID string) {
 // Both directories are 0700: a harness home holds the credential the harness
 // wrote there, and the transcripts hold whole conversations.
 func Ensure(data, harness, label string) (string, error) {
+	home, _, err := Prepare(data, harness, label)
+	return home, err
+}
+
+// Prepare is Ensure, saying which Keychain items it deleted on the way: a
+// home it makes where there was none starts with no login, and on macOS a
+// login Claude kept for that path in the Keychain — from an account removed
+// before this was done, or by a removal that died half-way — is deleted
+// before the home exists (decision 0069). Without that, a label added again
+// would run on the subscription it had before, which is the one thing
+// removing it was meant to end. An item that cannot be deleted stops the
+// home being made.
+//
+// A home already there is left with its login, whatever the Keychain holds:
+// that login is the home's own.
+func Prepare(data, harness, label string) (home string, cleared []string, err error) {
 	if err := checkNames(harness, label); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	home := HomeDir(data, harness, label)
+	home = HomeDir(data, harness, label)
+	// Two runs making one home can both find it missing, and both delete;
+	// the second finds nothing, which is not an error. A login made there
+	// takes minutes, so none has been written in between.
+	if _, err := os.Lstat(home); errors.Is(err, os.ErrNotExist) {
+		if cleared, err = forgetKeychain(harness, home, true); err != nil {
+			return "", cleared, err
+		}
+	}
+	home, err = ensure(data, harness, home)
+	return home, cleared, err
+}
+
+func ensure(data, harness, home string) (string, error) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return "", err
 	}
@@ -418,7 +468,8 @@ func placeLink(from, to string) error {
 // scheduled inside a gap a few syscalls wide.
 var beforeReplace func(path string)
 
-// Remove deletes an account's harness home, and nothing else.
+// Remove deletes an account's harness home — with, on macOS, the login Claude
+// keeps for it in the Keychain — and nothing else.
 //
 // The shared transcripts are reached through a symlink, and RemoveAll deletes
 // the link rather than following it, so every other account keeps every
@@ -427,13 +478,15 @@ var beforeReplace func(path string)
 // rest, which is why the home is a directory to delete and not a file to
 // unlink.
 //
-// Any copy of the home set aside for deletion and never finished goes with it
-// (RemoveSetAside): it holds the same login.
+// It goes the way a removal through the daemon does, set aside and then
+// deleted by RemoveSetAside, so the login Claude keeps for it in the macOS
+// Keychain goes with it by the same one path. Any copy of the home set aside
+// before and never finished goes too: it holds the same login.
 func Remove(data, harness, label string) error {
-	if err := checkNames(harness, label); err != nil {
+	if err := SetAside(data, harness, label); err != nil {
 		return err
 	}
-	return errors.Join(os.RemoveAll(HomeDir(data, harness, label)), RemoveSetAside(data, harness, label))
+	return RemoveSetAside(data, harness, label)
 }
 
 // asidePrefix names a home set aside for deletion: a leading dot and a
@@ -464,11 +517,29 @@ func SetAside(data, harness, label string) error {
 // owner was told would go, so a retried removal is what finishes one left
 // behind rather than reporting the account gone while its credential sits
 // under a hidden name.
+//
+// It is where every removal ends — `yad account remove` with no daemon, and
+// the daemon's for the owner or a hub, at once or when the last run lets go —
+// so it is also where the login Claude keeps for the home in the macOS
+// Keychain is deleted (decision 0069). The Keychain goes first: if it cannot,
+// the copies are kept and the error says so, and the next removal of the
+// label tries both again. A home and its Keychain login go together or not at
+// all.
+//
+// Only while no home is at the account's path. One that is has been made
+// since the removal — the label added again — and the Keychain item for the
+// path is that home's login now; Prepare cleared whatever was left before it.
 func RemoveSetAside(data, harness, label string) error {
 	if err := checkNames(harness, label); err != nil {
 		return err
 	}
-	dir := filepath.Dir(HomeDir(data, harness, label))
+	home := HomeDir(data, harness, label)
+	if _, err := os.Lstat(home); errors.Is(err, os.ErrNotExist) {
+		if _, err := forgetKeychain(harness, home, false); err != nil {
+			return err
+		}
+	}
+	dir := filepath.Dir(home)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

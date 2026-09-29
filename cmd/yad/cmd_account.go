@@ -134,9 +134,18 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	kctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	_, _ = tellDaemon(kctx, g.paths, control.AccountChange{Harness: id, Label: label, Keep: true})
 	cancel()
-	home, err := account.Ensure(g.paths.Data, id, label)
+	home, cleared, err := account.Prepare(g.paths.Data, id, label)
+	if _, ok := errors.AsType[*account.KeychainError](err); ok {
+		return fmt.Errorf("%s account %q was not added: %w, and then run `%s` again", id, label, err, again)
+	}
 	if err != nil {
 		return err
+	}
+	// Said, not done quietly: the owner may have removed the label meaning to
+	// keep that login somewhere, and "starts logged out" is the thing they
+	// would otherwise find out from a login they did not expect to need.
+	if len(cleared) > 0 {
+		fmt.Fprintf(w, "%s account %q: claude still kept a login for %s in the macOS Keychain, from an account removed before; it is deleted, so this account starts with no login but the one this command gives it\n", id, label, home)
 	}
 	var loginErr error
 	check := account.LoggedIn
@@ -408,9 +417,9 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 	switch {
 	case errors.Is(err, control.ErrNotRunning):
 		if err := account.Remove(g.paths.Data, id, label); err != nil {
-			return err
+			return fmt.Errorf("%s account %q is out of config.toml, but %w — then run `%s` again to finish", id, label, err, again)
 		}
-		fmt.Fprintf(w, "removed %s account %q; %s is gone and the shared transcripts are untouched\n", id, label, home)
+		fmt.Fprintf(w, "removed %s account %q; %s is gone%s, and the shared transcripts are untouched\n", id, label, home, keychainGone(id))
 		return nil
 	case errors.As(err, &refused):
 		return fmt.Errorf("%s account %q is out of config.toml, and %w — run `%s` again", id, label, err, again)
@@ -419,12 +428,23 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 		return fmt.Errorf("%s account %q is out of config.toml, but the running daemon did not answer (%v), so its home %s is kept in case a run is using it — once `%s` answers, run `%s` again", id, label, err, home, g.paths.Command("status"), again)
 	}
 	if len(res.Runs) == 0 {
-		fmt.Fprintf(w, "removed %s account %q; the running daemon has let it go, %s is gone, and the shared transcripts are untouched\n", id, label, home)
+		fmt.Fprintf(w, "removed %s account %q; the running daemon has let it go, %s is gone%s, and the shared transcripts are untouched\n", id, label, home, keychainGone(id))
 		return nil
 	}
-	fmt.Fprintf(w, "removed %s account %q; no new run takes it. Still on it, and finishing there: %s. %s is deleted when the last of them ends; the shared transcripts are untouched\n",
-		id, label, strings.Join(res.Runs, ", "), home)
+	fmt.Fprintf(w, "removed %s account %q; no new run takes it. Still on it, and finishing there: %s. %s is deleted when the last of them ends%s; the shared transcripts are untouched\n",
+		id, label, strings.Join(res.Runs, ", "), home, keychainGone(id))
 	return nil
+}
+
+// keychainGone is what a removal says about the login a harness keeps
+// outside the home, where it keeps one: without it an owner who knows Claude
+// logs in to the Keychain would read "the home is gone" and wonder about the
+// rest (decision 0069).
+func keychainGone(harness string) string {
+	if !account.KeychainLogin(harness) {
+		return ""
+	}
+	return ", with the login claude kept for it in the macOS Keychain"
 }
 
 // checkHarness refuses a harness YAD cannot give a home of its own, naming
