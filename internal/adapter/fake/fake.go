@@ -22,11 +22,19 @@ type Script struct {
 	Delay time.Duration
 	// Hang never ends the turn on its own — for watchdog and cancel tests.
 	Hang bool
-	// IgnoreInterrupt and IgnoreTerm make the turn deaf to the cancel
-	// ladder's first and second rungs, as a wedged harness is; only the
-	// context — SIGKILL — ends it then.
+	// IgnoreInterrupt and IgnoreTerm keep the cancel ladder's first and
+	// second rungs from stopping the turn, as a wedged harness is not
+	// stopped by them; a turn that hangs then ends only by the context —
+	// SIGKILL.
 	IgnoreInterrupt bool
 	IgnoreTerm      bool
+	// AwaitInterrupt holds the turn after its events until an interrupt is
+	// delivered and then, when Release is set, until Release is closed. A
+	// turn the interrupt did not stop then ends with Outcome: with
+	// IgnoreInterrupt it is a harness that is interrupted and carries on,
+	// with no clock to race the interrupt's delivery (DEV-147).
+	AwaitInterrupt bool
+	Release        <-chan struct{}
 	// Stopped is the outcome an interrupt or SIGTERM ends the turn with; nil
 	// is cancelled. A harness whose answer was already on its way reports
 	// that answer instead.
@@ -84,7 +92,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, e
 	a.mu.Unlock()
 
 	s := a.Next(spec)
-	t := &turn{events: make(chan v1.Event), done: make(chan struct{}), stop: make(chan struct{}), script: s}
+	t := &turn{events: make(chan v1.Event), done: make(chan struct{}), stop: make(chan struct{}), heard: make(chan struct{}), script: s}
 	t.native = s.Outcome.NativeSessionID
 	a.mu.Lock()
 	a.turns = append(a.turns, t)
@@ -97,6 +105,7 @@ type turn struct {
 	events chan v1.Event
 	done   chan struct{}
 	stop   chan struct{} // closed by the rung that ends the turn
+	heard  chan struct{} // closed by the first interrupt that reaches the turn
 	script Script
 
 	mu          sync.Mutex
@@ -145,6 +154,22 @@ func (t *turn) play(ctx context.Context) {
 		}
 		if end() {
 			return
+		}
+	}
+	if s.AwaitInterrupt {
+		for _, wait := range []<-chan struct{}{t.heard, s.Release} {
+			// A nil Release blocks for ever, so it is not waited on.
+			if wait == nil {
+				continue
+			}
+			select {
+			case <-wait:
+			case <-t.stop:
+			case <-ctx.Done():
+			}
+			if end() {
+				return
+			}
 		}
 	}
 	if s.Hang {
@@ -198,12 +223,18 @@ func (t *turn) Interrupt() error {
 	t.mu.Lock()
 	t.interrupts++
 	failed := t.interrupts <= t.script.InterruptFails
+	first := t.interrupts == t.script.InterruptFails+1
 	t.mu.Unlock()
 	if failed {
 		return errors.New("the harness is not reading its input")
 	}
+	// Halted before heard closes, so a turn that awaits the interrupt and
+	// also obeys it ends stopped rather than with its Outcome.
 	if !t.script.IgnoreInterrupt {
 		t.halt()
+	}
+	if first {
+		close(t.heard)
 	}
 	return nil
 }
