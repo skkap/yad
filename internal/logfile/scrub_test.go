@@ -1,6 +1,7 @@
 package logfile
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,7 +70,7 @@ func TestScrubRewritesEveryFileAndTheLogGoesOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
-	if lines[0] != "a https://host/r" {
+	if lines[0] != "a https://host/r    " {
 		t.Errorf("the live file's line was not rewritten:\n%s", b)
 	}
 	if lines[len(lines)-1] != "after" || len(lines) != 202 {
@@ -94,6 +95,65 @@ func TestScrubRewritesEveryFileAndTheLogGoesOn(t *testing.T) {
 	}
 }
 
+// A follower of the live file, attached before the scrub, goes on with the
+// lines appended after it, whole: nothing it had read past moved.
+func TestScrubKeepsAFollowerInPlace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "yad.log")
+	l, err := Open(path, 1<<20, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	fmt.Fprintf(l, "{\"msg\":\"cloning https://x-access-token:ghp_FAKEFAKEFAKEFAKEFAKE@host/r\"}\n")
+
+	var out syncBuf
+	ready := make(chan struct{})
+	followReady = func() { close(ready) }
+	t.Cleanup(func() { followReady = func() {} })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Follow(ctx, path, &out) }()
+	<-ready
+
+	if _, err := l.Scrub("https://x-access-token:ghp_FAKEFAKEFAKEFAKEFAKE@", "https://"); err != nil {
+		t.Fatal(err)
+	}
+	// Longer than what the scrub took out: a file that shrank and grew
+	// back past the follower's offset before it looked is what it cannot
+	// tell from one that only grew.
+	want := "{\"msg\":\"took out the credentials an earlier version kept\"}\n"
+	fmt.Fprint(l, want)
+	deadline := time.Now().Add(5 * time.Second)
+	for out.String() != want && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != want {
+		t.Errorf("followed:\n%q\nwant:\n%q", out.String(), want)
+	}
+}
+
+func TestScrubRefusesALongerNew(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "yad.log")
+	if err := os.WriteFile(path, []byte("a@\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := Open(path, 1<<20, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if _, err := l.Scrub("a@", "longer"); err == nil {
+		t.Error("Scrub took a new longer than its old, which would move every line after it")
+	}
+	if b, _ := os.ReadFile(path); string(b) != "a@\n" {
+		t.Errorf("the refused Scrub changed the file to %q", b)
+	}
+}
+
 // A credential whose start is another credential goes whole, whichever order
 // the pairs come in.
 func TestScrubLongestOldWins(t *testing.T) {
@@ -113,7 +173,7 @@ func TestScrubLongestOldWins(t *testing.T) {
 			t.Fatal(err)
 		}
 		l.Close()
-		if b, _ := os.ReadFile(path); string(b) != "https://host https://host\n" {
+		if b, _ := os.ReadFile(path); string(b) != "https://host https://host      \n" {
 			t.Errorf("pairs %q left %q", pairs, b)
 		}
 	}

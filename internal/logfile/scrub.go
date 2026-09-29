@@ -1,6 +1,7 @@
 package logfile
 
 import (
+	"bufio"
 	"cmp"
 	"errors"
 	"fmt"
@@ -24,12 +25,15 @@ import (
 // so; err is for a file that could be neither rewritten nor removed, and a
 // caller that must not lose the olds keeps them until a Scrub returns nil.
 //
-// The live file is rewritten in place through a second descriptor while
-// writes wait on the lock, so the appending one stays open and goes on at the
-// new end, and `yad daemon logs --follow` sees a truncation, which it reads
-// again from the top. It is truncated before it is written: a crash between
-// the two loses the file's lines rather than keeping any of what was to go. A
-// backup is replaced whole, through a file beside it.
+// The live file is rewritten in place, through a second descriptor, while
+// writes wait on the lock, and every line in it keeps its length: what came
+// out is made up in spaces before its newline, which JSON reads past. So
+// nothing after a changed line moves — the appending descriptor goes on at
+// the same end, and `yad daemon logs --follow`, which reads on from the
+// offset it had reached, neither misses a line nor starts one in its middle.
+// Hence no new may be longer than its old. A line is one write, so a crash
+// tears at most the one it was in. A backup is replaced whole, through a file
+// beside it.
 func (l *File) Scrub(oldnew ...string) (removed []string, err error) {
 	if len(oldnew)%2 != 0 {
 		return nil, errors.New("logfile: Scrub takes old and new strings in pairs")
@@ -37,6 +41,9 @@ func (l *File) Scrub(oldnew ...string) (removed []string, err error) {
 	type pair struct{ old, new string }
 	var pairs []pair
 	for i := 0; i < len(oldnew); i += 2 {
+		if len(oldnew[i+1]) > len(oldnew[i]) {
+			return nil, errors.New("logfile: Scrub cannot replace a string with a longer one in place")
+		}
 		// An empty old would match between every two bytes.
 		if oldnew[i] != "" {
 			pairs = append(pairs, pair{oldnew[i], oldnew[i+1]})
@@ -113,24 +120,36 @@ func (l *File) scrubLive(r *strings.Replacer) error {
 		return err
 	}
 	defer f.Close()
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return err
+	// Reads go through f's offset and writes land behind it, at lines
+	// already read, so the buffer never holds a byte that has since changed.
+	br := bufio.NewReader(f)
+	var off int64
+	changed := false
+	for {
+		line, err := br.ReadString('\n')
+		if body := strings.TrimSuffix(line, "\n"); body != "" {
+			if s := r.Replace(body); s != body {
+				padded := s + strings.Repeat(" ", len(body)-len(s)) + line[len(body):]
+				if _, err := f.WriteAt([]byte(padded), off); err != nil {
+					return err
+				}
+				changed = true
+			}
+		}
+		off += int64(len(line))
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
 	}
-	s := r.Replace(string(b))
-	if s == string(b) {
+	if !changed {
 		return nil
-	}
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := f.WriteAt([]byte(s), 0); err != nil {
-		return err
 	}
 	if err := f.Sync(); err != nil {
 		return err
 	}
-	l.size = int64(len(s))
 	return f.Close()
 }
 
