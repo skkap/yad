@@ -1143,7 +1143,8 @@ user_version`; migrations are embedded and run on open. What a migration needs
 Go for, it leaves in `start_sweeps` by name, and the daemon's start does it and
 deletes the row in one transaction — the credential a source URL carried
 before [0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md)
-is the one so far (`runner.scrubSourceCredentials`). The daemon is its only
+is the one so far (`runner.scrubSourceCredentials`, which rewrites the
+daemon's log files in that transaction too, through `logfile.File.Scrub`). The daemon is its only
 writer: the CLI opens it read-only, and a change the CLI makes goes through the
 control socket
 ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md),
