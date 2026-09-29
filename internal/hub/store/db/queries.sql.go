@@ -1872,6 +1872,37 @@ func (q *Queries) UnbindWithdrawnSession(ctx context.Context, arg UnbindWithdraw
 	return result.RowsAffected()
 }
 
+const unboundForksOf = `-- name: UnboundForksOf :many
+SELECT id FROM sessions
+WHERE fork_from = ?1 AND runner_id IS NULL AND closed_at IS NULL
+ORDER BY id
+`
+
+// The open forks of a session that no claim has bound: sessions that can
+// open only on the runner holding the session they fork (decision 0065).
+func (q *Queries) UnboundForksOf(ctx context.Context, id sql.NullString) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, unboundForksOf, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const unstartedRunsInSession = `-- name: UnstartedRunsInSession :many
 SELECT id FROM runs WHERE session_id = ? AND state IN ('queued', 'offered') ORDER BY created_at, id
 `

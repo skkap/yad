@@ -75,6 +75,13 @@ UPDATE sessions SET runner_id = NULL, bound_by_run = NULL
 WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id) AND bound_by_run = sqlc.arg(run_id)
   AND close_requested_at IS NULL AND closed_at IS NULL;
 
+-- The open forks of a session that no claim has bound: sessions that can
+-- open only on the runner holding the session they fork (decision 0065).
+-- name: UnboundForksOf :many
+SELECT id FROM sessions
+WHERE fork_from = sqlc.arg(id) AND runner_id IS NULL AND closed_at IS NULL
+ORDER BY id;
+
 -- name: CreateRun :exec
 INSERT INTO runs (id, session_id, harness, model, spec, state, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, 'queued', ?, ?);

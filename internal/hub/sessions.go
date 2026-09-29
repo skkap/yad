@@ -106,6 +106,12 @@ func (h *Hub) registerSessions(api huma.API) {
 					return err
 				}
 			}
+			// Closing is enough: a runner refuses to fork a session it is
+			// closing, so a fork of this one ends now rather than being
+			// offered to be refused.
+			if err := endForksOf(ctx, q, sess.ID, sourceClosed(sess.ID), now); err != nil {
+				return err
+			}
 			view, err = sessionView(ctx, q, sess.ID)
 			return err
 		})
@@ -151,6 +157,47 @@ func endSessionRuns(ctx context.Context, q *db.Queries, id string, end unstarted
 		}
 	}
 	return nil
+}
+
+// endForksOf closes the forks of a session that no claim has bound, and ends
+// the runs waiting in them, once that session can no longer be offered one:
+// a fork opens only on the runner holding the session it forks, from the
+// conversation there (decision 0065), and a session unbound or closed has
+// none there to copy. A queued run holds no lease, so a fork left waiting for
+// its source to be bound again — by a run that may never come — would wait for
+// ever, and one offered to a runner closing its source would be refused
+// (DEV-151). The fork's session closes rather than only its runs ending, so a
+// run submitted to it later is refused at submit instead of queued behind them.
+// A runner that goes away closes these with its own sessions (SessionsToSettle).
+func endForksOf(ctx context.Context, q *db.Queries, source string, end unstartedEnd, now time.Time) error {
+	forks, err := q.UnboundForksOf(ctx, sql.NullString{String: source, Valid: true})
+	if err != nil {
+		return err
+	}
+	for _, id := range forks {
+		if err := closeHere(ctx, q, id, v1.SessionClosed, end, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sourceUnbound is what becomes of a run waiting to open a fork of a session
+// the hub unbound because the claim that opened it was withdrawn: the runner
+// deleted that session before any turn ran there. Decision 0065's end for a
+// source with nothing to copy — resume_rejected on a runner — in the hub's
+// words, since a run the hub ends carries a reason and no class.
+func sourceUnbound(source string) unstartedEnd {
+	return unstartedEnd{v1.RunFailed, fmt.Sprintf(
+		"the session it forks, %s, has no conversation to copy: the claim that opened it was withdrawn before a turn ran there; fork it once one of its runs has started", source)}
+}
+
+// sourceClosed is what becomes of a run waiting to open a fork of a session
+// that closed, or is closing, before the fork opened: a runner refuses to
+// fork one, and the fork can go to no other runner.
+func sourceClosed(source string) unstartedEnd {
+	return unstartedEnd{v1.RunFailed, fmt.Sprintf(
+		"the session it forks, %s, was closed before this fork opened, so there is no conversation to copy; fork an open session, or submit the work to a new one", source)}
 }
 
 // closedByRunner is what becomes of a run still waiting in a session its

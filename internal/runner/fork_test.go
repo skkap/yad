@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -154,5 +156,71 @@ func TestAForkOfASessionTheRunnerCannotForkIsRefused(t *testing.T) {
 	}
 	if _, err := l.record(ctx, forkOf("r-open", "fork-of-open", "open")); err != nil {
 		t.Fatalf("a fork of an open session this runner holds: %v", err)
+	}
+}
+
+// Through yad hub: a fork queued while the session it forks was bound by a
+// claim whose acknowledging answer was lost ends when the hub unbinds that
+// session, rather than waiting queued for a runner nobody can name (DEV-151).
+// The runner withdrew the claim and deleted the session with it, so there is
+// no conversation to copy, and the fork ends with the reason decision 0065
+// gives for a source with nothing to copy; its session closes, so a run
+// submitted to it later is refused rather than queued behind it.
+func TestAForkOfASessionTheHubUnbindsEnds(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		// withdraw takes a, held on the hub with the runner not told, to
+		// withdrawn on the runner and s1 unbound on the hub.
+		withdraw func(t *testing.T, e *env, l *Loop)
+	}{
+		{"its claim cancelled, then left out", func(t *testing.T, e *env, l *Loop) {
+			if _, err := e.api(t).Cancel(ctx, "a"); err != nil {
+				t.Fatal(err)
+			}
+			if res := mustSync(t, l); !slices.Equal(cancels(res), []string{"a"}) {
+				t.Fatalf("cancels %v, want [a]", cancels(res))
+			}
+			mustSync(t, l)
+		}},
+		{"its lease lapsed, then listed as claimed", func(t *testing.T, e *env, l *Loop) {
+			e.skew.Store(int64(10 * time.Minute))
+			if res := mustSync(t, l); !slices.Equal(cancels(res), []string{"a"}) {
+				t.Fatalf("cancels %v, want [a]", cancels(res))
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			l := e.loop(t, 1)
+			h := &losesAnswer{Hub: l.Hub}
+			l.Hub = h
+			e.enqueue(t, testRun("a", "s1"))
+			mustSync(t, l)
+			h.arm()
+			if _, err := l.SyncOnce(ctx); err == nil {
+				t.Fatal("the armed sync's answer arrived")
+			}
+			// s1 is bound on the hub, so the fork is taken at submit.
+			e.enqueue(t, forkOf("f", "s2", "s1"))
+			tc.withdraw(t, e, l)
+			if _, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "hub", ID: "s1"}); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("session s1 is still on the runner: %v", err)
+			}
+
+			r, err := e.hubStore.GetRun(ctx, "f")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.State != string(v1.RunFailed) || !strings.Contains(r.Reason.String, "no conversation to copy") {
+				t.Fatalf("the fork is %s (%q), want failed with nothing to copy", r.State, r.Reason.String)
+			}
+			if s, err := e.hubStore.GetSession(ctx, "s2"); err != nil || !s.ClosedAt.Valid {
+				t.Errorf("the fork's session = %+v, %v; want it closed", s, err)
+			}
+			if res := mustSync(t, l); len(res.Runs) != 0 {
+				t.Errorf("offered %+v after the fork ended", res.Runs)
+			}
+		})
 	}
 }
