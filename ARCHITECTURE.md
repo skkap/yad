@@ -84,6 +84,8 @@ internal/hubapiclient    the caller side of yad hub's service API
 internal/hub             `yad hub`: huma server, store, submit/watch API
 internal/control         the Unix control socket, server and client
 internal/upgrade         `yad upgrade`: releases fetched over HTTPS, checksum, atomic replace
+internal/selfupdate      the owner's opt-in to self-update: the six-hourly check, the
+                         protocol check of a downloaded release, the wait for idle (0071)
 internal/conformance     the protocol conformance suite, run against any hub
 internal/shellword       every command yad prints for pasting, built from argv
                          and POSIX-quoted; shellwordtest runs one through sh
@@ -199,8 +201,9 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   heard a window, never that the account has no limits; a window the harness
   did not mention keeps its last value rather than reading zero.
 - **Control kinds**: `cancel`, `interrupt`, `steer`, `close_session`, `drain`,
-  `report_capabilities`, `update` (reserved —
-  [0018](docs/decisions/0018-no-self-update-in-v1.md)), the four of hub
+  `report_capabilities`, `update` (reserved, and ignored: a runner updates
+  itself only when its owner turns it on —
+  [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)), the four of hub
   login: `start_login`, `login_code`, `login_token`, `cancel_login`, and
   `remove_account`.
 - **Controls are not acknowledged**, so a hub repeats `cancel` and `interrupt`
@@ -468,7 +471,19 @@ opening a session with a source on the machine does not go to a runner whose
 document says `path_sources: false`, which would refuse it
 ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)). A runner
 whose fingerprint moved without the document it promised is treated as
-advertising neither, until the document it is asked for arrives. `yad hub` advertises no
+advertising neither, until the document it is asked for arrives.
+
+`steer`, `interrupt`, `effort` and `fork` are **per-run features**: the harness
+a run targets decides them, not the runner. A runner lists each harness's in
+that harness's report (`features`) and advertises `harness_features` to say
+so; a hub reading it gates a run, and a control on a run, on the list of the
+run's harness. The runner-wide strings stay, for hubs that do not read the
+lists, and a runner lists one only while every first-class harness supports
+it — so one harness without a feature cannot switch it off for the others, and
+a hub reading only the strings is never told a run may use what its harness
+cannot ([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).
+`yad hub` gates on `capability.RunMayUse`, which reads the list when there is
+one and the string when there is not. `yad hub` advertises no
 `hub_features` of its own — it has nothing beyond the v1 baseline.
 
 Every enum in the document is closed for all of v1
@@ -830,6 +845,22 @@ for `codex`); the suite never runs a real harness.
   to have succeeded as well as the check. The token's year is counted
   from when it was stored; the month before, the harness report carries a
   warning and `yad account list` says so.
+- **On macOS a Claude home's login is in the Keychain, not the home**
+  ([0070](docs/decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)):
+  generic passwords `Claude Code-credentials-<h>` (the login) and
+  `Claude Code-<h>` (a Console API key), `<h>` the first eight hex digits of
+  the SHA-256 of the home's path, filed under `$USER`
+  (`account.KeychainServices`; read from claude 2.1.284, and the record says
+  how to re-check it). The items are part of the home. `account.RemoveSetAside`,
+  where every removal ends, deletes them with
+  `/usr/bin/security delete-generic-password -s … -a …` before the home, and
+  keeps the home when it cannot, giving the command to run by hand.
+  `account.Prepare` (`Ensure`) deletes any found for a path where it is about
+  to make a home, since those can only be a leftover, and `yad account add`
+  says when it did. Each account also sets `CLAUDE_SECURESTORAGE_CONFIG_DIR`
+  to its home, which Claude would hash in place of the home, so the owner's
+  own copy cannot put every account on one login. On Linux the login is
+  `.credentials.json` inside the home, and deleting the home deletes it.
 - **Every home shares the machine's config** (0054): each time a home is
   prepared, `CLAUDE.md`, `settings.json`, `skills/`, `commands/` and `agents/`
   (Claude) or `AGENTS.md` and `prompts/` (Codex) are linked from the
@@ -1136,6 +1167,9 @@ roots         = ["/home/me/src"]  # where path sources and local git URLs may po
 path_sources  = false             # refuse path sources and local git URLs altogether, whatever roots says; absent = take them — 0062
 git_timeout   = "10m"
 setup_timeout = "15m"
+
+[update]
+auto = true   # check for a newer release every 6 h, install it, re-exec at an idle moment — 0071; absent = never
 ```
 
 ### `state.db`
@@ -1200,7 +1234,8 @@ yad disconnect <name> [--now] [--force]
 yad daemon start|stop|restart|status|logs [-f] [-n N]
                                    the runner process
 yad status [--json]                connections, capacity, runs, sessions and recent
-                                   errors — via the socket
+                                   errors — via the socket; with self-update on, the
+                                   last check and any release pending or refused
 yad sessions [--json]              the sessions held: workdir, runs, last use — read
                                    from state.db read-only, so the daemon may be down
 yad sessions close [--connection c] <id>
@@ -1268,6 +1303,8 @@ yad conformance <url> --token T [--second-token T2]
                                    the first one's run
 yad upgrade [--check] [--force] [--tag v]
                                    replace this binary with the newest release
+yad version [--json]               the build; --json adds the protocol majors it
+                                   speaks, which a self-update asks a release (0071)
 ```
 
 `yad daemon start` backgrounds itself — it re-executes `yad daemon start
@@ -1291,6 +1328,26 @@ signal cancels the runs held, a third exits at once — and falls back to
 signals; `restart` checks every credential locally
 before it stops anything
 ([0027](docs/decisions/0027-stop-asks-then-signals-and-restart-checks-first.md)).
+
+**Self-update** is off unless `config.toml` says `[update] auto = true`
+([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
+Then the daemon asks for the newest release every six hours, jittered by a
+tenth, with the one anonymous request `yad upgrade` makes, and a newer one
+goes through `internal/upgrade.Apply` — downloaded beside the binary,
+checked against `checksums.txt`, then run as `version --json` with `HOME`
+alone before the rename: a release that no longer speaks the protocol major a
+connection syncs over is refused and left uninstalled, and one older than the
+flag is read as v1-only. Once installed, the running process becomes it at the
+first idle moment — every unit of capacity free and no hub login in flight —
+through the one drain with no drain wait, or, after 24 hours without one,
+through the same drain regardless, which lets every run finish however long it
+takes, and any hub login in flight end and reach its hub. Its health offers no capacity and does
+not say `draining`, since the runner is coming back. At the drain's end the
+daemon closes its socket, lock, `state.db` and log and `exec`s the same path
+with the same argv and environment, so the pid a service manager watches never
+exits. A stop or a hub's drain during it makes it an ordinary drain that exits. A failed check is a warning in the log and in
+`yad status`, which also shows the last check, the next, and any release
+pending or refused.
 
 ## §6 Dependencies
 
@@ -1366,6 +1423,9 @@ line here is a reviewed change.
 - **No release is downloaded.** `internal/upgrade` fakes the release source
   outright, and reads what the installed binary held *at the moment the
   download ran* to prove nothing was replaced before the checksum was checked.
+  `internal/selfupdate` fakes the source and the clock; its end-to-end test
+  serves a release from a loopback server and re-executes a real runner
+  process into a script that runs the test binary as the new version.
   `gh` itself, and `scripts/install.sh` around it, are tested against a `gh`
   that is a shell script on `PATH` — which proves the argv, the checksum gate
   and where the binary lands, and proves nothing about a real GitHub release.
@@ -1395,7 +1455,8 @@ line here is a reviewed change.
   credential a harness uses or which home it logs in from
   (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
   `ANTHROPIC_PROFILE`, the federation pair, `ANTHROPIC_CONFIG_DIR`,
-  `CLAUDE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, every
+  `CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`,
+  `ANTHROPIC_CUSTOM_HEADERS`, every
   `CLAUDE_CODE_USE_*` provider switch, `CODEX_HOME`, `OPENAI_API_KEY`,
   `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`, `OPENAI_BASE_URL`,
   `CODEX_REFRESH_TOKEN_URL_OVERRIDE`, `AWS_BEARER_TOKEN_BEDROCK` — `accountGrantNames` in
@@ -1422,6 +1483,13 @@ line here is a reviewed change.
   API only the third.
 - Permission mode and sandbox are runner configuration per harness; no protocol
   field can set them — [0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md).
+- Self-update is the owner's alone: off unless `config.toml` turns it on, no
+  protocol field reaches it, and the reserved `update` control is ignored. A
+  release it takes is checked against `checksums.txt` from the same release,
+  which catches corruption and not a compromised release — signing is a
+  separate decision — and it runs the downloaded binary once, as `version
+  --json` with `HOME` alone, before trusting it with anything
+  ([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
 - The owner trusts the hubs it connects, so YAD does not police what a hub
   sends ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)).
   Hub input and harness output are still data to YAD itself: never executed,
@@ -1488,7 +1556,7 @@ than complete in one.
 | **E6** | accounts and usage limits — failover, waiting, restart survival |
 | **E7** | many hubs — shared capacity, caps, grants, host tools, conformance suite |
 | **E8** | operating it — health, metrics, versioning, packaging |
-| **E9** | later — the backlog: self-update, live sessions, release, ACP, … |
+| **E9** | later — the backlog: live sessions, release, ACP, … |
 
 ## §10 What Multica taught
 

@@ -98,6 +98,10 @@ _Rules_: Every connected hub reads it, so the runner writes it without a path
 on the machine and without quoting what a harness or tool printed (DEV-67). A
 run's error goes only to the hub that sent the run, and may name a path
 ([0064](docs/decisions/0064-a-runs-error-may-name-a-path-on-the-runner.md)).
+A **per-run feature** — steer, interrupt, effort, fork — is the harness's:
+each harness lists its own, and the runner-wide string says only what every
+harness it drives supports
+([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).
 _Avoid_: capabilities for anything else — yashiki's "capabilities" are its house
 tools, which here are **host tools**
 _See_: `internal/capability`, `protocol/v1`
@@ -365,8 +369,21 @@ reboot or a retiring machine does. A draining runner keeps syncing, so leases
 renew and results land, and says `draining` in its health.
 _Rules_: Stop signals are counted: the first drains, the second cancels the runs
 held, the third exits at once. A drain lets runs finish for the owner's drain
-wait, then cancels them. The hub's `drain` control is the first step.
+wait, then cancels them — all but a self-update's, which has no wait, and does
+not say `draining` either, since the runner comes back. The hub's `drain`
+control is the first step.
 _See_: [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md), `internal/runner/drain.go`
+
+**Self-update** — the runner replacing its own binary with a newer release and
+re-executing in place, when its owner has turned it on (`[update] auto` in
+`config.toml`). Not **upgrade**, which is the owner's own `yad upgrade`, done
+once and restarting nothing; both install a release the same way.
+_Rules_: Never on a hub's say-so; the `update` control is reserved and
+ignored. A release that no longer speaks a protocol major a connection syncs
+over is refused. It takes over at the first idle moment, or after a drain
+once 24 hours pass without one; a run is never interrupted for it, and a stop
+asked for meanwhile wins. The pid stays, so a service manager sees no exit.
+_See_: [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md), `internal/selfupdate`
 
 **Watchdog** — the runner's two timers on a run: an inactivity timeout on the
 event stream, which catches a wedged harness, and an optional wall-clock cap set
@@ -412,7 +429,9 @@ per run.
   after its limit resets is not a retry — no process died, and nothing is redone.
 - A terminal state is reported at least once and applied at most once.
 - Harness output is data. It is streamed and stored, never acted on.
-- A runner holds no work it did not claim, and no schedule at all.
+- A runner holds no work it did not claim, and no schedule of work at all. The
+  one timer of its own besides its syncs and sweeps is the self-update check,
+  and only when its owner turns it on.
 
 ## Open questions
 

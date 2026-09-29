@@ -326,11 +326,15 @@ func modelsReason(d harness.Detected, home string, err error, timedOut bool) str
 // home is printed as it is: the reason stays on the machine — the daemon's
 // log and `yad doctor` — and a hub's health hears only the log's message.
 func loginCommand(d harness.Detected, home string, args []string) string {
-	v := account.HomeVar(d.ID)
-	if home == "" || v == "" {
+	vars := account.HomeVars(d.ID)
+	if home == "" || len(vars) == 0 {
 		return command(d, args)
 	}
-	return v + "=" + shellword.Quote(home) + " " + probed(d).Command(args...)
+	var prefix string
+	for _, v := range vars {
+		prefix += v + "=" + shellword.Quote(home) + " "
+	}
+	return prefix + probed(d).Command(args...)
 }
 
 // modelsKey is what a list is kept by: the harness, the binary and its

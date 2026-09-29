@@ -158,6 +158,49 @@ func TestApplyReplacesTheBinary(t *testing.T) {
 	}
 }
 
+// A self-update runs the release before it is installed (decision 0071): Vet
+// sees the verified binary, executable, and a refusal from it leaves the
+// installed one exactly as it was.
+func TestApplyVetsTheVerifiedBinaryBeforeTheRename(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		refuse error
+		want   string
+	}{
+		{"taken", nil, "new yad"},
+		{"refused", errors.New("it no longer speaks protocol 1"), "old yad"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			target := installed(t, "old yad")
+			src := release(t, "v0.4.0", map[string][]byte{asset: []byte("new yad")})
+			o := opts(src, target, "")
+			var vetted, installedThen string
+			o.Vet = func(_ context.Context, staged string) error {
+				vetted = read(t, staged)
+				installedThen = read(t, target)
+				info, err := os.Stat(staged)
+				if err != nil || info.Mode().Perm() != 0o755 {
+					t.Errorf("the binary vetted is %v, %v; want it executable, since vetting runs it", info, err)
+				}
+				return c.refuse
+			}
+			_, err := Apply(context.Background(), o)
+			if !errors.Is(err, c.refuse) {
+				t.Fatalf("Apply = %v, want %v", err, c.refuse)
+			}
+			if vetted != "new yad" || installedThen != "old yad" {
+				t.Errorf("vetted %q with %q installed; want the release, before anything was replaced", vetted, installedThen)
+			}
+			if got := read(t, target); got != c.want {
+				t.Errorf("binary is %q, want %q", got, c.want)
+			}
+			if extra := leftovers(t, target); extra != nil {
+				t.Errorf("left %v beside the binary", extra)
+			}
+		})
+	}
+}
+
 // TestApplyRefusesABadChecksum is the acceptance criterion: the checksum is
 // checked before the binary is replaced, so a corrupted or tampered download
 // leaves a working yad on a machine the owner may only reach through it.

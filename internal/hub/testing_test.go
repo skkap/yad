@@ -61,7 +61,7 @@ func doc(id string) v1.Capabilities {
 		RunnerID: id, Name: id, YadVersion: "dev", OS: "linux", Arch: "amd64",
 		ProtocolFeatures: capability.Features(),
 		Harnesses: []v1.HarnessReport{
-			{ID: "claude", Label: "Claude Code", Kind: "first-class", Present: true, Version: "2.1.276"},
+			{ID: "claude", Label: "Claude Code", Kind: "first-class", Present: true, Version: "2.1.276", Features: capability.HarnessFeatures("claude")},
 			{ID: "codex", Label: "Codex", Kind: "recognised", Present: true, Version: "0.1"},
 		},
 		Capacity: v1.Capacity{Total: 4},

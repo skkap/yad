@@ -30,8 +30,21 @@ import (
 // Features is what this build of the runner supports beyond the v1 baseline.
 // A hub must not use a feature the runner did not advertise, so "live_sessions"
 // is absent until it is built.
+//
+// A per-run feature — one a run's harness decides, RunFeatures — is listed
+// here only while every first-class harness's adapter supports it, as it was
+// before harnesses carried their own lists: a hub that reads only these
+// strings must never be told a run may use one its harness cannot. Each
+// harness's own list, beside FeatureHarnessFeatures, is the whole answer for
+// a hub that reads it (decision 0069).
 func Features() []string {
-	return []string{FeatureStartAt, FeatureSteer, FeatureInterrupt, FeatureDrain, FeatureCloseSession, FeatureEffort, FeatureFork, FeatureLogin}
+	out := []string{FeatureStartAt}
+	for _, f := range RunFeatures() {
+		if everyFirstClass(f) {
+			out = append(out, f)
+		}
+	}
+	return append(out, FeatureDrain, FeatureCloseSession, FeatureLogin, FeatureHarnessFeatures)
 }
 
 // FeatureStartAt is a runner that holds a run until its start_at rather than
@@ -42,7 +55,7 @@ const FeatureStartAt = "start_at"
 // harness; FeatureInterrupt, one that ends a turn without ending the session.
 // A hub sends neither control to a runner that does not advertise it: nothing
 // acknowledges a control, so one that is ignored looks exactly like one that
-// landed.
+// landed. Both are per-run features, like effort (decision 0069).
 const (
 	FeatureSteer     = "steer"
 	FeatureInterrupt = "interrupt"
@@ -60,8 +73,9 @@ const FeatureCloseSession = "close_session"
 // FeatureEffort is a runner that hands a run's effort to its harness. A hub
 // offers a run carrying one only to such a runner: any other would drop the
 // field it does not know and run the harness at its default, and the run
-// would succeed saying nothing of it (decision 0049). Advertised because
-// every first-class adapter applies it — a test holds the two together.
+// would succeed saying nothing of it (decision 0049). A per-run feature:
+// listed for each harness whose adapter applies it, and runner-wide only
+// while every first-class adapter does (decision 0069).
 const FeatureEffort = "effort"
 
 // FeatureFork is a runner that opens a session as a fork of another it holds
@@ -69,11 +83,10 @@ const FeatureEffort = "effort"
 // other's, which goes on untouched — Claude's --fork-session, Codex's
 // thread/fork (decision 0065). A hub offers a run carrying fork_from only to
 // such a runner, and it is always the one holding the session forked, so a
-// fork waits on that runner rather than going elsewhere. Advertised because
-// every first-class adapter forks: Claude's flags probe asks for
-// --fork-session, so a Claude without it is driven not at all, and the
-// pinned Codex protocol has thread/fork — a test holds the two together. A
-// Codex whose protocol drifted from the pinned one is still driven, with a
+// fork waits on that runner rather than going elsewhere. A per-run feature,
+// like effort (decision 0069). Claude's flags probe asks for --fork-session,
+// so a Claude without it is driven not at all, and the pinned Codex protocol
+// has thread/fork. A Codex whose protocol drifted from the pinned one is still driven, with a
 // warning, for forks as for every other method it may have changed (decision
 // 0037); a fork it cannot do fails with Codex's own refusal.
 const FeatureFork = "fork"
@@ -208,6 +221,9 @@ func Harnesses(found []harness.Detected, cfg config.Config, accounts []account.A
 			ID: d.ID, Label: d.Label, Kind: string(d.Kind),
 			Present: d.Present, Version: d.Version, Error: d.Error, Models: d.Models,
 			ModelsSource: d.ModelsSource, Warnings: d.Warnings,
+		}
+		if d.Kind == harness.FirstClass {
+			r.Features = HarnessFeatures(d.ID)
 		}
 		if len(r.Models) > 0 && r.ModelsSource == "" {
 			// Detection alone, with no model probe: the catalog's list.

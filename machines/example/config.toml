@@ -19,3 +19,9 @@ accounts = ["main"]
 
 [harness.codex]
 cap = 1
+
+# Self-update: the runner follows new releases by itself, at a moment it holds
+# no run. Off unless turned on here; refused with a pinned YAD_VERSION, and it
+# gives the yad binary to the runner's user (README.md, "Updating itself").
+#[update]
+#auto = true

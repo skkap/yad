@@ -51,6 +51,9 @@ func (Adapter) AppliesEffort() bool { return true }
 // (decision 0065).
 func (Adapter) Forks() bool { return true }
 
+// Steers: a steer is turn/steer on the turn running.
+func (Adapter) Steers() bool { return true }
+
 // Timings a test may shorten.
 var (
 	// handshakeTimeout bounds each step before the turn runs: initialize,

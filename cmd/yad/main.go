@@ -66,7 +66,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var cmdErr error
 	switch cmd {
 	case "version":
-		cmdErr = cmdVersion(stdout)
+		cmdErr = cmdVersion(rest, stdout)
 	case "doctor":
 		cmdErr = cmdDoctor(ctx, g, rest, stdout)
 	case "harnesses":
@@ -203,7 +203,7 @@ usage: yad [--profile name] <command> [flags]
                       check any hub against v1: every rule it breaks, and
                       where that rule is written; a second token checks
                       that a run one runner holds takes nothing from another
-  version             version and build
+  version [--json]    version and build; --json adds the protocol majors it speaks
 
   account use         does not exist: a run takes the free account whose
                       window refills soonest; it says so, and what to use

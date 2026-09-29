@@ -142,8 +142,9 @@ const (
 	ControlCloseSession       ControlKind = "close_session"
 	ControlDrain              ControlKind = "drain"
 	ControlReportCapabilities ControlKind = "report_capabilities"
-	// ControlUpdate is reserved (decision 0018): a runner that does not
-	// implement self-update ignores it and keeps reporting its version.
+	// ControlUpdate is reserved (decision 0018), and a yad runner ignores it:
+	// it updates itself only when its owner's config.toml says so, never on
+	// a hub's say-so (decision 0071), and keeps reporting its version.
 	ControlUpdate ControlKind = "update"
 	// The hub-login controls (decision 0055), added within v1 and sent only
 	// to a runner advertising the "login" feature, as every kind added to
@@ -174,7 +175,9 @@ func ControlKinds() []ControlKind {
 // session the runner does not hold, or already closed, is reported closed.
 //
 // steer and interrupt are gated the same way, on the "steer" and "interrupt"
-// features. Only cancel and report_capabilities go to every v1 runner; update
+// features of the run's harness (decision 0069): its own list when the runner
+// advertises "harness_features", and the runner-wide strings otherwise. Only
+// cancel and report_capabilities go to every v1 runner; update
 // is reserved and goes to none. Nothing acknowledges a control, so one sent to
 // a runner that does not act on it is indistinguishable, to whoever asked for
 // it, from one that was obeyed.
@@ -199,7 +202,7 @@ func ControlKinds() []ControlKind {
 // use or reports them back; a hub holds a token only until a sync from the
 // runner reports the login it was delivered for, and never shows it again.
 type Control struct {
-	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update,start_login,login_code,login_token,cancel_login,remove_account" doc:"cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins (and for Codex the user_code to type there). login_code: the code the owner got at that URL, never for a login reporting user_code. login_token: store a token as the account's login. cancel_login: end a login. remove_account: take the account named by harness and account off the runner. interrupt, steer, close_session and drain go only to a runner advertising the feature of the same name; the four login kinds only to one advertising login; remove_account, and start_login or login_token carrying add, only to one advertising accounts. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."`
+	Kind      ControlKind `json:"kind" enum:"cancel,interrupt,steer,close_session,drain,report_capabilities,update,start_login,login_code,login_token,cancel_login,remove_account" doc:"cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins (and for Codex the user_code to type there). login_code: the code the owner got at that URL, never for a login reporting user_code. login_token: store a token as the account's login. cancel_login: end a login. remove_account: take the account named by harness and account off the runner. close_session and drain go only to a runner advertising the feature of the same name; interrupt and steer only to one advertising it for the harness of the run they name — in that harness's features when protocol_features lists harness_features; the four login kinds only to one advertising login; remove_account, and start_login or login_token carrying add, only to one advertising accounts. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."`
 	RunID     string      `json:"run_id,omitempty" doc:"The run, for cancel, interrupt and steer."`
 	SessionID string      `json:"session_id,omitempty" doc:"The session, for close_session."`
 	Text      string      `json:"text,omitempty" doc:"What to tell the harness, for steer."`

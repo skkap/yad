@@ -166,16 +166,17 @@ func TestAnEffortRunWaitsForADocumentTheHubKnowsIsStale(t *testing.T) {
 }
 
 // downgraded is a sync carrying a document with one feature taken out of it —
-// a runner restarted under an older binary, which keeps its credential.
+// a runner restarted under an older binary, which keeps its credential. Older
+// than the harnesses' own lists too, so the runner-wide strings are what a
+// hub goes by.
 func downgraded(id string, free int, without string) v1.SyncRequest {
 	r := first(id, free)
-	var kept []string
-	for _, f := range r.Capabilities.ProtocolFeatures {
-		if f != without {
-			kept = append(kept, f)
-		}
+	r.Capabilities.ProtocolFeatures = slices.DeleteFunc(slices.Clone(r.Capabilities.ProtocolFeatures), func(f string) bool {
+		return f == without || f == capability.FeatureHarnessFeatures
+	})
+	for i := range r.Capabilities.Harnesses {
+		r.Capabilities.Harnesses[i].Features = nil
 	}
-	r.Capabilities.ProtocolFeatures = kept
 	return r
 }
 
@@ -312,15 +313,16 @@ func kindsOf(res v1.SyncResponse) map[v1.ControlKind]bool {
 	return out
 }
 
-// Decision 0018: v1 has no self-update. The control name is reserved so the
-// machinery is there when it is built, and nothing acts on it meanwhile.
+// Decisions 0018 and 0071: the control name is reserved, and nothing sends
+// or acts on it — a runner updates itself only when its owner's config.toml
+// says so, never on a hub's say-so.
 func TestUpdateControlIsReservedAndUnhandled(t *testing.T) {
 	if !containsKind(v1.ControlKinds(), v1.ControlUpdate) {
 		t.Fatal("the update control is no longer reserved in the protocol")
 	}
 	for _, f := range capability.Features() {
 		if f == string(v1.ControlUpdate) {
-			t.Fatal("a runner advertises update; v1 has no self-update (decision 0018)")
+			t.Fatal("a runner advertises update; a hub never triggers a self-update (decision 0071)")
 		}
 	}
 	// Nothing in the hub ever queues one: a control kind reaches a runner
@@ -337,4 +339,73 @@ func containsKind(kinds []v1.ControlKind, want v1.ControlKind) bool {
 		}
 	}
 	return false
+}
+
+// perHarness is a runner's first sync with a second first-class harness,
+// opencode, whose own list has interrupt alone. Its runner-wide strings then
+// drop what opencode cannot do, as a yad runner's do, and a hub reading them
+// alone would refuse Claude's runs their effort and steer as well (decision
+// 0069).
+func perHarness(id string, free int) v1.SyncRequest {
+	r := first(id, free)
+	r.Capabilities.Harnesses = append(r.Capabilities.Harnesses, v1.HarnessReport{
+		ID: "opencode", Label: "OpenCode", Kind: "first-class", Present: true, Version: "1.18.33",
+		Features: []string{capability.FeatureInterrupt},
+	})
+	r.Capabilities.ProtocolFeatures = slices.DeleteFunc(slices.Clone(r.Capabilities.ProtocolFeatures), func(f string) bool {
+		return f == capability.FeatureSteer || f == capability.FeatureEffort || f == capability.FeatureFork
+	})
+	return r
+}
+
+// A run's effort and its steer are its harness's to have: a runner sending
+// each harness's list is offered an effort run for the harness that applies
+// one and not for the one that does not, and a steer is taken for the first
+// and refused for the second — with the alternative, not an upgrade, since
+// no yad release is what that harness lacks.
+func TestAPerRunFeatureIsGatedOnTheRunsHarness(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	f.mustSync(t, "r1", cred, perHarness("r1", 4))
+	hardClaude := run("hard-claude", "s1")
+	hardClaude.Effort = "high"
+	hardOC := run("hard-oc", "s2")
+	hardOC.Harness, hardOC.Effort = "opencode", "high"
+	plainOC := run("plain-oc", "s3")
+	plainOC.Harness = "opencode"
+	f.enqueue(t, hardClaude, hardOC, plainOC)
+
+	got := ids(f.mustSync(t, "r1", cred, req("r1", 4)).Runs)
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"hard-claude", "plain-oc"}) {
+		t.Fatalf("offered %v, want [hard-claude plain-oc]: effort for claude, whose list has it, and none for opencode, whose list does not", got)
+	}
+	if s := f.state(t, "hard-oc"); s != "queued" {
+		t.Errorf("run hard-oc is %s, want queued", s)
+	}
+	f.mustSync(t, "r1", cred, req("r1", 2, claimed("hard-claude", "plain-oc")...))
+
+	if code, e := f.api(t, "POST", "/runs/hard-claude/steer", tok, hubapi.SteerRequest{Text: "try the other file"}, nil); code != http.StatusOK {
+		t.Fatalf("steer on claude: %d %+v", code, e)
+	}
+	code, e := f.api(t, "POST", "/runs/plain-oc/steer", tok, hubapi.SteerRequest{Text: "try the other file"}, nil)
+	if code != http.StatusConflict || !strings.Contains(e.Message, `"opencode"`) {
+		t.Errorf("steer on opencode: %d %+v, want 409 naming the harness", code, e)
+	}
+	if strings.Contains(e.NextAction, "upgrade yad") || !strings.Contains(e.NextAction, "new run") {
+		t.Errorf("next action %q: no upgrade gives opencode a steer; say what to do instead", e.NextAction)
+	}
+	if code, e := f.api(t, "POST", "/runs/plain-oc/interrupt", tok, nil, nil); code != http.StatusOK {
+		t.Errorf("interrupt on opencode, whose list has it: %d %+v", code, e)
+	}
+	res := f.mustSync(t, "r1", cred, req("r1", 2, claimed("hard-claude", "plain-oc")...))
+	for _, c := range res.Controls {
+		if c.Kind == v1.ControlSteer && c.RunID != "hard-claude" {
+			t.Errorf("a steer went to run %s", c.RunID)
+		}
+	}
+	if k := kindsOf(res); !k[v1.ControlSteer] || !k[v1.ControlInterrupt] {
+		t.Errorf("controls delivered: %v, want claude's steer and opencode's interrupt", k)
+	}
 }

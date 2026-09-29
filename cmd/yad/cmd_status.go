@@ -43,6 +43,43 @@ func cleanLine(s string) string {
 	return strings.NewReplacer("\n", " ", "\t", " ").Replace(clean(s))
 }
 
+// printUpdate is the self-update, when config.toml has it on (decision 0071):
+// where the schedule stands, then any release refused or waiting to take
+// over. The version running is the status's first line; a pending release is
+// the one installed on disk.
+func printUpdate(w io.Writer, u control.Update, now time.Time) {
+	ago := func(t time.Time) string { return now.Sub(t).Round(time.Second).String() + " ago" }
+	if u.Off != "" {
+		fmt.Fprintf(w, "self-update on, and does nothing on this build: %s\n", cleanLine(u.Off))
+		return
+	}
+	line := "self-update on — "
+	switch {
+	case u.LastCheck == nil:
+		line += "not checked yet"
+	case u.LastError != "":
+		line += fmt.Sprintf("the last check, %s, failed: %s", ago(*u.LastCheck), cleanLine(u.LastError))
+	default:
+		line += fmt.Sprintf("checked %s, newest release %s", ago(*u.LastCheck), cleanLine(u.Latest))
+	}
+	if u.NextCheck != nil {
+		line += fmt.Sprintf("; next check in %s", u.NextCheck.Sub(now).Round(time.Second))
+	}
+	fmt.Fprintln(w, line)
+	if r := u.Refused; r != nil {
+		fmt.Fprintf(w, "  refused %s %s: %s\n", cleanLine(r.Tag), ago(r.At), cleanLine(r.Reason))
+	}
+	if p := u.Pending; p != nil {
+		if p.Swapping {
+			fmt.Fprintf(w, "  %s installed %s; taking over — %s. No new runs; the runner re-executes as %s once the runs held have ended\n",
+				cleanLine(p.Tag), ago(p.Since), cleanLine(p.Reason), cleanLine(p.Tag))
+		} else {
+			fmt.Fprintf(w, "  %s installed %s in place of this binary; the runner becomes it at its first idle moment, or drains for it at %s\n",
+				cleanLine(p.Tag), ago(p.Since), p.By.Local().Format(time.DateTime))
+		}
+	}
+}
+
 func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 	ago := func(t time.Time) string { return now.Sub(t).Round(time.Second).String() + " ago" }
 	state := ""
@@ -60,6 +97,9 @@ func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 	// restart.
 	if s.PathSources != nil && !*s.PathSources {
 		fmt.Fprintln(w, "sources on the machine switched off (path_sources = false under [workdirs] in config.toml) — a run with a path source or a local git URL is refused")
+	}
+	if s.Update != nil {
+		printUpdate(w, *s.Update, now)
 	}
 
 	fmt.Fprintln(w)

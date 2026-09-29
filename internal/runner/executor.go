@@ -728,7 +728,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		// that has none to continue is the same fault (decision 0031).
 		resumed := spec.NativeSessionID != "" || spec.ForkFrom != ""
 		if hasAccount {
-			spec.HomeVar, spec.Account = account.HomeVar(run.Harness), acct.Label
+			spec.HomeVars, spec.Account = account.HomeVars(run.Harness), acct.Label
 		}
 
 		if stoppedEarly() {

@@ -79,8 +79,9 @@ var deniedGrantPrefixes = []struct{ prefix, why string }{
 // runner starts, by supervise.Scrub reading this same list through
 // AccountVariable, since one set on the machine ranks above the account just
 // as a grant would. The harness home variables are the exception there: the
-// owner's CLAUDE_CONFIG_DIR or CODEX_HOME is the harness's own login when it
-// has no accounts, and an account's home is appended after it and wins.
+// owner's CLAUDE_CONFIG_DIR, CLAUDE_SECURESTORAGE_CONFIG_DIR or CODEX_HOME is
+// the harness's own login when it has no accounts, and an account's home is
+// appended after it and wins.
 //
 // One list for every harness, rather than each harness refusing its own. A hub
 // checks it before queueing without knowing which adapter reads what, a run of
@@ -125,8 +126,13 @@ var accountGrantNames = map[string]string{
 	"ANTHROPIC_ORGANIZATION_ID":    "with ANTHROPIC_FEDERATION_RULE_ID puts Claude on a federated credential ranked above the account's login",
 	"ANTHROPIC_CONFIG_DIR":         "chooses the directory Claude reads Anthropic profiles from, and a federation profile there ranks above the account's login",
 	"CLAUDE_CONFIG_DIR":            "is the home Claude reads its login from, which is the account itself",
-	"ANTHROPIC_BASE_URL":           "chooses the server that answers and bills Claude's turns",
-	"ANTHROPIC_CUSTOM_HEADERS":     "adds headers to every request Claude makes, and an x-api-key or Authorization header there is a credential",
+	// Read from claude 2.1.284's code (decision 0070): set, it replaces the
+	// home in the name of the macOS Keychain item Claude keeps the login in,
+	// and in where it writes .credentials.json elsewhere — and set empty, it
+	// means the owner's own default login.
+	"CLAUDE_SECURESTORAGE_CONFIG_DIR": "chooses where Claude keeps its login — the macOS Keychain item or the .credentials.json file — in place of the account's home, so every run handed one path reads the one login there",
+	"ANTHROPIC_BASE_URL":              "chooses the server that answers and bills Claude's turns",
+	"ANTHROPIC_CUSTOM_HEADERS":        "adds headers to every request Claude makes, and an x-api-key or Authorization header there is a credential",
 	// Codex (codex-rs/login/src/auth/manager.rs).
 	"CODEX_HOME":                       "is the home Codex reads its login from, which is the account itself",
 	"OPENAI_API_KEY":                   "is an OpenAI API key, which Codex can bill in place of the account's ChatGPT login",

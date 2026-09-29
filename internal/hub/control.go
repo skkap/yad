@@ -12,6 +12,7 @@ import (
 	"github.com/skkap/yad/protocol/hubapi"
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hub/store/db"
 )
@@ -106,7 +107,7 @@ func (h *Hub) control(ctx context.Context, runID string, kind v1.ControlKind, te
 				if err != nil {
 					return err
 				}
-				if err := refuseUnadvertised(holder, kind, feature, alternative); err != nil {
+				if err := refuseUnadvertised(holder, run.Harness, kind, feature, alternative); err != nil {
 					return err
 				}
 			}
@@ -159,7 +160,7 @@ func queue(ctx context.Context, q *db.Queries, runID string, kind v1.ControlKind
 // spent on it: a steer held back can still reach the runner it was meant for,
 // while a steer deleted here is gone and its caller was told it landed. The
 // same holds when described is false and doc is known to be out of date.
-func deliver(ctx context.Context, q *db.Queries, runID string, doc v1.Capabilities, described bool) ([]v1.Control, error) {
+func deliver(ctx context.Context, q *db.Queries, runID, harness string, doc v1.Capabilities, described bool) ([]v1.Control, error) {
 	rows, err := q.ControlsFor(ctx, runID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
@@ -168,7 +169,7 @@ func deliver(ctx context.Context, q *db.Queries, runID string, doc v1.Capabiliti
 	var lastSteer int64
 	for _, r := range rows {
 		kind := v1.ControlKind(r.Kind)
-		if feature, _ := controlFeature(kind, runID); feature != "" && !(described && advertises(doc, feature)) {
+		if feature, _ := controlFeature(kind, runID); feature != "" && !(described && capability.RunMayUse(doc, harness, feature)) {
 			continue
 		}
 		out = append(out, v1.Control{Kind: kind, RunID: runID, Text: r.Text})

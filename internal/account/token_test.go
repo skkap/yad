@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
 // A stored token reaches the account's runs as CLAUDE_CODE_OAUTH_TOKEN, after
@@ -17,7 +19,7 @@ func TestATokenAccountHandsItsTokenToItsRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := Env("claude", home); len(got) != 1 {
+	if got := Env("claude", home); slices.ContainsFunc(got, isToken) {
 		t.Fatalf("an account with no token carries %q", got)
 	}
 	if err := SetToken(home, "  sk-ant-oat01-not-a-real-token\n"); err != nil {
@@ -30,14 +32,21 @@ func TestATokenAccountHandsItsTokenToItsRuns(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("the token file is %v, want 0600", info.Mode().Perm())
 	}
-	want := []string{"CLAUDE_CONFIG_DIR=" + home, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-not-a-real-token"}
+	want := []string{"CLAUDE_CONFIG_DIR=" + home, "CLAUDE_SECURESTORAGE_CONFIG_DIR=" + home, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-not-a-real-token"}
 	if got := Env("claude", home); !slices.Equal(got, want) {
 		t.Errorf("Env = %q, want %q", got, want)
 	}
-	// The command yad prints for this account never carries the token.
-	if s := suggest("claude", "/bin/claude", home, []string{"auth", "status"}); strings.Contains(s, "not-a-real-token") {
+	// The command yad prints for this account never carries the token, and
+	// carries both variables that point claude at the account's login: in a
+	// shell that exports CLAUDE_SECURESTORAGE_CONFIG_DIR, one naming only the
+	// home would ask about another login (decision 0070).
+	s := suggest("claude", "claude", home, []string{"auth", "status"})
+	if strings.Contains(s, "not-a-real-token") {
 		t.Errorf("the suggested command carries the token: %s", s)
 	}
+	shellwordtest.CheckEnv(t, s, map[string]string{
+		"CLAUDE_CONFIG_DIR": home, "CLAUDE_SECURESTORAGE_CONFIG_DIR": home, "CLAUDE_CODE_OAUTH_TOKEN": "",
+	}, "claude", "auth", "status")
 	// Codex takes no token: its home is all its runs are given.
 	if got := Env("codex", home); len(got) != 1 {
 		t.Errorf("codex was handed %q", got)
@@ -58,7 +67,7 @@ func TestATokenOthersCanReadIsNotUsed(t *testing.T) {
 	if err := os.Chmod(filepath.Join(home, tokenFile), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := Env("claude", home); len(got) != 1 {
+	if got := Env("claude", home); slices.ContainsFunc(got, isToken) {
 		t.Errorf("a world-readable token was used: %q", got)
 	}
 }
@@ -171,7 +180,7 @@ func TestEveryReaderAgreesOnWhetherATokenCounts(t *testing.T) {
 			_, stored := TokenStored(home)
 			env, id := TurnEnv("claude", home)
 			for what, got := range map[string]bool{
-				"HasToken": HasToken(home), "TokenStored": stored, "in the run's env": len(env) == 2,
+				"HasToken": HasToken(home), "TokenStored": stored, "in the run's env": slices.ContainsFunc(env, isToken),
 				"TokenID": id != "", "the expiry warning": TokenWarning("tl", home, time.Now().Add(TokenLife)) != "",
 				"--token - in the next action": slices.Contains(AddArgs("claude", "tl", home), "--token"),
 			} {
@@ -217,3 +226,6 @@ func mustSetToken(t *testing.T, home, tok string) {
 		t.Fatal(err)
 	}
 }
+
+// isToken is whether an environment entry hands a harness a stored token.
+func isToken(kv string) bool { return strings.HasPrefix(kv, tokenVar+"=") }

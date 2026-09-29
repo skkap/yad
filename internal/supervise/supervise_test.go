@@ -248,7 +248,7 @@ func TestScrubRemovesAccountVariables(t *testing.T) {
 		{"anthropic_api_key", true},
 		// The harness's own login when it has no accounts; an account's home
 		// is appended after it and wins when it has one.
-		{"CLAUDE_CONFIG_DIR", false}, {"CODEX_HOME", false},
+		{"CLAUDE_CONFIG_DIR", false}, {"CLAUDE_SECURESTORAGE_CONFIG_DIR", false}, {"CODEX_HOME", false},
 		// Not on the list: moves no account, or only behind a switch that is.
 		{"ANTHROPIC_MODEL", false}, {"ANTHROPIC_BEDROCK_BASE_URL", false}, {"MY_OPENAI_API_KEY", false},
 		{"AWS_SECRET_ACCESS_KEY", false}, {"OPENAI_ORG_ID", false}, {"PATH", false},

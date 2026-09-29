@@ -95,8 +95,8 @@ const (
 	// writes into its own sentence, not one the answer's printing covers.
 	flawTokenInTheCode   = "the code of a refusal is built from the bearer it was given"
 	flawOffersLiveMode   = "a run is offered in a live session to a runner advertising nothing"
-	flawOffersEffort     = "a run carrying an effort is offered to a runner advertising nothing"
-	flawOffersFork       = "a run opening a fork is offered to a runner advertising nothing"
+	flawOffersEffort     = "a run carrying an effort is offered to a runner whose harness lists no effort"
+	flawOffersFork       = "a run opening a fork is offered to a runner whose harness lists no fork"
 	flawGrantInTheOpen   = "a run's grant value comes back quoted in a later refusal"
 	flawRegistersAnyone  = "anyone registers, and the credential comes back under a name of the hub's own"
 	flawUngatedControl   = "a steer goes to a runner that never advertised one"
@@ -400,8 +400,9 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	if f.flaw == flawUngatedRemoval {
 		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlRemoveAccount, Harness: "claude", Account: "work"})
 	}
-	// Reserved, and gated on nothing: a runner that does not implement
-	// self-update ignores it (decision 0018), so this must not be a finding.
+	// Reserved, and gated on nothing: a runner ignores it — self-update is
+	// its owner's to turn on, never a hub's (decision 0071) — so this must
+	// not be a finding.
 	if f.flaw == flawSendsUpdate {
 		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlUpdate})
 	}

@@ -59,6 +59,9 @@ type Adapter struct {
 	// NoFork is an adapter that cannot open a session as a fork; the fake
 	// forks by default, as both real adapters do.
 	NoFork bool
+	// NoSteer makes the adapter one whose turns take no steer; it steers by
+	// default, as both real adapters do.
+	NoSteer bool
 
 	mu     sync.Mutex
 	Starts []adapter.Spec
@@ -82,6 +85,8 @@ func (a *Adapter) Harness() string {
 func (a *Adapter) AppliesEffort() bool { return !a.NoEffort }
 
 func (a *Adapter) Forks() bool { return !a.NoFork }
+
+func (a *Adapter) Steers() bool { return !a.NoSteer }
 
 func (a *Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, error) {
 	if a.Next == nil {
