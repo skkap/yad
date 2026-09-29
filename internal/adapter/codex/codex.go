@@ -495,13 +495,21 @@ func (t *turn) startThread() {
 	if t.spec.Brief.Context != "" {
 		params["developerInstructions"] = t.spec.Brief.Context
 	}
+	// A resume or a fork is answered with the thread and the model; the
+	// thread's id is read, its turns never are. Without excludeTurns the
+	// answer carries every one of them — one line that grows with the
+	// session toward adapter.MaxLine — and, since 0.157.1, a deprecation
+	// notice saying hydration is going away (DEV-139). 0.147.0 refused the
+	// field; it is no longer pinned (decision 0067).
 	if t.asked != "" {
 		params["threadId"] = t.asked
+		params["excludeTurns"] = true
 		t.send("thread/resume", params)
 		return
 	}
 	if t.forkFrom != "" {
 		params["threadId"] = t.forkFrom
+		params["excludeTurns"] = true
 		t.send("thread/fork", params)
 		return
 	}

@@ -472,12 +472,18 @@ func TestResume(t *testing.T) {
 	if p["threadId"] != spec.NativeSessionID || p["approvalPolicy"] != "never" {
 		t.Errorf("thread/resume = %v", p)
 	}
+	// The answer's turns are never read; asking for them earns a deprecation
+	// notice today and a line toward adapter.MaxLine on a long session
+	// (DEV-139).
+	if p["excludeTurns"] != true {
+		t.Errorf("thread/resume = %v: asked for the thread's whole history", p)
+	}
 	if len(h.seen(t).sent("thread/start")) != 0 {
 		t.Error("a resume started a new thread")
 	}
 	u := out.Usage["gpt-5.6-luna"]
 	if total := u.Input + u.CacheRead; total == 0 || total > 13000 {
-		// The replayed first turn alone is 11 658 tokens.
+		// The replayed first turn alone is 11 656 tokens.
 		t.Errorf("usage = %+v: counted more than the resumed turn", u)
 	}
 	if got := text(evs); got != "plum" {
@@ -577,19 +583,19 @@ func TestResumeMismatch(t *testing.T) {
 func TestFork(t *testing.T) {
 	h := &harness{fixture: fixture("fork")}
 	spec := h.spec(t)
-	spec.ForkFrom = "01a0e96e-93de-7143-a6cb-78e4214b4825"
+	spec.ForkFrom = "01a0ebb0-fec1-74e1-9c8a-57d9633d5f3a"
 	spec.Brief.Context = "You are terse."
 	evs, out, tr := drive(t, context.Background(), spec, nil)
 	if out.State != v1.RunSucceeded || out.FinalText != "plum" {
 		t.Fatalf("outcome = %+v (%+v)", out, out.Error)
 	}
-	const fork = "01a0e96e-9e8d-77a2-8dcc-34ea72e844ec"
+	const fork = "01a0ebb1-0bf3-74e2-aeae-51d00bea1ae2"
 	if out.NativeSessionID != fork || tr.NativeSessionID() != fork {
 		t.Errorf("native = %q, %q; want the new thread %s", out.NativeSessionID, tr.NativeSessionID(), fork)
 	}
 	s := h.seen(t)
 	p := s.params(t, "thread/fork")
-	if p["threadId"] != spec.ForkFrom || p["approvalPolicy"] != "never" || p["developerInstructions"] != spec.Brief.Context {
+	if p["threadId"] != spec.ForkFrom || p["approvalPolicy"] != "never" || p["developerInstructions"] != spec.Brief.Context || p["excludeTurns"] != true {
 		t.Errorf("thread/fork = %v", p)
 	}
 	if len(s.sent("thread/start")) != 0 || len(s.sent("thread/resume")) != 0 {
@@ -629,7 +635,7 @@ func TestForkMissing(t *testing.T) {
 func TestForkMismatch(t *testing.T) {
 	h := &harness{fixture: fixture("fork")}
 	spec := h.spec(t)
-	spec.ForkFrom = "01a0e96e-9e8d-77a2-8dcc-34ea72e844ec" // the thread the recording answered with
+	spec.ForkFrom = "01a0ebb1-0bf3-74e2-aeae-51d00bea1ae2" // the thread the recording answered with
 	evs, out, tr := drive(t, context.Background(), spec, nil)
 	if out.State != v1.RunFailed || out.Error == nil || out.Error.Class != adapter.ClassSessionMismatch {
 		t.Fatalf("outcome = %+v (%+v)", out, out.Error)
@@ -650,7 +656,7 @@ func TestAForkWithItsOwnThreadResumesIt(t *testing.T) {
 	h := &harness{fixture: fixture("resume")}
 	spec := h.spec(t)
 	spec.NativeSessionID = "01a0b879-aaaa-7050-84ee-d1a30d4b696d"
-	spec.ForkFrom = "01a0e96e-93de-7143-a6cb-78e4214b4825"
+	spec.ForkFrom = "01a0ebb0-fec1-74e1-9c8a-57d9633d5f3a"
 	if _, out, _ := drive(t, context.Background(), spec, nil); out.State != v1.RunSucceeded {
 		t.Fatalf("outcome = %+v", out)
 	}
@@ -1058,75 +1064,5 @@ func TestLegacyApprovalDeclined(t *testing.T) {
 	}
 	if !strings.Contains(reply, `"denied"`) {
 		t.Errorf("reply = %s", reply)
-	}
-}
-
-// Every pinned release is one yad doctor calls ready, so each must still be
-// driven: its recorded conversations replay to the outcomes they were
-// recorded with. The tests above read the newest; this keeps the older ones
-// honest while they stay pinned.
-func TestEveryPinnedReleaseReplays(t *testing.T) {
-	steer := func(tr adapter.Turn, e v1.Event) bool {
-		if e.Kind != v1.EventToolCall {
-			return false
-		}
-		if err := tr.Steer("Also: end your final reply with the word STEERED."); err != nil {
-			t.Error(err)
-		}
-		return true
-	}
-	interrupt := func(tr adapter.Turn, e v1.Event) bool {
-		if e.Kind != v1.EventText {
-			return false
-		}
-		if err := tr.Interrupt(); err != nil {
-			t.Error(err)
-		}
-		return true
-	}
-	for _, v := range pinned {
-		for _, tc := range []struct {
-			fixture, effort, resume string
-			context                 string
-			settings                map[string]string
-			act                     func(adapter.Turn, v1.Event) bool
-			state                   v1.RunState
-			final, class            string
-		}{
-			{fixture: "plain", state: v1.RunSucceeded, final: "pong"},
-			{fixture: "tool", state: v1.RunSucceeded, final: "hello from a small file"},
-			{fixture: "tool-outcomes", state: v1.RunSucceeded, final: "done"},
-			{fixture: "file-change", state: v1.RunSucceeded, final: "done"},
-			{fixture: "effort", effort: "low", state: v1.RunSucceeded, final: "pong"},
-			{fixture: "resume", resume: "01a0b879-aaaa-7050-84ee-d1a30d4b696d", state: v1.RunSucceeded, final: "plum"},
-			// thread/resume, thread/inject_items, turn/start: the one
-			// recording of a continuing run's context.
-			{fixture: "resume-context", resume: "01a0b879-aaaa-7050-84ee-d1a30d4b696d",
-				context: "The codeword is BLUE. If asked, give the codeword.", state: v1.RunSucceeded, final: "BLUE"},
-			{fixture: "steer", act: steer, state: v1.RunSucceeded},
-			{fixture: "interrupt", act: interrupt, state: v1.RunCancelled},
-			{fixture: "approval", settings: map[string]string{"approval": "untrusted", "sandbox": "read-only"}, state: v1.RunSucceeded},
-			{fixture: "error", state: v1.RunFailed, class: adapter.ClassHarness},
-			{fixture: "effort-rejected", effort: "bogus", state: v1.RunFailed, class: adapter.ClassHarness},
-			{fixture: "resume-missing", resume: "01a0b86e-0000-7000-8000-000000000000", state: v1.RunFailed, class: adapter.ClassSessionNotFound},
-		} {
-			t.Run(v+"/"+tc.fixture, func(t *testing.T) {
-				p, err := filepath.Abs(filepath.Join("testdata", "codex-"+v, tc.fixture+".jsonl"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				h := &harness{fixture: p}
-				spec := h.spec(t)
-				spec.Effort, spec.NativeSessionID, spec.Settings = tc.effort, tc.resume, tc.settings
-				spec.Brief.Context = tc.context
-				_, out, _ := drive(t, context.Background(), spec, tc.act)
-				if out.State != tc.state || tc.final != "" && out.FinalText != tc.final {
-					t.Fatalf("outcome = %+v (%+v)", out, out.Error)
-				}
-				if tc.class != "" && (out.Error == nil || out.Error.Class != tc.class) {
-					t.Errorf("error = %+v, want %s", out.Error, tc.class)
-				}
-			})
-		}
 	}
 }

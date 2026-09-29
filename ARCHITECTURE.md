@@ -604,7 +604,9 @@ run's environment, which carries the hub's grants.
 `codex app-server --listen stdio://`, JSON-RPC over stdin and stdout
 (`internal/adapter/codex/rpc.go`): `initialize` → `initialized` →
 `thread/start`, `thread/resume` with the stored thread id, or `thread/fork` of
-the forked session's thread for a fork, whose answer names the new thread →
+the forked session's thread for a fork, whose answer names the new thread —
+both with `excludeTurns: true`, since the answer's thread id and model are
+read and its turns never are, and they would grow with the session (DEV-139) →
 one `turn/start`
 with the instruction and the run's `effort`, when it has one; the brief's
 context is the thread's `developerInstructions`, and on a resume or a fork it is also
@@ -635,7 +637,10 @@ boundary, as for Claude. A request for approval that still arrives is declined
 
 The app-server is marked experimental and Codex ships weekly, so the protocol is
 pinned: the adapter's slice of `codex app-server generate-json-schema` is hashed
-per recorded version, and an installed codex whose slice differs is still
+for the latest recorded release, and only that one — pinning a new release
+drops the older in the same change
+([0067](docs/decisions/0067-only-the-latest-recorded-harness-protocol-is-pinned.md)).
+An installed codex whose slice differs, an older one included, is still
 driven, with a warning on the harness in the capability document and in
 `yad doctor`.
 

@@ -33,7 +33,7 @@ in the conformance suite now fails a hub that offers one to a runner
 advertising nothing. It is one feature for the runner, not one per harness,
 because every first-class adapter forks on every pinned harness version
 (measured below) — a Claude without `--fork-session` is not driven at all,
-and a Codex whose protocol drifted from the pinned ones is driven with a
+and a Codex whose protocol drifted from the pinned one is driven with a
 warning, for forks as for every other method (decision 0037); a test holds `capability.Features()` and
 `adapter.Forks` together, as it does for `effort`, and the runner refuses a
 fork for an adapter that cannot (class `refused`) rather than start the

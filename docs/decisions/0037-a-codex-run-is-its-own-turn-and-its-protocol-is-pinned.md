@@ -1,4 +1,5 @@
 ---
+status: amended by 0067 — only the latest recorded release is pinned, and pinning a new one drops the older in the same change
 date: 2026-09-19
 ---
 

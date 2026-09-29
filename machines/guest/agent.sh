@@ -35,9 +35,9 @@ for h in ${MACHINE_HARNESSES:-claude codex}; do
 		command -v claude >/dev/null 2>&1 || { say "Claude Code"; run_installer https://claude.ai/install.sh bash; } ;;
 	codex)
 		# Pinned: yad drives Codex through its app-server protocol and knows
-		# the versions it was recorded against (pinned in
+		# the one version it was recorded against (pinned in
 		# internal/adapter/codex/schema.go — a test there keeps this default
-		# one of them). A newer Codex is ready but warned about.
+		# on it). Any other Codex is ready but warned about.
 		want=${CODEX_VERSION:-0.157.1}
 		have=$(codex --version 2>/dev/null | awk '{ print $NF }')
 		[[ $have == "$want" ]] || { say "Codex $want"; npm install -g --silent "@openai/codex@$want"; } ;;

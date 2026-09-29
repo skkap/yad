@@ -6,7 +6,7 @@ the adapter wrote, wrapped as `{">": …}`. They were recorded by
 `record_test.go` through the real adapter, on `gpt-5.6-luna`, with a throwaway
 `CODEX_HOME`, and scrubbed: paths become `/work`, `/codex-home` and
 `/home/user`, the host name becomes `host`, the installation id and the
-ChatGPT account id (in 0.157.1's rate-limit snapshots) are zeroed and the user
+ChatGPT account id (in the rate-limit snapshots) are zeroed and the user
 agent no longer names the terminal it ran in.
 
 | Fixture | The run |
@@ -19,15 +19,13 @@ agent no longer names the terminal it ran in.
 | `effort` | `plain` with `effort: low` on the `turn/start` |
 | `effort-rejected` | an effort the model does not take: the turn fails with Codex's own message |
 | `resume-missing` | `thread/resume` of a thread Codex has no rollout for |
-| `resume` | a second turn in a thread; Codex replays the first turn's usage before it |
+| `resume` | a second turn in a thread, resumed with `excludeTurns: true` (DEV-139); Codex still replays the first turn's usage before it |
 | `resume-context` | a second turn whose context the first did not have, injected before it as a developer message |
 | `interrupt` | `turn/interrupt` sent at the first text |
 | `steer` | `turn/steer` sent at the first tool call, answered in the same turn |
 | `approval` | `approval = "untrusted"`, `sandbox = "read-only"`: a command approval, declined |
 
-Recorded on 0.157.1 only, the one release installed when forks arrived
-(DEV-48, decision 0065); 0.147.0's schema has the same `thread/fork`, and its
-surface hash covers it, but no conversation of it was recorded:
+Recorded when forks arrived (DEV-48, decision 0065):
 
 | Fixture | The run |
 |---|---|
@@ -80,12 +78,14 @@ To record against a new Codex release:
 YAD_REAL_HARNESS=1 go test -tags realharness -run 'TestRecord' -v ./internal/adapter/codex/
 ```
 
-add the hash `TestRecordSchema` prints to `pinned` in `schema.go`, point
-`fixtures` in `codex_test.go` at the new directory, and read the diff before
-committing it. The hand-written fixtures are carried over from the previous
-release's, on the new `plain`'s handshake and in the new release's shapes.
+put the version and the hash `TestRecordSchema` prints in `pinnedVersion`
+and `pinnedSum` in `schema.go`, point `fixtures` in `codex_test.go` at the new
+directory, and read the diff before committing it. The hand-written fixtures
+are carried over from the previous release's, on the new `plain`'s handshake
+and in the new release's shapes.
 
-Every release in `pinned` keeps its directory: `yad doctor` calls each of them
-ready, so `TestEveryPinnedReleaseReplays` replays each one's recordings, and
-`TestPinnedSchema` checks each one's pin. Dropping a release from `pinned` is
-what lets its directory go.
+Only the latest recorded release is pinned (decision 0067), so the same change
+deletes the previous release's directory: its recordings, its schema and its
+hand-written fixtures. `TestPinnedSchema` fails while two `codex-*`
+directories are here. A codex of the dropped release is still driven, with the
+drift warning in `yad doctor`, as any codex whose protocol differs is.
