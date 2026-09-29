@@ -165,7 +165,7 @@ the shared **ACP core** (`internal/adapter/acp`), which drives the protocol
 and leaves the harness's own ways — its context route, its failures — to it.
 _Avoid_: driver, provider, backend, runtime; agent for a harness spoken to over
 ACP — ACP's own word for it, which here stays the protocol's
-_See_: [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md), [0072](docs/decisions/0072-opencode-is-first-class-through-a-generic-acp-core.md), `internal/adapter`
+_See_: [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md), [0073](docs/decisions/0073-opencode-is-first-class-through-a-generic-acp-core.md), `internal/adapter`
 
 **Account** — one harness login (subscription) on a runner, with its own harness
 home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), logged in by the harness's own login —
@@ -186,7 +186,7 @@ hub sends it as a grant, and is removed from every run when the owner's
 environment holds it; a harness is asked whether an account can take a run in
 the environment its runs get. OpenCode has no accounts: it runs on its own
 login, checked by whether it offers a model
-([0072](docs/decisions/0072-opencode-is-first-class-through-a-generic-acp-core.md)).
+([0073](docs/decisions/0073-opencode-is-first-class-through-a-generic-acp-core.md)).
 _Kinds_: free | limited | needs_login
 _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
 [0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md),

@@ -156,7 +156,7 @@ func fakeOpenCode(args []string) int {
 
 // OpenCode's login is whether it offers a model: it runs on free models with
 // no credential at all, so a list with any is yes, an empty one is no, and a
-// list that failed is no answer (decision 0072).
+// list that failed is no answer (decision 0073).
 func TestOpenCodesLoginIsWhetherItOffersAModel(t *testing.T) {
 	bin := self(t, "opencode")
 	for _, tc := range []struct {

@@ -72,7 +72,7 @@ var scenarios = []scenario{
 	{name: "effort", prompt: "Reply with exactly: pong", model: effortModel, effort: "high"},
 	{name: "effort-rejected", prompt: "Reply with exactly: pong", model: effortModel, effort: "bogus"},
 	// The run's context reaches the model from the first turn on, through
-	// OpenCode's instructions (decision 0050, 0072).
+	// OpenCode's instructions (decision 0050, 0073).
 	{name: "context", context: "The codeword is BLUE. If asked for the codeword, give it.",
 		prompt: "What is the codeword? Reply with the word only."},
 	{name: "resume-missing", prompt: "Reply: hi", resume: true},

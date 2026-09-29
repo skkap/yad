@@ -192,7 +192,7 @@ func Detect(ctx context.Context) []harness.Detected {
 			}
 		}
 		// OpenCode cannot print the ACP surface it speaks, so the release
-		// is the pin (decision 0072).
+		// is the pin (decision 0073).
 		if d.ID == "opencode" && d.Ready() {
 			if w := opencode.VersionWarning(d.Version); w != "" {
 				found[i].Warnings = append(found[i].Warnings, w)

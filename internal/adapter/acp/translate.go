@@ -25,7 +25,7 @@ type promptResult struct {
 }
 
 // tokens is a turn's usage as ACP reports it. OpenCode 1.18.33 reports the
-// turn's last model call, not the sum of its calls (decision 0072).
+// turn's last model call, not the sum of its calls (decision 0073).
 type tokens struct {
 	InputTokens       int64 `json:"inputTokens"`
 	OutputTokens      int64 `json:"outputTokens"`

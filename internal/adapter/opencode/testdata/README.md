@@ -18,7 +18,7 @@ names the machine. Only the latest recorded release is kept (decision 0067).
 | `error` | a model OpenCode does not have: `session/set_config_option` refused |
 | `effort` | `effort: high` set on `opencode/longcat-2.5-preview-free`, which has levels |
 | `effort-rejected` | an effort the model does not have: refused |
-| `context` | the context names a codeword, and the answer gives it: the instruction route reaches the model (decision 0050, 0072) |
+| `context` | the context names a codeword, and the answer gives it: the instruction route reaches the model (decision 0050, 0073) |
 | `resume-missing` | `session/resume` of a session that does not exist, and the `session/list` of every session that tells it apart |
 | `resume` | a second turn in a session, resumed without a replay |
 | `resume-context` | a second turn whose context the first did not have, answered from it |

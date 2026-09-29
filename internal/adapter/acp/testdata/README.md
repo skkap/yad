@@ -5,7 +5,7 @@ to, as released at `agentclientprotocol/agent-client-protocol` v1.23.0
 (2026-09-18): `schema.unstable.json` and `meta.unstable.json`, the unstable
 bundle, because `session/fork` and a prompt's `usage` are in it and not yet in
 the stable one. `schema_test.go` hashes the core's surface of it against
-`schema.go`'s pin (decisions 0067, 0072).
+`schema.go`'s pin (decisions 0067, 0073).
 
 `agent/` holds conversations written by hand for what no recorded agent
 shows: an agent speaking protocol version 2, one that resumes and forks

@@ -77,7 +77,7 @@ internal/adapter         the Adapter interface and event normalisation
 internal/adapter/claude  stream-json both ways
 internal/adapter/codex   app-server JSON-RPC
 internal/adapter/jsonrpc the line-delimited JSON-RPC client Codex and ACP share
-internal/adapter/acp     a generic Agent Client Protocol v1 core (0072)
+internal/adapter/acp     a generic Agent Client Protocol v1 core (0073)
 internal/adapter/opencode OpenCode over the ACP core: its context route, server password, failures
 internal/adapter/fake    a scripted harness for tests
 internal/supervise       spawn, process groups, watchdogs, cancel ladder
@@ -667,7 +667,7 @@ An installed codex whose slice differs, an older one included, is still
 driven, with a warning on the harness in the capability document and in
 `yad doctor`.
 
-**OpenCode** — [0072](docs/decisions/0072-opencode-is-first-class-through-a-generic-acp-core.md):
+**OpenCode** — [0073](docs/decisions/0073-opencode-is-first-class-through-a-generic-acp-core.md):
 `opencode acp`, the Agent Client Protocol v1 over stdin and stdout, driven by a
 generic core (`internal/adapter/acp`) that knows nothing of OpenCode:
 `initialize` → `session/new`, `session/resume` (no replay) or `session/fork` →
@@ -678,8 +678,8 @@ once its prompt is sent, are its events; a fork's replay comes before. An
 interrupt is `session/cancel`; ACP v1 has no steer, so none is advertised for
 OpenCode. A permission request is answered from the owner's `permission_mode`
 (`allow`, the default, or `reject`). A resume or fork OpenCode refuses is
-checked against every page of `session/list`, and one no page lists is
-`session_not_found`. What is OpenCode's own is in `internal/adapter/opencode`:
+checked against every page of `session/list`, up to fifty, and one no page
+lists is `session_not_found`; past fifty the refusal is reported as it is. What is OpenCode's own is in `internal/adapter/opencode`:
 the run's context goes into its system prompt as an instruction file named in
 `OPENCODE_CONFIG_CONTENT`; its own HTTP server on 127.0.0.1 gets a random
 `OPENCODE_SERVER_PASSWORD` per run; `OPENCODE_*` from a run's grants is
@@ -1177,7 +1177,7 @@ cap      = 2
 accounts = ["personal"]
 
 [harness.opencode]
-permission_mode = "allow"   # how OpenCode's permission requests are answered: allow (the default) or reject — 0072
+permission_mode = "allow"   # how OpenCode's permission requests are answered: allow (the default) or reject — 0073
 
 [[connection]]
 name = "yashiki"

@@ -99,6 +99,17 @@ environment only — never in argv, a log, an event or a file. **The runner
 still listens on no port ([0004](0004-runner-listens-on-no-port.md)); this
 child does**, on loopback, behind that password, for as long as its run.
 
+yad never writes the password anywhere. OpenCode's own tools inherit its
+environment, though, so a run whose brief has its shell print the
+environment prints the password too, into a tool result the hub receives —
+as it would print a grant, or a token account's token in Claude's. That is
+the reach decision 0038 already grants a brief: whatever the machine lets a
+run's harness read, the hub that wrote the brief can have it. The password
+buys nothing off the machine or after the run, since the server it opens is
+on loopback and exits with it. Keeping it out of the shell would need a
+plugin of OpenCode's own (its `shell.env` hook) loaded into every run, and
+was not done.
+
 **The run's context is an instruction file.** ACP has no system-prompt field.
 OpenCode reads `config.instructions` into the system prompt of every request
 it makes, so the context is written to a `0600` file in a directory of the

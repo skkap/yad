@@ -32,7 +32,7 @@ var loginArgs = map[string][]string{
 // providers it holds credentials for, and it runs on OpenCode Zen's free
 // models with none. What decides whether it can take a run is whether it
 // offers any model, so its check is the model list, which also spends no
-// token (decision 0072).
+// token (decision 0073).
 var statusArgs = map[string][]string{
 	"claude":   {"auth", "status"},
 	"codex":    {"login", "status"},
@@ -41,7 +41,7 @@ var statusArgs = map[string][]string{
 
 // manualLogin is the login command of a harness whose login yad checks but
 // cannot run itself — `yad account add` and a hub login need a home per
-// account, which OpenCode does not have here (decision 0072) — for the
+// account, which OpenCode does not have here (decision 0073) — for the
 // owner to run at the machine.
 var manualLogin = map[string][]string{
 	"opencode": {"auth", "login"},

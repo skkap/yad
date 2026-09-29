@@ -1,5 +1,5 @@
 // Package opencode drives OpenCode through `opencode acp`, the Agent Client
-// Protocol core in internal/adapter/acp (decision 0072). What is OpenCode's
+// Protocol core in internal/adapter/acp (decision 0073). What is OpenCode's
 // own is here: how the run's context reaches its model, the password on the
 // server it opens, what its failures mean, and the one release it is pinned
 // to.
@@ -44,7 +44,7 @@ func (Adapter) AppliesEffort() bool { return true }
 // and pinned with the release (PinnedVersion).
 func (Adapter) Forks() bool { return true }
 
-// Steers is false: ACP v1 has no steer (decision 0072).
+// Steers is false: ACP v1 has no steer (decision 0073).
 func (Adapter) Steers() bool { return false }
 
 func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, error) {
@@ -71,7 +71,7 @@ const (
 	// envPassword is the password OpenCode's own HTTP server takes. `opencode
 	// acp` serves the agent from a server it opens on 127.0.0.1 and talks to
 	// itself over it; without a password, anything on the machine that finds
-	// the port drives the session with the run's credentials (decision 0072).
+	// the port drives the session with the run's credentials (decision 0073).
 	envPassword = "OPENCODE_SERVER_PASSWORD"
 	// envConfig is inline configuration OpenCode merges over every file it
 	// reads, and the route the run's context takes (decision 0050).
@@ -105,7 +105,7 @@ const contextFile = "context.md"
 // model gets, so they are outside the conversation, survive a compaction and
 // reach a resumed or forked session's next turn as they reach a new one's.
 // Measured on 1.18.33: a new session told nothing asked for a codeword the
-// instructions named, and its fork, answered it (decision 0072).
+// instructions named, and its fork, answered it (decision 0073).
 func prepare(spec adapter.Spec) ([]string, func(), error) {
 	secret := make([]byte, passwordBytes)
 	if _, err := rand.Read(secret); err != nil {

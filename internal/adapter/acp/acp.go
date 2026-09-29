@@ -4,7 +4,7 @@
 // session/resume for one the agent already has or session/fork for a fork,
 // then session/set_config_option for the run's model and effort, then one
 // session/prompt, whose answer ends the turn; session/cancel interrupts it
-// (decision 0072).
+// (decision 0073).
 //
 // The protocol is the core; what is the harness's own — how to start it,
 // how the run's context reaches its model, what its failures mean — is an
@@ -34,7 +34,7 @@ import (
 
 // ProtocolVersion is the ACP major version the core speaks. v2 is in alpha
 // and drops session/load and modes; an agent that answers initialize with
-// another version is not driven (decision 0072).
+// another version is not driven (decision 0073).
 const ProtocolVersion = 1
 
 // Agent is everything about one ACP agent that is not the protocol's.
@@ -246,7 +246,7 @@ func (t *turn) Wait() adapter.Outcome {
 
 // Steer is refused: ACP v1 has no way to add input to a turn that is
 // running, and a second session/prompt is a second turn, which is a second
-// run (decision 0072). The runner advertises no steer for a harness driven
+// run (decision 0073). The runner advertises no steer for a harness driven
 // here, so a hub that reads it sends none.
 func (t *turn) Steer(string) error {
 	return fmt.Errorf("%s takes no input while a turn runs — send this as a new run in the same session", t.agent.Name)
@@ -584,6 +584,9 @@ func (t *turn) prompt() {
 	// would run to the end. The queue never blocks, so holding the lock
 	// across it costs the runner's event loop nothing.
 	t.prompted = true
+	if promptHook != nil {
+		promptHook()
+	}
 	id, err := t.conn.Send("session/prompt", map[string]any{
 		"sessionId": t.session,
 		"prompt":    []any{map[string]any{"type": "text", "text": t.spec.Brief.Instruction}},
@@ -596,6 +599,10 @@ func (t *turn) prompt() {
 	}
 	t.wait[id] = "session/prompt"
 }
+
+// promptHook, when a test sets it, runs the moment a turn is marked prompted
+// and before its prompt is queued: where an interrupt must not get in.
+var promptHook func()
 
 // refused ends the run on a request the agent answered with an error. A
 // resume or a fork of a session the agent does not know is asked once more,

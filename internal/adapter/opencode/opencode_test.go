@@ -163,7 +163,7 @@ func text(events []v1.Event, kind v1.EventKind) string {
 // A new session's turn: the answer is the last message, its reasoning is
 // thinking, its usage is the prompt's, and its context reaches OpenCode as an
 // instruction file, never in argv — beside a password for OpenCode's own
-// server that is new on every run (decision 0072).
+// server that is new on every run (decision 0073).
 func TestPlainRun(t *testing.T) {
 	p := &play{fixture: fixture(t, "plain")}
 	spec := p.spec(t)
