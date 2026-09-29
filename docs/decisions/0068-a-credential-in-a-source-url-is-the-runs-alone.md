@@ -64,9 +64,23 @@ another.
   ssh URL with a password is still refused: ssh takes none from a URL.
 
 Needs git 2.31 or later, which reads config from the environment; an older git
-ignores it and fetches with the machine's own credentials. A cache an earlier
-version made from a URL with userinfo keeps that URL in its config, under
-another directory name than the one used now, until it is deleted.
+ignores it and fetches with the machine's own credentials.
+
+**The upgrade takes out what an earlier version kept** (DEV-154). A cache it
+made from a URL with userinfo held that URL as its origin, under a directory
+named by it, where a session opened then has its worktree; `state.db` held the
+URL in the run's spec, the session's sources, and the events, reason and result
+that quoted it. The daemon's first start after the upgrade — the daemon, which
+alone writes `state.db` ([0043](0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md)) —
+replaces every copy of the credential in `state.db` in one transaction, then
+moves each such cache to the name the URL without its credential gives, its
+worktrees' `.git` files pointed there first, and rewrites its origin; a
+second cache of the same repository, made with another credential, cannot take
+that name and keeps its own, rewritten, and a session with a worktree of it
+goes on there. So a session from before the upgrade continues, and the next
+one from the repository finds the branches in the cache. A run so rewritten
+is marked as having had grants: it cannot be rebuilt from its row. The
+daemon's log files are not rewritten; they rotate out.
 
 This replaces 0033's "a URL that carries a password is refused".
 

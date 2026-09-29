@@ -997,6 +997,23 @@ func (q *Queries) PutOutbox(ctx context.Context, arg PutOutboxParams) error {
 	return err
 }
 
+const renameSlotsRepo = `-- name: RenameSlotsRepo :exec
+UPDATE OR IGNORE slots SET repo = ?1 WHERE repo = ?2
+`
+
+type RenameSlotsRepoParams struct {
+	NewRepo string
+	OldRepo string
+}
+
+// A bare cache moved to the name it has now keeps its sessions' WT_SLOTs.
+// OR IGNORE: a slot the new name already holds stays that session's, and the
+// one under the old name is freed with its session.
+func (q *Queries) RenameSlotsRepo(ctx context.Context, arg RenameSlotsRepoParams) error {
+	_, err := q.db.ExecContext(ctx, renameSlotsRepo, arg.NewRepo, arg.OldRepo)
+	return err
+}
+
 const requestSessionClose = `-- name: RequestSessionClose :exec
 UPDATE sessions SET close_requested_at = COALESCE(close_requested_at, ?1),
   close_reason = COALESCE(close_reason, ?2)
@@ -1043,6 +1060,41 @@ func (q *Queries) RetryOutbox(ctx context.Context, arg RetryOutboxParams) error 
 	return err
 }
 
+const runSpecsWithAt = `-- name: RunSpecsWithAt :many
+SELECT connection, id, spec FROM runs WHERE instr(spec, '@') > 0
+`
+
+type RunSpecsWithAtRow struct {
+	Connection string
+	ID         string
+	Spec       string
+}
+
+// The rows whose JSON may name a git URL with userinfo, for the source
+// credential sweep to read (decision 0068). Every such URL has an '@'.
+func (q *Queries) RunSpecsWithAt(ctx context.Context) ([]RunSpecsWithAtRow, error) {
+	rows, err := q.db.QueryContext(ctx, runSpecsWithAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunSpecsWithAtRow{}
+	for rows.Next() {
+		var i RunSpecsWithAtRow
+		if err := rows.Scan(&i.Connection, &i.ID, &i.Spec); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const runsWithUnackedEvents = `-- name: RunsWithUnackedEvents :many
 SELECT DISTINCT run_id FROM events WHERE connection = ? AND acked = 0 ORDER BY run_id
 `
@@ -1068,6 +1120,84 @@ func (q *Queries) RunsWithUnackedEvents(ctx context.Context, connection string) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const scrubEvents = `-- name: ScrubEvents :execrows
+UPDATE events SET body = replace(body, ?1, ?2)
+WHERE instr(body, ?1) > 0
+`
+
+type ScrubEventsParams struct {
+	Old string
+	New string
+}
+
+func (q *Queries) ScrubEvents(ctx context.Context, arg ScrubEventsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, scrubEvents, arg.Old, arg.New)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const scrubOutbox = `-- name: ScrubOutbox :execrows
+UPDATE outbox SET body = replace(body, ?1, ?2), last_error = replace(last_error, ?1, ?2)
+WHERE instr(body, ?1) > 0 OR instr(last_error, ?1) > 0
+`
+
+type ScrubOutboxParams struct {
+	Old string
+	New string
+}
+
+func (q *Queries) ScrubOutbox(ctx context.Context, arg ScrubOutboxParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, scrubOutbox, arg.Old, arg.New)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const scrubRuns = `-- name: ScrubRuns :execrows
+UPDATE runs SET spec = replace(spec, ?1, ?2), reason = replace(reason, ?1, ?2),
+  had_grants = CASE WHEN instr(spec, ?1) > 0 THEN 1 ELSE had_grants END
+WHERE instr(spec, ?1) > 0 OR instr(reason, ?1) > 0
+`
+
+type ScrubRunsParams struct {
+	Old string
+	New string
+}
+
+// Every copy of a source credential an earlier version wrote, replaced where
+// it stands: the rest of the text keeps its bytes, which a JSON parse and
+// re-encode would not promise. A run whose spec changed, in its sources or
+// its brief, cannot be rebuilt from its row as it was sent, so it is marked
+// as Loop.record has marked one with a source credential since decision 0068.
+func (q *Queries) ScrubRuns(ctx context.Context, arg ScrubRunsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, scrubRuns, arg.Old, arg.New)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const scrubSessions = `-- name: ScrubSessions :execrows
+UPDATE sessions SET sources = replace(sources, ?1, ?2)
+WHERE instr(sources, ?1) > 0
+`
+
+type ScrubSessionsParams struct {
+	Old string
+	New string
+}
+
+func (q *Queries) ScrubSessions(ctx context.Context, arg ScrubSessionsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, scrubSessions, arg.Old, arg.New)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const sessionOpenerSpec = `-- name: SessionOpenerSpec :one
@@ -1102,6 +1232,39 @@ func (q *Queries) SessionSlot(ctx context.Context, arg SessionSlotParams) (int64
 	var slot int64
 	err := row.Scan(&slot)
 	return slot, err
+}
+
+const sessionSourcesWithAt = `-- name: SessionSourcesWithAt :many
+SELECT connection, id, sources FROM sessions WHERE instr(sources, '@') > 0
+`
+
+type SessionSourcesWithAtRow struct {
+	Connection string
+	ID         string
+	Sources    sql.NullString
+}
+
+func (q *Queries) SessionSourcesWithAt(ctx context.Context) ([]SessionSourcesWithAtRow, error) {
+	rows, err := q.db.QueryContext(ctx, sessionSourcesWithAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SessionSourcesWithAtRow{}
+	for rows.Next() {
+		var i SessionSourcesWithAtRow
+		if err := rows.Scan(&i.Connection, &i.ID, &i.Sources); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const sessionsCloseRequested = `-- name: SessionsCloseRequested :many
@@ -1539,6 +1702,27 @@ func (q *Queries) StampUnknownLastUsed(ctx context.Context, now int64) (int64, e
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const startSweepDone = `-- name: StartSweepDone :exec
+DELETE FROM start_sweeps WHERE name = ?
+`
+
+func (q *Queries) StartSweepDone(ctx context.Context, name string) error {
+	_, err := q.db.ExecContext(ctx, startSweepDone, name)
+	return err
+}
+
+const startSweepPending = `-- name: StartSweepPending :one
+SELECT EXISTS (SELECT 1 FROM start_sweeps WHERE name = ?)
+`
+
+// A sweep a migration left for the daemon's start (0009_start_sweeps.sql).
+func (q *Queries) StartSweepPending(ctx context.Context, name string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, startSweepPending, name)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const takeSlot = `-- name: TakeSlot :exec
