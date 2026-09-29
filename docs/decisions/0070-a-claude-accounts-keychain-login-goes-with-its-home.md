@@ -61,7 +61,8 @@ free.
   that asked stops asking. Three things finish it: `yad account remove`
   again (a no-op on `config.toml`, which still finishes the rest), a hub
   repeating the removal, and the daemon's next start, which finishes every
-  home a removal left set aside (`account.Unfinished`). Deleting the items by
+  home a removal left set aside or marked (`account.Unfinished`; the marker
+  is the amendment below). Deleting the items by
   hand and letting the next start delete the set-aside home is the fourth.
 - **A new home starts with no Keychain login.** `account.Prepare`, which
   `Ensure` is, runs every time a home is made where there was none. On macOS
@@ -138,6 +139,80 @@ somewhere spelled in decomposed Unicode. That case is named in
 **Codex.** It keeps `auth.json` in `CODEX_HOME` unless that home's
 `config.toml` chooses the keyring, and yad never writes one that does
 (0054 shares only `AGENTS.md` and `prompts/`). Nothing is done for it here.
+
+## A removal outlives the daemon: the marker (DEV-160)
+
+Added 2026-09-29. Found by review on DEV-134. The start sweep above found
+only homes already set aside. Two removals never get that far:
+
+- one waiting for a run still in the home, which `runner.Accounts` holds as
+  an in-memory `doomed` flag until the last run lets go;
+- one whose rename out of the account's path (`SetAside`) failed.
+
+In both, `config.toml` has already dropped the label. If the daemon dies
+then — a crash, SIGKILL, a power cut — the home stays at its path under a
+label nothing lists, and its Keychain login stays with it. The next start
+finds no set-aside copy, and a hub's repeat finds nothing to finish. The
+owner is never told.
+
+Deleting every unlisted home at start would be wrong. A `yad account add`
+whose login is still running, or was walked away from, keeps an unlisted home
+on purpose for the next try (0043).
+
+- **Every removal marks the home first.** It writes `.yad-removing`, 0600, at
+  the top of the home, synced along with its directory entry. This happens
+  under `config.toml`'s lock and before the write that drops the label
+  (`account.Unlist`). A marker that cannot be written leaves the file
+  unchanged and the removal fails. So there is never a moment when the label
+  is gone and the home carries no marker. This covers every path:
+  `yad account remove` with or without a daemon, which marks whatever home it
+  finds because the owner asked for it to go; a hub's `remove_account`, which
+  marks only a label something lists; and the daemon's own `Reload`, which
+  marks again under the lock that dooms the home.
+- **The daemon's start finishes every marked home `config.toml` does not
+  list.** `account.Unfinished` names it, and the home is set aside and
+  deleted, Keychain first, exactly as any other removal. Nothing can hold the
+  home at start. A hub repeating the removal finishes it the same way, unless
+  a run is still in the home. The owner running `yad account remove` again
+  also finishes it.
+- **A home without the marker is never touched.** The sweep reads only the
+  marker, never the absence of a label. That keeps a pending add's home safe.
+- **A marked home whose label is still listed was never removed.** The
+  removal died between the marker and the write. `config.toml` is the record
+  of what is listed, so the account keeps its home and its runs. The start
+  takes the marker off and logs that the removal did not happen, so a later
+  hand edit of the file is not read as this removal. Running the removal
+  again removes it.
+- **An add takes the marker off.** This covers `yad account add` (the
+  daemon's `Keep`, and the CLI itself when no daemon runs), a hub's add, and a
+  reload that lists the label again. Each does it with the in-memory flag,
+  before the login, so a daemon that dies during the login does not delete
+  the home at its next start.
+- **The marker stays out of the harness's way.** Neither Claude nor Codex
+  uses the name. It sits at the top of the home and is opened with
+  `O_NOFOLLOW`. Nothing the home links to — the shared transcripts, the
+  machine's shared config (0054) — is named like it, so it never reaches
+  another account or the owner's own harness. A run making its home again
+  (`Ensure`) leaves it where it is: only an add takes it off.
+
+A run the killed daemon left behind, a harness process still in the home, has
+its home deleted under it at the next start. The daemon that started that run
+is gone, and the next start reports the run lost (0030). A removal the owner
+asked for is not held back for a process nothing supervises any more.
+
+### Considered options
+
+**Move the home aside at once and let runs keep the old path open.** The
+ticket's first direction, and it needs nothing on disk but the rename. It was
+rejected because a running claude keeps paths under its home open and goes on
+creating files there by path. Moving the directory from under it is a change
+of behaviour nobody has measured, and the marker needs no such measurement.
+
+**Record the removal in `state.db`.** The CLI never writes `state.db` (0043),
+and `yad account remove` is one of the writers that must record it.
+
+**Delete every unlisted home at start.** This deletes a pending add's home,
+which 0043 keeps on purpose.
 
 ## Re-checking on a claude upgrade
 

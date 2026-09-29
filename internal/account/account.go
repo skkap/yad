@@ -572,12 +572,19 @@ func RemoveSetAside(data, harness, label string) error {
 	return errors.Join(errs...)
 }
 
-// Unfinished is every account with a home set aside for deletion and not yet
-// deleted, in a stable order: a removal whose delete failed — a Keychain that
-// would not let go of its login (decision 0070), a disk error — or whose
-// process died. The daemon finishes each at start (RemoveSetAside), since
-// nothing else would: the label is out of config.toml, so no report names it
-// and no hub asks about it again.
+// Unfinished is every account a removal was under way on and did not finish,
+// in a stable order: a home set aside for deletion and not yet deleted — a
+// Keychain that would not let go of its login (decision 0070), a disk error,
+// a process that died — and a home still at its path carrying the removal
+// marker, whose removal was waiting on a run or could not set it aside when
+// the daemon died (DEV-160). The daemon finishes each at start, since nothing
+// else would: the label is out of config.toml, so no report names it and no
+// hub asks about it again.
+//
+// A marked home whose label config.toml still lists is here too: the process
+// removing it died before the file changed. That removal did not happen, and
+// its caller decides by the lists (Finish is only for a label nothing lists).
+// A home with no marker is never here.
 func Unfinished(data string) ([]Ref, error) {
 	root := filepath.Join(data, "accounts")
 	harnesses, err := os.ReadDir(root)
@@ -599,6 +606,10 @@ func Unfinished(data string) ([]Ref, error) {
 		for _, e := range entries {
 			rest, ok := strings.CutPrefix(e.Name(), ".")
 			if !ok {
+				r := Ref{Harness: h.Name(), Label: e.Name()}
+				if e.IsDir() && config.ValidName(r.Label) == nil && Marked(data, r.Harness, r.Label) && !slices.Contains(out, r) {
+					out = append(out, r)
+				}
 				continue
 			}
 			label, _, ok := strings.Cut(rest, ".removed-")
