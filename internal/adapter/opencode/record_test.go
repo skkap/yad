@@ -103,7 +103,6 @@ var scenarios = []scenario{
 		prompt:   "Use the bash tool to run `echo yad-probe`, then reply with its output only."},
 }
 
-
 func TestRecord(t *testing.T) {
 	if os.Getenv("YAD_REAL_HARNESS") != "1" {
 		t.Skip("set YAD_REAL_HARNESS=1 to record fixtures")
