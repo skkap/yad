@@ -74,6 +74,17 @@ than logging into a directory about to go. The daemon also waits for its store
 before it answers a change, so the state it reports is its record and not the
 default a runner with no database reads.
 
+Only two things let the login start: the daemon's answer to `keep`, or no
+daemon at all — none running holds no pending deletion in memory. A daemon
+that holds the lock and does not answer — a timeout, a socket it cannot be
+reached on — may still hold one, and a login of minutes gives the last run
+every chance to end and take the home with it. So the add stops before it
+touches the home, as it does when the daemon refuses, and says to run it
+again once `yad status` answers (DEV-167, 2026-09-29). Before that, only a
+refusal stopped it, on the reasoning that a daemon too wedged to answer
+`keep` would not answer the add at the end either; that covered the add, not
+the deletion.
+
 A daemon that did not answer leaves the home on disk and says to run the
 remove again once `yad status` answers. A daemon that is gone before a held
 run lets go leaves the home behind the same way; the label is already out of

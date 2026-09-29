@@ -200,7 +200,9 @@ on purpose for the next try (0043).
   unlink that cannot be synced is undone, so an error always means the
   marker is still there. An add whose marker will not come off does not
   begin, and the removal it would have cancelled stands whole. The same goes
-  for a daemon that refuses `Keep`. The CLI takes the marker off under
+  for a daemon that refuses `Keep`, and for one that holds the lock and does
+  not answer it (DEV-167, 0043). With no daemon running, the CLI takes the
+  marker off itself, under
   `config.toml`'s lock (`account.Reclaim`), so a daemon starting at that
   moment never looks at the marker and moves the home in the gap between.
 - **The marker stays out of the harness's way.** Neither Claude nor Codex
