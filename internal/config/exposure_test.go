@@ -444,12 +444,13 @@ func TestALeakedSecretIsRotatedNotJustClosed(t *testing.T) {
 			t.Errorf("no chmod in:\n%s", line)
 		}
 	}
-	// `yad disconnect` is not built yet (it answers "arrives in epic E7"), so
-	// no warning may tell an owner to run it. The credential path is the one
-	// config.Credential already gives when ReadSecret refuses the same file.
+	// An exposed credential wants rotating, not leaving the hub: `yad
+	// disconnect` would retire the runner and its sessions with it, and it
+	// refuses to send a credential ReadSecret refuses anyway. The advice is
+	// the one config.Credential already gives for the same file.
 	got := strings.Join(Exposures(p), "\n")
 	if strings.Contains(got, "yad disconnect") {
-		t.Errorf("a warning names a command this yad does not have:\n%s", got)
+		t.Errorf("a warning sends the owner to disconnect for what a rotation mends:\n%s", got)
 	}
 	// `yad hub admin-token create` refuses while the file is still there —
 	// revoke only touches hub.db — so an advice line that skips the delete

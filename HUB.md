@@ -500,9 +500,12 @@ stops syncing.
 `401 unauthorized`; `403 unauthorized` for another runner's credential; `413`
 for a body of a mebibyte or more.
 
-A current yad runner does not call `deregister` yet: `yad disconnect`, which
-will, is still being designed. Implement it anyway; the conformance suite
-lists it among the rules it cannot check (§12).
+A yad runner calls `deregister` when its owner runs `yad disconnect`, before
+it forgets the credential. It takes a `401 unauthorized` or any
+`runner_revoked` in reply as a credential you have already retired — that is
+how running the command again after a half-finished one completes — and
+anything else as a refusal that leaves the runner registered with you. The
+conformance suite lists `deregister` among the rules it cannot check (§12).
 
 ## 4. Runs
 

@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -586,12 +587,15 @@ func TestPruneFollowsAReclaimAndBlocksNothing(t *testing.T) {
 	}
 }
 
-// A runner with no hub connected still collects. Reclaiming disk belongs to
-// the machine: the owner who disconnected their only hub while no daemon ran
-// left its sessions and workdirs here, and no hub will come back to close
-// them. Serve used to return before opening the store when there was no
-// connection, so nothing expired and nothing was reclaimed — until a hub was
-// connected again, which might be never.
+// A runner with no hub connected still collects, and ends what a connection
+// no longer in config.toml left: the owner who disconnected their only hub
+// while no daemon ran left its sessions, a run parked with no max_wait, a
+// running row a crash left, and a result and events owed, and no hub will
+// come back for any of them (DEV-74, decision 0072). Serve used to return
+// before opening the store when there was no connection, so nothing was
+// reclaimed; and until the removal was ended at start, only that
+// connection's own loop could end the runs, so their sessions waited for
+// ever.
 func TestARunnerWithNoConnectionStillCollects(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -603,10 +607,37 @@ func TestARunnerWithNoConnectionStillCollects(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	// The idle TTL alone: the real disk's free space is no business of a test.
+	// Nothing idle and no disk floor: what closes them is the removal.
 	cfg.Sessions.DiskFloor = 0
-	idle := time.Now().Add(-cfg.Sessions.IdleTTL.Duration - day).UnixMilli()
-	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "disconnected", ID: "s1", Harness: "claude", Workdir: dir, CreatedAt: idle, LastUsedAt: idle}); err != nil {
+	now := time.Now().UnixMilli()
+	for _, s := range []db.CreateSessionParams{
+		{Connection: "disconnected", ID: "s1", Harness: "claude", Workdir: dir, CreatedAt: now, LastUsedAt: now},
+		{Connection: "disconnected", ID: "parked", Harness: "claude", CreatedAt: now, LastUsedAt: now},
+		{Connection: "disconnected", ID: "crashed", Harness: "claude", CreatedAt: now, LastUsedAt: now},
+	} {
+		if err := e.store.CreateSession(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, r := range []db.CreateRunParams{
+		{Connection: "disconnected", ID: "waits", SessionID: "parked", Harness: "claude", Model: "m", Spec: "{}", CreatedAt: now, UpdatedAt: now},
+		{Connection: "disconnected", ID: "ran", SessionID: "crashed", Harness: "claude", Model: "m", Spec: "{}", CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := e.store.CreateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.store.SetRunWaiting(ctx, db.SetRunWaitingParams{ResumesAt: sql.NullInt64{Int64: now + day.Milliseconds(), Valid: true},
+		WaitingSince: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, Connection: "disconnected", ID: "waits"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.SetRunState(ctx, db.SetRunStateParams{State: string(v1.RunRunning), UpdatedAt: now, Connection: "disconnected", ID: "ran"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.AppendEvent(ctx, db.AppendEventParams{Connection: "disconnected", RunID: "ran", Seq: 1, Body: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.PutOutbox(ctx, db.PutOutboxParams{Connection: "disconnected", RunID: "ran", Body: "{}"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -618,13 +649,30 @@ func TestARunnerWithNoConnectionStillCollects(t *testing.T) {
 			Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
 			Log:          slog.New(slog.DiscardHandler), Monitor: m, Drain: d})
 	}()
-	eventually(t, "the expired session's workdir is reclaimed", func() bool { return gone(dir) })
-	s, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "disconnected", ID: "s1"})
-	if err != nil {
-		t.Fatal(err)
+	eventually(t, "the removed connection's workdir is reclaimed", func() bool { return gone(dir) })
+	for _, id := range []string{"s1", "parked", "crashed"} {
+		s, err := e.store.GetSession(ctx, db.GetSessionParams{Connection: "disconnected", ID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.State != "closed" || s.CloseReason.String != string(v1.SessionClosedByOwner) || !s.ReportedAt.Valid {
+			t.Errorf("session %s is %s (%s, reported %v), want closed by the owner and nothing owed", id, s.State, s.CloseReason.String, s.ReportedAt.Valid)
+		}
 	}
-	if s.State != "expired" {
-		t.Errorf("the session is %s, want expired", s.State)
+	for _, id := range []string{"waits", "ran"} {
+		r, err := e.store.GetRun(ctx, dbRun("disconnected", id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.State != string(v1.RunLost) || r.ResumesAt.Valid {
+			t.Errorf("run %s is %s (resumes %v), want lost and waiting on nothing", id, r.State, r.ResumesAt.Valid)
+		}
+	}
+	if o, err := e.store.OutboxDepth(ctx); err != nil || o != 0 {
+		t.Errorf("outbox %d (%v): a result owed to a removed hub is still waiting to go", o, err)
+	}
+	if sp, err := e.store.SpoolDepth(ctx); err != nil || sp != 0 {
+		t.Errorf("spool %d (%v): events owed to a removed hub are still waiting to go", sp, err)
 	}
 	if !m.Ready() {
 		t.Error("a runner with no connection is not ready")

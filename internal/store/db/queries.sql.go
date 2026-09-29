@@ -128,6 +128,42 @@ func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (int
 	return result.RowsAffected()
 }
 
+const connectionsWithLeftovers = `-- name: ConnectionsWithLeftovers :many
+SELECT connection FROM sessions WHERE state = 'open' OR reported_at IS NULL
+UNION SELECT connection FROM runs WHERE state IN ('claimed', 'preparing', 'running', 'waiting')
+UNION SELECT connection FROM outbox
+UNION SELECT connection FROM events WHERE acked = 0
+ORDER BY connection
+`
+
+// A removed connection's leftovers (DEV-81): every connection this store still
+// holds something of that a connection's own loop would otherwise settle -- an
+// open session, a close its hub has not heard of, a run held, a result or an
+// event owed. The collector ends those of a connection config.toml no longer
+// lists, since no loop of theirs will ever run again.
+func (q *Queries) ConnectionsWithLeftovers(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, connectionsWithLeftovers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var connection string
+		if err := rows.Scan(&connection); err != nil {
+			return nil, err
+		}
+		items = append(items, connection)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countOpenSessions = `-- name: CountOpenSessions :one
 SELECT count(*) FROM sessions WHERE state = 'open'
 `
@@ -294,6 +330,24 @@ func (q *Queries) DeleteUnstartedRun(ctx context.Context, arg DeleteUnstartedRun
 	return err
 }
 
+const dropConnectionEvents = `-- name: DropConnectionEvents :exec
+UPDATE events SET acked = 1 WHERE connection = ? AND acked = 0
+`
+
+func (q *Queries) DropConnectionEvents(ctx context.Context, connection string) error {
+	_, err := q.db.ExecContext(ctx, dropConnectionEvents, connection)
+	return err
+}
+
+const dropConnectionOutbox = `-- name: DropConnectionOutbox :exec
+DELETE FROM outbox WHERE connection = ?
+`
+
+func (q *Queries) DropConnectionOutbox(ctx context.Context, connection string) error {
+	_, err := q.db.ExecContext(ctx, dropConnectionOutbox, connection)
+	return err
+}
+
 const dropEvents = `-- name: DropEvents :exec
 UPDATE events SET acked = 1 WHERE connection = ? AND run_id = ?
 `
@@ -345,6 +399,38 @@ func (q *Queries) DueOutbox(ctx context.Context, arg DueOutboxParams) ([]Outbox,
 		return nil, err
 	}
 	return items, nil
+}
+
+const endRemovedRun = `-- name: EndRemovedRun :execrows
+UPDATE runs SET state = 'lost', reason = ?1, resumes_at = NULL,
+  waited_ms = waited_ms + MAX(?2 - COALESCE(waiting_since, ?2), 0),
+  waiting_since = NULL, updated_at = ?2
+WHERE connection = ?3 AND id = ?4
+  AND state IN ('claimed', 'preparing', 'running', 'waiting')
+`
+
+type EndRemovedRunParams struct {
+	Reason     sql.NullString
+	Now        int64
+	Connection string
+	ID         string
+}
+
+// A run of a removed connection that no process holds: its hub has let it go
+// (deregister marks it lost), so it ends here as lost too, with its wait
+// ended in the same statement, and nothing owed for it -- nobody is left to
+// tell.
+func (q *Queries) EndRemovedRun(ctx context.Context, arg EndRemovedRunParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, endRemovedRun,
+		arg.Reason,
+		arg.Now,
+		arg.Connection,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const endRunWait = `-- name: EndRunWait :exec
@@ -964,6 +1050,50 @@ func (q *Queries) ListWaitingRuns(ctx context.Context) ([]Run, error) {
 	return items, nil
 }
 
+const openSessionsOf = `-- name: OpenSessionsOf :many
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions WHERE connection = ? AND state = 'open' ORDER BY id
+`
+
+func (q *Queries) OpenSessionsOf(ctx context.Context, connection string) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, openSessionsOf, connection)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.Connection,
+			&i.ID,
+			&i.Harness,
+			&i.NativeID,
+			&i.Account,
+			&i.Workdir,
+			&i.State,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.Sources,
+			&i.CloseReason,
+			&i.CloseRequestedAt,
+			&i.ClosedAt,
+			&i.ReclaimedAt,
+			&i.ReportedAt,
+			&i.ForkFrom,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const outboxDepth = `-- name: OutboxDepth :one
 SELECT count(*) FROM outbox
 `
@@ -1407,6 +1537,22 @@ func (q *Queries) SetAccountWindow(ctx context.Context, arg SetAccountWindowPara
 		arg.ResetsAt,
 		arg.UpdatedAt,
 	)
+	return err
+}
+
+const setConnectionSessionsReported = `-- name: SetConnectionSessionsReported :exec
+UPDATE sessions SET reported_at = ?1
+WHERE connection = ?2 AND state != 'open' AND reported_at IS NULL
+`
+
+type SetConnectionSessionsReportedParams struct {
+	Now        sql.NullInt64
+	Connection string
+}
+
+// No hub will hear these closes: the connection they would go to is gone.
+func (q *Queries) SetConnectionSessionsReported(ctx context.Context, arg SetConnectionSessionsReportedParams) error {
+	_, err := q.db.ExecContext(ctx, setConnectionSessionsReported, arg.Now, arg.Connection)
 	return err
 }
 

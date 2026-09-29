@@ -23,6 +23,11 @@ type Monitor struct {
 	sessions *Collector
 	logins   *Logins
 	ready    bool
+	// remover is the running Serve's removal of a connection; nil until its
+	// loops are set up.
+	remover func(ctx context.Context, conn string) (Removal, error)
+	// gone are the connections the owner removed while this process ran.
+	gone map[string]bool
 }
 
 // Connection states.
@@ -127,6 +132,11 @@ func (m *Monitor) update(conn string, fn func(*ConnectionState)) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.gone[conn] {
+		// A loop's last word, arriving after its removal, would list it
+		// again.
+		return
+	}
 	c, ok := m.conns[conn]
 	if !ok {
 		c.State = ConnStarting
@@ -152,6 +162,9 @@ func (m *Monitor) failed(conn string, err error, at time.Time, state string) {
 // Snapshot is the runner at one moment.
 type Snapshot struct {
 	Connections map[string]ConnectionState
+	// Removed are the connections the owner removed while this process
+	// ran, which the daemon's own copy of config.toml still lists.
+	Removed map[string]bool
 	// Capacity is nil while no pool exists: before Serve has set up, or
 	// after it has returned.
 	Capacity *struct{ Total, Free int }
@@ -168,6 +181,10 @@ func (m *Monitor) Snapshot(ctx context.Context) (Snapshot, error) {
 	s := Snapshot{Connections: make(map[string]ConnectionState, len(m.conns))}
 	for k, v := range m.conns {
 		s.Connections[k] = v
+	}
+	s.Removed = make(map[string]bool, len(m.gone))
+	for k := range m.gone {
+		s.Removed[k] = true
 	}
 	pool, st := m.pool, m.store
 	m.mu.Unlock()
@@ -199,4 +216,46 @@ func (m *Monitor) Snapshot(ctx context.Context) (Snapshot, error) {
 	s.Outbox = int(n)
 	errs = append(errs, err)
 	return s, errors.Join(errs...)
+}
+
+// ErrNotRunningConnections is a removal asked of a runner that has not set up
+// its connections yet.
+var ErrNotRunningConnections = errors.New("the runner is still starting and has not set up its connections yet; try again in a moment")
+
+// RemoveConnection is `yad disconnect` telling the daemon that config.toml no
+// longer lists a connection: its loop stops, its runs in hand are cancelled
+// and what it leaves here is ended, while the other connections carry on
+// (decision 0072).
+func (m *Monitor) RemoveConnection(ctx context.Context, conn string) (Removal, error) {
+	m.mu.Lock()
+	remove := m.remover
+	m.mu.Unlock()
+	if remove == nil {
+		return Removal{}, ErrNotRunningConnections
+	}
+	return remove(ctx, conn)
+}
+
+func (m *Monitor) serveRemovals(fn func(context.Context, string) (Removal, error)) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.remover = fn
+}
+
+// removed forgets a connection the owner removed: `yad status` lists the
+// connections config.toml has, and it no longer has this one.
+func (m *Monitor) removed(conn string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.conns, conn)
+	if m.gone == nil {
+		m.gone = map[string]bool{}
+	}
+	m.gone[conn] = true
 }
