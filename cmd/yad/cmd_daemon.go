@@ -21,6 +21,7 @@ import (
 	"github.com/skkap/yad/internal/control"
 	"github.com/skkap/yad/internal/logfile"
 	"github.com/skkap/yad/internal/runner"
+	"github.com/skkap/yad/internal/selfupdate"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -80,7 +81,14 @@ func daemonStart(ctx context.Context, g global, args []string, w io.Writer) erro
 		return err
 	}
 	if s.foreground {
-		return runForeground(ctx, g, s.interval, w)
+		err := runForeground(ctx, g, s.interval, w)
+		// Here and not inside runForeground: its deferred closes — the
+		// socket, the lock, the log — have all run by now.
+		var re reexecError
+		if errors.As(err, &re) {
+			return reexec(re.path)
+		}
+		return err
 	}
 	return startBackground(ctx, g, s, w)
 }
@@ -134,7 +142,11 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	sigs := make(chan os.Signal, 3)
 	signal.Notify(sigs, stopSignals...)
 	defer signal.Stop(sigs)
-	go runner.OnSignals(runCtx, sigs, drain, stop, log)
+	signalsDone := make(chan struct{})
+	go func() {
+		defer close(signalsDone)
+		runner.OnSignals(runCtx, sigs, drain, stop, log)
+	}()
 
 	// The one copy of the owner's account lists every part of the runner
 	// reads, and the one `yad account add` and `remove` reload through the
@@ -187,6 +199,14 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	// An account change rebuilds the document now rather than at the next
 	// tick, so a hub hears of the new account within one sync.
 	rebuild := make(chan struct{}, 1)
+	// Off unless config.toml turns it on (decision 0071). The path is read
+	// now, before a release can replace the file it names.
+	var updater *selfupdate.Updater
+	exe, _ := os.Executable()
+	if cfg.Update.Auto {
+		updater = newUpdater(g, cfg, exe, drain, monitor, log)
+		go updater.Run(runCtx)
+	}
 
 	// The socket outlives the runner's context: while a stop is under way,
 	// `yad status` is how the owner sees what it is waiting on.
@@ -196,7 +216,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 		defer close(ctlDone)
 		ctl.Serve(ctlCtx, control.Handler{
 			Status: func(ctx context.Context) control.Status {
-				return statusOf(ctx, g.paths, cfg, current(), started, monitor, recent)
+				st := statusOf(ctx, g.paths, cfg, current(), started, monitor, recent)
+				st.Update = updateStatus(updater)
+				return st
 			},
 			Stop: gracefulStop(log, drain),
 			CloseSession: func(ctx context.Context, conn, id string) (control.SessionClose, error) {
@@ -265,6 +287,32 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			case runCtx.Err() != nil:
 				fmt.Fprintln(w, "\nshut down — runs cut short are reported lost at the next start")
 				log.Info("daemon stopped", "drained", false)
+			case drain.ForUpdate():
+				// A stop still wins here (decision 0071): the socket and the
+				// signal handler are shut first, so no stop can be taken
+				// and then lost to the exec, and one already caught is
+				// counted before the drain is read again.
+				ctlStop()
+				<-ctlDone
+				signal.Stop(sigs)
+				stop()
+				<-signalsDone
+				for pending := true; pending; {
+					select {
+					case sig := <-sigs:
+						drain.Step("the runner received " + sig.String())
+					default:
+						pending = false
+					}
+				}
+				if !drain.ForUpdate() {
+					fmt.Fprintln(w, "\ndrained — a stop came as the self-update took over, so the runner exits; its next start is the new release")
+					log.Info("daemon stopped", "drained", true, "reason", drain.Reason())
+					return nil
+				}
+				fmt.Fprintln(w, "\ndrained for a self-update — re-executing as the new release")
+				log.Info("daemon re-executing as the new release", "reason", drain.Reason(), "path", exe)
+				return reexecError{path: exe}
 			case drain.IsDraining():
 				fmt.Fprintln(w, "\ndrained — every run held has ended")
 				log.Info("daemon stopped", "drained", true, "reason", drain.Reason())

@@ -542,7 +542,12 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	}()
 
 	req := v1.SyncRequest{RunnerID: l.RunnerID, Fingerprint: fp, Health: l.health(ctx, free)}
-	req.Health.Draining = draining
+	// A self-update's drain is not one: the runner comes back as the new
+	// release rather than exiting, which is what draining tells a hub. It
+	// offers no capacity meanwhile, so the hub offers it nothing — and a hub
+	// asking it to drain still hears no draining, so its drain control keeps
+	// coming until it turns the update's drain into an exit (decision 0071).
+	req.Health.Draining = draining && !l.Drain.ForUpdate()
 	// The document goes with the first sync of every process, after any move
 	// and whenever the hub asks; otherwise the fingerprint stands for it.
 	if l.wantDocument || fp != l.sentFingerprint {
@@ -689,7 +694,7 @@ func (l *Loop) removeAccount(ctx context.Context, c v1.Control) {
 	case err != nil:
 		// Repeated by the hub until the runner's reports leave the account out, so the
 		// next sync tries again.
-		log.Warn("the hub asked to remove an account, and it could not be removed; its next ask tries again", "err", err)
+		log.Warn("the hub asked to remove an account, and it could not be removed; a repeat from the hub tries again, and so does the daemon's next start", "err", err)
 	case removed:
 		log.Info("the hub removed the account", "runs_still_on_it", len(res.Runs))
 		if l.AccountsChanged != nil {

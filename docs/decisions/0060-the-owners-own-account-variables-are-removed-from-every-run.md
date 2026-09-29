@@ -1,4 +1,5 @@
 ---
+status: amended by 0070 — CLAUDE_SECURESTORAGE_CONFIG_DIR passes as the home variables do, and every account sets it to its own home
 date: 2026-09-29
 ---
 

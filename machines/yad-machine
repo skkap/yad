@@ -34,7 +34,8 @@ KIT_DIR=$(cd "$(dirname "$self_path")" && pwd)
 unset self_path link
 # The runner's user inside the machine. Not the Lima user, which has
 # passwordless sudo: a run must not be able to lift the egress rules or replace
-# the yad binary, so the user it runs as has no sudo at all.
+# the yad binary — unless the spec turns self-update on, which gives the binary
+# to this user (guest/root.sh) — so the user it runs as has no sudo at all.
 AGENT_USER=agent
 # /var/tmp, not /tmp: a stage that vanished with a reboot between `up`'s steps
 # would fail the next step with a missing-file error that names nothing useful.
@@ -126,6 +127,20 @@ load_spec() {
 	check_name "$name"
 }
 
+# self_update_on is whether a spec's config.toml turns self-update on —
+# `[update]` then `auto = true`, or the same as a dotted key or an inline table
+# (decision 0071). Read here, where no yad may be installed; yad reads the file
+# for itself on the machine.
+self_update_on() {
+	awk '
+		/^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]|#.*/, "", section); next }
+		section == "[update]" && /^[[:space:]]*auto[[:space:]]*=[[:space:]]*true[[:space:]]*(#.*)?$/ { on = 1 }
+		section == "" && /^[[:space:]]*update\.auto[[:space:]]*=[[:space:]]*true[[:space:]]*(#.*)?$/ { on = 1 }
+		section == "" && /^[[:space:]]*update[[:space:]]*=[[:space:]]*\{.*auto[[:space:]]*=[[:space:]]*true/ { on = 1 }
+		END { exit !on }
+	' "$1"
+}
+
 host_arch() {
 	case $(uname -m) in
 	arm64 | aarch64) echo arm64 ;;
@@ -173,13 +188,29 @@ cmd_up() {
 		*) die "unknown argument $(sq "$1") — usage: yad-machine up SPEC_DIR [--yad PATH]" ;;
 		esac
 	done
-	need_lima
 	load_spec "$spec_arg"
+	local self_update=''
+	if self_update_on "$spec/config.toml"; then
+		self_update=on
+		# A pin says this machine runs that release; self-update says it runs
+		# the newest. Both cannot hold, and the runner would quietly settle
+		# it within six hours.
+		if [[ -n ${YAD_VERSION:-} && $YAD_VERSION != latest ]]; then
+			die "$(sq "$spec/config.toml") turns self-update on ([update] auto = true), and YAD_VERSION pins yad at $(sq "$YAD_VERSION") — the runner would replace the pinned release with the newest within hours. Unset YAD_VERSION to follow the newest release, or take auto = true out of the spec to keep the pin"
+		fi
+	fi
+	need_lima
 
 	# Global, not local: the EXIT trap runs after cmd_up has returned.
 	tmp=$(mktemp -d)
 	trap 'rm -rf "$tmp"' EXIT
 	mkdir -p "$tmp/stage"
+	# Read by root.sh, which installs yad where the runner can replace it
+	# only when this is there.
+	if [[ -n $self_update ]]; then : >"$tmp/stage/self-update"; fi
+	# The fork this machine's yad comes from, for the runner's unit: a
+	# self-update fetches from it rather than from upstream.
+	if [[ -n ${YAD_REPO:-} ]]; then printf '%s\n' "$YAD_REPO" >"$tmp/stage/repo"; fi
 	if [[ -n $yad_path ]]; then
 		[[ -f $yad_path ]] || die "no file at --yad $(sq "$yad_path")"
 		cp "$yad_path" "$tmp/stage/yad"

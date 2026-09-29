@@ -133,6 +133,46 @@ type Status struct {
 	// hub is told the list is the catalog's, and why is the owner's to read
 	// (DEV-146). Nil from a daemon older than it.
 	ModelsFailures []ModelsFailure `json:"models_failures,omitempty"`
+	// Update is where self-update stands (decision 0071): nil when
+	// config.toml leaves it off, and from a daemon older than it.
+	Update *Update `json:"update,omitempty"`
+}
+
+// Update is the runner's self-update. The version this process runs is
+// Status.Version; a release installed and not yet taken over is Pending.
+type Update struct {
+	// Off is why nothing is checked, with what to do: a build that carries
+	// no release version.
+	Off       string     `json:"off,omitempty"`
+	LastCheck *time.Time `json:"last_check,omitempty"`
+	// LastError is why the last check failed; empty when it succeeded.
+	LastError string     `json:"last_error,omitempty"`
+	Latest    string     `json:"latest,omitempty"`
+	NextCheck *time.Time `json:"next_check,omitempty"`
+	// Pending is a newer release already installed in place of this
+	// binary, which the runner becomes at its first idle moment, or after a
+	// drain once By has passed.
+	Pending *PendingUpdate `json:"pending,omitempty"`
+	// Refused is a newer release the runner will not take, and why.
+	Refused *RefusedUpdate `json:"refused,omitempty"`
+}
+
+// PendingUpdate is a release on disk the running process has not yet become.
+type PendingUpdate struct {
+	Tag   string    `json:"tag"`
+	Since time.Time `json:"since"`
+	By    time.Time `json:"by"`
+	// Swapping is set once the runner has stopped taking work for it, and
+	// Reason says why then: an idle moment, or By passing.
+	Swapping bool   `json:"swapping,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// RefusedUpdate is a newer release left uninstalled.
+type RefusedUpdate struct {
+	Tag    string    `json:"tag"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 // ModelsFailure is one login's failed ask for its models.

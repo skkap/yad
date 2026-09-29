@@ -19,7 +19,7 @@ func TestExitWithoutCompletionChecksTheAccountsLogin(t *testing.T) {
 	h := &harness{fixture: cutBefore(t, "plain", `{"method":"turn/completed"`), env: map[string]string{"CODEX_TEST_MODE": "exit"}}
 	spec := h.spec(t)
 	spec.Home = "/Users/owner/.local/share/yad/accounts/codex/work"
-	spec.HomeVar, spec.Account = "CODEX_HOME", "work"
+	spec.HomeVars, spec.Account = []string{"CODEX_HOME"}, "work"
 	spec.Yad = func(args ...string) string {
 		return shellword.Command(append([]string{"yad", "--profile", "side"}, args...)...)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -197,6 +198,34 @@ func TestTheLoginCommandRunsAsPrinted(t *testing.T) {
 				shellwordtest.CheckEnv(t, cmds[0], env, append([]string{tc.id}, tc.args...)...)
 			}
 		})
+	}
+}
+
+// An owner who moved Claude's home and set CLAUDE_SECURESTORAGE_CONFIG_DIR
+// empty keeps the default Keychain login (decision 0070). The printed login
+// carries that empty value, which sh hands on as set and empty: without it
+// the pasted login would make a second login the runner never reads.
+func TestTheLoginCommandKeepsAnEmptyStorageDir(t *testing.T) {
+	fakeLoginHarness(t, "claude", "out", true)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), "home"))
+	t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", "")
+	h := report(t, "claude", config.Default())
+	cmds := shellwordtest.Commands(h.Error, "claude ")
+	if len(cmds) != 1 {
+		t.Fatalf("want one claude command in %q, got %q", h.Error, cmds)
+	}
+	shellwordtest.CheckEnv(t, cmds[0], map[string]string{"CLAUDE_CONFIG_DIR": "<runner CLAUDE_CONFIG_DIR>"}, "claude", "auth", "login")
+	probe := strings.Replace(cmds[0], "claude auth login", `/bin/sh -c 'printf "%s" "${CLAUDE_SECURESTORAGE_CONFIG_DIR-unset}"'`, 1)
+	// A shell with none of the test's environment: this one has the variable
+	// set empty, and the paste must set it itself.
+	sh := exec.Command("/bin/sh", "-c", probe)
+	sh.Env = []string{"PATH=/usr/bin:/bin"}
+	out, err := sh.Output()
+	if err != nil {
+		t.Fatalf("sh could not run %s: %v", probe, err)
+	}
+	if len(out) != 0 {
+		t.Errorf("sh ran\n  %s\nwith CLAUDE_SECURESTORAGE_CONFIG_DIR %q, want it set and empty", cmds[0], out)
 	}
 }
 

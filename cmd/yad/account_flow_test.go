@@ -400,7 +400,7 @@ func TestAccountAddTakesATokenFromStdin(t *testing.T) {
 		t.Errorf("accounts = %v, want [tl]", got)
 	}
 	home := account.HomeDir(p.Data, "claude", "tl")
-	if got := account.Env("claude", home); len(got) != 2 || got[1] != "CLAUDE_CODE_OAUTH_TOKEN="+tok {
+	if got := account.Env("claude", home); !slices.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN="+tok) {
 		t.Errorf("the account's runs would get %q", got)
 	}
 	noStateDB(t, p)

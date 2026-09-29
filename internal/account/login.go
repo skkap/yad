@@ -90,12 +90,15 @@ func suggest(harness, binary, home string, args []string) string {
 	// resolved, not a word the reader typed, and a space or a $ in it makes
 	// the line mean something else when pasted.
 	cmd := shellword.Command(append([]string{binary}, args...)...)
-	env := Env(harness, home)
-	if len(env) == 0 {
+	if home == "" {
 		return cmd
 	}
-	name, value, _ := strings.Cut(env[0], "=")
-	return name + "=" + shellword.Quote(value) + " " + cmd
+	// Every variable an account sets to its home, and never its token.
+	var prefix string
+	for _, v := range HomeVars(harness) {
+		prefix += v + "=" + shellword.Quote(home) + " "
+	}
+	return prefix + cmd
 }
 
 // LoginArgs is the harness's own login command after its binary, or nil for a
@@ -171,7 +174,11 @@ func LoginEnv(harness, home string) []string {
 	if !ok || home == "" {
 		return nil
 	}
-	return []string{v + "=" + home}
+	env := []string{v + "=" + home}
+	if sv, ok := storageVar[harness]; ok {
+		env = append(env, sv+"="+home)
+	}
+	return env
 }
 
 // LoggedIn asks the harness whether this home holds a login: the one a run

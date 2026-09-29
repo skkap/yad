@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -31,8 +32,8 @@ func TestTheRunsSpecCarriesWhatALoginCheckNeeds(t *testing.T) {
 	x.Paths = config.Paths{Profile: "side"}
 	claimAndRun(t, l, x)
 
-	if seen.HomeVar != "CLAUDE_CONFIG_DIR" || seen.Account != "work" {
-		t.Errorf("spec HomeVar %q Account %q, want CLAUDE_CONFIG_DIR and work", seen.HomeVar, seen.Account)
+	if !slices.Equal(seen.HomeVars, []string{"CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"}) || seen.Account != "work" {
+		t.Errorf("spec HomeVars %q Account %q, want CLAUDE_CONFIG_DIR, CLAUDE_SECURESTORAGE_CONFIG_DIR and work", seen.HomeVars, seen.Account)
 	}
 	shellwordtest.Check(t, seen.YadCommand("account", "list"), "yad", "--profile", "side", "account", "list")
 }

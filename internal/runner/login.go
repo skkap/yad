@@ -184,6 +184,32 @@ func (m *Logins) Close() {
 	m.wg.Wait()
 }
 
+// Busy is whether a hub login is in flight: a harness's login process still
+// holds an account's home, waiting on a person's code or finishing with it.
+// A nil Logins has none.
+func (m *Logins) Busy() bool {
+	if m == nil {
+		return false
+	}
+	m.init()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.live) > 0
+}
+
+// Owed is whether any hub has a login it has not yet heard the end of: one in
+// flight, or one ended whose end no sync has carried yet. A nil Logins owes
+// none.
+func (m *Logins) Owed() bool {
+	if m == nil {
+		return false
+	}
+	m.init()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.byKey) > 0
+}
+
 // Control acts on one of a hub's login controls. It returns at once: a login
 // runs on its own, and the loop reports where it is at each sync.
 func (m *Logins) Control(conn string, c v1.Control) {
@@ -547,9 +573,17 @@ func (m *Logins) claim(l *hubLogin) (home string, release func(), err error) {
 		}
 		m.Accounts.release(hold)
 	}
-	if home, err = account.Ensure(m.Data, l.ref.Harness, l.ref.Label); err != nil {
+	var cleared []string
+	if home, cleared, err = account.Prepare(m.Data, l.ref.Harness, l.ref.Label); err != nil {
 		release()
 		return "", nil, err
+	}
+	// The owner is not at a terminal to be told, as `yad account add` tells
+	// them; the log is where they find out why a label they had before asks
+	// for a login again (decision 0070).
+	if len(cleared) > 0 {
+		m.Log.Info("a login claude kept in the macOS Keychain for this account's path, from an account removed before, is deleted; the account starts logged out",
+			"harness", l.ref.Harness, "account", l.ref.Label, "keychain_items", cleared)
 	}
 	return home, release, nil
 }

@@ -79,6 +79,7 @@ func TestMain(m *testing.M) {
 		// The test binary as yad itself, for tests that signal a runner as a
 		// service manager would; the harness it spawns is still the fake.
 		os.Unsetenv(childYad)
+		selfUpdateChild()
 		main()
 		return
 	}

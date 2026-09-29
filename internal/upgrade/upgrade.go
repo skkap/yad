@@ -1,10 +1,11 @@
 // Package upgrade replaces this binary with another tagged release — the
 // newest by default, or the one Options.Tag names, which may be older and
 // deliberately is when a bad release is being rolled back. On the owner's
-// command and never on anyone else's: there is no poller here, no
-// control message and no re-exec — decision 0018 holds those back to a backlog
-// item, and this package is deliberately the whole of what v1 does about
-// updating itself.
+// command, or on the owner's standing opt-in: `yad upgrade` calls it, and so
+// does internal/selfupdate when config.toml turns self-update on (decision
+// 0071). Never on a hub's say-so. There is no poller and no re-exec here —
+// both are the self-update's — so every replacement of the binary, asked for
+// or scheduled, goes through the one order below.
 //
 // The order is the point. A download goes to a temporary directory beside the
 // installed binary, its SHA-256 is checked against the release's checksums
@@ -128,6 +129,11 @@ type Options struct {
 	// its yad commands, for the commands its errors offer (Command).
 	Repo string
 	Yad  func(args ...string) string
+	// Vet, when set, judges the verified, executable binary before it
+	// replaces the target, and an error from it leaves the target as it was.
+	// A self-update asks the binary which protocol majors it speaks (decision
+	// 0071); `yad upgrade` sets none, since the owner chose the release.
+	Vet func(ctx context.Context, staged string) error
 }
 
 // Result is what an upgrade did.
@@ -188,6 +194,13 @@ func Apply(ctx context.Context, o Options) (Result, error) {
 	}
 	if err := os.Chmod(staged, binaryMode); err != nil {
 		return Result{}, err
+	}
+	// After the checksum, so what is run is the release's own binary; before
+	// the rename, so a refusal leaves the installed one untouched.
+	if o.Vet != nil {
+		if err := o.Vet(ctx, staged); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := os.Rename(staged, target); err != nil {
 		return Result{}, fmt.Errorf("cannot replace %s: %w", target, err)
