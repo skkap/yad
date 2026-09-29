@@ -635,7 +635,10 @@ boundary, as for Claude. A request for approval that still arrives is declined
 
 The app-server is marked experimental and Codex ships weekly, so the protocol is
 pinned: the adapter's slice of `codex app-server generate-json-schema` is hashed
-per recorded version, and an installed codex whose slice differs is still
+for the latest recorded release, and only that one — pinning a new release
+drops the older in the same change
+([0067](docs/decisions/0067-only-the-latest-recorded-harness-protocol-is-pinned.md)).
+An installed codex whose slice differs, an older one included, is still
 driven, with a warning on the harness in the capability document and in
 `yad doctor`.
 

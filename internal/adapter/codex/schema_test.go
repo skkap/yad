@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,31 +20,28 @@ func recordedSchema(t *testing.T) []byte {
 	return b
 }
 
-// Every pin in schema.go is a recorded schema's: a changed surface that was
-// not re-pinned, or a pin typed by hand, fails here.
+// The pin in schema.go is the recorded schema's, and the one release pinned is
+// the one the tests replay: a changed surface that was not re-pinned, or a
+// pin typed by hand, fails here. Only that release has recordings (decision
+// 0067) — an older one left behind would read as supported to the next
+// person to open testdata/.
 func TestPinnedSchema(t *testing.T) {
-	// Each entry on its own: two hashes for one version would otherwise pass
-	// on the one that matches, and the other would call an unrecorded
-	// surface ready.
-	newest := strings.TrimPrefix(filepath.Base(fixtures), "codex-")
-	newestPinned := false
-	for sum, v := range pinned {
-		newestPinned = newestPinned || v == newest
-		b, err := os.ReadFile(filepath.Join("testdata", "codex-"+v, schemaFile))
-		if err != nil {
-			t.Errorf("codex %s is pinned with no recorded schema: %v", v, err)
-			continue
-		}
-		got, err := SchemaHash(b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != sum {
-			t.Errorf("schema.go pins %s as codex %s, whose recorded schema hashes to %s", sum, v, got)
-		}
+	if got := strings.TrimPrefix(filepath.Base(fixtures), "codex-"); got != pinnedVersion {
+		t.Errorf("the replayed fixtures are codex %s's, and schema.go pins %s", got, pinnedVersion)
 	}
-	if !newestPinned {
-		t.Errorf("the replayed fixtures are codex %s's, which schema.go does not pin", newest)
+	got, err := SchemaHash(recordedSchema(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != pinnedSum {
+		t.Errorf("schema.go pins %s as codex %s, whose recorded schema hashes to %s", pinnedSum, pinnedVersion, got)
+	}
+	dirs, err := filepath.Glob(filepath.Join("testdata", "codex-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{filepath.Join("testdata", "codex-"+pinnedVersion)}; !slices.Equal(dirs, want) {
+		t.Errorf("recorded releases = %v, want only %v: pinning a release drops the one before it, recordings and all", dirs, want)
 	}
 }
 
@@ -175,7 +173,7 @@ func TestSchemaWarning(t *testing.T) {
 	}{
 		{name: "pinned", schema: pinnedFile, version: "codex-cli 0.157.1"},
 		{name: "a newer codex, same surface", schema: pinnedFile, version: "codex-cli 0.148.0"},
-		{name: "drift", schema: drifted, version: "codex-cli 0.149.0", want: "differs from the one this yad was built against (codex 0.147.0, 0.157.1)"},
+		{name: "drift", schema: drifted, version: "codex-cli 0.149.0", want: "differs from the one this yad was built against (codex 0.157.1)"},
 		{name: "no schema at all", schema: "fail", version: "codex-cli 0.9.0", want: "could not check"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -352,7 +350,7 @@ func TestSchemaWarningQuotesNothingItWasTold(t *testing.T) {
 
 // The work-machine kit installs one Codex by default (machines/guest/agent.sh).
 // A default this adapter was not recorded against gives every new machine a
-// Codex that yad doctor warns about, so the default must be one of pinned.
+// Codex that yad doctor warns about, so the default must be the pinned one.
 func TestMachineKitInstallsAPinnedCodex(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "machines", "guest", "agent.sh"))
 	if err != nil {
@@ -364,11 +362,7 @@ func TestMachineKitInstallsAPinnedCodex(t *testing.T) {
 		t.Fatalf("machines/guest/agent.sh no longer defaults CODEX_VERSION with %q", marker)
 	}
 	rest := string(b[i+len(marker):])
-	want := rest[:strings.IndexByte(rest, '}')]
-	for _, v := range pinned {
-		if v == want {
-			return
-		}
+	if got := rest[:strings.IndexByte(rest, '}')]; got != pinnedVersion {
+		t.Errorf("machines/guest/agent.sh installs Codex %s by default, and schema.go pins %s — move the default to it", got, pinnedVersion)
 	}
-	t.Errorf("machines/guest/agent.sh installs Codex %s by default, which is not among the pinned versions %v — move the default to one of them", want, pinned)
 }
