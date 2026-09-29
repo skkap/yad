@@ -3,6 +3,7 @@
 package workdir
 
 import (
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/cgi"
@@ -210,9 +211,53 @@ func TestAWrongCredentialNamesTheHubs(t *testing.T) {
 	newOrigin(t, served, "acme", nil)
 	cs := newCredServer(t, served, "right", "")
 	host := strings.TrimPrefix(cs.srv.URL, "https://")
-	_, _, err := f.prepare("s1", gitSource("https://"+fakeToken+"@"+host+"/acme.git", "", ""))
-	if class(err) != ClassSourceFailed || !strings.Contains(err.Error(), "the URL's credential") || strings.Contains(err.Error(), "FAKEt0ken") {
-		t.Errorf("err = %v", err)
+	for i, tc := range []struct{ userinfo, want string }{
+		{fakeToken, "offered as a token"},
+		{"someone:" + fakeToken, "the URL's credential"},
+	} {
+		_, _, err := f.prepare(fmt.Sprintf("s%d", i), gitSource("https://"+tc.userinfo+"@"+host+"/acme.git", "", ""))
+		if class(err) != ClassSourceFailed || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "FAKEt0ken") {
+			t.Errorf("%s: err = %v", tc.userinfo, err)
+		}
+	}
+}
+
+// A user alone in the URL may be the account's name rather than a token —
+// Azure DevOps and Bitbucket hand out clone URLs with it — so when the remote
+// refuses it as a token, the owner's own helper is asked for that name, as it
+// was when git was given the URL whole. What it stores is its own credential,
+// and the name still reaches git only through the environment.
+func TestAUserAloneFallsBackToTheOwnersHelper(t *testing.T) {
+	f := newFixture(t)
+	served := t.TempDir()
+	newOrigin(t, served, "acme", map[string]string{"README": "v1\n"})
+	cs := newCredServer(t, served, "alice", "owners-secret")
+	host := strings.TrimPrefix(cs.srv.URL, "https://")
+	store := filepath.Join(t.TempDir(), "credentials")
+	stored := "https://alice:owners-secret@" + host + "\n"
+	if err := os.WriteFile(store, []byte(stored), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(global, []byte("[credential]\n\thelper = store --file "+store+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	argv := argvLog(t, f.m)
+
+	p, _, err := f.prepare("s1", gitSource("https://alice@"+host+"/acme.git", "", ""))
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if got := read(t, filepath.Join(p.Dir, "README")); got != "v1\n" {
+		t.Errorf("README = %q", got)
+	}
+	// The store helper writes back what worked, spelling the port its own way.
+	if got := read(t, store); strings.Count(got, "\n") != 1 || !strings.HasPrefix(got, "https://alice:owners-secret@127.0.0.1") {
+		t.Errorf("the owner's store now holds %q, want its one entry", got)
+	}
+	if log := read(t, argv); strings.Contains(log, "alice") {
+		t.Errorf("git's argv held the URL's user:\n%s", log)
 	}
 }
 

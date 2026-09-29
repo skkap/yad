@@ -47,6 +47,14 @@ another.
   inherits it. A run parked before its fetch and picked up by a later process
   has lost it, as it would have lost its grants: it is reported `lost` with
   `grants_lost`, for the hub to send again.
+- **A user alone is tried as a token first, then as a name.** Nothing in
+  `https://x@host/…` says whether `x` is a token or the account's name, which
+  Azure DevOps and Bitbucket put in the clone URLs they hand out. It is
+  offered as a token with an empty password; when the remote refuses that, the
+  command runs once more with `credential.<scheme>://<host>.username` set to it
+  — still in the environment — and the owner's own helpers answer for that
+  name, as they did when git was given the URL whole. A user and a password
+  are the hub's whole credential, and get no second try.
 - **A credential git cannot carry is refused** — a control character, sent as
   `%0A`, would be read by git's credential protocol as a line of its own.
 - **ssh is unchanged.** `git@host` is the login name, not a credential, and an

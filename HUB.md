@@ -1385,7 +1385,10 @@ already blanked.
 one in its userinfo — `https://<token>@host/org/repo`, or `user:password@` —
 and the runner fetches that repository with it, for that run alone: it keeps
 the URL without it in its cache, its store, its log and the run's events, and
-gives it to git only in the environment of the run's fetch, never argv. A later
+gives it to git only in the environment of the run's fetch, never argv. A user
+with no password is offered as a token first; if the remote refuses it, the
+runner's own credential helpers are asked for that user's name, so a clone URL
+that names the account, as Azure DevOps and Bitbucket hand out, still works. A later
 run in the session may send another credential or none and still names the
 same source; one without it is fetched with the machine's own credentials. Like
 a grant, it does not survive the runner restarting while the run waits: send

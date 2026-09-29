@@ -433,8 +433,8 @@ func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
 				return err
 			}
 		}
-		if _, err := m.gitEnv(ctx, tmp, r.cred.env(r.url), fetch...); err != nil {
-			return fetchFailed(err, r.cred != nil)
+		if _, err := m.remoteGit(ctx, tmp, r, fetch...); err != nil {
+			return fetchFailed(err, r.cred)
 		}
 		if err := os.Rename(tmp, cache); err != nil {
 			return err
@@ -443,8 +443,8 @@ func (m *Manager) fetch(ctx context.Context, cache string, r remote) error {
 	} else if err != nil {
 		return err
 	}
-	if _, err := m.gitEnv(ctx, cache, r.cred.env(r.url), fetch...); err != nil {
-		return fetchFailed(err, r.cred != nil)
+	if _, err := m.remoteGit(ctx, cache, r, fetch...); err != nil {
+		return fetchFailed(err, r.cred)
 	}
 	return nil
 }
@@ -460,9 +460,12 @@ const checkedOut = "yad-checked-out"
 // fetchFailed says what the owner checks. The URL is the hub's, so it is
 // never written into a command for someone to paste: a URL holding "$(…)" is
 // valid to git and would run in their shell. A URL that carried a credential
-// was fetched with that credential alone, so it is the hub's to check.
-func fetchFailed(err error, hubCredential bool) error {
-	if hubCredential {
+// was fetched with that credential, so it is the hub's to check.
+func fetchFailed(err error, cred *credential) error {
+	switch {
+	case cred != nil && cred.userOnly:
+		return fmt.Errorf("%w — the URL's user was offered as a token, then as the name for the runner's own credential helpers; check that the token may read the repository, or that the runner's user has a credential for that name", err)
+	case cred != nil:
 		return fmt.Errorf("%w — the URL's credential was the one git offered for this fetch; check that it may read the repository, or send the URL without it to use the runner's own credentials (gh, SSH)", err)
 	}
 	return fmt.Errorf("%w — the runner reaches repositories with its own credentials (gh, SSH); check that its user can run git ls-remote on the repository's URL", err)
@@ -500,7 +503,7 @@ func (m *Manager) base(ctx context.Context, cache string, it item, has func(stri
 			// Asked of the remote only when needed: it is one more round
 			// trip, and a remote whose default branch never moves has
 			// answered once.
-			if _, err := m.gitEnv(ctx, cache, it.git.cred.env(it.git.url), "remote", "set-head", "origin", "--auto"); err != nil {
+			if _, err := m.remoteGit(ctx, cache, *it.git, "remote", "set-head", "origin", "--auto"); err != nil {
 				return "", fmt.Errorf("%w — the run names no base, and the remote's default branch could not be found; name one", err)
 			}
 		}

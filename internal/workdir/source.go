@@ -147,14 +147,17 @@ func checkHost(shown, host, user string) error {
 // 0067).
 type credential struct {
 	user, password string
+	// userOnly is userinfo with no password: a token as the user, or a user's
+	// name alone, which nothing in the URL tells apart (userEnv).
+	userOnly bool
 }
 
 // credentialOf is u's userinfo as git's credential protocol will carry it:
 // one key=value per line, so a line break or other control character — sent
 // as %0A — would be read as a key of its own, a host or a URL git then trusts.
 func credentialOf(u *url.URL) (*credential, error) {
-	pass, _ := u.User.Password()
-	c := &credential{user: u.User.Username(), password: pass}
+	pass, hasPassword := u.User.Password()
+	c := &credential{user: u.User.Username(), password: pass, userOnly: !hasPassword}
 	if strings.IndexFunc(c.user+c.password, unicode.IsControl) >= 0 {
 		return nil, fmt.Errorf("git.url for %s carries a credential with a control character in it, which git cannot be handed — send the credential as it is issued", u.Host)
 	}
@@ -177,20 +180,45 @@ const credentialHelper = `!f() { test "$1" = get || { cat >/dev/null; exit 0; };
 // before this one, and on success git asks each to store what worked — a
 // keychain would keep the hub's token for good.
 func (c *credential) env(fetchURL string) []string {
-	if c == nil {
+	scope, ok := credentialScope(c, fetchURL)
+	if !ok {
 		return nil
+	}
+	return []string{
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=" + scope + ".helper", "GIT_CONFIG_VALUE_0=",
+		"GIT_CONFIG_KEY_1=" + scope + ".helper", "GIT_CONFIG_VALUE_1=" + credentialHelper,
+		"YAD_GIT_USERNAME=" + c.user, "YAD_GIT_PASSWORD=" + c.password,
+	}
+}
+
+// userEnv is the second try for a URL whose userinfo was a user alone, once
+// the remote has refused it as a token with no password: the user as the
+// name git asks the owner's own helpers for, as git did with the user in the
+// URL. Azure DevOps and Bitbucket put the account's name in the clone URLs
+// they hand out, and a helper such as Git Credential Manager answers for that
+// name. The owner's helpers are the ones answering, so what they store on
+// success is their own credential — and the user reaches git in the
+// environment still, never argv or the cache's config.
+func (c *credential) userEnv(fetchURL string) []string {
+	scope, ok := credentialScope(c, fetchURL)
+	if !ok || !c.userOnly {
+		return nil
+	}
+	return []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=" + scope + ".username", "GIT_CONFIG_VALUE_0=" + c.user}
+}
+
+// credentialScope is the config subsection that holds c for the remote at
+// fetchURL: credential.<scheme>://<host[:port]>.
+func credentialScope(c *credential, fetchURL string) (string, bool) {
+	if c == nil {
+		return "", false
 	}
 	u, err := url.Parse(fetchURL)
 	if err != nil {
-		return nil
+		return "", false
 	}
-	scope := "credential." + strings.ToLower(u.Scheme) + "://" + u.Host + ".helper"
-	return []string{
-		"GIT_CONFIG_COUNT=2",
-		"GIT_CONFIG_KEY_0=" + scope, "GIT_CONFIG_VALUE_0=",
-		"GIT_CONFIG_KEY_1=" + scope, "GIT_CONFIG_VALUE_1=" + credentialHelper,
-		"YAD_GIT_USERNAME=" + c.user, "YAD_GIT_PASSWORD=" + c.password,
-	}
+	return "credential." + strings.ToLower(u.Scheme) + "://" + u.Host, true
 }
 
 // withoutCredential is a git URL as it may be stored, keyed by or handed to

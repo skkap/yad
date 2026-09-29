@@ -47,6 +47,38 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 	return m.gitEnv(ctx, dir, nil, args...)
 }
 
+// remoteGit is a git command that talks to r's remote: with r's credential,
+// when its URL carried one, and — for a user alone that the remote refused as
+// a token — once more with that user for the owner's own helpers to answer
+// (credential.userEnv).
+func (m *Manager) remoteGit(ctx context.Context, dir string, r remote, args ...string) (string, error) {
+	out, err := m.gitEnv(ctx, dir, r.cred.env(r.url), args...)
+	if err != nil && r.cred != nil && r.cred.userOnly && authRefused(err) {
+		return m.gitEnv(ctx, dir, r.cred.userEnv(r.url), args...)
+	}
+	return out, err
+}
+
+// authRefusals are git's words, under LC_ALL=C, for a remote that would not
+// take the credential it was offered or asked for one nobody could give.
+var authRefusals = []string{
+	"Authentication failed", "could not read Username", "could not read Password",
+	"terminal prompts disabled", "returned error: 401", "returned error: 403",
+}
+
+func authRefused(err error) bool {
+	var ge *gitError
+	if !errors.As(err, &ge) {
+		return false
+	}
+	for _, s := range authRefusals {
+		if strings.Contains(ge.msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // gitEnv is git with env added after gitEnv: a source's credential, for the
 // commands that talk to its remote and no others.
 func (m *Manager) gitEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
