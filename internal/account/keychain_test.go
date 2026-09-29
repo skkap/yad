@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/skkap/yad/internal/shellword"
 	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
@@ -197,13 +199,20 @@ func TestAKeychainThatRefusesKeepsTheHome(t *testing.T) {
 	if !strings.Contains(err.Error(), "home is kept") || !strings.Contains(err.Error(), "User interaction is not allowed") {
 		t.Errorf("the error does not say what is kept and why: %v", err)
 	}
-	cmds := shellwordtest.Commands(err.Error(), "security ")
+	cmds := printedDeletes(t, err)
 	if len(cmds) != 2 {
 		t.Fatalf("the error names %d commands, want one per item: %v", len(cmds), err)
 	}
-	for i, service := range KeychainServices(home) {
-		shellwordtest.Check(t, cmds[i], "security", "delete-generic-password", "-s", service, "-a", "owner")
+	// Pasted into a shell, each deletes its item: the fake is what the
+	// printed path names here, as /usr/bin/security is on a Mac.
+	t.Setenv("ACCOUNT_TEST_SECURITY", "found")
+	for _, cmd := range cmds {
+		runInSh(t, cmd)
 	}
+	if want := deletes("owner", KeychainServices(home)...); !sameCalls(calls(), want) {
+		t.Errorf("the printed commands did not run as %q", want)
+	}
+	t.Setenv("ACCOUNT_TEST_SECURITY", "locked")
 	if n := setAside(t, data, "claude", "work"); n != 1 {
 		t.Errorf("%d copies of the home are set aside, want the one kept", n)
 	}
@@ -254,7 +263,7 @@ func TestANewHomeStartsWithNoKeychainLogin(t *testing.T) {
 // there would run on it.
 func TestALeftoverThatCannotGoStopsTheHome(t *testing.T) {
 	t.Setenv("USER", "owner")
-	useFakeSecurity(t, "locked")
+	calls := useFakeSecurity(t, "locked")
 	data := t.TempDir()
 	_, _, err := Prepare(data, "claude", "work")
 	var kerr *KeychainError
@@ -264,11 +273,18 @@ func TestALeftoverThatCannotGoStopsTheHome(t *testing.T) {
 	if !strings.Contains(err.Error(), "not made") {
 		t.Errorf("the error does not say the home was not made: %v", err)
 	}
-	for _, cmd := range shellwordtest.Commands(err.Error(), "security ") {
-		argv := shellwordtest.Run(t, cmd, "security")
-		if len(argv) != 1 || len(argv[0]) != 6 || argv[0][1] != "delete-generic-password" {
-			t.Errorf("%s does not run as one delete: %q", cmd, argv)
-		}
+	cmds := printedDeletes(t, err)
+	if len(cmds) != 2 {
+		t.Fatalf("the error names %d commands, want one per item: %v", len(cmds), err)
+	}
+	calls()
+	t.Setenv("ACCOUNT_TEST_SECURITY", "found")
+	for _, cmd := range cmds {
+		runInSh(t, cmd)
+	}
+	home := HomeDir(data, "claude", "work")
+	if want := deletes("owner", KeychainServices(home)...); !sameCalls(calls(), want) {
+		t.Errorf("the printed commands did not run as %q", want)
 	}
 	if _, err := os.Lstat(HomeDir(data, "claude", "work")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the home was made anyway: %v", err)
@@ -326,6 +342,41 @@ func TestOnlyClaudeOnAMacHasAKeychainLogin(t *testing.T) {
 	if got := calls(); len(got) > 0 {
 		t.Errorf("off macOS the Keychain was asked: %q", got)
 	}
+}
+
+// printedDeletes are the commands an error prints for deleting a Keychain
+// item by hand: each set apart in backticks and starting with the program
+// the runner itself runs.
+func printedDeletes(t *testing.T, err error) []string {
+	t.Helper()
+	return shellwordtest.Commands(err.Error(), shellword.Quote(security)+" ")
+}
+
+// runInSh runs a printed command the way an owner pasting it would, through
+// a real sh, in this test's environment — where the program it names is the
+// fake, which records the argv it was given.
+func runInSh(t *testing.T, line string) {
+	t.Helper()
+	if out, err := exec.Command("/bin/sh", "-c", line).CombinedOutput(); err != nil {
+		t.Errorf("sh -c %s: %v\n%s", line, err, out)
+	}
+}
+
+// What is printed names the program by the path the runner runs, not by a
+// name the owner's PATH would resolve: on a Mac, /usr/bin/security.
+func TestThePrintedDeleteNamesTheProgramByItsPath(t *testing.T) {
+	argv := deleteArgv("Claude Code-credentials-2130e35f", "owner")
+	if argv[0] != "/usr/bin/security" {
+		t.Errorf("the delete runs and prints %q, want /usr/bin/security", argv[0])
+	}
+	line := shellword.Command(argv...)
+	if !strings.HasPrefix(line, "/usr/bin/security ") {
+		t.Fatalf("printed as %s", line)
+	}
+	// The stubs sh runs are functions, which cannot carry a path in their
+	// name; the rest of the line is what is checked.
+	shellwordtest.Check(t, "security"+strings.TrimPrefix(line, "/usr/bin/security"),
+		"security", "delete-generic-password", "-s", "Claude Code-credentials-2130e35f", "-a", "owner")
 }
 
 func setAside(t *testing.T, data, harness, label string) int {

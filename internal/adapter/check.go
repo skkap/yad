@@ -25,13 +25,17 @@ func (s Spec) YadCommand(args ...string) string {
 // knows it is.
 func (s Spec) HarnessCheck(harness string, args ...string) string {
 	cmd := shellword.Command(append([]string{harness}, args...)...)
-	if s.Home == "" || s.HomeVar == "" {
+	if s.Home == "" || len(s.HomeVars) == 0 {
 		return "`" + cmd + "`"
 	}
 	account := "the run's account"
 	if s.Account != "" {
 		account = "account " + shellword.Quote(s.Account)
 	}
-	return "`" + s.HomeVar + "=" + shellword.Quote("<home>") + " " + cmd + "`, with <home> the HOME `" +
+	var prefix string
+	for _, v := range s.HomeVars {
+		prefix += v + "=" + shellword.Quote("<home>") + " "
+	}
+	return "`" + prefix + cmd + "`, with <home> the HOME `" +
 		s.YadCommand("account", "list") + "` shows for " + account
 }

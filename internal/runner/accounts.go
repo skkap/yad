@@ -205,7 +205,7 @@ func (a *Accounts) release(h *accountHold) {
 		return
 	}
 	if err := errors.Join(asideErr, account.RemoveSetAside(a.data, h.ref.Harness, h.ref.Label)); err != nil {
-		log.Warn("the last run on a removed account has ended and its home could not be deleted", "err", err)
+		log.Warn("the last run on a removed account has ended and its home could not be deleted; the daemon's next start tries again", "err", err)
 		return
 	}
 	log.Info("the last run on a removed account has ended; its home is deleted")
@@ -268,6 +268,28 @@ func (a *Accounts) attach(ctx context.Context, st *store.Store) {
 	}
 	for _, r := range gone {
 		a.log().Info("forgot the state of an account config.toml no longer lists", "harness", r.Harness, "account", r.Label)
+	}
+	a.finishRemovals()
+}
+
+// finishRemovals completes every removal that stopped half-way: a home set
+// aside and not deleted, and on macOS the Keychain login that went with it
+// (decision 0069). Nothing else comes back to one. Its label is out of
+// config.toml, so no report names the account and a hub that asked for the
+// removal has stopped asking; the owner's own `yad account remove` again is
+// the one other way it is finished.
+func (a *Accounts) finishRemovals() {
+	refs, err := account.Unfinished(a.data)
+	if err != nil {
+		a.log().Warn("could not look for account homes a removal left behind; the next start looks again", "err", err)
+	}
+	for _, r := range refs {
+		log := a.log().With("harness", r.Harness, "account", r.Label)
+		if err := account.RemoveSetAside(a.data, r.Harness, r.Label); err != nil {
+			log.Warn("a removed account's home, set aside by a removal that did not finish, could not be deleted; the next start tries again", "err", err)
+			continue
+		}
+		log.Info("finished removing an account whose removal had stopped half-way")
 	}
 }
 
@@ -424,6 +446,13 @@ func (a *Accounts) Remove(ctx context.Context, p config.Paths, r account.Ref) (r
 		return Changed{}, false, err
 	}
 	if !inFile && !a.Lists().Has(r) {
+		// Already removed, but perhaps not finished: a repeat is the hub's
+		// way to try again, and the one it has.
+		if refs, err := account.Unfinished(a.data); err == nil && slices.Contains(refs, r) {
+			if err := account.RemoveSetAside(a.data, r.Harness, r.Label); err != nil {
+				return Changed{}, false, fmt.Errorf("%s account %q is removed, and its home could not be deleted: %w", r.Harness, r.Label, err)
+			}
+		}
 		return Changed{}, false, nil
 	}
 	res, err = a.reread(ctx, p, r, true)

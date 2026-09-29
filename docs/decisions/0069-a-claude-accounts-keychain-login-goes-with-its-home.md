@@ -54,11 +54,15 @@ free.
 - **The Keychain goes first.** If `security` fails for any other reason — a
   locked Keychain, say — the set-aside home is kept. The error names the
   cause and gives each `security` command that deletes an item by hand,
-  built with `shellword.Command`. The next removal of the label tries both
-  again: `yad account remove` on a label `config.toml` no longer lists is a
-  no-op there and still finishes the rest. A home and its Keychain login go
-  together or not at all. `config.toml` has already changed by then, by
-  design (0043), so no new run takes the account meanwhile.
+  built with `shellword.Command` and naming `/usr/bin/security` by its path,
+  as it is run. A home and its Keychain login go together or not at all.
+  `config.toml` has already changed by then, by design (0043), so no new
+  run takes the account meanwhile, and no report names it either, so a hub
+  that asked stops asking. Three things finish it: `yad account remove`
+  again (a no-op on `config.toml`, which still finishes the rest), a hub
+  repeating the removal, and the daemon's next start, which finishes every
+  home a removal left set aside (`account.Unfinished`). Deleting the items by
+  hand and letting the next start delete the set-aside home is the fourth.
 - **A new home starts with no Keychain login.** `account.Prepare`, which
   `Ensure` is, runs every time a home is made where there was none. On macOS
   it deletes any Claude item for that path before the directory exists: a
@@ -96,7 +100,10 @@ free.
   and it applies unchanged. With accounts, the value appended is the path
   already in `CLAUDE_CONFIG_DIR`, so the Keychain name and the file location
   are exactly what they were without it, and existing logins are untouched.
-  A claude older than the variable ignores it.
+  A claude older than the variable ignores it. Every command yad prints for
+  an account's login — a check in an error, a next action in health —
+  carries both variables (`account.HomeVars`), because in a shell that
+  exports the second, one naming only the home asks about another login.
 
 ## Considered options
 

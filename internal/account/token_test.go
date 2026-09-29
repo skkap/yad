@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
 // A stored token reaches the account's runs as CLAUDE_CODE_OAUTH_TOKEN, after
@@ -34,10 +36,17 @@ func TestATokenAccountHandsItsTokenToItsRuns(t *testing.T) {
 	if got := Env("claude", home); !slices.Equal(got, want) {
 		t.Errorf("Env = %q, want %q", got, want)
 	}
-	// The command yad prints for this account never carries the token.
-	if s := suggest("claude", "/bin/claude", home, []string{"auth", "status"}); strings.Contains(s, "not-a-real-token") {
+	// The command yad prints for this account never carries the token, and
+	// carries both variables that point claude at the account's login: in a
+	// shell that exports CLAUDE_SECURESTORAGE_CONFIG_DIR, one naming only the
+	// home would ask about another login (decision 0069).
+	s := suggest("claude", "claude", home, []string{"auth", "status"})
+	if strings.Contains(s, "not-a-real-token") {
 		t.Errorf("the suggested command carries the token: %s", s)
 	}
+	shellwordtest.CheckEnv(t, s, map[string]string{
+		"CLAUDE_CONFIG_DIR": home, "CLAUDE_SECURESTORAGE_CONFIG_DIR": home, "CLAUDE_CODE_OAUTH_TOKEN": "",
+	}, "claude", "auth", "status")
 	// Codex takes no token: its home is all its runs are given.
 	if got := Env("codex", home); len(got) != 1 {
 		t.Errorf("codex was handed %q", got)

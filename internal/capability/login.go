@@ -112,9 +112,11 @@ func command(d harness.Detected, args []string) string {
 }
 
 func homePrefix(id string) string {
-	v := account.HomeVar(id)
-	if v == "" || os.Getenv(v) == "" {
-		return ""
+	var prefix string
+	for _, v := range account.HomeVars(id) {
+		if os.Getenv(v) != "" {
+			prefix += v + "=" + shellword.Quote("<runner "+v+">") + " "
+		}
 	}
-	return v + "=" + shellword.Quote("<runner "+v+">") + " "
+	return prefix
 }

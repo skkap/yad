@@ -245,6 +245,22 @@ func TranscriptDir(data, harness string) string {
 // names it; empty for a harness with no home of its own.
 func HomeVar(harness string) string { return homeVar[harness] }
 
+// HomeVars are every variable an account sets to its home: the home variable
+// first, then where the harness keeps its login when that is not the home
+// (storageVar). A command yad prints for an account names all of them — one
+// that named only the first would, in a shell that exports the second, ask
+// about a login the account's runs never use.
+func HomeVars(harness string) []string {
+	v, ok := homeVar[harness]
+	if !ok {
+		return nil
+	}
+	if sv, ok := storageVar[harness]; ok {
+		return []string{v, sv}
+	}
+	return []string{v}
+}
+
 // Env is what points a harness at an account, ready to append to a child's
 // environment: the variable naming the account's home, first, then the one
 // naming where its login is kept, set to the same home (storageVar), and for
@@ -554,6 +570,45 @@ func RemoveSetAside(data, harness, label string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// Unfinished is every account with a home set aside for deletion and not yet
+// deleted, in a stable order: a removal whose delete failed — a Keychain that
+// would not let go of its login (decision 0069), a disk error — or whose
+// process died. The daemon finishes each at start (RemoveSetAside), since
+// nothing else would: the label is out of config.toml, so no report names it
+// and no hub asks about it again.
+func Unfinished(data string) ([]Ref, error) {
+	root := filepath.Join(data, "accounts")
+	harnesses, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []Ref
+	for _, h := range harnesses {
+		if !h.IsDir() || config.ValidName(h.Name()) != nil {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(root, h.Name()))
+		if err != nil {
+			return out, err
+		}
+		for _, e := range entries {
+			rest, ok := strings.CutPrefix(e.Name(), ".")
+			if !ok {
+				continue
+			}
+			label, _, ok := strings.Cut(rest, ".removed-")
+			r := Ref{Harness: h.Name(), Label: label}
+			if ok && config.ValidName(label) == nil && !slices.Contains(out, r) {
+				out = append(out, r)
+			}
+		}
+	}
+	return out, nil
 }
 
 // checkNames guards the two strings that become path elements under

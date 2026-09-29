@@ -141,7 +141,7 @@ func forgetKeychain(harness, home string, leftover bool) (forgot []string, err e
 		gone, cause := deleteKeychainItem(service, account)
 		switch {
 		case cause != "":
-			failed = append(failed, shellword.Command("security", "delete-generic-password", "-s", service, "-a", account))
+			failed = append(failed, shellword.Command(deleteArgv(service, account)...))
 			causes = append(causes, cause)
 		case gone:
 			forgot = append(forgot, service)
@@ -153,12 +153,20 @@ func forgetKeychain(harness, home string, leftover bool) (forgot []string, err e
 	return forgot, nil
 }
 
+// deleteArgv is one delete, as it is run and as it is printed for the owner
+// to run by hand: the same absolute path in both, since the owner's shell is
+// the one whose PATH could put another `security` first.
+func deleteArgv(service, account string) []string {
+	return []string{security, "delete-generic-password", "-s", service, "-a", account}
+}
+
 // deleteKeychainItem runs one delete. gone is whether an item was there and
 // is not now; cause is why it could not be done, empty when it was.
 func deleteKeychainItem(service, account string) (gone bool, cause string) {
 	ctx, cancel := context.WithTimeout(context.Background(), securityTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, security, "delete-generic-password", "-s", service, "-a", account)
+	argv := deleteArgv(service, account)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	// No stdin: security must not stop to ask at the terminal of whoever
 	// ran yad. Nothing it prints for a delete is a secret — the password is
 	// printed only when asked for with -g or -w, which this never passes.

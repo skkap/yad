@@ -59,12 +59,13 @@ type Spec struct {
 	// in the right home. Empty when the owner configured no accounts for the
 	// harness, whose runs use the harness's own default home.
 	Home string
-	// HomeVar is the variable that points the harness at Home, and Account
-	// the label of the account it belongs to; both empty with no account.
-	// Only a next action uses them: a check pasted without the variable
-	// answers about another login.
-	HomeVar string
-	Account string
+	// HomeVars are the variables that point the harness at Home — its home
+	// and, for Claude, where it keeps its login — and Account the label of
+	// the account it belongs to; both empty with no account. Only a next
+	// action uses them: a check pasted without them answers about another
+	// login.
+	HomeVars []string
+	Account  string
 	// Yad builds a yad command for this runner, carrying its profile; nil
 	// builds a bare one. A function rather than the profile, so no adapter
 	// knows how a runner names its profile on a command line.
