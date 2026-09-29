@@ -226,7 +226,7 @@ components:
             - file
           type: string
         name:
-          description: "An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH or HOME, nor a name beginning LD_ or DYLD_, nor one that picks a harness's credential or home — the whole list: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_PROFILE, ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_CONFIG_DIR, CLAUDE_CONFIG_DIR, ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS, any name beginning CLAUDE_CODE_USE_, CODEX_HOME, OPENAI_API_KEY, CODEX_API_KEY, CODEX_ACCESS_TOKEN, OPENAI_BASE_URL, CODEX_REFRESH_TOKEN_URL_OVERRIDE and AWS_BEARER_TOKEN_BEDROCK, whatever the run's harness. Every name is matched in any case. No two grants may share a name, and no two file grants may differ only by case."
+          description: "An environment variable name, [A-Za-z_][A-Za-z0-9_]*, which is also the file name for a file grant. Not PATH or HOME, nor a name beginning LD_ or DYLD_, nor one that picks a harness's credential or home — the whole list: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_PROFILE, ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_CONFIG_DIR, CLAUDE_CONFIG_DIR, CLAUDE_SECURESTORAGE_CONFIG_DIR, ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS, any name beginning CLAUDE_CODE_USE_, CODEX_HOME, OPENAI_API_KEY, CODEX_API_KEY, CODEX_ACCESS_TOKEN, OPENAI_BASE_URL, CODEX_REFRESH_TOKEN_URL_OVERRIDE and AWS_BEARER_TOKEN_BEDROCK, whatever the run's harness. Every name is matched in any case. No two grants may share a name, and no two file grants may differ only by case."
           type: string
         value:
           description: The secret. Never logged or shown; a hub should keep it only until the run is terminal.
@@ -650,7 +650,7 @@ components:
       additionalProperties: true
       properties:
         fork_from:
-          description: "With new true: start the session as a fork of this one — its conversation begins as a copy of that session's, which goes on unchanged. Refused with 404 if the hub has no such session, and with 409 if it is closed or closing, of another harness, not yet claimed by any runner (fork it once one of its runs has started), or on a runner that does not advertise the fork feature. The fork runs on that session's runner, in a workdir of its own built from this run's sources."
+          description: "With new true: start the session as a fork of this one — its conversation begins as a copy of that session's, which goes on unchanged. Refused with 404 if the hub has no such session, and with 409 if it is closed or closing, of another harness, not yet claimed by any runner (fork it once one of its runs has started), or on a runner that does not advertise the fork feature for its harness. The fork runs on that session's runner, in a workdir of its own built from this run's sources."
           type: string
         id:
           description: The session id.
@@ -701,7 +701,7 @@ components:
         brief:
           $ref: "#/components/schemas/Brief"
         effort:
-          description: "How hard the harness thinks, in its own terms, such as low or high: at most 64 letters, digits, - and _, or the run is refused. Offered only to a runner advertising the effort feature. Absent: the harness's default."
+          description: "How hard the harness thinks, in its own terms, such as low or high: at most 64 letters, digits, - and _, or the run is refused. Offered only to a runner advertising the effort feature for the run's harness. Absent: the harness's default."
           type: string
         grants:
           description: Secrets for this run alone. Sent to the runner with the run, never returned by this API, and blanked in the hub's store once the run is terminal.

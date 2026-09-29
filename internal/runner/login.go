@@ -573,9 +573,17 @@ func (m *Logins) claim(l *hubLogin) (home string, release func(), err error) {
 		}
 		m.Accounts.release(hold)
 	}
-	if home, err = account.Ensure(m.Data, l.ref.Harness, l.ref.Label); err != nil {
+	var cleared []string
+	if home, cleared, err = account.Prepare(m.Data, l.ref.Harness, l.ref.Label); err != nil {
 		release()
 		return "", nil, err
+	}
+	// The owner is not at a terminal to be told, as `yad account add` tells
+	// them; the log is where they find out why a label they had before asks
+	// for a login again (decision 0070).
+	if len(cleared) > 0 {
+		m.Log.Info("a login claude kept in the macOS Keychain for this account's path, from an account removed before, is deleted; the account starts logged out",
+			"harness", l.ref.Harness, "account", l.ref.Label, "keychain_items", cleared)
 	}
 	return home, release, nil
 }

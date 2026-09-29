@@ -1,5 +1,5 @@
 ---
-status: amended by 0054 — a Claude account may be a `claude setup-token` token yad stores in its home
+status: amended by 0054 — a Claude account may be a `claude setup-token` token yad stores in its home — and by 0070, since on macOS Claude keeps a home's login in the Keychain and not in the home
 date: 2026-09-19
 ---
 

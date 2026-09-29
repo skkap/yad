@@ -318,14 +318,18 @@ var gated = []v1.ControlKind{v1.ControlDrain, v1.ControlCloseSession, v1.Control
 func checkControlsAreGated(_ context.Context, s *session) error {
 	for _, seen := range s.syncs {
 		for _, c := range seen.res.Controls {
+			if c.Kind == v1.ControlSteer || c.Kind == v1.ControlInterrupt {
+				return brokenf("answering %s the hub sent a %q control, which goes only to a runner advertising %q for the harness of the run it names; this one advertises harness_features, so that harness's own list is the answer, and the list is empty — the runner-wide %q beside it is not the answer",
+					seen.call, c.Kind, gatedBy(c.Kind), gatedBy(c.Kind))
+			}
 			if slices.Contains(gated, c.Kind) {
-				return brokenf("answering %s the hub sent a %q control, which goes only to a runner whose capability document advertises %q; this one advertises no protocol feature at all",
+				return brokenf("answering %s the hub sent a %q control, which goes only to a runner whose capability document advertises %q; this one advertises none of the runner's own features",
 					seen.call, c.Kind, gatedBy(c.Kind))
 			}
 			// Whatever the kind: add is decision 0057's, and a runner without
 			// accounts would drop the field and log in a label it does not list.
 			if c.Add {
-				return brokenf("answering %s the hub sent a %q control carrying add, which goes only to a runner whose capability document advertises \"accounts\"; this one advertises no protocol feature at all",
+				return brokenf("answering %s the hub sent a %q control carrying add, which goes only to a runner whose capability document advertises \"accounts\"; this one does not",
 					seen.call, c.Kind)
 			}
 		}

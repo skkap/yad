@@ -17,7 +17,7 @@ func TestExitWithoutResultChecksTheAccountsLogin(t *testing.T) {
 	h := &harness{fixture: derive(t, "plain", func(l []string) []string { return l[:indexOf(l, "result")] })}
 	spec := h.spec(t)
 	spec.Home = "/Users/owner/.local/share/yad/accounts/claude/work"
-	spec.HomeVar, spec.Account = "CLAUDE_CONFIG_DIR", "work"
+	spec.HomeVars, spec.Account = []string{"CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"}, "work"
 	spec.Yad = func(args ...string) string {
 		return shellword.Command(append([]string{"yad", "--profile", "side"}, args...)...)
 	}
@@ -33,7 +33,7 @@ func TestExitWithoutResultChecksTheAccountsLogin(t *testing.T) {
 	if len(check) != 1 {
 		t.Fatalf("want one claude command in %q", msg)
 	}
-	shellwordtest.CheckEnv(t, check[0], map[string]string{"CLAUDE_CONFIG_DIR": "<home>"}, "claude", "-p", "hello")
+	shellwordtest.CheckEnv(t, check[0], map[string]string{"CLAUDE_CONFIG_DIR": "<home>", "CLAUDE_SECURESTORAGE_CONFIG_DIR": "<home>"}, "claude", "-p", "hello")
 	list := shellwordtest.Commands(msg, "yad ")
 	if len(list) != 1 {
 		t.Fatalf("want the yad command that shows the home in %q", msg)

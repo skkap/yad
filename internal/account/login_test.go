@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,9 @@ import (
 // ACCOUNT_TEST_LOGIN_FAILS makes the login exit non-zero having written
 // nothing, which is the owner walking away from it.
 func TestMain(m *testing.M) {
+	if mode := os.Getenv("ACCOUNT_TEST_SECURITY"); mode != "" {
+		os.Exit(fakeSecurity(mode, os.Args[1:]))
+	}
 	if h := os.Getenv("ACCOUNT_TEST_HARNESS"); h != "" {
 		os.Exit(fakeHarness(h, os.Args[1:]))
 	}
@@ -506,7 +510,7 @@ func TestALoginBesideATokenIsJudgedWithoutIt(t *testing.T) {
 	if err := SetToken(home, "sk-ant-oat01-stored"); err != nil {
 		t.Fatal(err)
 	}
-	if env := LoginEnv("claude", home); len(env) != 1 || strings.HasPrefix(env[0], tokenVar+"=") {
+	if env := LoginEnv("claude", home); len(env) == 0 || slices.ContainsFunc(env, isToken) {
 		t.Errorf("the login's environment is %v, want the home and no token", env)
 	}
 	for _, tc := range []struct {

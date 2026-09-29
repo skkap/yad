@@ -694,7 +694,7 @@ func (l *Loop) removeAccount(ctx context.Context, c v1.Control) {
 	case err != nil:
 		// Repeated by the hub until the runner's reports leave the account out, so the
 		// next sync tries again.
-		log.Warn("the hub asked to remove an account, and it could not be removed; its next ask tries again", "err", err)
+		log.Warn("the hub asked to remove an account, and it could not be removed; a repeat from the hub tries again, and so does the daemon's next start", "err", err)
 	case removed:
 		log.Info("the hub removed the account", "runs_still_on_it", len(res.Runs))
 		if l.AccountsChanged != nil {

@@ -166,7 +166,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 					return err
 				}
 			}
-			controls, err := deliver(ctx, q, run.ID, doc, described)
+			controls, err := deliver(ctx, q, run.ID, run.Harness, doc, described)
 			if err != nil {
 				return err
 			}
@@ -448,7 +448,11 @@ func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) 
 	// run would succeed with nothing saying so (decision 0049). On a fleet
 	// that advertises none the run stays queued, which is the honest answer.
 	// An undescribed runner is offered none, for the reason above.
-	takesEffort := described && advertises(doc, capability.FeatureEffort)
+	//
+	// Effort and fork are the harness's to have (decision 0069), so both are
+	// asked of the run's harness: RunMayUse reads its own list when the runner
+	// sends one, and the runner-wide string when it does not.
+	takesEffort := func(h string) bool { return described && capability.RunMayUse(doc, h, capability.FeatureEffort) }
 	// A run opening a session with a source on the machine goes only to a
 	// runner whose owner has not switched those off: that runner would fail
 	// it source_refused, where another may take it (decision 0062). A run in
@@ -463,15 +467,15 @@ func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) 
 	// conversation and answer as if it had the history (decision 0065). The
 	// run waits, as it can go nowhere else. An undescribed runner is offered
 	// none, for the reason above.
-	forks := described && advertises(doc, capability.FeatureFork)
+	forks := func(h string) bool { return described && capability.RunMayUse(doc, h, capability.FeatureFork) }
 	return func(run v1.Run) bool {
 		if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
 			return false
 		}
-		if run.Effort != "" && !takesEffort {
+		if run.Effort != "" && !takesEffort(run.Harness) {
 			return false
 		}
-		if run.Session.ForkFrom != "" && !forks {
+		if run.Session.ForkFrom != "" && !forks(run.Harness) {
 			return false
 		}
 		return !run.Session.New || takesLocal || !slices.ContainsFunc(run.Sources, onTheMachine)

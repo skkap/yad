@@ -15,8 +15,6 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/account"
-	"github.com/skkap/yad/internal/adapter/claude"
-	"github.com/skkap/yad/internal/adapter/codex"
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/config"
@@ -260,7 +258,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			Paths: g.paths, Config: cfg, Accounts: lists, RunnerID: id, Capabilities: current,
 			// The catalog decides what is advertised; an adapter here with a
 			// harness still recognised there is never offered a run.
-			Adapters: runner.NewRegistry(claude.Adapter{}, codex.Adapter{}),
+			Adapters: runner.NewRegistry(capability.Adapters()...),
 			Drain:    drain,
 			Log:      log,
 			ScrubLog: logf.Scrub,
