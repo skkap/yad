@@ -46,7 +46,7 @@ func (e *env) removable(t *testing.T, l *Loop, x *Exec, d *Drain) *server {
 	sv := e.server(l, x, d, time.Hour)
 	sv.paths, sv.monitor, sv.grace = e.paths, NewMonitor(), time.Minute
 	sv.configured = map[string]bool{l.Connection: true}
-	sv.sessions.Configured = func(conn string) bool { return sv.configured[conn] && !sv.isRemoved(conn) }
+	sv.sessions.Configured = func(conn string) bool { return sv.configured[conn] && !sv.isRetired(conn) }
 	sv.sessions.Holds = x.Holds
 	x.Ended = sv.sessions.Wake
 	return sv

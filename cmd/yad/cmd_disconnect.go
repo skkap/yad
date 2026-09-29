@@ -70,7 +70,11 @@ func cmdDisconnect(ctx context.Context, g global, args []string, w io.Writer) er
 	if *now {
 		reason += ", stopping the runs it had in progress"
 	}
-	d, err := runner.Disconnect(ctx, g.paths, name, *force, reason)
+	var carry []string
+	if *now {
+		carry = append(carry, "--now")
+	}
+	d, err := runner.Disconnect(ctx, g.paths, name, *force, reason, carry...)
 	var nc *runner.NotConnectedError
 	if errors.As(err, &nc) {
 		return disconnectLeftover(ctx, g, nc, again, w)

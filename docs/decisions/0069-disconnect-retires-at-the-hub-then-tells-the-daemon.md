@@ -51,6 +51,11 @@ is the only end it can record, and the daemon cancels the runs a moment later
 with their results going nowhere. So `--now` lifts the refusal rather than
 adding a step before the hub.
 
+The refusal is read before the hub call and is not atomic with it: a run the
+daemon claims in the moment between is recorded lost by the hub and stopped
+here as if `--now` had been given. Holding claims off for that moment would
+need the daemon told before the hub — the two-stage shape this replaces.
+
 **Every connection the owner removed is ended, by whichever of three ways
 comes first.** The collector ends what the store holds of any connection
 `config.toml` no longer lists — the daemon's copy from its start, less the

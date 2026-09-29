@@ -799,7 +799,8 @@ for `codex`); the suite never runs a real harness.
   ([0069](docs/decisions/0069-disconnect-retires-at-the-hub-then-tells-the-daemon.md)).
   A missing last-used timestamp is unknown, never ancient: the TTL counts from
   the sweep that first sees it. Every close goes to the session's hub in
-  `closed_sessions`.
+  `closed_sessions`, but for those of a removed connection, which has no hub
+  left to hear it.
 
 ### Accounts and usage limits
 

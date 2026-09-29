@@ -171,6 +171,11 @@ func (s *server) remove(ctx context.Context, conn string) (Removal, error) {
 // finishRemoval is what follows a removed connection's loop stopping, however
 // it stopped.
 func (s *server) finishRemoval(ctx context.Context, conn string, out Removal) (Removal, error) {
+	s.mu.Lock()
+	if s.retired != nil {
+		s.retired[conn] = true
+	}
+	s.mu.Unlock()
 	if s.exec != nil {
 		out.Stopped = s.exec.CancelConnection(conn, removedReason(conn))
 	}
@@ -280,6 +285,14 @@ func (s *server) toldWithin(ctx context.Context, conn string, d time.Duration) b
 		}
 	}
 	return true
+}
+
+// isRetired says whether a removed connection's loop has stopped, so that
+// what it left may be ended.
+func (s *server) isRetired(conn string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retired[conn]
 }
 
 // isRemoved says whether the owner removed the connection while this daemon

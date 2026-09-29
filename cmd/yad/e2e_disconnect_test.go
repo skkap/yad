@@ -255,6 +255,17 @@ func TestE2EDisconnectWithTheHubUnreachable(t *testing.T) {
 	if _, ok := m.credential(); !ok {
 		t.Error("the credential is gone with the hub never told")
 	}
+	// Every retry repeats the flags it was given: one without --now would
+	// refuse on the runs the first was told to stop.
+	code, _, errs = m.p.yad("", "disconnect", "home", "--now")
+	if code != 1 {
+		t.Fatalf("exit %d: %s", code, errs)
+	}
+	shellwordtest.CheckEnv(t, onlyCommand(t, errs, "yad --profile default disconnect home --now --force"), dirsEnv(t),
+		"yad", "--profile", "default", "disconnect", "home", "--now", "--force")
+	if !strings.Contains(errs, "disconnect home --now` again") {
+		t.Errorf("the retry drops --now: %s", errs)
+	}
 
 	m.cut.Store(nil)
 	if m.retired(cred) {

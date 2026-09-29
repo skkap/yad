@@ -137,7 +137,7 @@ func Serve(ctx context.Context, o Options) error {
 	// Read at the daemon's start and changed only by a removal: a connection
 	// added to config.toml since is one this daemon never synced, and has
 	// nothing here to end.
-	sessions.Configured = func(conn string) bool { return sv.configured[conn] && !sv.isRemoved(conn) }
+	sessions.Configured = func(conn string) bool { return sv.configured[conn] && !sv.isRetired(conn) }
 	sv.probe = &LoginProbe{Store: st, Accounts: o.Accounts, Log: o.Log}
 	// Bound to Serve's own context, and closed before the store: a login
 	// that takes writes the account's row as it ends.
@@ -272,8 +272,12 @@ type server struct {
 	// hub a moment before the owner's `yad disconnect` reached the daemon
 	// stopped because of the disconnect, not of a fault.
 	errs []connErr
-	// removed are the connections the owner removed while this daemon ran.
-	removed map[string]bool
+	// removed are the connections the owner removed while this daemon ran,
+	// from the moment the removal is asked for: a loop stopping then is not
+	// failing. retired are those whose loop has since stopped, from when
+	// what they left may be ended — a claim the loop is still withdrawing,
+	// or a start it is making, is not a leftover yet.
+	removed, retired map[string]bool
 	// stops and endedBy are each running loop's stop and end, for a
 	// removal. Set before the control socket can ask for one.
 	stops   map[string]context.CancelFunc
@@ -339,6 +343,9 @@ func (s *server) run(ctx context.Context) error {
 	s.mu.Lock()
 	if s.removed == nil {
 		s.removed = map[string]bool{}
+	}
+	if s.retired == nil {
+		s.retired = map[string]bool{}
 	}
 	s.stops, s.endedBy = map[string]context.CancelFunc{}, map[string]chan struct{}{}
 	s.mu.Unlock()

@@ -78,8 +78,14 @@ func (e *NotConnectedError) Error() string {
 // config.toml goes before the credential file. A failure between the two
 // leaves a credential no connection names, which the next `yad disconnect`
 // of that name deletes; the other order would leave a connection with no
-// credential, which cannot ask the hub whether it is retired.
-func Disconnect(ctx context.Context, p config.Paths, name string, force bool, reason string) (Disconnection, error) {
+// credential, which cannot ask the hub whether it is retired. Each removes
+// only what it read before the hub call: a `yad connect` of the same name made
+// meanwhile is someone's new registration, not this one's leftover.
+//
+// carry are the other flags the command was given, which every retry it
+// prints repeats: a retry that dropped --now would refuse on the runs the
+// first one was told to stop.
+func Disconnect(ctx context.Context, p config.Paths, name string, force bool, reason string, carry ...string) (Disconnection, error) {
 	var out Disconnection
 	if err := config.ValidName(name); err != nil {
 		return out, fmt.Errorf("connection name: %w", err)
@@ -98,8 +104,9 @@ func Disconnect(ctx context.Context, p config.Paths, name string, force bool, re
 	}
 	out.Connection = cfg.Connections[i]
 	shown := config.RedactURL(out.Connection.URL)
-	again := p.Command("disconnect", name)
-	forced := p.Command("disconnect", name, "--force")
+	argv := append([]string{"disconnect", name}, carry...)
+	again := p.Command(argv...)
+	forced := p.Command(append(argv, "--force")...)
 
 	// Each way the hub cannot be asked is refused alike: nothing has been
 	// retired, and the owner decides whether to go on without the hub.
@@ -116,12 +123,13 @@ func Disconnect(ctx context.Context, p config.Paths, name string, force bool, re
 		err = errors.New("this profile has no runner id")
 	}
 	var client *hubclient.Client
+	var cred string
 	if err != nil {
 		err = cannotAsk(fmt.Errorf("the runner's id could not be read (%w)", err))
-	} else if cred, cerr := p.Credential(name); cerr != nil {
-		err = cannotAsk(fmt.Errorf("its credential could not be read (%w)", cerr))
-	} else if client, cerr = hubclient.New(out.Connection.URL, cred); cerr != nil {
-		err = cannotAsk(fmt.Errorf("its URL is not one a runner calls (%w)", cerr))
+	} else if cred, err = p.Credential(name); err != nil {
+		err = cannotAsk(fmt.Errorf("its credential could not be read (%w)", err))
+	} else if client, err = hubclient.New(out.Connection.URL, cred); err != nil {
+		err = cannotAsk(fmt.Errorf("its URL is not one a runner calls (%w)", err))
 	}
 	if err != nil {
 		return out, err
@@ -152,9 +160,16 @@ func Disconnect(ctx context.Context, p config.Paths, name string, force bool, re
 	if force {
 		rerun = forced
 	}
+	replaced := false
 	now, err := config.Update(ctx, p, func(c *config.Config) (bool, error) {
 		n := len(c.Connections)
-		c.Connections = slices.DeleteFunc(c.Connections, func(k config.Connection) bool { return k.Name == name })
+		c.Connections = slices.DeleteFunc(c.Connections, func(k config.Connection) bool {
+			if k.Name != name {
+				return false
+			}
+			replaced = k.URL != out.Connection.URL
+			return !replaced
+		})
 		return len(c.Connections) != n, nil
 	})
 	if err != nil {
@@ -162,6 +177,10 @@ func Disconnect(ctx context.Context, p config.Paths, name string, force bool, re
 			out.standing(shown), p.ConfigFile(), err, rerun, out.retry())
 	}
 	out.Remaining = len(now.Connections)
+	if now, err := p.Credential(name); replaced || (cred != "" && err == nil && now != cred) {
+		return out, fmt.Errorf("%s, but %q was connected again while this ran, and the new connection is left as it is — `%s` removes it too",
+			out.standing(shown), name, again)
+	}
 	if err := p.DeleteCredential(name); err != nil {
 		return out, fmt.Errorf("%s, and %q is out of %s, but its credential file %s could not be deleted (%w) — run `%s` again, or delete the file",
 			out.standing(shown), name, p.ConfigFile(), p.CredentialFile(name), err, rerun)
