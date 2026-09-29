@@ -361,8 +361,10 @@ type machine struct {
 	hub     *hub.Hub
 	hubDB   *hubstore.Store
 	service string // the service API's hub URL, always reachable
-	gate    string
-	atGate  string
+	// runnerURL is the hub's URL as the runner dials it, through cut.
+	runnerURL string
+	gate      string
+	atGate    string
 	// cut, while set, picks the runner's requests that are dropped without an
 	// answer, as a lost network drops them.
 	cut     atomic.Pointer[func(*http.Request) bool]
@@ -408,14 +410,14 @@ func newMachine(t *testing.T, h *e2eHarness) *machine {
 		m.hub.ServeHTTP(w, r)
 	}))
 	t.Cleanup(runnerSide.Close)
-	m.service = service.URL
+	m.service, m.runnerURL = service.URL, runnerSide.URL+hub.BasePath
 
 	m.ok("hub", "admin-token", "create")
 	code, tok, errs := m.p.yad("", "hub", "token", "create")
 	if code != 0 {
 		t.Fatalf("hub token create: exit %d: %s", code, errs)
 	}
-	m.ok2(tok, "connect", runnerSide.URL+hub.BasePath, "--token", "-", "--name", "home")
+	m.ok2(tok, "connect", m.runnerURL, "--token", "-", "--name", "home")
 	return m
 }
 

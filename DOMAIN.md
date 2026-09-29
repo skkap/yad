@@ -65,7 +65,15 @@ _See_: [0003](docs/decisions/0003-hub-is-a-role-runner-is-multi-homed.md), `inte
 **Connection** — one runner's standing registration with one hub: the hub URL,
 the runner credential, and the owner's caps for it. A runner has one connection
 per hub and any number of hubs.
-_See_: `internal/config`
+_Rules_: `yad disconnect` ends one in a fixed order: the hub retires the runner
+first — its held runs lost, its sessions there closed — then `config.toml` and
+the credential lose it, then a running daemon lets it go. What a connection
+`config.toml` no longer lists leaves on the runner — sessions, parked runs,
+runs a crash left, reports owed — is ended there: at once when the daemon is
+told, at its loop's next refused sync when it is not, and at the next start
+when no daemon ran. Only the hub's own answer makes a credential dead; one
+that cannot be read here never is.
+_See_: [0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md), `internal/config`, `internal/runner/disconnect.go`
 
 **Registration token** — the one-time, short-lived secret a hub issues so that
 `yad connect` can register a runner. Exchanged once for a **runner credential**,
@@ -234,7 +242,8 @@ or disk pressure — only while no run is held in it, takes no new run after, an
 its hub is told why ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md)).
 When its runner deregisters, the hub closes it on its own and ends the runs
 still queued in it: the session is never handed to another runner, since it is
-resumable only on the one that went.
+resumable only on the one that went. The runner closes it too, as closed by
+the owner, and tells no hub.
 A session may be opened as a **fork** of another on the same runner: its
 conversation starts as the harness's copy of that one's, and the two diverge —
 the one forked goes on untouched. A fork is a session like any other from its

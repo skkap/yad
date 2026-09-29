@@ -19,12 +19,6 @@ func TestUnbuiltCommandsSayWhereTheWorkIs(t *testing.T) {
 		not      []string // none does
 		commands [][]string
 	}{{
-		name:     "disconnect",
-		args:     []string{"disconnect", "work"},
-		want:     []string{"still being designed"},
-		not:      []string{"DEV-", "Zumino"},
-		commands: [][]string{{"daemon", "stop"}},
-	}, {
 		// Which account a run takes is the soonest refill (0039), so the
 		// refusal must not send the owner to reorder a list that decides
 		// nothing but ties.
@@ -63,10 +57,12 @@ func TestUnbuiltCommandsSayWhereTheWorkIs(t *testing.T) {
 	}
 }
 
-// The help lists both, and no longer promises an epic for either.
+// The help lists disconnect as a command it has, account use as one that does
+// not exist, and promises an epic for neither.
 func TestHelpDoesNotPromiseAnEpic(t *testing.T) {
 	code, out, _ := yad(t, "help")
-	if code != 0 || strings.Contains(out, "which epic") || !strings.Contains(out, "disconnect · account use") {
+	if code != 0 || strings.Contains(out, "which epic") || strings.Contains(out, "not built") ||
+		!strings.Contains(out, "disconnect <name> [--now] [--force]") || !strings.Contains(out, "account use         does not exist") {
 		t.Errorf("exit %d:\n%s", code, out)
 	}
 }

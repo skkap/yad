@@ -806,11 +806,16 @@ for `codex`); the suite never runs a real harness.
   and frees its slots — which retries a removal that failed and touches
   nothing outside `<data>/workdirs`.
   The collector runs whether or not any hub is connected: the disk is the
-  machine's, and a hub disconnected while no daemon ran leaves sessions no
-  hub will ever close.
+  machine's. It also ends what the store holds of a connection `config.toml`
+  no longer lists — its runs no process holds end `lost`, its sessions close
+  as closed by the owner and are reported to nobody, and what it owed its hub
+  is dropped — so a hub disconnected while no daemon ran, or while the daemon
+  was not told, leaves nothing behind
+  ([0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md)).
   A missing last-used timestamp is unknown, never ancient: the TTL counts from
   the sweep that first sees it. Every close goes to the session's hub in
-  `closed_sessions`.
+  `closed_sessions`, but for those of a removed connection, which has no hub
+  left to hear it.
 
 ### Accounts and usage limits
 
@@ -1183,7 +1188,8 @@ daemon's log files in that transaction too, through `logfile.File.Scrub`). The d
 writer: the CLI opens it read-only, and a change the CLI makes goes through the
 control socket
 ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md),
-[0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md)).
+[0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md),
+[0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md)).
 
 ### `hub.db`
 
@@ -1216,9 +1222,15 @@ yad doctor                         what is installed, what YAD can drive, and wh
 yad harnesses [--json]             the capability document, as a hub receives it but for
                                    the accounts feature, added per connection (0057)
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
-yad disconnect <name>              not built: its coordination with a running
-                                   daemon is being designed (DEV-81); it refuses
-                                   and says so
+yad disconnect <name> [--now] [--force]
+                                   the hub retires the runner, config.toml and the
+                                   credential lose the connection, then a running
+                                   daemon lets it go live — its loop stops, its runs
+                                   are cancelled, its sessions close — or the next
+                                   start ends what it left (0072). Refuses while its
+                                   runs are in progress; --now goes on and the hub
+                                   records them lost; --force goes on past a hub
+                                   that cannot be asked or will not agree
 yad daemon start|stop|restart|status|logs [-f] [-n N]
                                    the runner process
 yad status [--json]                connections, capacity, runs, sessions and recent

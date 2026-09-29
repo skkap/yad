@@ -107,6 +107,21 @@ func WriteSecret(path, secret string) error {
 	return writePrivate(path, []byte(secret+"\n"))
 }
 
+// CredentialFile is where a connection's credential is kept, for a message
+// that has to name the file.
+func (p Paths) CredentialFile(connection string) string { return p.credentialPath(connection) }
+
+// HasCredentialFile says whether anything is at a connection's credential
+// path, readable or not. It tells a credential file left behind from none at
+// all; whether it can be read is Credential's question.
+func (p Paths) HasCredentialFile(connection string) (bool, error) {
+	_, err := os.Lstat(p.credentialPath(connection))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // DeleteCredential forgets a connection's credential. Missing is not an error.
 func (p Paths) DeleteCredential(connection string) error {
 	err := os.Remove(p.credentialPath(connection))
