@@ -101,6 +101,14 @@ installed on it. That is the truth about the runs it may then be sent — one
 may target OpenCode — and the cost of the other rule, every runner losing
 `steer` whether or not it has OpenCode, was a hub that steers nothing.
 
+One gap is accepted. The strings describe the harnesses drivable now, so a
+harness that stops being drivable while a run on it is live — OpenCode's
+binary gone mid-upgrade — no longer counts, and a hub reading only the
+strings may steer that run. The runner answers with an `error` event, class
+`steer_failed`, and the run goes on. Counting the harnesses with live runs
+as well would close it, at the price of the document depending on the
+runner's run state; one failed steer in that window was judged not worth it.
+
 The conformance suite's document is unchanged, and still a probe: a yad
 runner's runner-wide strings still only name what every harness it can drive
 lists, with OpenCode or without it, which a test in `internal/conformance`

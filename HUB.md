@@ -1092,7 +1092,11 @@ harness on the runner takes none. Adding, removing or breaking a harness
 moves the harness reports and the fingerprint, and the runner-wide strings
 with them whenever it changes what every drivable harness shares, so a hub
 that re-reads the document when the fingerprint moves always has the two in
-agreement. Without `harness_features`, the runner-wide
+agreement. The strings describe the harnesses drivable now: one that stops
+being drivable while a run on it is live — its binary gone mid-upgrade — no
+longer counts, so a hub going by the strings alone may send that run a
+`steer` its harness cannot take. The runner answers it with an `error` event
+of class `steer_failed`; the run goes on. Without `harness_features`, the runner-wide
 strings are the answer for every harness
 ([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).
 
