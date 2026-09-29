@@ -36,7 +36,8 @@ import (
 // with CLAUDE_TEST_EXIT; "died" exits 1 at once with something on stderr;
 // "linger" ignores the closed stdin and SIGTERM, as a wedged claude would;
 // "mute" closes stdout and then lingers the same way; "die-on-interrupt"
-// keeps working until an interrupt arrives, then exits without answering it;
+// keeps working until an interrupt arrives, then exits without answering it,
+// and "died-when-asked" is the same for a Claude asked for its models;
 // "deaf" never takes the interrupt at all, and dies only by signal.
 // fakeHelp is `claude --help` for the flags probe: "current" lists
 // --system-prompt-snapshot as 2.1.276 onwards do, "old" is a Claude from
@@ -205,8 +206,9 @@ func fakeClaude() {
 	case "linger":
 		signal.Ignore(syscall.SIGTERM)
 		time.Sleep(time.Hour)
-	case "die-on-interrupt":
-		// Still working, until an interrupt arrives — then gone, unanswered.
+	case "die-on-interrupt", "died-when-asked":
+		// Still working, until an interrupt or any other control request
+		// arrives — then gone, unanswered.
 		awaitString(controls)
 		os.Exit(1)
 	case "mute":

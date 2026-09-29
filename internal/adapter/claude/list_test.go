@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/skkap/yad/internal/adapter"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // modelsFixture is the list_models answer recorded from a real login.
@@ -98,7 +99,15 @@ func TestListModelsKeepsOnlyWhatTheLoginRuns(t *testing.T) {
 
 // A Claude that cannot answer is an error, in yad's words; the caller reports
 // its own fallback instead, and nothing Claude said travels.
+//
+// One that died before answering is one error, whether it was gone before
+// the request was written or went after reading it, so the capability
+// document and doctor say the same thing whichever order the OS picked
+// (DEV-149). "died" leaves the order to the OS; the two after it fix it, and
+// check that the order they name is the one that happened.
 func TestListModelsFailures(t *testing.T) {
+	const died = "claude ended its output without listing its models"
+	startup := []string{`{"type":"system","subtype":"init"}`}
 	for _, tc := range []struct {
 		name  string
 		lines []string
@@ -107,19 +116,35 @@ func TestListModelsFailures(t *testing.T) {
 		// kind is what the caller words its reason by (DEV-146); nil is a
 		// Claude that ended before it answered, which wraps none.
 		kind error
+		// exitFirst holds the request until Claude has exited.
+		exitFirst bool
+		// asked is how many list_models requests Claude read; -1 is either.
+		asked int
 	}{
 		{"refused", []string{`{"type":"control_response","response":{"subtype":"error","request_id":"yad-list-models","error":"Unsupported control request subtype: list_models at /Users/someone"}}`},
-			nil, "refused list_models", adapter.ErrModelsRefused},
-		{"nothing listed", []string{answer(`{"value":"claude-x","disabled":true}`)}, nil, "listed no models", adapter.ErrModelsUnread},
-		{"died", []string{`{"type":"system","subtype":"init"}`}, map[string]string{"CLAUDE_TEST_MODE": "died"}, "without listing", nil},
+			nil, "refused list_models", adapter.ErrModelsRefused, false, 1},
+		{"nothing listed", []string{answer(`{"value":"claude-x","disabled":true}`)}, nil, "listed no models", adapter.ErrModelsUnread, false, 1},
+		{"died", startup, map[string]string{"CLAUDE_TEST_MODE": "died"}, died, nil, false, -1},
+		{"died before it was asked", startup, map[string]string{"CLAUDE_TEST_MODE": "died"}, died, nil, true, 0},
+		{"died when asked", startup, map[string]string{"CLAUDE_TEST_MODE": "died-when-asked"}, died, nil, false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _, err := list(t, fixtureOf(t, tc.lines...), tc.env, 20*time.Second)
+			if tc.exitFirst {
+				beforeModelsAsked = func(p *supervise.Process) { <-p.Done() }
+				t.Cleanup(func() { beforeModelsAsked = nil })
+			}
+			got, s, err := list(t, fixtureOf(t, tc.lines...), tc.env, 20*time.Second)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("models %v, err %v; want an error saying %q", got, err, tc.want)
 			}
+			if tc.want == died && err.Error() != died {
+				t.Errorf("err %q, want exactly %q", err, died)
+			}
 			if strings.Contains(err.Error(), "someone") {
 				t.Errorf("the error quotes Claude: %v", err)
+			}
+			if n := len(s.frames("control_request")); tc.asked >= 0 && n != tc.asked {
+				t.Errorf("claude read %d list_models requests, want %d", n, tc.asked)
 			}
 			for _, k := range []error{adapter.ErrModelsNoStart, adapter.ErrModelsRefused, adapter.ErrModelsUnread} {
 				if got, want := errors.Is(err, k), k == tc.kind; got != want {

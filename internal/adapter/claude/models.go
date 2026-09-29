@@ -46,6 +46,11 @@ const modelsRequestID = requestPrefix + "list-models"
 // stopped.
 var modelsExitGrace = 3 * time.Second
 
+// beforeModelsAsked, set only by tests, runs between Claude's start and the
+// list_models request, so a test can have Claude exit first — the order the
+// OS picks only sometimes.
+var beforeModelsAsked func(*supervise.Process)
+
 // maxModels bounds what one login reports. Claude lists about a dozen; the
 // bound keeps a strange answer from growing every capability document.
 const maxModels = 64
@@ -99,9 +104,15 @@ func listModels(ctx context.Context, bin, dir string, env []string, raw io.Write
 		"type": "control_request", "request_id": modelsRequestID,
 		"request": map[string]string{"subtype": "list_models"},
 	})
-	if _, err := p.Stdin().Write(append(req, '\n')); err != nil {
-		return nil, fmt.Errorf("claude closed its input before it was asked for its models: %w", err)
+	if beforeModelsAsked != nil {
+		beforeModelsAsked(p)
 	}
+	// A write that fails is a Claude already gone, and one gone a moment
+	// later is found by the reader instead; which of the two comes first is
+	// the OS's choice. The reader decides both, from the end of Claude's
+	// output, so a Claude that died says the same thing either way (DEV-149)
+	// — and one that closed its input yet lives on is given up on with ctx.
+	_, _ = p.Stdin().Write(append(req, '\n'))
 	select {
 	case a := <-answer:
 		return a.models, a.err
