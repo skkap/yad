@@ -109,7 +109,8 @@ func (c *Collector) expireWaits(ctx context.Context, now time.Time) error {
 
 // Collector closes sessions and reclaims their workdirs: on the hub's
 // close_session, the owner's `yad sessions close`, the idle TTL, and disk
-// pressure (decisions 0011 and 0035). A session with a run held — claimed,
+// pressure (decisions 0011 and 0035), and the removal of its connection
+// (decision 0069). A session with a run held — claimed,
 // preparing, running, or waiting on a usage limit or its start time — is
 // never closed: its workdir is in use. The close is recorded first, in one
 // statement that also checks that, and the workdir is removed after, by the
@@ -148,6 +149,16 @@ type Collector struct {
 	// clause of "may I start work now?" belongs to the sync loop, and a
 	// sweep that only ever writes a terminal result has none of them.
 	Runs Executor
+	// Configured says whether the owner's configuration still lists a
+	// connection. What the store holds of one it does not list is ended at
+	// every sweep (EndConnection), since no loop of its will ever settle it.
+	// Nil ends nothing.
+	Configured func(connection string) bool
+	// Holds says whether a process of this runner has the run in hand. A
+	// removed connection's run in hand has been cancelled and ends on its
+	// own; ending its row under it would be a second terminal state. Nil
+	// holds none.
+	Holds func(connection, run string) bool
 	// DiskFree measures the free space at a path; nil is statfs.
 	DiskFree func(path string) (int64, error)
 	Clock    Clock
@@ -296,7 +307,8 @@ func (c *Collector) Sweep(ctx context.Context) error {
 	} else if n > 0 {
 		c.Log.Warn("sessions with no last-used time; their idle time counts from now", "sessions", n)
 	}
-	var errs []error
+	// First, so what it closes is reclaimed by this same sweep.
+	errs := []error{c.endRemoved(ctx)}
 	asked, err := c.Store.SessionsCloseRequested(ctx)
 	if err != nil {
 		return err

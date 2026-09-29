@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -343,6 +344,37 @@ func (e *Exec) CancelAll(reason string) {
 			e.Log.Warn("the runner is cancelling the run on its way down", "connection", k.connection, "run", k.run, "reason", reason)
 		}
 	}
+}
+
+// CancelConnection cancels every run in hand of one connection, as CancelAll
+// cancels every run, and returns them: the connection was removed, and its
+// hub has already recorded them lost.
+func (e *Exec) CancelConnection(connection, reason string) []string {
+	e.init()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := time.Now()
+	var ids []string
+	for k, a := range e.active {
+		if k.connection != connection {
+			continue
+		}
+		ids = append(ids, k.run)
+		if first, _ := a.stopBy(now, true, reason); first {
+			e.Log.Warn("the runner is cancelling the run: its connection was removed", "connection", k.connection, "run", k.run)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// Holds says whether the run is in hand here: started and not yet ended.
+func (e *Exec) Holds(connection, run string) bool {
+	e.init()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, ok := e.active[runKey{connection, run}]
+	return ok
 }
 
 // Control receives the hub's instructions for runs. It only hands them over —

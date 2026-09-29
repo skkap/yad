@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"sync"
 	"time"
 
@@ -225,6 +226,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				}
 				return control.AccountResult{State: string(res.State), Runs: res.Runs}, nil
 			},
+			ConnectionRemoved: func(ctx context.Context, conn string) (control.ConnectionRemoval, error) {
+				return removeConnection(ctx, g.paths, monitor, conn)
+			},
 		})
 	}()
 	defer func() {
@@ -291,6 +295,30 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 		doc = next
 		mu.Unlock()
 	}
+}
+
+// removeConnection is the daemon's half of `yad disconnect` (decision 0069).
+// It acts only on a connection config.toml no longer lists, read as the file
+// is now: the CLI removes the entry once the hub has let the runner go, and
+// asks after. A request for one still listed is refused, so nothing can make
+// a daemon drop a connection its owner still has configured.
+func removeConnection(ctx context.Context, p config.Paths, m *runner.Monitor, conn string) (control.ConnectionRemoval, error) {
+	if err := config.ValidName(conn); err != nil {
+		return control.ConnectionRemoval{}, fmt.Errorf("connection name: %w", err)
+	}
+	cfg, err := config.Load(p)
+	if err != nil {
+		return control.ConnectionRemoval{}, err
+	}
+	if slices.ContainsFunc(cfg.Connections, func(c config.Connection) bool { return c.Name == conn }) {
+		return control.ConnectionRemoval{}, fmt.Errorf("config.toml still lists connection %q, so the daemon keeps it — `%s` retires it at its hub and removes it", conn, p.Command("disconnect", conn))
+	}
+	r, err := m.RemoveConnection(ctx, conn)
+	if err != nil {
+		return control.ConnectionRemoval{}, err
+	}
+	return control.ConnectionRemoval{Known: r.Known, Already: r.Already, Stopped: r.Stopped, Ended: r.Ended,
+		Closed: r.Closed, Closing: r.Closing, Remaining: r.Remaining}, nil
 }
 
 // modelsNoted is the reason the daemon last logged for each login, by harness
@@ -369,6 +397,11 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		st.Capacity = control.Capacity{Total: snap.Capacity.Total, Free: snap.Capacity.Free}
 	}
 	for _, c := range cfg.Connections {
+		if snap.Removed[c.Name] {
+			// The daemon's copy of config.toml is from its start; the
+			// owner has removed this one since.
+			continue
+		}
 		cs, ok := snap.Connections[c.Name]
 		if !ok {
 			cs.State = runner.ConnStarting

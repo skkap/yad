@@ -34,10 +34,17 @@ const (
 // only then answers, so the CLI can say what happened rather than what will.
 const OpAccountsChanged = "accounts_changed"
 
+// OpConnectionRemoved is `yad disconnect` telling the daemon that config.toml
+// no longer lists a connection, whose hub has already been told (decision
+// 0069). The daemon stops that connection's loop, cancels its runs in hand
+// and ends what it leaves here, and answers once it has.
+const OpConnectionRemoved = "connection_removed"
+
 // Request is what the CLI asks.
 type Request struct {
-	Op string `json:"op"` // "status", OpStop, OpConfirm, "close_session" or OpAccountsChanged
-	// Connection and Session name the session to close.
+	Op string `json:"op"` // "status", OpStop, OpConfirm, "close_session", OpAccountsChanged or OpConnectionRemoved
+	// Connection and Session name the session to close; Connection alone
+	// names the connection removed.
 	Connection string `json:"connection,omitempty"`
 	Session    string `json:"session,omitempty"`
 	// Account is the account an OpAccountsChanged is about.
@@ -83,10 +90,33 @@ type Response struct {
 	Closed *SessionClose `json:"closed,omitempty"`
 	// Account is what the daemon did with an OpAccountsChanged.
 	Account *AccountResult `json:"account,omitempty"`
+	// Removed is what the daemon did with an OpConnectionRemoved.
+	Removed *ConnectionRemoval `json:"removed,omitempty"`
 	// Confirm is the daemon holding a stop until the CLI confirms it. A stop
 	// answered without it came from a daemon older than the exchange, which
 	// acted on the request alone.
 	Confirm bool `json:"confirm,omitempty"`
+}
+
+// ConnectionRemoval is what the daemon did with a connection the owner
+// removed.
+type ConnectionRemoval struct {
+	// Known is whether the daemon started with the connection configured;
+	// one connected since was never synced by it.
+	Known bool `json:"known"`
+	// Already is a connection the daemon had removed before: an earlier
+	// request, or its loop finding the hub refused the credential.
+	Already bool `json:"already,omitempty"`
+	// Stopped are the runs in hand it cancelled; Ended the runs held with
+	// no process — parked, or left by an earlier process — it ended.
+	Stopped []string `json:"stopped,omitempty"`
+	Ended   []string `json:"ended,omitempty"`
+	// Closed are the connection's sessions closed now, and Closing those
+	// that close once the run in them ends. Their workdirs go after.
+	Closed  int `json:"closed"`
+	Closing int `json:"closing"`
+	// Remaining is how many connections the daemon still syncs.
+	Remaining int `json:"remaining"`
 }
 
 // SessionClose is what `yad sessions close` did.

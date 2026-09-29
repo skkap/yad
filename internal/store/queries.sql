@@ -386,3 +386,40 @@ WHERE instr(body, sqlc.arg(old)) > 0 OR instr(last_error, sqlc.arg(old)) > 0;
 -- one under the old name is freed with its session.
 -- name: RenameSlotsRepo :exec
 UPDATE OR IGNORE slots SET repo = sqlc.arg(new_repo) WHERE repo = sqlc.arg(old_repo);
+
+-- A removed connection's leftovers (DEV-81): every connection this store still
+-- holds something of that a connection's own loop would otherwise settle -- an
+-- open session, a close its hub has not heard of, a run held, a result or an
+-- event owed. The collector ends those of a connection config.toml no longer
+-- lists, since no loop of theirs will ever run again.
+-- name: ConnectionsWithLeftovers :many
+SELECT connection FROM sessions WHERE state = 'open' OR reported_at IS NULL
+UNION SELECT connection FROM runs WHERE state IN ('claimed', 'preparing', 'running', 'waiting')
+UNION SELECT connection FROM outbox
+UNION SELECT connection FROM events WHERE acked = 0
+ORDER BY connection;
+
+-- name: OpenSessionsOf :many
+SELECT * FROM sessions WHERE connection = ? AND state = 'open' ORDER BY id;
+
+-- A run of a removed connection that no process holds: its hub has let it go
+-- (deregister marks it lost), so it ends here as lost too, with its wait
+-- ended in the same statement, and nothing owed for it -- nobody is left to
+-- tell.
+-- name: EndRemovedRun :execrows
+UPDATE runs SET state = 'lost', reason = sqlc.arg(reason), resumes_at = NULL,
+  waited_ms = waited_ms + MAX(sqlc.arg(now) - COALESCE(waiting_since, sqlc.arg(now)), 0),
+  waiting_since = NULL, updated_at = sqlc.arg(now)
+WHERE connection = sqlc.arg(connection) AND id = sqlc.arg(id)
+  AND state IN ('claimed', 'preparing', 'running', 'waiting');
+
+-- No hub will hear these closes: the connection they would go to is gone.
+-- name: SetConnectionSessionsReported :exec
+UPDATE sessions SET reported_at = sqlc.arg(now)
+WHERE connection = sqlc.arg(connection) AND state != 'open' AND reported_at IS NULL;
+
+-- name: DropConnectionOutbox :exec
+DELETE FROM outbox WHERE connection = ?;
+
+-- name: DropConnectionEvents :exec
+UPDATE events SET acked = 1 WHERE connection = ? AND acked = 0;

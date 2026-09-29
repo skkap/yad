@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -60,12 +61,21 @@ type Options struct {
 // capacity pool and one executor, each with its reporter delivering events and
 // results. A connection whose loop stops — its credential was refused, say —
 // stops alone; the others carry on, and Serve reports it when it returns.
+// A connection the owner removes — `yad disconnect` telling the daemon over
+// the control socket, or its hub refusing a credential config.toml no longer
+// names — stops alone too, and what it leaves here is ended (decision 0069).
 //
-// Serve returns when every connection has stopped, when a drain has run its
-// course, or when ctx ends. A runner with no connection configured has none to
-// stop: it collects until it is drained or ctx ends. The end of ctx is the way down's last step, exit
+// Serve returns when a drain has run its course, when ctx ends, or when every
+// connection has stopped on its own — a fault the owner has to fix, not a
+// removal. A runner with no connection left to sync, because none was
+// configured or every one was removed, collects until it is drained or ctx
+// ends. The end of ctx is the way down's last step, exit
 // now: runs in hand are killed where they stand and stay held, for the next
 // start to report lost.
+//
+// What the store holds of a connection config.toml does not list is ended by
+// the collector's first sweep: the leftovers of a `yad disconnect` made while
+// no daemon ran.
 //
 // The capacity pool is shared round-robin (decision 0005): each sync takes
 // the free units its connection's turn gives it, under the owner's cap on
@@ -80,10 +90,10 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	sweepGrants(o.Paths.Data, o.Log)
 	// A runner with no connection still opens its store and runs the
-	// collector: reclaiming disk and expiring what is left over belong to
-	// the machine, not to a hub. The sessions and parked runs of a hub the
-	// owner disconnected while no daemon ran are on this disk, and no hub
-	// will come back to close them.
+	// collector: reclaiming disk and ending what is left over belong to the
+	// machine, not to a hub. The sessions and parked runs of a hub the owner
+	// disconnected while no daemon ran are on this disk, and no hub will
+	// come back to close them.
 	st, err := store.Open(ctx, o.Paths.StateDB())
 	if err != nil {
 		return err
@@ -120,7 +130,14 @@ func Serve(ctx context.Context, o Options) error {
 
 	sv := &server{drain: o.Drain, wait: o.Config.Drain.Wait.Duration, store: st, pool: pool,
 		log: o.Log, monitor: o.Monitor, sessions: sessions, reporters: map[string]*Reporter{},
-		hubless: len(o.Config.Connections) == 0}
+		hubless: len(o.Config.Connections) == 0, paths: o.Paths, configured: map[string]bool{}, grace: removalGrace}
+	for _, conn := range o.Config.Connections {
+		sv.configured[conn.Name] = true
+	}
+	// Read at the daemon's start and changed only by a removal: a connection
+	// added to config.toml since is one this daemon never synced, and has
+	// nothing here to end.
+	sessions.Configured = func(conn string) bool { return sv.configured[conn] && !sv.isRemoved(conn) }
 	sv.probe = &LoginProbe{Store: st, Accounts: o.Accounts, Log: o.Log}
 	// Bound to Serve's own context, and closed before the store: a login
 	// that takes writes the account's row as it ends.
@@ -146,6 +163,7 @@ func Serve(ctx context.Context, o Options) error {
 		Ended: sessions.Wake,
 	}
 	sessions.Runs = sv.exec
+	sessions.Holds = sv.exec.Holds
 	var executor Executor
 	if o.Adapters != nil {
 		executor = sv.exec
@@ -239,9 +257,38 @@ type server struct {
 	// what it was asked for, not every connection having stopped: it keeps
 	// collecting until it is told to go.
 	hubless bool
+	// paths is the profile, whose config.toml a refused loop reads to learn
+	// whether its connection was removed. Zero never reads it.
+	paths config.Paths
+	// configured are the connections this daemon started with. Written
+	// before any goroutine starts, and only read after.
+	configured map[string]bool
+	// grace is removalGrace, or what a test waits instead.
+	grace time.Duration
 
-	mu   sync.Mutex
-	errs []error
+	mu sync.Mutex
+	// errs are the connections that stopped on a fault, in the order they
+	// stopped. A removal takes its connection's out: a loop refused by the
+	// hub a moment before the owner's `yad disconnect` reached the daemon
+	// stopped because of the disconnect, not of a fault.
+	errs []connErr
+	// removed are the connections the owner removed while this daemon ran.
+	removed map[string]bool
+	// stops and endedBy are each running loop's stop and end, for a
+	// removal. Set before the control socket can ask for one.
+	stops   map[string]context.CancelFunc
+	endedBy map[string]chan struct{}
+}
+
+// connErr is one connection that stopped on a fault.
+type connErr struct {
+	conn string
+	err  error
+}
+
+// forget drops what a connection's stop recorded. s.mu is held.
+func (s *server) forget(conn string) {
+	s.errs = slices.DeleteFunc(s.errs, func(e connErr) bool { return e.conn == conn })
 }
 
 // fail records a connection that stopped, and says so now: the others keep
@@ -254,7 +301,7 @@ func (s *server) fail(conn string, err error) {
 	s.monitor.failed(conn, err, time.Now(), ConnStopped)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.errs = append(s.errs, fmt.Errorf("connection %s: %w", conn, err))
+	s.errs = append(s.errs, connErr{conn, fmt.Errorf("connection %s: %w", conn, err)})
 }
 
 func (s *server) run(ctx context.Context) error {
@@ -289,9 +336,17 @@ func (s *server) run(ctx context.Context) error {
 	bg.Go(func() { s.probe.Run(lctx) })
 	go func() { bg.Wait(); close(background) }()
 	defer func() { stopLoops(); <-background }()
+	s.mu.Lock()
+	if s.removed == nil {
+		s.removed = map[string]bool{}
+	}
+	s.stops, s.endedBy = map[string]context.CancelFunc{}, map[string]chan struct{}{}
+	s.mu.Unlock()
 	if s.hubless {
 		// Nothing is claimed, so nothing is held and there is no drain to
 		// run: a drain or the end of ctx is simply the end.
+		s.monitor.serveRemovals(s.remove)
+		defer s.monitor.serveRemovals(nil)
 		s.monitor.markReady()
 		select {
 		case <-ctx.Done():
@@ -309,6 +364,11 @@ func (s *server) run(ctx context.Context) error {
 			l.Executor = runsOn{Executor: l.Executor, ctx: ctx}
 		}
 		ended[i] = make(chan struct{})
+		// A loop of its own context, so one the owner removes stops alone.
+		loopCtx, stopLoop := context.WithCancel(lctx)
+		s.mu.Lock()
+		s.stops[l.Connection], s.endedBy[l.Connection] = stopLoop, ended[i]
+		s.mu.Unlock()
 		// A reporter lives as long as its connection's loop: a connection
 		// the owner has to fix delivers nothing, and what it owes stays in
 		// the store for the next start.
@@ -318,11 +378,22 @@ func (s *server) run(ctx context.Context) error {
 			defer stop()
 			defer close(ended[i])
 			defer l.Pool.Pass(l.Connection)
-			if err := l.Run(lctx); err != nil {
+			err := l.Run(loopCtx)
+			switch {
+			case err == nil:
+			case s.goneFromConfig(ctx, l.Connection, err):
+				s.removedByHub(ctx, l.Connection, err)
+			case !s.isRemoved(l.Connection):
 				s.fail(l.Connection, err)
 			}
+			// A loop the owner's removal stopped, or that stopped in the
+			// moment before it arrived, leaves the rest to the removal.
 		})
 	}
+	// Once every loop's stop is known, and no sooner: a removal asked
+	// before would find no loop to stop and leave it syncing.
+	s.monitor.serveRemovals(s.remove)
+	defer s.monitor.serveRemovals(nil)
 	// Ready once the store is open and a loop is running: a runner whose
 	// every connection failed to start is never ready.
 	if len(s.loops) > 0 {
@@ -333,8 +404,20 @@ func (s *server) run(ctx context.Context) error {
 
 	select {
 	case <-stopped:
-		// Every connection stopped on its own: nothing left to sync with,
-		// and the runs in hand still answer the ladder on their way to an end.
+		if s.onlyRemoved() {
+			// The owner removed every connection: nothing is wrong, and
+			// the runner goes on as one started with none, collecting —
+			// the workdirs of the sessions just closed among what it
+			// reclaims — until it is told to go.
+			s.log.Info("no connection left to sync; collecting until stopped")
+			select {
+			case <-ctx.Done():
+			case <-s.drain.Draining():
+			}
+		}
+		// Otherwise every connection stopped on its own: nothing left to
+		// sync with, and the runs in hand still answer the ladder on their
+		// way to an end.
 	case <-ctx.Done():
 	case <-s.drain.Draining():
 	}
@@ -353,7 +436,11 @@ func (s *server) run(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return errors.Join(s.errs...)
+	errs := make([]error, 0, len(s.errs))
+	for _, e := range s.errs {
+		errs = append(errs, e.err)
+	}
+	return errors.Join(errs...)
 }
 
 // runsOn starts runs on the server's context rather than the calling loop's.

@@ -233,10 +233,9 @@ after an upgrade, are in [docs/install.md](docs/install.md#run-it-as-a-service).
 Everything above works today. **No release has been tagged yet**, so until the
 first one the install script has nothing to fetch — build from source.
 
-Not built yet: `yad disconnect`, so a runner cannot yet leave a hub on its own;
-live sessions, which would keep one harness process across runs (reserved in
-the protocol); and adapters for Gemini CLI, GitHub Copilot CLI, OpenCode and
-Cursor Agent, which `yad doctor` recognises but will not run.
+Not built yet: live sessions, which would keep one harness process across runs
+(reserved in the protocol); and adapters for Gemini CLI, GitHub Copilot CLI,
+OpenCode and Cursor Agent, which `yad doctor` recognises but will not run.
 
 ## Documentation
 
