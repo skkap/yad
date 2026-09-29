@@ -157,6 +157,68 @@ func TestRemovingAConnectionStopsItAloneWhileAnotherCarriesOn(t *testing.T) {
 	}
 }
 
+// A connection whose loop had already stopped on a fault — its credential
+// refused while config.toml still listed it — is removed like any other: what
+// it left is ended, and the fault it recorded no longer counts (DEV-81 review
+// round 3: the removal used to wait for a retirement nothing would make).
+func TestRemovingAConnectionThatHadStoppedOnAFault(t *testing.T) {
+	e := newEnv(t)
+	l := e.loop(t, 2)
+	l.Clock = shortClock{}
+	x := e.executor(fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}))
+	d := NewDrain()
+	sv := e.removable(t, l, x, d)
+	sv.grace = 100 * time.Millisecond
+	quiet := &quietHub{}
+	other := &Loop{Connection: "other", RunnerID: l.RunnerID, Hub: quiet, Store: e.store, Pool: l.Pool,
+		Capabilities: l.Capabilities, Executor: x, Drain: d, Clock: shortClock{}}
+	otherRep := NewReporter("other", quiet, e.store, sv.log)
+	other.ClaimAfter = otherRep.Replayed()
+	sv.loops = append(sv.loops, other)
+	sv.reporters["other"] = otherRep
+	sv.configured["other"] = true
+	e.enqueue(t, testRun("a", "s1"))
+	ctx := context.Background()
+	done := make(chan error, 1)
+	go func() { done <- sv.run(ctx) }()
+	eventually(t, "the hub has the run's result", func() bool { return e.hubState(t, "a") == string(v1.RunSucceeded) })
+
+	e.deregister(t, l.RunnerID)
+	eventually(t, "the refused connection has stopped on a fault", func() bool {
+		sv.mu.Lock()
+		defer sv.mu.Unlock()
+		return len(sv.errs) == 1
+	})
+	if err := config.Save(e.paths, config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	r, err := sv.monitor.RemoveConnection(ctx, "hub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Closed != 1 || r.Remaining != 1 {
+		t.Errorf("removal %+v, want its session closed and one connection left", r)
+	}
+	if s := session(t, e, "s1"); s.State != "closed" {
+		t.Errorf("the session is %s", s.State)
+	}
+	sv.mu.Lock()
+	faults := len(sv.errs)
+	sv.mu.Unlock()
+	if faults != 0 {
+		t.Errorf("%d fault(s) still recorded for a connection the owner removed", faults)
+	}
+	d.Begin("test")
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("the drain returned %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the drain never finished")
+	}
+}
+
 // A runner whose every connection the owner removed is not a runner whose
 // every connection failed: it stays up, collecting, as one started with none
 // does, and goes cleanly when asked (finding 4 of the parked branch: the

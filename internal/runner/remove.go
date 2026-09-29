@@ -171,8 +171,14 @@ func (s *server) remove(ctx context.Context, conn string) (Removal, error) {
 		return out, fmt.Errorf("the connection's sync loop did not stop in time (%w); what it left here is ended once it has", ctx.Err())
 	}
 	s.mu.Lock()
-	done := s.retirements[conn]
+	done, retired := s.retirements[conn]
 	s.mu.Unlock()
+	if !retired {
+		// The loop had stopped before the removal was asked — on a fault,
+		// or just past its goroutine's look — so nothing retired it, and
+		// with the loop stopped it is safe to do here.
+		return s.finishRemoval(ctx, conn, out)
+	}
 	done.Removal.Known, done.Removal.Already = out.Known, out.Already
 	return done.Removal, done.err
 }

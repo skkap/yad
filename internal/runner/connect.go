@@ -163,16 +163,24 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 // not ended yet (decision 0069). The store keys everything by connection
 // name, so a new hub under that name would inherit them — its reporter would
 // send the old hub's events to the new one. Checked before the token is
-// spent, from the database read-only; a database that is not there holds
-// nothing, and one this binary cannot read does not stop a registration.
+// spent, from the database read-only. A database that is not there holds
+// nothing; one that cannot be read is refused rather than guessed about — one
+// migration behind is the usual reason, which a daemon restart mends — since
+// the cost of a wrong guess is one hub's events delivered to another.
 func leftoverName(ctx context.Context, p config.Paths, name string) error {
 	st, err := store.OpenProfile(ctx, p)
-	if err != nil {
+	if errors.Is(err, store.ErrNoState) {
 		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("whether a removed connection left anything under the name %q could not be read (%w), and a new hub under it would inherit it — connect again once it can be, or under another --name", name, err)
 	}
 	defer st.Close()
 	left, err := st.ConnectionsWithLeftovers(ctx)
-	if err != nil || !slices.Contains(left, name) {
+	if err != nil {
+		return fmt.Errorf("whether a removed connection left anything under the name %q could not be read (%w) — connect again, or under another --name", name, err)
+	}
+	if !slices.Contains(left, name) {
 		return nil
 	}
 	return fmt.Errorf("%q was the name of a connection removed from this runner, and what it left here is not ended yet — `%s` ends it when a daemon is running, and `%s` when none is; or connect this hub under another --name",
