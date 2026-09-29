@@ -1343,7 +1343,9 @@ fork should see the same code), bound by its claim.
   copy — 0065's `resume_rejected` end, in words, since a run a hub ends
   carries no class. It does not wait for the source to be bound again: a
   later run there opens a new conversation, not the one the fork was asked of.
-  A fork a claim has bound has its own conversation, and is left alone.
+  A fork a claim has bound has its own conversation, and is left alone —
+  until you unbind it because that claim was withdrawn: then it has none,
+  and if its source can no longer be forked it closes the same way.
 
 **A session whose runner has gone** — deregistered, or silent past your
 abandon-after — is covered in §5: close it and end its queued runs; never hand

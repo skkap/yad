@@ -692,7 +692,28 @@ func unbindWithdrawn(ctx context.Context, q *db.Queries, session, runID, runnerI
 	if err != nil || n == 0 {
 		return err
 	}
-	return endForksOf(ctx, q, session, sourceUnbound(session), now)
+	if err := endForksOf(ctx, q, session, sourceUnbound(session), now); err != nil {
+		return err
+	}
+	// The session unbound may itself be a fork, bound when its source went
+	// unbound or closing and spared then, as a fork with a conversation of
+	// its own. It has none now, and opens only from a source that can still
+	// be forked; one that cannot would leave it offered only to be refused.
+	sess, err := q.GetSession(ctx, session)
+	if err != nil || !sess.ForkFrom.Valid {
+		return err
+	}
+	src, err := q.GetSession(ctx, sess.ForkFrom.String)
+	if err != nil {
+		return err
+	}
+	switch {
+	case src.ClosedAt.Valid || src.CloseRequestedAt.Valid:
+		return closeHere(ctx, q, session, v1.SessionClosed, sourceClosed(src.ID), now)
+	case !src.RunnerID.Valid:
+		return closeHere(ctx, q, session, v1.SessionClosed, sourceUnbound(src.ID), now)
+	}
+	return nil
 }
 
 // holdable is whether a listed run is this runner's: offered to it and not yet

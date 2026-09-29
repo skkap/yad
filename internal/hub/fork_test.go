@@ -124,6 +124,51 @@ func TestAForkWaitingToOpenEndsWhenItsSourceCloses(t *testing.T) {
 	}
 }
 
+// A fork its claim bound is spared when its source is asked to close, since it
+// has a conversation of its own — until that claim is withdrawn and the hub
+// unbinds it. Then it has none, and its source can no longer be forked, so it
+// closes and the run waiting in it ends rather than being offered to a runner
+// that would refuse it (DEV-151).
+func TestAForkUnboundAfterItsSourceClosesEnds(t *testing.T) {
+	f := newFixture(t)
+	cred := f.register(t, "r1")
+	f.held(t, "r1", cred, "a", first("r1", 1))
+	f.enqueue(t, forkRun("c", "s-c", "s-a"))
+	if got := ids(f.mustSync(t, "r1", cred, req("r1", 1, claimed("a")...)).Runs); !slices.Equal(got, []string{"c"}) {
+		t.Fatalf("offered %v, want [c]", got)
+	}
+	f.mustSync(t, "r1", cred, req("r1", 0, claimed("a", "c")...))
+	d := run("d", "s-c")
+	d.Session.New = false
+	f.enqueue(t, d)
+	tok := f.admin(t, "cli")
+	if code, e := f.api(t, "POST", "/sessions/s-a/close", tok, nil, nil); code != http.StatusOK {
+		t.Fatalf("close: %d %+v", code, e)
+	}
+	if s, err := f.store.GetSession(t.Context(), "s-c"); err != nil || s.ClosedAt.Valid {
+		t.Fatalf("the bound fork = %+v, %v; want it open while its claim stands", s, err)
+	}
+	if code, e := f.api(t, "POST", "/runs/c/cancel", tok, nil, nil); code != http.StatusOK {
+		t.Fatalf("cancel: %d %+v", code, e)
+	}
+	// The runner withdraws the claim on hearing the cancel, and leaves it out.
+	f.mustSync(t, "r1", cred, req("r1", 0, claimed("a")...))
+
+	if got := f.state(t, "c"); got != "cancelled" {
+		t.Fatalf("c is %s, want cancelled", got)
+	}
+	if s, err := f.store.GetSession(t.Context(), "s-c"); err != nil || !s.ClosedAt.Valid {
+		t.Errorf("the fork unbound after its source closed = %+v, %v; want it closed", s, err)
+	}
+	r, err := f.store.GetRun(t.Context(), "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.State != string(v1.RunFailed) || !strings.Contains(r.Reason.String, "no conversation to copy") {
+		t.Errorf("the run waiting in it is %s (%q), want failed with nothing to copy", r.State, r.Reason.String)
+	}
+}
+
 // yad hub refuses at submit a fork that could never be offered, each with
 // what to do instead, and queues one that can.
 func TestSubmittingAFork(t *testing.T) {

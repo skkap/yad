@@ -460,8 +460,9 @@ forks, and only while that runner advertises `fork` — it can go nowhere else,
 so it waits; one without the feature would open the session empty
 [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md).
 It waits only while that session can be forked: once it is unbound, closing
-or closed, or its runner has gone, a fork no claim has bound closes and its
-runs end `failed` with nothing to copy (DEV-151). A run
+or closed, a fork no claim has bound closes and its runs end `failed` with
+nothing to copy (DEV-151); once its runner has gone, the fork closes with
+that runner's sessions, and its runs end with the departure's reason. A run
 opening a session with a source on the machine does not go to a runner whose
 document says `path_sources: false`, which would refuse it
 ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)). A runner
