@@ -398,7 +398,7 @@ func TestAGitURLsTokenStaysOutOfTheRun(t *testing.T) {
 	if strings.Contains(err.Error(), "FAKEt0ken") {
 		t.Errorf("the run's error carries the token: %v", err)
 	}
-	if s := ev.statuses(); strings.Contains(s, "FAKEt0ken") || !strings.Contains(s, "fetching https://redacted@example.invalid/acme.git") {
+	if s := ev.statuses(); strings.Contains(s, "FAKEt0ken") || !strings.Contains(s, "fetching https://example.invalid/acme.git") {
 		t.Errorf("status events = %q, want the fetch named without the token", s)
 	}
 

@@ -269,14 +269,17 @@ _Avoid_: prompt, for the whole thing — the prompt is only the instruction
 a question or uses host tools has none.
 _Avoid_: folder source — say path source, or source on the machine for both kinds
 _Rules_: A source is hub input. It reaches the network over https or ssh with
-the machine's own credentials, and the machine itself only inside the roots the
+the machine's own credentials — or with the one an https URL's userinfo
+carries, which is the run's alone, like a grant: taken out of everything
+stored and given to git only in its fetch's environment — and the machine
+itself only inside the roots the
 owner allows — their home directory when they have listed none — and not at all
 when the owner has set `path_sources = false`. A **source on the machine** is a
 path source, or a git source whose URL is a local path or `file://`: the two
 reach the same directories, and the roots and the switch govern both. A session keeps
 the sources its workdir was built from; a run continuing it names the same ones
 or none.
-_See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md), [0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md), `internal/workdir`
+_See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md), [0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md), [0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md), `internal/workdir`
 
 **Workdir** — the directory a session's runs execute in. Owned by the session,
 kept between its runs, reclaimed after it closes. Built from the sources, or

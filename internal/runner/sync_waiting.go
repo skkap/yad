@@ -219,16 +219,17 @@ func (l *Loop) considerWaiting(ctx context.Context, stale db.Run, res *Reservati
 	if !l.due(row, run, now) {
 		return
 	}
-	// The grants are the one thing the row cannot hold. A run that had them
+	// The grants, and a credential a source's URL carried, are what the row
+	// cannot hold (had_grants says either). A run that had them
 	// and is not the one this process parked has lost them for good: it is
 	// reported rather than started, so the failure is a sentence the hub can
 	// act on instead of a harness failing on a missing credential.
 	parked, ours := l.Executor.Parked(l.Connection, row.ID)
 	if !ours {
 		if row.HadGrants != 0 {
-			log.Warn("the run was parked by an earlier process and its grants did not survive; the hub is asked for it again")
+			log.Warn("the run was parked by an earlier process and its grants or source credential did not survive; the hub is asked for it again")
 			l.endWait(ctx, row, v1.RunLost, &v1.RunError{Class: ClassGrantsLost,
-				Message: "this run was waiting for a free account when the runner stopped, and the grants it was given do not survive a restart — offer it again"}, now)
+				Message: "this run was waiting for a free account when the runner stopped, and the grants or the credential in a source's URL it was given do not survive a restart — offer it again"}, now)
 			return
 		}
 		parked = run

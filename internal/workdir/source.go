@@ -37,6 +37,9 @@ type remote struct {
 	// name is the repository's name, WT_REPO, and the start of its cache's
 	// directory name.
 	name string
+	// cred is what an https URL's userinfo carried, taken out of url and key:
+	// a credential for this run alone, like a grant (decision 0068).
+	cred *credential
 }
 
 // helperURL is git's remote-helper syntax, <transport>::<address>. ext:: runs
@@ -44,9 +47,11 @@ type remote struct {
 var helperURL = regexp.MustCompile(`^[A-Za-z0-9+.-]+::`)
 
 // parseRemote checks a git source's URL. https and ssh reach the network with
-// the machine's own credentials (decision 0009); a local repository — a path
-// or file:// — only inside the owner's roots. Everything else is refused:
-// plain http and git:// carry no integrity, and a remote helper is a program.
+// the machine's own credentials (decision 0009), or for https with the one
+// the URL's userinfo carries, which is taken out of the URL git is given and
+// the cache is keyed by (decision 0068); a local repository — a path or
+// file:// — only inside the owner's roots. Everything else is refused: plain
+// http and git:// carry no integrity, and a remote helper is a program.
 func parseRemote(raw string, reach reachFunc) (remote, error) {
 	shown := quotedURL(raw)
 	if err := plain("git.url", raw, shown); err != nil {
@@ -65,15 +70,29 @@ func parseRemote(raw string, reach reachFunc) (remote, error) {
 			return remote{}, fmt.Errorf("git.url %s is not a URL — check it for a character that needs escaping or a port that is not a number", shown)
 		}
 		switch strings.ToLower(u.Scheme) {
-		case "https", "ssh", "git+ssh", "ssh+git":
+		case "https":
+			if err := checkHost(shown, u.Hostname(), ""); err != nil {
+				return remote{}, err
+			}
+			if u.User != nil {
+				cred, err := credentialOf(u)
+				if err != nil {
+					return remote{}, err
+				}
+				r.cred = cred
+				r.url = withoutCredential(raw)
+				r.key = strings.TrimRight(r.url, "/")
+			}
+			r.name = repoName(u.Path)
+		case "ssh", "git+ssh", "ssh+git":
 			if err := checkHost(shown, u.Hostname(), u.User.Username()); err != nil {
 				return remote{}, err
 			}
 			if _, ok := u.User.Password(); ok {
-				// A secret in the URL lands in git's argv, its config and every
-				// error message. The machine's own credentials reach the
-				// repository instead (decision 0009).
-				return remote{}, fmt.Errorf("git.url for %s carries a password; this runner reaches repositories with its own credentials — drop it from the URL", u.Host)
+				// ssh's user is the login name, and ssh takes no password
+				// from a URL: git would put it in argv and the cache's config
+				// for nothing. The machine's key reaches the repository.
+				return remote{}, fmt.Errorf("git.url for %s carries a password, which ssh does not take from a URL — drop it; this runner reaches an ssh repository with its own key, or send an https URL with the credential in it", u.Host)
 			}
 			r.name = repoName(u.Path)
 		case "file":
@@ -117,6 +136,155 @@ func checkHost(shown, host, user string) error {
 		return fmt.Errorf("git.url %s has a host or user beginning with '-', which ssh would read as an option", shown)
 	}
 	return nil
+}
+
+// credential is an https source URL's userinfo: a token as the user, or a user
+// and a password. It is the run's, as a grant is (decision 0009): git is given
+// the URL without it, and it reaches git only in the environment of the run's
+// own commands that talk to the remote (credential.env) — never argv, which
+// every user on the machine can read, and never the cache's config, which
+// outlives the run and which every later run, from any hub, reads (decision
+// 0068).
+type credential struct {
+	user, password string
+	// userOnly is userinfo with no password: a token as the user, or a user's
+	// name alone, which nothing in the URL tells apart (userEnv).
+	userOnly bool
+}
+
+// credentialOf is u's userinfo as git's credential protocol will carry it:
+// one key=value per line, so a line break or other control character — sent
+// as %0A — would be read as a key of its own, a host or a URL git then trusts.
+func credentialOf(u *url.URL) (*credential, error) {
+	pass, hasPassword := u.User.Password()
+	c := &credential{user: u.User.Username(), password: pass, userOnly: !hasPassword}
+	if strings.IndexFunc(c.user+c.password, unicode.IsControl) >= 0 {
+		return nil, fmt.Errorf("git.url for %s carries a credential with a control character in it, which git cannot be handed — send the credential as it is issued", u.Host)
+	}
+	return c, nil
+}
+
+// credentialHelper answers git's "get" with the credential from the two
+// variables beside it and ignores "store" and "erase", so nothing is kept.
+// Fixed text: no hub string is in it, and the values reach the shell only as
+// quoted expansions. printf, not echo, so a value beginning with '-' or holding
+// a backslash is printed as it is.
+const credentialHelper = `!f() { test "$1" = get || { cat >/dev/null; exit 0; }; printf 'username=%s\npassword=%s\n' "$YAD_GIT_USERNAME" "$YAD_GIT_PASSWORD"; }; f`
+
+// env is what a git command that talks to the remote at fetchURL runs with to
+// present the credential: git's own config taken from the environment
+// (GIT_CONFIG_COUNT, git 2.31 and later), which neither argv nor any file
+// holds. Scoped to the remote's scheme, host and port, so a redirect to
+// another host is never handed it. The empty helper first clears every helper
+// the owner's config lists for that host: one of them would otherwise answer
+// before this one, and on success git asks each to store what worked — a
+// keychain would keep the hub's token for good.
+func (c *credential) env(fetchURL string) []string {
+	scope, ok := credentialScope(c, fetchURL)
+	if !ok {
+		return nil
+	}
+	return []string{
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=" + scope + ".helper", "GIT_CONFIG_VALUE_0=",
+		"GIT_CONFIG_KEY_1=" + scope + ".helper", "GIT_CONFIG_VALUE_1=" + credentialHelper,
+		"YAD_GIT_USERNAME=" + c.user, "YAD_GIT_PASSWORD=" + c.password,
+	}
+}
+
+// userEnv is the second try for a URL whose userinfo was a user alone, once
+// the remote has refused it as a token with no password: the user as the
+// name git asks the owner's own helpers for, as git did with the user in the
+// URL. Azure DevOps and Bitbucket put the account's name in the clone URLs
+// they hand out, and a helper such as Git Credential Manager answers for that
+// name. This is exactly how git treated the user in the URL before decision
+// 0068, with its one exposure: a helper of the owner's that answers with a
+// password alone leaves the user as the name, and on success git asks every
+// helper to store that pair — a token as the user included. The first try,
+// with the owner's helpers cleared, is what keeps that to a remote which
+// refused the user as a token. The user reaches git in the environment still,
+// never argv or the cache's config.
+func (c *credential) userEnv(fetchURL string) []string {
+	scope, ok := credentialScope(c, fetchURL)
+	if !ok || !c.userOnly {
+		return nil
+	}
+	return []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=" + scope + ".username", "GIT_CONFIG_VALUE_0=" + c.user}
+}
+
+// credentialScope is the config subsection that holds c for the remote at
+// fetchURL: credential.<scheme>://<host[:port]>.
+func credentialScope(c *credential, fetchURL string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	u, err := url.Parse(fetchURL)
+	if err != nil {
+		return "", false
+	}
+	return "credential." + strings.ToLower(u.Scheme) + "://" + u.Host, true
+}
+
+// withoutCredential is a git URL as it may be stored, keyed by or handed to
+// git: an https URL without its userinfo, an ssh URL without a password —
+// its user is the login name, not a credential. Cut from the string rather
+// than rebuilt by net/url, so nothing else in the URL changes spelling and a
+// URL that does not parse loses its userinfo too. Anything that is not
+// scheme://… comes back as given.
+func withoutCredential(raw string) string {
+	scheme, rest, ok := strings.Cut(raw, "://")
+	if !ok {
+		return raw
+	}
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	at := strings.LastIndex(rest[:end], "@")
+	if at < 0 {
+		return raw
+	}
+	switch strings.ToLower(scheme) {
+	case "ssh", "git+ssh", "ssh+git":
+		user, _, hasPassword := strings.Cut(rest[:at], ":")
+		if !hasPassword {
+			return raw
+		}
+		return scheme + "://" + user + rest[at:]
+	}
+	return scheme + "://" + rest[at+1:]
+}
+
+// StoredSources is a copy of sources as they may be written anywhere — the
+// run's spec and the session's sources in state.db — or compared: every git
+// URL without the credential its userinfo carried (withoutCredential). The
+// credential lives only in the claim, in memory, for the run that was sent it.
+func StoredSources(sources []v1.Source) []v1.Source {
+	if sources == nil {
+		return nil
+	}
+	out := make([]v1.Source, len(sources))
+	for i, s := range sources {
+		out[i] = s
+		if s.Git != nil {
+			g := *s.Git
+			g.URL = withoutCredential(g.URL)
+			out[i].Git = &g
+		}
+	}
+	return out
+}
+
+// CarriesCredential reports whether any git source's URL holds a credential
+// StoredSources takes out: a run that cannot be rebuilt whole from what is
+// stored of it.
+func CarriesCredential(sources []v1.Source) bool {
+	for _, s := range sources {
+		if s.Git != nil && withoutCredential(s.Git.URL) != s.Git.URL {
+			return true
+		}
+	}
+	return false
 }
 
 // localRemote is a repository on this machine, taken only inside a root.

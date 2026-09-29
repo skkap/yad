@@ -1,5 +1,5 @@
 ---
-status: amended by 0038 — with no roots configured, the owner's home directory is the root
+status: amended by 0038 — with no roots configured, the owner's home directory is the root — and by 0068, where an https URL's userinfo is accepted as the run's own credential, taken out of everything stored and handed to git only through the environment of the run's fetch
 date: 2026-09-19
 ---
 
@@ -22,7 +22,11 @@ run what they deliver. A remote helper (`ext::`, `fd::`, any
 a program chosen by the hub. A URL that carries a password is refused rather
 than stripped: the secret would land in git's argv, the cache's config and
 every error message, and the machine's own credentials are what reach a
-repository. git enforces the same list itself (`GIT_ALLOW_PROTOCOL=https:ssh:file`),
+repository. *(Amended by [0068](0068-a-credential-in-a-source-url-is-the-runs-alone.md):
+an https URL's userinfo is accepted as the run's own credential, taken out of
+the URL git is given and of everything stored, and handed to git only through
+the environment of the run's fetch; an ssh URL with a password is still
+refused.)* git enforces the same list itself (`GIT_ALLOW_PROTOCOL=https:ssh:file`),
 so a redirect or a submodule cannot reach another.
 
 **Local sources only inside roots.** A `path` source, and a git source whose
@@ -112,4 +116,5 @@ keeps mirrors on disk.
 **Roots default to the owner's home.** Convenient, and it hands every hub
 `~/.ssh`. Refuse by default and make the owner name what runs may touch.
 **Strip a password from a URL and go on.** The hub would learn nothing from the
-refusal, and the owner's log would still have held it once.
+refusal, and the owner's log would still have held it once. (0068 strips it and
+uses it, for the run it came with.)

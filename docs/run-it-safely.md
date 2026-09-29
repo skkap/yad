@@ -150,7 +150,11 @@ wanted any of this could simply ask the harness for it.
   hub, a run's git source in its events and errors, git's own reason for a
   failed fetch — the userinfo, query and fragment are taken out first, and a
   URL that does not parse is not repeated at all (`config.RedactURL`,
-  `shownURL` in `internal/workdir/source.go`).
+  `shownURL` in `internal/workdir/source.go`). A git source's https URL may
+  carry a credential for its run; it is taken out of everything the runner
+  keeps — the bare cache's config, `state.db`, the log — and handed to git
+  only in the environment of that run's fetch, never argv
+  ([0068](decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md)).
 - **What a hub learns about the machine depends on what it is reading.** The
   capability document goes to every hub you connect, so it names no path on
   the machine and quotes nothing a harness printed. A run's error goes only to

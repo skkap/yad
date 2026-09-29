@@ -1058,9 +1058,11 @@ for `codex`); the suite never runs a real harness.
   run becoming due are one moment seen through two clocks, and acting on it buys
   a cache-cold turn against a limit that has not really lifted.
 
-  The one thing the row cannot hold is the run's grants — they live in the
-  process that claimed them and never touch disk — so a waiting run that had them
-  and is picked up by a *later* process is reported `lost` with class
+  What the row cannot hold is the run's grants, and a credential a source's URL
+  carried ([0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md)) —
+  they live in the process that claimed them and never touch disk — so a
+  waiting run that had either and is picked up by a *later* process is reported
+  `lost` with class
   `grants_lost` for the hub to send again. A hub's `max_wait_ms` caps the total
   wait, after which the run is `timed_out` with class `max_wait_exceeded`; the
   collector ends such a run for a connection no loop is serving, which is the
@@ -1333,7 +1335,10 @@ line here is a reviewed change.
   resume, missing rollout and interrupt play as recorded
   (`e2e_codex_test.go`).
   `internal/workdir`'s tests use local bare repositories, and a loopback TLS
-  server for a remote that asks for a password or never answers.
+  server for a remote that asks for a password or never answers — and git's
+  own `git-http-backend` behind one, answering only one credential, for a
+  URL that carries it; `e2e_credential_test.go` runs that twice in one
+  session and finds the token nowhere under the data directory.
 - **Real harnesses** only behind `//go:build realharness` and
   `YAD_REAL_HARNESS=1`, run by hand — and `make smoke` and `make
   smoke-codex`, the same path as the end-to-end tests with the real `claude`
@@ -1413,7 +1418,10 @@ line here is a reviewed change.
   git's own reason — loses its credential first
   ([0064](docs/decisions/0064-a-runs-error-may-name-a-path-on-the-runner.md)).
 - A run's sources are argv, never a shell: https and ssh only, no remote
-  helpers, no leading `-`, no password in a URL, and nothing on the machine
+  helpers, no leading `-`, no password in an ssh URL, an https URL's userinfo
+  taken out as the run's own credential and handed to git only in its fetch's
+  environment ([0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md)),
+  and nothing on the machine
   outside the owner's `[workdirs] roots`, which default to the owner's home
   directory when unset, and nothing on it at all with `path_sources = false`
   ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)) —
