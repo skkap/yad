@@ -1,8 +1,9 @@
 // Package codex drives Codex through `codex app-server --listen stdio://`,
 // JSON-RPC over its stdin and stdout: initialize, then thread/start for a new
-// session or thread/resume for one Codex already has — followed, on a resume
-// whose run has a context, by thread/inject_items putting that context in the
-// thread (decision 0050) — then one turn/start per run, with turn/steer and
+// session, thread/resume for one Codex already has or thread/fork for a fork
+// — followed, on a resume or a fork whose run has a context, by
+// thread/inject_items putting that context in the thread (decisions 0050 and
+// 0065) — then one turn/start per run, with turn/steer and
 // turn/interrupt while it runs (decision 0006, ARCHITECTURE.md §3). The
 // thread id is the session's native id.
 //
@@ -434,7 +435,8 @@ func (t *turn) respond(method string, m *Message) {
 		}
 		// A fork is a resume into a new thread, and its developerInstructions
 		// are read no sooner than a resume's: until a compaction the copy
-		// opens with the forked thread's (decision 0050).
+		// opens with the forked thread's (decision 0050; measured for forks
+		// on 0.157.1, DEV-150, decision 0065).
 		if method != "thread/start" && t.spec.Brief.Context != "" {
 			t.send("thread/inject_items", injectContext(r.Thread.ID, t.spec.Brief.Context))
 			return
@@ -487,11 +489,11 @@ func (t *turn) startThread() {
 		params["model"] = t.spec.Model
 	}
 	// Codex's equivalent of Claude's appended system prompt: kept outside the
-	// conversation, so it survives compaction. On a resume Codex keeps it as
-	// the thread's and puts it before the model only when it rebuilds the
-	// thread's opening, at a compaction; until then the thread still opens
-	// with the first run's, so the run's context is also injected before its
-	// turn (injectContext, decision 0050).
+	// conversation, so it survives compaction. On a resume or a fork Codex
+	// keeps it as the thread's and puts it before the model only when it
+	// rebuilds the thread's opening, at a compaction; until then the thread
+	// still opens with the first run's, so the run's context is also injected
+	// before its turn (injectContext, decisions 0050 and 0065).
 	if t.spec.Brief.Context != "" {
 		params["developerInstructions"] = t.spec.Brief.Context
 	}
@@ -516,13 +518,15 @@ func (t *turn) startThread() {
 	t.send("thread/start", params)
 }
 
-// injectContext puts a resumed run's context in the thread as a developer
-// message, the role Codex gives developerInstructions itself, just before the
-// run's turn. Measured on Codex 0.147.0: thread/resume's developerInstructions
-// reach the model only after a compaction, so a continuing run otherwise
-// works under the context of the run that opened the session. Injected on
-// every resumed run that has a context, so each run's own is the latest one
-// the model has read; one that has none injects nothing (decision 0050).
+// injectContext puts a resumed or forked run's context in the thread as a
+// developer message, the role Codex gives developerInstructions itself, just
+// before the run's turn. Measured on Codex 0.147.0: thread/resume's
+// developerInstructions reach the model only after a compaction, so a
+// continuing run otherwise works under the context of the run that opened the
+// session; measured on 0.157.1, thread/fork's are the same (DEV-150). Injected
+// on every resumed or forked run that has a context, so each run's own is the
+// latest one the model has read; one that has none injects nothing (decisions
+// 0050 and 0065).
 func injectContext(thread, context string) map[string]any {
 	return map[string]any{"threadId": thread, "items": []any{map[string]any{
 		"type": "message", "role": "developer",

@@ -611,8 +611,11 @@ one `turn/start`
 with the instruction and the run's `effort`, when it has one; the brief's
 context is the thread's `developerInstructions`, and on a resume or a fork it is also
 put in the thread as a developer message (`thread/inject_items`) before the
-turn, since Codex reads a resume's instructions only after a compaction
-([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md)).
+turn, since Codex reads a resume's or a fork's instructions only after a
+compaction
+([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md),
+measured for forks in
+[0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md)).
 Each of those is answered within 30 s. Codex's models, for the capability
 document, are an app-server of their own: `initialize` → `initialized` →
 `model/list`, and no thread; where it cannot answer, the `models_cache.json`
