@@ -20,6 +20,7 @@ import (
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter/claude"
 	"github.com/skkap/yad/internal/adapter/codex"
+	"github.com/skkap/yad/internal/adapter/opencode"
 	"github.com/skkap/yad/internal/buildinfo"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
@@ -187,6 +188,13 @@ func Detect(ctx context.Context) []harness.Detected {
 	for i, d := range found {
 		if d.ID == "codex" && d.Ready() {
 			if w := codex.SchemaWarning(ctx, d.Path, d.Version); w != "" {
+				found[i].Warnings = append(found[i].Warnings, w)
+			}
+		}
+		// OpenCode cannot print the ACP surface it speaks, so the release
+		// is the pin (decision 0073).
+		if d.ID == "opencode" && d.Ready() {
+			if w := opencode.VersionWarning(d.Version); w != "" {
 				found[i].Warnings = append(found[i].Warnings, w)
 			}
 		}

@@ -27,9 +27,24 @@ var loginArgs = map[string][]string{
 // statusArgs asks the harness whether a home has a login, and is the only way
 // YAD ever learns that. It spends no token and reaches no model: each reads
 // the home it is pointed at and answers in about the time it takes to start.
+//
+// OpenCode has no login check of its own: `opencode auth list` names the
+// providers it holds credentials for, and it runs on OpenCode Zen's free
+// models with none. What decides whether it can take a run is whether it
+// offers any model, so its check is the model list, which also spends no
+// token (decision 0073).
 var statusArgs = map[string][]string{
-	"claude": {"auth", "status"},
-	"codex":  {"login", "status"},
+	"claude":   {"auth", "status"},
+	"codex":    {"login", "status"},
+	"opencode": {"models"},
+}
+
+// manualLogin is the login command of a harness whose login yad checks but
+// cannot run itself — `yad account add` and a hub login need a home per
+// account, which OpenCode does not have here (decision 0073) — for the
+// owner to run at the machine.
+var manualLogin = map[string][]string{
+	"opencode": {"auth", "login"},
 }
 
 // codexLoggedOut is what `codex login status` prints when the home has no
@@ -92,6 +107,21 @@ func LoginArgs(harness string) []string { return slices.Clone(loginArgs[harness]
 
 // StatusArgs is the harness's own login check after its binary, or nil.
 func StatusArgs(harness string) []string { return slices.Clone(statusArgs[harness]) }
+
+// LoginCommandArgs is the harness's own login command after its binary, for
+// an owner to run: the one yad runs, or the one it cannot.
+func LoginCommandArgs(harness string) []string {
+	if args, ok := loginArgs[harness]; ok {
+		return slices.Clone(args)
+	}
+	return slices.Clone(manualLogin[harness])
+}
+
+// ChecksLogin says whether yad can ask the harness if a home holds a login.
+func ChecksLogin(harness string) bool {
+	_, ok := statusArgs[harness]
+	return ok
+}
 
 // CanLogIn says whether `yad account add` knows how to log this harness in.
 func CanLogIn(harness string) bool {
@@ -237,6 +267,18 @@ func loggedIn(ctx context.Context, harness, binary, home string, env []string) (
 	}
 
 	switch harness {
+	case "opencode":
+		// Logged in is offering a model: a line shaped provider/model. A
+		// failing list is a question that got no answer, never a "no".
+		if err != nil {
+			return false, fmt.Errorf("could not read %s's models for the home %s — run `%s` to see what it says", harness, home, suggest(harness, binary, home, args))
+		}
+		for _, line := range strings.Split(string(stdout), "\n") {
+			if f := strings.TrimSpace(line); strings.Contains(f, "/") && !strings.ContainsAny(f, " \t") {
+				return true, nil
+			}
+		}
+		return false, nil
 	case "codex":
 		if err == nil {
 			return true, nil

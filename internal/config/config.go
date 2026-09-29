@@ -37,7 +37,9 @@ type Config struct {
 type HarnessConfig struct {
 	// PermissionMode is claude's --permission-mode. Unset means
 	// bypassPermissions: runs are unattended and auto-approve (0015), and
-	// Claude's own default would deny every tool that needs a prompt.
+	// Claude's own default would deny every tool that needs a prompt. For
+	// OpenCode it is the answer to its permission requests, allow or reject,
+	// and unset is allow, for the same reason (0073).
 	PermissionMode string `toml:"permission_mode,omitempty"`
 	// Sandbox and Approval are codex's sandbox mode and approval policy.
 	// Unset means danger-full-access and never: runs are unattended, and the

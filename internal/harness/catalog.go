@@ -66,7 +66,11 @@ func Catalog() []Harness {
 		},
 		{ID: "gemini", Binary: "gemini", Label: "Gemini CLI", Kind: Recognised, VersionArgs: []string{"--version"}, EnvPath: "YAD_GEMINI_PATH"},
 		{ID: "copilot", Binary: "copilot", Label: "GitHub Copilot CLI", Kind: Recognised, VersionArgs: []string{"--version"}, EnvPath: "YAD_COPILOT_PATH"},
-		{ID: "opencode", Binary: "opencode", Label: "OpenCode", Kind: Recognised, VersionArgs: []string{"--version"}, EnvPath: "YAD_OPENCODE_PATH"},
+		// OpenCode is driven over the Agent Client Protocol
+		// (internal/adapter/opencode on internal/adapter/acp, decision 0073).
+		// Its models depend on the providers it is logged in to, so, as for
+		// Codex, a run's model is passed through and OpenCode decides.
+		{ID: "opencode", Binary: "opencode", Label: "OpenCode", Kind: FirstClass, VersionArgs: []string{"--version"}, EnvPath: "YAD_OPENCODE_PATH"},
 		{ID: "cursor", Binary: "cursor-agent", Label: "Cursor Agent", Kind: Recognised, VersionArgs: []string{"--version"}, EnvPath: "YAD_CURSOR_PATH"},
 	}
 }

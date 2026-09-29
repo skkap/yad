@@ -684,7 +684,7 @@ components:
           $ref: "#/components/schemas/Brief"
           description: What the run is told.
         effort:
-          description: "How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. It must still look like a level — at most 64 bytes of letters, digits, - and _ — or the run is refused whole. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort for its harness: in that harness's features when protocol_features lists harness_features, and in protocol_features otherwise."
+          description: "How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh; for OpenCode, one of the effort variants its model has. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. It must still look like a level — at most 64 bytes of letters, digits, - and _ — or the run is refused whole. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort for its harness: in that harness's features when protocol_features lists harness_features, and in protocol_features otherwise."
           type: string
         grants:
           description: Short-lived secrets for this run alone, delivered to the harness process and deleted when the run ends. Names follow rules the schema cannot state; a run breaking one is refused whole.
@@ -692,7 +692,7 @@ components:
             $ref: "#/components/schemas/Grant"
           type: array
         harness:
-          description: "The harness to run, by its id in the capability document: claude or codex today. Offer a run only to a runner whose document shows this harness first-class, present and without an error."
+          description: "The harness to run, by its id in the capability document: claude, codex or opencode today. Offer a run only to a runner whose document shows this harness first-class, present and without an error."
           type: string
         inactivity_ms:
           description: "Stop the run when the harness emits no event for this many milliseconds; it ends timed_out with class inactivity_timeout. It can only lower the owner's own timeout (30 minutes unless they changed it), never raise it. Absent or 0: the owner's."

@@ -16,7 +16,7 @@ import (
 type Run struct {
 	RunID   string     `json:"run_id" doc:"The run's id, chosen by the hub and unique within it. It is the {run} in the events and result paths, and a runner never runs the same id twice."`
 	Session SessionRef `json:"session" doc:"The session the run belongs to."`
-	Harness string     `json:"harness" doc:"The harness to run, by its id in the capability document: claude or codex today. Offer a run only to a runner whose document shows this harness first-class, present and without an error."`
+	Harness string     `json:"harness" doc:"The harness to run, by its id in the capability document: claude, codex or opencode today. Offer a run only to a runner whose document shows this harness first-class, present and without an error."`
 	// Model is required: a run names its model, and a harness left to its own
 	// default runs something different, and differently priced, from what the
 	// hub asked for.
@@ -30,7 +30,7 @@ type Run struct {
 	// advertising the "effort" feature for the run's harness: any other would
 	// run it at the harness's default, and nothing would say so (decisions
 	// 0049, 0069).
-	Effort  string   `json:"effort,omitempty" doc:"How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. It must still look like a level — at most 64 bytes of letters, digits, - and _ — or the run is refused whole. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort for its harness: in that harness's features when protocol_features lists harness_features, and in protocol_features otherwise."`
+	Effort  string   `json:"effort,omitempty" doc:"How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh; for OpenCode, one of the effort variants its model has. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. It must still look like a level — at most 64 bytes of letters, digits, - and _ — or the run is refused whole. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort for its harness: in that harness's features when protocol_features lists harness_features, and in protocol_features otherwise."`
 	Brief   Brief    `json:"brief" doc:"What the run is told."`
 	Sources []Source `json:"sources,omitempty" doc:"What the session's workdir is built from, used by the run that opens the session; a run continuing it names the same sources or none. Absent: the workdir starts empty. Each source sets exactly one of git, a repository checked out as a worktree, or path, an absolute directory on the runner's machine worked in place, taken only inside the directories its owner allows (their home unless they listed others), never at a runner whose capability document says path_sources is false, and otherwise failed with class source_refused."`
 	Grants  []Grant  `json:"grants,omitempty" doc:"Short-lived secrets for this run alone, delivered to the harness process and deleted when the run ends. Names follow rules the schema cannot state; a run breaking one is refused whole."`
