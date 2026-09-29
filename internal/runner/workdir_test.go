@@ -349,7 +349,7 @@ func TestASessionKeepsItsSources(t *testing.T) {
 }
 
 // A credential in a source's URL is the run's, not the session's (decision
-// 0067): the run's spec and the session's sources are stored without it, a
+// 0068): the run's spec and the session's sources are stored without it, a
 // continuation sending the same URL with another credential, or none, names
 // the same sources, and the refusal of one naming others names the session's
 // without it — the refusal goes to the hub and the daemon's log (decision

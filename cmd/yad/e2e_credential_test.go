@@ -19,7 +19,7 @@ import (
 )
 
 // A run whose git source is an https URL carrying a token, end to end, twice
-// in one session (decision 0067). The repository is served by git's own
+// in one session (decision 0068). The repository is served by git's own
 // smart-http backend on a loopback TLS listener, in process, and answers only
 // that token — so the fetch proves the token reached git. After both runs no
 // byte of it is anywhere the runner keeps things: the data directory, which

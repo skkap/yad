@@ -38,7 +38,7 @@ type remote struct {
 	// directory name.
 	name string
 	// cred is what an https URL's userinfo carried, taken out of url and key:
-	// a credential for this run alone, like a grant (decision 0067).
+	// a credential for this run alone, like a grant (decision 0068).
 	cred *credential
 }
 
@@ -49,7 +49,7 @@ var helperURL = regexp.MustCompile(`^[A-Za-z0-9+.-]+::`)
 // parseRemote checks a git source's URL. https and ssh reach the network with
 // the machine's own credentials (decision 0009), or for https with the one
 // the URL's userinfo carries, which is taken out of the URL git is given and
-// the cache is keyed by (decision 0067); a local repository — a path or
+// the cache is keyed by (decision 0068); a local repository — a path or
 // file:// — only inside the owner's roots. Everything else is refused: plain
 // http and git:// carry no integrity, and a remote helper is a program.
 func parseRemote(raw string, reach reachFunc) (remote, error) {
@@ -144,7 +144,7 @@ func checkHost(shown, host, user string) error {
 // own commands that talk to the remote (credential.env) — never argv, which
 // every user on the machine can read, and never the cache's config, which
 // outlives the run and which every later run, from any hub, reads (decision
-// 0067).
+// 0068).
 type credential struct {
 	user, password string
 	// userOnly is userinfo with no password: a token as the user, or a user's
@@ -198,7 +198,7 @@ func (c *credential) env(fetchURL string) []string {
 // URL. Azure DevOps and Bitbucket put the account's name in the clone URLs
 // they hand out, and a helper such as Git Credential Manager answers for that
 // name. This is exactly how git treated the user in the URL before decision
-// 0067, with its one exposure: a helper of the owner's that answers with a
+// 0068, with its one exposure: a helper of the owner's that answers with a
 // password alone leaves the user as the name, and on success git asks every
 // helper to store that pair — a token as the user included. The first try,
 // with the owner's helpers cleared, is what keeps that to a remote which

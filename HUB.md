@@ -1394,7 +1394,7 @@ same source; one without it is fetched with the machine's own credentials. Like
 a grant, it does not survive the runner restarting while the run waits: send
 it again with the run the `grants_lost` result asks for. An `ssh` URL's user is
 its login name, and one with a password is refused
-([0067](docs/decisions/0067-a-credential-in-a-source-url-is-the-runs-alone.md)).
+([0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md)).
 
 ## 10. Errors and `next_action`
 

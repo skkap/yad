@@ -763,7 +763,7 @@ func (g sessionGone) Error() string { return string(g) }
 
 // record writes the claim: the session when the run opens one, and the run as
 // claimed, without its grants or the credential a source's URL carried —
-// neither touches this machine's disk (decisions 0009, 0067). It reports
+// neither touches this machine's disk (decisions 0009, 0068). It reports
 // whether it created the session.
 func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err error) {
 	stored := run

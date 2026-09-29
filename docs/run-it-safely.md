@@ -154,7 +154,7 @@ wanted any of this could simply ask the harness for it.
   carry a credential for its run; it is taken out of everything the runner
   keeps — the bare cache's config, `state.db`, the log — and handed to git
   only in the environment of that run's fetch, never argv
-  ([0067](decisions/0067-a-credential-in-a-source-url-is-the-runs-alone.md)).
+  ([0068](decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md)).
 - **What a hub learns about the machine depends on what it is reading.** The
   capability document goes to every hub you connect, so it names no path on
   the machine and quotes nothing a harness printed. A run's error goes only to

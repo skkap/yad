@@ -1056,7 +1056,7 @@ for `codex`); the suite never runs a real harness.
   a cache-cold turn against a limit that has not really lifted.
 
   What the row cannot hold is the run's grants, and a credential a source's URL
-  carried ([0067](docs/decisions/0067-a-credential-in-a-source-url-is-the-runs-alone.md)) —
+  carried ([0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md)) —
   they live in the process that claimed them and never touch disk — so a
   waiting run that had either and is picked up by a *later* process is reported
   `lost` with class
@@ -1417,7 +1417,7 @@ line here is a reviewed change.
 - A run's sources are argv, never a shell: https and ssh only, no remote
   helpers, no leading `-`, no password in an ssh URL, an https URL's userinfo
   taken out as the run's own credential and handed to git only in its fetch's
-  environment ([0067](docs/decisions/0067-a-credential-in-a-source-url-is-the-runs-alone.md)),
+  environment ([0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md)),
   and nothing on the machine
   outside the owner's `[workdirs] roots`, which default to the owner's home
   directory when unset, and nothing on it at all with `path_sources = false`

@@ -106,7 +106,7 @@ func holding(t *testing.T, dir, s string) []string {
 	return found
 }
 
-// An https URL's userinfo is the run's credential (decision 0067): the
+// An https URL's userinfo is the run's credential (decision 0068): the
 // repository behind it is fetched with it, and nothing that outlives the
 // run, or that another user on the machine can read, holds it — not git's
 // argv, not the cache's config or name, not a file under the data directory,

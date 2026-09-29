@@ -1234,7 +1234,7 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 			sources = []v1.Source{}
 		}
 		// Without the credential a URL carried: the session outlives the
-		// run, and the credential was the run's (decision 0067).
+		// run, and the credential was the run's (decision 0068).
 		body, _ := json.Marshal(workdir.StoredSources(sources))
 		if err := e.Store.SetSessionSources(bg, db.SetSessionSourcesParams{
 			Sources: sql.NullString{String: string(body), Valid: true}, Connection: c.Connection, ID: c.Run.Session.ID,
@@ -1278,7 +1278,7 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 // and nothing would say so.
 //
 // Sources read back from the store are passed through StoredSources: a
-// version before decision 0067 kept a URL's credential there, and it was
+// version before decision 0068 kept a URL's credential there, and it was
 // sent for another run.
 func (e *Exec) sessionSources(ctx context.Context, c Claim) (sources []v1.Source, record bool, err error) {
 	sess, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
