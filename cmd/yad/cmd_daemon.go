@@ -241,6 +241,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			Adapters: runner.NewRegistry(claude.Adapter{}, codex.Adapter{}),
 			Drain:    drain,
 			Log:      log,
+			ScrubLog: logf.Scrub,
 			Monitor:  monitor,
 			// The same ring `yad status` shows. Health reports the messages
 			// alone, never the attrs — see runner.healthErrors.

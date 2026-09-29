@@ -80,7 +80,13 @@ that name and keeps its own, rewritten, and a session with a worktree of it
 goes on there. So a session from before the upgrade continues, and the next
 one from the repository finds the branches in the cache. A run so rewritten
 is marked as having had grants: it cannot be rebuilt from its row. The
-daemon's log files are not rewritten; they rotate out.
+daemon's log, `yad.log` and each rotated backup, has every credential that
+start found replaced too, inside that same transaction and before any row
+changes: state.db's rows are how the log's copies are found, so a start that
+stops before the commit finds them all again. A log file that cannot be
+rewritten is removed; one that can be neither leaves the transaction undone,
+for the next start. The live file is rewritten in place under the log's lock
+and goes on appending.
 
 This replaces 0033's "a URL that carries a password is refused".
 

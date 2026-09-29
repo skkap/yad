@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 
@@ -25,12 +26,17 @@ const sourceCredentialsSweep = "source_credentials"
 // that is a directory listing, and state.db's rows are read once, when the
 // migration that asks for it has just run.
 //
-// state.db first, one transaction, then the caches: the credential a cache
-// holds is how its copies in the store are found, so a start that stops
-// between the two finds the cache again and repeats both. Nothing here stops
-// the daemon; what fails is logged, never with the credential, and tried
-// again at the next start.
-func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Manager, log *slog.Logger) {
+// The daemon's log files first, then state.db, one transaction, then the
+// caches. Each is how the credential is found for the ones before it: a
+// cache's URL for all of them, and state.db's rows, read once, for the logs
+// too. So the logs are rewritten inside that transaction, before any row
+// changes and the sweep is marked done, and a start that stops anywhere
+// between finds every credential again next time and repeats what it had
+// done. Nothing here stops the daemon; what fails is logged, never with the
+// credential, and tried again at the next start.
+//
+// scrubLog is the daemon log's File.Scrub; nil, as in a test, is no log.
+func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Manager, scrubLog func(oldnew ...string) ([]string, error), log *slog.Logger) {
 	caches, err := w.StaleCaches(ctx)
 	if err != nil {
 		log.Warn("a bare cache could not be checked for a credential an earlier version kept in its URL; the next start looks again", "err", err)
@@ -75,6 +81,23 @@ func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Man
 				}
 			}
 		}
+		// A log line is slog's JSON, which escapes as a stored spec does, so
+		// the forms state.db's text may hold are the forms the log may.
+		if len(scrubs) > 0 && scrubLog != nil {
+			var oldnew []string
+			for s := range scrubs {
+				for _, f := range s.Forms() {
+					oldnew = append(oldnew, f.Old, f.New)
+				}
+			}
+			removed, err := scrubLog(oldnew...)
+			if len(removed) > 0 {
+				log.Warn("a daemon log file held a credential an earlier version kept in a source URL and could not be rewritten, so it was removed", "files", removed)
+			}
+			if err != nil {
+				return fmt.Errorf("the daemon's log: %w", err)
+			}
+		}
 		for s := range scrubs {
 			for _, f := range s.Forms() {
 				n, err := scrubText(ctx, q, f)
@@ -90,7 +113,7 @@ func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Man
 		return nil
 	})
 	if err != nil {
-		log.Warn("the credentials an earlier version kept in source URLs could not be taken out of state.db; the next start tries again", "err", err)
+		log.Warn("the credentials an earlier version kept in source URLs could not be taken out of the daemon's log and state.db; the next start tries again", "err", err)
 		return
 	}
 	// The rewritten pages reach state.db itself at a checkpoint; until then

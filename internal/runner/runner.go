@@ -41,6 +41,10 @@ type Options struct {
 	// drain control or the end of ctx can stop.
 	Drain *Drain
 	Log   *slog.Logger
+	// ScrubLog is the daemon log's File.Scrub, for the credentials an
+	// earlier version wrote there (scrubSourceCredentials). Nil is a runner
+	// with no log file of its own.
+	ScrubLog func(oldnew ...string) (removed []string, err error)
 	// Monitor, when set, is kept current for the control socket.
 	Monitor *Monitor
 	// RecentErrors is the ring the process keeps for `yad status`; health
@@ -104,7 +108,7 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	// Before any run is claimed or any workdir collected: it may move a bare
 	// cache out from under both.
-	scrubSourceCredentials(ctx, st, workdirs, o.Log)
+	scrubSourceCredentials(ctx, st, workdirs, o.ScrubLog, o.Log)
 	sessions := &Collector{
 		Store: st, Workdirs: filepath.Join(o.Paths.Data, "workdirs"),
 		IdleTTL: o.Config.Sessions.IdleTTL.Duration, DiskFloor: int64(o.Config.Sessions.DiskFloor),

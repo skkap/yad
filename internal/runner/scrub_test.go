@@ -1,12 +1,19 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/logfile"
 	"github.com/skkap/yad/internal/workdir"
 )
 
@@ -68,7 +75,7 @@ func TestAStoredSourceCredentialLeavesStateDB(t *testing.T) {
 			}
 
 			w := &workdir.Manager{Data: e.paths.Data, Slots: e.store}
-			scrubSourceCredentials(ctx, e.store, w, slog.New(slog.DiscardHandler))
+			scrubSourceCredentials(ctx, e.store, w, nil, slog.New(slog.DiscardHandler))
 
 			for _, f := range []string{e.paths.StateDB(), e.paths.StateDB() + "-wal"} {
 				if fileHolds(t, f, token) {
@@ -88,6 +95,95 @@ func TestAStoredSourceCredentialLeavesStateDB(t *testing.T) {
 				t.Errorf("the sweep is still owed (%v)", err)
 			}
 		})
+	}
+}
+
+// The credential a version before decision 0068 wrote into the daemon's log
+// leaves the live file and its backups at the daemon's start, and the log goes
+// on. A start whose log could not be rewritten leaves state.db as it was and
+// the sweep still owed: its rows are how the next start finds the credential
+// for the log.
+func TestADaemonStartTakesALoggedSourceCredentialOut(t *testing.T) {
+	const token = "ghp_FAKEl0gT0kenFAKEl0g"
+	url := "https://x-access-token:" + token + "@example.invalid/acme.git"
+	e := newEnv(t)
+	ctx := context.Background()
+	if _, err := e.store.DB.ExecContext(ctx,
+		`INSERT INTO sessions (connection, id, harness, workdir, created_at, last_used_at, sources)
+		 VALUES ('hub', 's1', 'claude', '/w', 1, 1, '[{"git":{"url":"`+url+`"}}]')`); err != nil {
+		t.Fatal(err)
+	}
+	// Lines as v0.1.0 wrote them: slog's JSON, the URL quoted whole.
+	planted := func(msg string) []byte {
+		var b bytes.Buffer
+		slog.New(slog.NewJSONHandler(&b, nil)).Warn(msg, "err", "base main is not a branch, tag or commit of "+url)
+		return b.Bytes()
+	}
+	live, backup := e.paths.Log(), logfile.Backup(e.paths.Log(), 1)
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{live, backup} {
+		if err := os.WriteFile(f, planted("the workdir could not be prepared"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	start := func(scrubLog func(...string) ([]string, error), log *slog.Logger) {
+		t.Helper()
+		if err := Serve(ctx, Options{
+			Paths: e.paths, Config: config.Default(), RunnerID: "r",
+			Capabilities: func() v1.Capabilities { return drivableDoc("r", 1) },
+			Log:          log, ScrubLog: scrubLog, Drain: drained(),
+		}); err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+	}
+
+	start(func(...string) ([]string, error) { return nil, errors.New("the disk is full") }, slog.New(slog.DiscardHandler))
+	if pending, err := e.store.StartSweepPending(ctx, sourceCredentialsSweep); err != nil || !pending {
+		t.Fatalf("a start whose log could not be rewritten marked the sweep done (pending %v, %v)", pending, err)
+	}
+	var sources string
+	if err := e.store.DB.QueryRowContext(ctx, `SELECT sources FROM sessions WHERE id = 's1'`).Scan(&sources); err != nil || !strings.Contains(sources, token) {
+		t.Fatalf("a start whose log could not be rewritten took the credential out of state.db, where the next start finds it (%v)", err)
+	}
+
+	logf, err := logfile.Open(live, logfile.DefaultMaxBytes, logfile.DefaultBackups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logf.Close()
+	log := slog.New(slog.NewJSONHandler(logf, nil))
+	start(logf.Scrub, log)
+	log.Info("a line after the start")
+
+	for _, f := range []string{live, backup} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), token) {
+			t.Errorf("%s still holds the token", f)
+		}
+		if !strings.Contains(string(b), "commit of https://example.invalid/acme.git") {
+			t.Errorf("%s lost the line that quoted the URL rather than having the credential taken out of it", f)
+		}
+		if fi, err := os.Stat(f); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Errorf("%s is %v after the rewrite (%v); want 0600", f, fi.Mode(), err)
+		}
+	}
+	b, err := os.ReadFile(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"took out the credentials", "a line after the start"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("the live log does not go on after the rewrite: no %q in\n%s", want, b)
+		}
+	}
+	if pending, err := e.store.StartSweepPending(ctx, sourceCredentialsSweep); err != nil || pending {
+		t.Errorf("the sweep is still owed (%v)", err)
 	}
 }
 
