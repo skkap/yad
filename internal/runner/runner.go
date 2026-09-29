@@ -105,6 +105,7 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	// Before any run can hold an account, so the prune of what a removal
 	// with no daemon left behind never races a run writing to one.
+	o.Accounts.usePaths(o.Paths)
 	o.Accounts.attach(ctx, st)
 	defer o.Accounts.attach(ctx, nil)
 	pool := NewPool(o.Capabilities().Capacity)

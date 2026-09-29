@@ -126,14 +126,26 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	}
 	// Before the home is made or reused: a label removed while a run was on
 	// it has a home the daemon deletes when that run ends, which could be in
-	// the middle of this login (decision 0043). Nothing to act on if it fails:
-	// with no daemon there is nothing pending, and a daemon that cannot
-	// answer this will not answer the change either, which says so.
+	// the middle of this login (decision 0043). Nothing to act on if no
+	// daemon answers: with none running, nothing is pending in memory, and a
+	// daemon that cannot answer this will not answer the change either,
+	// which says so.
 	// Bounded tighter than a change: the daemon reads nothing for this, and
 	// the owner is waiting for the login to start.
 	kctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	_, _ = tellDaemon(kctx, g.paths, control.AccountChange{Harness: id, Label: label, Keep: true})
+	_, err = tellDaemon(kctx, g.paths, control.AccountChange{Harness: id, Label: label, Keep: true})
 	cancel()
+	// A daemon that answered no still means to delete this home when its
+	// last run ends, whatever is done here; the login must not start in it.
+	if refused, ok := errors.AsType[*daemonRefusal](err); ok {
+		return fmt.Errorf("%s account %q was not added: %w — then run `%s` again", id, label, refused, again)
+	}
+	// The daemon takes the removal marker off with the pending deletion;
+	// with none running, nothing else would, and its next start would delete
+	// the home this login is about to use (DEV-160).
+	if err := account.Reclaim(ctx, g.paths, id, label); err != nil {
+		return fmt.Errorf("%s account %q was not added: %w — then run `%s` again", id, label, err, again)
+	}
 	home, cleared, err := account.Prepare(g.paths.Data, id, label)
 	if _, ok := errors.AsType[*account.KeychainError](err); ok {
 		return fmt.Errorf("%s account %q was not added: %w, and then run `%s` again", id, label, err, again)
@@ -372,11 +384,12 @@ func windowsColumn(ws []v1.AccountWindow) string {
 // this machine, and it is not undoable: it asks first unless told not to.
 //
 // Who deletes the home depends on whether a daemon is running. With none, this
-// command does, and nothing else is written — the daemon forgets the account's
-// state at its next start (decision 0043). With one, the daemon does: it is the
-// only one that knows whether a run is on the account, and a run that is
-// finishes there, in a home that must still be on disk; the last run to let go
-// of it deletes it.
+// command does, and nothing else is written but a marker in the home — the
+// daemon forgets the account's state at its next start (decision 0043). With
+// one, the daemon does: it is the only one that knows whether a run is on the
+// account, and a run that is finishes there, in a home that must still be on
+// disk; the last run to let go of it deletes it, or, if the daemon dies first,
+// its next start does, by the marker (decision 0070).
 func accountRemove(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("account remove", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "do not ask; the login in that home is deleted")
@@ -406,18 +419,23 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 			return nil
 		}
 	}
+	again := g.paths.Command("account", "remove", id, label, "--yes")
 	// Out of config.toml first: from here no daemon, running or starting,
-	// gives the account a new run.
-	if _, err := config.UpdateAccounts(ctx, g.paths, id, config.WithoutAccount(label)); err != nil {
-		return err
+	// gives the account a new run. The home is marked just before, so that
+	// whatever stops this removal half-way — this command killed, a daemon
+	// that dies holding the home for a run, a rename that fails — leaves a
+	// home the daemon's next start deletes rather than one it takes for an
+	// add in progress (DEV-160). Marked whether or not the file lists the
+	// label: the owner asked for this home to go.
+	if _, err := account.Unlist(ctx, g.paths, id, label, func(bool) bool { return true }); err != nil {
+		return fmt.Errorf("%s account %q was not removed: %w — run `%s` again once that is fixed", id, label, err, again)
 	}
 	res, err := tellDaemon(ctx, g.paths, control.AccountChange{Harness: id, Label: label, Removed: true})
-	again := g.paths.Command("account", "remove", id, label, "--yes")
 	var refused *daemonRefusal
 	switch {
 	case errors.Is(err, control.ErrNotRunning):
 		if err := account.Remove(g.paths.Data, id, label); err != nil {
-			return fmt.Errorf("%s account %q is out of config.toml, but %w — then run `%s` again to finish", id, label, err, again)
+			return fmt.Errorf("%s account %q is out of config.toml, but %w — then run `%s` again to finish, or let the daemon's next start try", id, label, err, again)
 		}
 		fmt.Fprintf(w, "removed %s account %q; %s is gone%s, and the shared transcripts are untouched\n", id, label, home, keychainGone(id))
 		return nil
@@ -425,7 +443,7 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 		return fmt.Errorf("%s account %q is out of config.toml, and %w — run `%s` again", id, label, err, again)
 	case err != nil:
 		// Not deleted: a run may be on it, and only the daemon could say.
-		return fmt.Errorf("%s account %q is out of config.toml, but the running daemon did not answer (%v), so its home %s is kept in case a run is using it — once `%s` answers, run `%s` again", id, label, err, home, g.paths.Command("status"), again)
+		return fmt.Errorf("%s account %q is out of config.toml, but the running daemon did not answer (%v), so its home %s is kept in case a run is using it — once `%s` answers, run `%s` again, or let the daemon's next start delete it", id, label, err, home, g.paths.Command("status"), again)
 	}
 	if len(res.Runs) == 0 {
 		fmt.Fprintf(w, "removed %s account %q; the running daemon has let it go, %s is gone%s, and the shared transcripts are untouched\n", id, label, home, keychainGone(id))

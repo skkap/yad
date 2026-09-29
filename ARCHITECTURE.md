@@ -903,7 +903,15 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   a removed account finishes there, and the daemon deletes the home when the
   last such run lets go (at once when there is none). With no daemon running
   nothing is written: `remove` deletes the home itself, and the daemon prunes
-  rows for accounts `config.toml` no longer lists when it starts.
+  rows for accounts `config.toml` no longer lists when it starts. Every
+  removal first writes a `.yad-removing` marker (0600) at the top of the home,
+  under `config.toml`'s lock and before the write that drops the label
+  (`account.Unlist`), so a removal the daemon was holding for a run, or whose
+  rename out of the path failed, survives the daemon dying: its next start
+  finishes every unlisted home carrying the marker, Keychain first
+  ([0070](docs/decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)),
+  and never touches a home without one — that is an add in progress. An add
+  takes the marker off.
 - **`config.toml` has two writers**
   ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)):
   the CLI, and the daemon for an account a hub adds or removes. Every write —

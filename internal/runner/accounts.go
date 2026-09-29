@@ -53,8 +53,13 @@ type Accounts struct {
 	// held is every run on each account right now, by the hold it took.
 	held map[account.Ref]map[*accountHold]bool
 	// doomed are removed accounts whose home the owner asked to delete while
-	// a run was still on it: the last release deletes it.
+	// a run was still on it: the last release deletes it. Memory only, so
+	// each doomed home also carries the removal marker on disk, which is
+	// what the next start finishes it by if this daemon dies first (DEV-160).
 	doomed map[account.Ref]bool
+	// paths are the profile's directories, once Serve has given them: the
+	// start sweep reads config.toml through them (finishAtStart).
+	paths config.Paths
 	// store is the runner's, once Serve has opened it. Before that there is
 	// nothing to write to, and Serve prunes at open what a reload could not.
 	store *store.Store
@@ -133,17 +138,35 @@ func (a *Accounts) takeForLogin(r account.Ref, loginID string) (*accountHold, bo
 // 0057), which is not listed yet and so is held whatever the lists say. A
 // home a removal left waiting to be deleted — a run on it still ending — is
 // kept, as `yad account add` keeps it with Keep: the login is about to make it
-// the new account's.
-func (a *Accounts) takeForAdd(r account.Ref, loginID string) *accountHold {
+// the new account's. A marker that cannot come off stops the login before it
+// begins: a daemon dying during it would have its next start delete the home
+// the login was writing.
+func (a *Accounts) takeForAdd(r account.Ref, loginID string) (*accountHold, error) {
 	if a == nil {
-		return nil
+		return nil, nil
 	}
 	h := &accountHold{ref: r, run: loginID, login: true}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	delete(a.doomed, r)
+	if err := a.undoomLocked(r); err != nil {
+		return nil, err
+	}
 	a.holdLocked(h)
-	return h
+	return h, nil
+}
+
+// undoomLocked cancels a pending deletion of an account's home, in memory and
+// on disk: the label is being added again, and the home is the one being
+// logged in now. The marker goes under the same lock as the flag, so a start
+// sweep or a last release reads the two alike, and the flag goes only once the
+// marker has: an add that cannot take the marker off does not go ahead, and
+// the removal it would have cancelled stands whole.
+func (a *Accounts) undoomLocked(r account.Ref) error {
+	if err := account.Unmark(a.data, r.Harness, r.Label); err != nil {
+		return err
+	}
+	delete(a.doomed, r)
+	return nil
 }
 
 func (a *Accounts) hold(h *accountHold) (*accountHold, bool) {
@@ -226,14 +249,15 @@ func (a *Accounts) onRemoved(fn func(account.Ref)) {
 // about to log the owner in there again. Sent before the login rather than
 // after it, because the login takes minutes and a run on the removed account
 // could end in the middle of it and delete the home the owner is logging in.
+// The removal marker goes too, under the same lock, or a daemon dying during
+// the login would have its next start delete that home (DEV-160).
 func (a *Accounts) Keep(r account.Ref) error {
 	if err := checkRef(r); err != nil {
 		return err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	delete(a.doomed, r)
-	return nil
+	return a.undoomLocked(r)
 }
 
 func checkRef(r account.Ref) error {
@@ -269,28 +293,110 @@ func (a *Accounts) attach(ctx context.Context, st *store.Store) {
 	for _, r := range gone {
 		a.log().Info("forgot the state of an account config.toml no longer lists", "harness", r.Harness, "account", r.Label)
 	}
-	a.finishRemovals()
+	a.finishRemovals(ctx)
+}
+
+// usePaths gives the source the profile's directories, for the start sweep to
+// read config.toml as it is now rather than as the daemon read it at start
+// (finishAtStart). Serve sets it before attach; without it, a marked home
+// under a label the lists name is left as it is.
+func (a *Accounts) usePaths(p config.Paths) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.paths = p
 }
 
 // finishRemovals completes every removal that stopped half-way: a home set
-// aside and not deleted, and on macOS the Keychain login that went with it
-// (decision 0070). Nothing else comes back to one. Its label is out of
-// config.toml, so no report names the account and a hub that asked for the
-// removal has stopped asking; the owner's own `yad account remove` again is
-// the one other way it is finished.
-func (a *Accounts) finishRemovals() {
+// aside and not deleted, a home marked for removal that a daemon died holding
+// for a run or could not set aside (DEV-160), and on macOS the Keychain login
+// that goes with each (decision 0070). Nothing else comes back to one. Its
+// label is out of config.toml, so no report names the account and a hub that
+// asked for the removal has stopped asking; the owner's own `yad account
+// remove` again is the one other way it is finished.
+//
+// A home with no marker is never touched here: under a label nothing lists,
+// it is a `yad account add` in progress or walked away from (decision 0043).
+func (a *Accounts) finishRemovals(ctx context.Context) {
 	refs, err := account.Unfinished(a.data)
 	if err != nil {
 		a.log().Warn("could not look for account homes a removal left behind; the next start looks again", "err", err)
 	}
 	for _, r := range refs {
 		log := a.log().With("harness", r.Harness, "account", r.Label)
-		if err := account.RemoveSetAside(a.data, r.Harness, r.Label); err != nil {
-			log.Warn("a removed account's home, set aside by a removal that did not finish, could not be deleted; the next start tries again", "err", err)
-			continue
+		switch kept, err := a.finishAtStart(ctx, r); {
+		case err != nil:
+			log.Warn("a removed account's home, left by a removal that did not finish, could not be deleted; the next start tries again", "err", err)
+		case kept:
+			log.Warn("a removal of this account stopped before config.toml dropped it, so it never happened: the account is still listed, keeps its home and takes runs, and removing it again removes it")
+		default:
+			log.Info("finished removing an account whose removal had stopped half-way")
 		}
-		log.Info("finished removing an account whose removal had stopped half-way")
 	}
+}
+
+// finishAtStart is finish for the start sweep, decided by config.toml as it
+// reads now, under its lock, rather than by the lists the daemon loaded
+// before its socket opened. Both can have changed between: `yad account
+// remove` may have marked a home and dropped its label, its word to the
+// daemon waiting on this start, and `yad account add` or a hand edit may have
+// listed a label again. The lock is the one account.Unlist holds from the
+// marker to the write and account.Reclaim holds to take a marker off, so the
+// sweep never sees a removal or an add half-done.
+//
+//   - Listed in the file: the removal died between its marker and the write
+//     and never happened. The account keeps its home, and the marker comes
+//     off, so a later hand edit is not read as this removal; kept says so.
+//   - Listed in neither the file nor the lists: a marked home nothing holds
+//     is set aside, as finish does. Listed in the lists alone is a removal
+//     in flight, which the Reload it is waiting on finishes.
+//
+// Every set-aside copy is deleted either way.
+func (a *Accounts) finishAtStart(ctx context.Context, r account.Ref) (kept bool, err error) {
+	a.mu.Lock()
+	p := a.paths
+	a.mu.Unlock()
+	if p.Config == "" {
+		return false, a.finish(r)
+	}
+	_, err = config.Update(ctx, p, func(c *config.Config) (bool, error) {
+		if account.ListsOf(*c).Has(r) {
+			if !account.Marked(a.data, r.Harness, r.Label) {
+				return false, nil
+			}
+			kept = true
+			return false, account.Unmark(a.data, r.Harness, r.Label)
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		// Listed in memory and not in the file is a removal in flight: the
+		// Reload it is waiting on finishes it, and until then a run may
+		// still take the account. Its marker stays for the next start if
+		// this daemon dies first.
+		if a.lists.Has(r) || len(a.held[r]) > 0 {
+			return false, nil
+		}
+		_, err := account.SetAsideMarked(a.data, r.Harness, r.Label)
+		return false, err
+	})
+	return kept, errors.Join(err, account.RemoveSetAside(a.data, r.Harness, r.Label))
+}
+
+// finish completes one unlisted account's unfinished removal: a marked home
+// still at its path is set aside — under the lock, and only while the lists
+// do not name the label and nothing holds the home — and then every set-aside
+// copy is deleted with its Keychain login. A home something still holds is
+// left to the last release, which the removal before this one arranged.
+func (a *Accounts) finish(r account.Ref) error {
+	var err error
+	a.mu.Lock()
+	if !a.lists.Has(r) && len(a.held[r]) == 0 {
+		_, err = account.SetAsideMarked(a.data, r.Harness, r.Label)
+	}
+	a.mu.Unlock()
+	return errors.Join(err, account.RemoveSetAside(a.data, r.Harness, r.Label))
 }
 
 // Changed is what Reload did with the account it was told about.
@@ -347,6 +453,14 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 			}
 		}
 		slices.Sort(runs)
+		// Whoever changed config.toml marked the home before it did
+		// (account.Unlist). Marked again here, under the lock that decides
+		// its fate: a start sweep may have taken the marker off in between,
+		// while the label was still listed, and a home kept for a run or
+		// left by a failed rename must carry one for the next start to find.
+		if err := account.Mark(a.data, r.Harness, r.Label); err != nil {
+			a.log().Warn("the removed account's home could not be marked for removal; if the daemon dies before the home is deleted, the next start leaves it", "harness", r.Harness, "account", r.Label, "err", err)
+		}
 		// A login's hold keeps the home as a run's does: its process may
 		// still be in there, and it is told to stop just below.
 		if len(a.held[r]) > 0 {
@@ -356,8 +470,13 @@ func (a *Accounts) Reload(ctx context.Context, lists account.Lists, r account.Re
 		}
 	} else {
 		// Logged in again under a label whose old home was waiting to go:
-		// that home is now the one the owner just logged in.
-		delete(a.doomed, r)
+		// that home is now the one the owner just logged in. Listed now,
+		// so a marker left on it is one a start takes off rather than acts
+		// on; the flag goes whatever becomes of it.
+		if err := a.undoomLocked(r); err != nil {
+			delete(a.doomed, r)
+			a.log().Warn("the account is added again, and the removal marker on its home could not be taken off; the next start takes it off, since the account is listed", "harness", r.Harness, "account", r.Label, "err", err)
+		}
 	}
 	st := a.store
 	onRemoved := a.removed
@@ -438,18 +557,19 @@ func (a *Accounts) Remove(ctx context.Context, p config.Paths, r account.Ref) (r
 	}
 	a.changing.Lock()
 	defer a.changing.Unlock()
-	inFile := false
-	if _, err := config.UpdateAccounts(ctx, p, r.Harness, func(labels []string) []string {
-		inFile = slices.Contains(labels, r.Label)
-		return config.WithoutAccount(r.Label)(labels)
-	}); err != nil {
+	// The home is marked before the file drops the label, under its lock
+	// (account.Unlist), and only for a label something lists: a home under a
+	// label nothing lists may be a `yad account add` in progress.
+	inLists := a.Lists().Has(r)
+	inFile, err := account.Unlist(ctx, p, r.Harness, r.Label, func(listed bool) bool { return listed || inLists })
+	if err != nil {
 		return Changed{}, false, err
 	}
-	if !inFile && !a.Lists().Has(r) {
+	if !inFile && !inLists {
 		// Already removed, but perhaps not finished: a repeat is the hub's
 		// way to try again, and the one it has.
 		if refs, err := account.Unfinished(a.data); err == nil && slices.Contains(refs, r) {
-			if err := account.RemoveSetAside(a.data, r.Harness, r.Label); err != nil {
+			if err := a.finish(r); err != nil {
 				return Changed{}, false, fmt.Errorf("%s account %q is removed, and its home could not be deleted: %w", r.Harness, r.Label, err)
 			}
 		}

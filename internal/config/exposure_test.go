@@ -255,6 +255,7 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 		"internal/workdir/workdir.go":           "a marker file in a checkout, which holds no secret",
 		"internal/account/token.go":             "a token account's token, in its home inside the data directory this checks as a whole — and one others can read is refused rather than used (decision 0054)",
 		"internal/adapter/opencode/opencode.go": "a run's context for OpenCode, in a directory of its own under the temp directory, removed when the run's OpenCode exits (decision 0073)",
+		"internal/account/removal.go":           "the removal marker in an account's home, which holds no secret — only that the home is going (decision 0070)",
 	}
 	root := filepath.Join("..", "..")
 	sources, err := moduleSources(root)
