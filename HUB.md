@@ -692,7 +692,7 @@ whoever submitted it, or submit it without the effort.
 **A fork only to the runner holding what it forks.** A run opening a session
 with `session.fork_from` goes only to the runner the forked session is bound
 to — the transcript it copies is there and nowhere else — and only while that
-runner advertises `fork`. Like an `effort`, it never lapses, and it can go
+runner advertises `fork` for the run's harness (§7). Like an `effort`, it never lapses, and it can go
 nowhere else: hold it until that runner advertises the feature, and end it
 when that runner goes (§5, §8).
 
@@ -1339,7 +1339,7 @@ workdir comes with it — name the same repository on a branch of its own if the
 fork should see the same code), bound by its claim.
 
 - Offer the run only to the runner the forked session is bound to, and only
-  while it advertises `fork` (§7). A fork of a session no claim has bound has
+  while it advertises `fork` for the run's harness (§7). A fork of a session no claim has bound has
   no conversation anywhere to copy; `yad hub` refuses one at submit.
 - Send `fork_from` on whichever run opens the session — decided at offer, as
   `session.new` is: if the fork's first run never bound it, its next run goes

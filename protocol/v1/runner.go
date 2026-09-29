@@ -48,17 +48,17 @@ type HarnessReport struct {
 	// ModelsSource is set whenever Models is.
 	ModelsSource string          `json:"models_source,omitempty" enum:"harness,catalog" doc:"Where models came from. harness: the harness listed them for the logins a run may use — asked without spending a token or, for a Codex that could not be asked, read from the list Codex keeps of its own last answer. catalog: the harness could not be asked or did not answer, and models is the runner's own fixed list for it, which may name a model the login is not offered or miss one it is. Absent when models is, and from runners older than this field."`
 	Accounts     []AccountReport `json:"accounts,omitempty" doc:"The owner's accounts for this harness. Absent when none are configured, and the harness runs on its own login."`
+	// Features is per harness because a harness decides them: an adapter that
+	// cannot fork must not switch fork off for the harnesses that can
+	// (decision 0069). Read only beside harness_features, which is what tells
+	// an absent list, meaning none, from a runner older than the field.
+	Features []string `json:"features,omitempty" doc:"The per-run features a run on this harness may use: steer, interrupt, effort and fork. Read it only when protocol_features lists harness_features: then it is the whole answer for runs on this harness, in place of those four runner-wide strings, and absent means none. Without harness_features, go by the runner-wide strings. Ignore strings you do not know."`
 	// Warnings are what the runner found wrong with a harness it can still
 	// drive — an installed Codex whose app-server protocol differs from the
 	// one the adapter was built against, a path override naming nothing while
 	// PATH has the harness. A hub may show them or prefer a runner without;
 	// they never make a harness refuse runs, which Error does. The same rule
 	// as Error binds them (DEV-67).
-	// Features is per harness because a harness decides them: an adapter that
-	// cannot fork must not switch fork off for the harnesses that can
-	// (decision 0069). Read only beside harness_features, which is what tells
-	// an absent list, meaning none, from a runner older than the field.
-	Features []string `json:"features,omitempty" doc:"The per-run features a run on this harness may use: steer, interrupt, effort and fork. Read it only when protocol_features lists harness_features: then it is the whole answer for runs on this harness, in place of those four runner-wide strings, and absent means none. Without harness_features, go by the runner-wide strings. Ignore strings you do not know."`
 	Warnings []string `json:"warnings,omitempty" doc:"What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine: a path configured for it that names nothing, so the one on PATH is used; a Codex whose protocol differs from the one the runner was built against. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
 }
 

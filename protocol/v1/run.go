@@ -27,9 +27,10 @@ type Run struct {
 	// (decision 0047), and a runner that checked names would refuse a level
 	// its harness had just learned. The harness decides; the runner passes
 	// the word through. A hub offers a run carrying one only to a runner
-	// advertising the "effort" feature: any other would run it at the
-	// harness's default, and nothing would say so (decision 0049).
-	Effort  string   `json:"effort,omitempty" doc:"How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. It must still look like a level — at most 64 bytes of letters, digits, - and _ — or the run is refused whole. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort."`
+	// advertising the "effort" feature for the run's harness: any other would
+	// run it at the harness's default, and nothing would say so (decisions
+	// 0049, 0069).
+	Effort  string   `json:"effort,omitempty" doc:"How hard the harness thinks, in the harness's own terms, as model is: low, medium, high, xhigh or max for Claude Code; for Codex, one of the reasoning levels its model lists, such as low, medium, high or xhigh. Not a closed set, and the runner checks no name: a level the harness does not take fails the run with the harness's own error. It must still look like a level — at most 64 bytes of letters, digits, - and _ — or the run is refused whole. Absent: the harness's default. Offer a run carrying one only to a runner advertising effort for its harness: in that harness's features when protocol_features lists harness_features, and in protocol_features otherwise."`
 	Brief   Brief    `json:"brief" doc:"What the run is told."`
 	Sources []Source `json:"sources,omitempty" doc:"What the session's workdir is built from, used by the run that opens the session; a run continuing it names the same sources or none. Absent: the workdir starts empty. Each source sets exactly one of git, a repository checked out as a worktree, or path, an absolute directory on the runner's machine worked in place, taken only inside the directories its owner allows (their home unless they listed others), never at a runner whose capability document says path_sources is false, and otherwise failed with class source_refused."`
 	Grants  []Grant  `json:"grants,omitempty" doc:"Short-lived secrets for this run alone, delivered to the harness process and deleted when the run ends. Names follow rules the schema cannot state; a run breaking one is refused whole."`
@@ -64,8 +65,8 @@ type SessionRef struct {
 	// run that opens the session and on no later one: from then on the fork
 	// is a session like any other, resuming its own conversation. A hub
 	// offers it only to the runner holding the session it names, and only
-	// while that runner advertises fork.
-	ForkFrom string `json:"fork_from,omitempty" doc:"Only with new true: open this session as a fork of the session named here — a new conversation that starts from a copy of that session's, as far as the harness has written it, and diverges from there, while the session forked goes on unchanged. Offer the run only to the runner that holds that session, and only while it advertises fork; the runner refuses it (class refused) for a session it does not hold for this hub, of another harness, or closed or closing. The fork gets its own workdir from its own sources, as any new session does; nothing of the forked session's workdir comes with it. Absent: the session starts with an empty conversation."`
+	// while that runner advertises fork for the run's harness (decision 0069).
+	ForkFrom string `json:"fork_from,omitempty" doc:"Only with new true: open this session as a fork of the session named here — a new conversation that starts from a copy of that session's, as far as the harness has written it, and diverges from there, while the session forked goes on unchanged. Offer the run only to the runner that holds that session, and only while it advertises fork for the run's harness — in that harness's features when protocol_features lists harness_features; the runner refuses it (class refused) for a session it does not hold for this hub, of another harness, or closed or closing. The fork gets its own workdir from its own sources, as any new session does; nothing of the forked session's workdir comes with it. Absent: the session starts with an empty conversation."`
 }
 
 // Brief is what the run is told: context goes into the harness's system prompt
