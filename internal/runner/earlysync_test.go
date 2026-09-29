@@ -90,12 +90,42 @@ type earlyRig struct {
 	settled chan struct{}
 	// reportTo is the hub the reporter delivers to; nil is the loop's.
 	reportTo ReportHub
+	// byHand is a reporter that flushes only when the test calls
+	// reporter.Flush: no tick and no executor's wake, so the moment a result
+	// reaches the hub is the test's.
+	byHand   bool
+	reporter *Reporter
+	// holds keeps each run named in it from giving its capacity back until
+	// the test closes its channel; ending hears the run then, its result
+	// already written.
+	holds  map[string]chan struct{}
+	ending chan string
+}
+
+// holdingExec is the rig's executor with the end of a run's release in the
+// test's hands: the executor writes the result, then gives the capacity back,
+// and the test may act in between.
+type holdingExec struct {
+	*Exec
+	g *earlyRig
+}
+
+func (h holdingExec) Start(ctx context.Context, c Claim) {
+	if hold, ok := h.g.holds[c.Run.RunID]; ok {
+		release, id := c.Release, c.Run.RunID
+		c.Release = func() {
+			h.g.ending <- id
+			<-hold
+			release()
+		}
+	}
+	h.Exec.Start(ctx, c)
 }
 
 func newEarlyRig(t *testing.T, capacity int, runs ...v1.Run) *earlyRig {
 	t.Helper()
 	g := &earlyRig{e: newEnv(t), clock: newHeldClock(), gates: map[string]chan struct{}{},
-		started: make(chan string, 16), settled: make(chan struct{}, 16)}
+		started: make(chan string, 16), settled: make(chan struct{}, 16), ending: make(chan string, 16)}
 	for _, r := range runs {
 		g.gates[r.RunID] = make(chan struct{})
 	}
@@ -106,7 +136,7 @@ func newEarlyRig(t *testing.T, capacity int, runs ...v1.Run) *earlyRig {
 		<-g.gates[s.RunID]
 		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
 	}})
-	g.l.Executor = g.x
+	g.l.Executor = holdingExec{Exec: g.x, g: g}
 	g.e.enqueue(t, runs...)
 	return g
 }
@@ -126,9 +156,12 @@ func (g *earlyRig) run(t *testing.T, drive func(ctx context.Context, cancel cont
 		g.l.Wake()
 		g.settled <- struct{}{}
 	}
-	g.x.Report = func(string) { r.Wake() }
+	g.reporter = r
 	var bg sync.WaitGroup
-	bg.Go(func() { r.Run(ctx) })
+	if !g.byHand {
+		g.x.Report = func(string) { r.Wake() }
+		bg.Go(func() { r.Run(ctx) })
+	}
 	done := make(chan error, 1)
 	go func() { done <- g.l.Run(ctx) }()
 	drive(ctx, cancel)
@@ -142,14 +175,42 @@ func (g *earlyRig) run(t *testing.T, drive func(ctx context.Context, cancel cont
 	}
 	cancel()
 	bg.Wait()
-	for _, ch := range g.gates {
-		select {
-		case <-ch:
-		default:
-			close(ch)
+	for _, chs := range []map[string]chan struct{}{g.gates, g.holds} {
+		for _, ch := range chs {
+			select {
+			case <-ch:
+			default:
+				close(ch)
+			}
 		}
 	}
 	g.x.Wait()
+}
+
+// heard waits until the loop has taken the wake waiting for it.
+func (g *earlyRig) heard(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for len(g.l.wakes()) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the loop never took its wake")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// ended waits until the run id has written its result and is about to give
+// its capacity back.
+func (g *earlyRig) ended(t *testing.T, id string) {
+	t.Helper()
+	select {
+	case got := <-g.ending:
+		if got != id {
+			t.Fatalf("%s ended, want %s", got, id)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("%s never ended", id)
+	}
 }
 
 // next is the next wait the loop holds, or a failure if it never asks: a loop
@@ -187,10 +248,16 @@ func (g *earlyRig) delivered(t *testing.T, ids ...string) {
 }
 
 // Against yad hub: once the run a runner holds ends, the runner syncs as soon
-// as the hub has the result, and the next turn of the session starts — not
-// after the 3 s the hub asked for, which on this clock never passes. The early
-// sync keeps earlySyncGap from the last one, and no more once that much has
-// gone by. The run then going on, the runner waits the hub's interval again.
+// as the hub has the result and the run's capacity is back, and the next turn
+// of the session starts — not after the 3 s the hub asked for, which on this
+// clock never passes. The early sync keeps earlySyncGap from the last one, and
+// no more once that much has gone by. The run then going on, the runner waits
+// the hub's interval again.
+//
+// The result reaches the hub before the capacity comes back, the order a
+// loaded machine can put them in (DEV-156): the executor writes the one, then
+// gives the other, and the reporter can deliver in between. A sync then would
+// offer no capacity, and the hub would hand a2 to nobody.
 func TestARunEndingBringsTheNextSyncForward(t *testing.T) {
 	later := testRun("a2", "s1")
 	later.Session.New = false
@@ -205,15 +272,29 @@ func TestARunEndingBringsTheNextSyncForward(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := newEarlyRig(t, 1, testRun("a", "s1"), later)
-			g.run(t, func(_ context.Context, cancel context.CancelFunc) {
+			g.byHand = true
+			g.holds = map[string]chan struct{}{"a": make(chan struct{})}
+			g.run(t, func(ctx context.Context, cancel context.CancelFunc) {
 				if d := g.next(t); d != 3*time.Second {
 					t.Fatalf("waited %s with a2 queued behind a, want 3s", d)
 				}
 				g.clock.advance(tc.ran)
 				close(g.gates["a"])
+				g.ended(t, "a")
+				g.reporter.Flush(ctx)
+				g.delivered(t, "a")
+				g.heard(t)
+				// Absence has no event to wait for; this bounds how long
+				// it is looked for. A loop that syncs on the delivery
+				// asks its next wait within microseconds of taking it.
+				select {
+				case d := <-g.clock.asked:
+					t.Fatalf("waited %s before a's capacity came back: the sync it follows offered none", d)
+				case <-time.After(200 * time.Millisecond):
+				}
+				close(g.holds["a"])
 				d := g.next(t)
 				if d == earlySyncGap {
-					g.delivered(t, "a")
 					g.clock.fire(d)
 					d = g.next(t)
 				}

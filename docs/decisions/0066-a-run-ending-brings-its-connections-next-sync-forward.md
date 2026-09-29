@@ -30,6 +30,13 @@ changes.
   once it is handled is the one that syncs. A result in backoff does not hold
   it: that hub is failing, and it would hold the early sync until the hub came
   back. So a delivery that fails wakes the loop as well.
+- **Not before the capacity is back.** The executor writes a run's result,
+  then gives its capacity back, and the reporter may deliver the result in
+  between — on a loaded machine it does (DEV-156). A sync then lists the run
+  as ended but offers no capacity for the next turn, so the hub hands it to
+  nobody and the early sync is spent. A wake while a run the loop started has
+  ended in the store with its capacity still out is let go too; the release's
+  own wake is the one that syncs.
 - **Not while a hub is failing.** During the error backoff no wake is heard:
   the backoff is what spares the hub.
 - **`earlySyncGap` is 1 s.** It bounds a queue of runs that each fail the
