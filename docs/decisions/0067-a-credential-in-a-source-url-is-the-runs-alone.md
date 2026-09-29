@@ -53,8 +53,11 @@ another.
   offered as a token with an empty password; when the remote refuses that, the
   command runs once more with `credential.<scheme>://<host>.username` set to it
   — still in the environment — and the owner's own helpers answer for that
-  name, as they did when git was given the URL whole. A user and a password
-  are the hub's whole credential, and get no second try.
+  name, as they did when git was given the URL whole. That second try keeps
+  git's old exposure, narrowed to a remote that refused the user as a token:
+  an owner's helper that answers with a password alone leaves the user as the
+  name, and on success git asks every helper to store the pair. A user and a
+  password are the hub's whole credential, and get no second try.
 - **A credential git cannot carry is refused** — a control character, sent as
   `%0A`, would be read by git's credential protocol as a line of its own.
 - **ssh is unchanged.** `git@host` is the login name, not a credential, and an

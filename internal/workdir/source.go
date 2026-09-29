@@ -197,9 +197,13 @@ func (c *credential) env(fetchURL string) []string {
 // name git asks the owner's own helpers for, as git did with the user in the
 // URL. Azure DevOps and Bitbucket put the account's name in the clone URLs
 // they hand out, and a helper such as Git Credential Manager answers for that
-// name. The owner's helpers are the ones answering, so what they store on
-// success is their own credential — and the user reaches git in the
-// environment still, never argv or the cache's config.
+// name. This is exactly how git treated the user in the URL before decision
+// 0067, with its one exposure: a helper of the owner's that answers with a
+// password alone leaves the user as the name, and on success git asks every
+// helper to store that pair — a token as the user included. The first try,
+// with the owner's helpers cleared, is what keeps that to a remote which
+// refused the user as a token. The user reaches git in the environment still,
+// never argv or the cache's config.
 func (c *credential) userEnv(fetchURL string) []string {
 	scope, ok := credentialScope(c, fetchURL)
 	if !ok || !c.userOnly {
