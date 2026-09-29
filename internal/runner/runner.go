@@ -132,6 +132,9 @@ func Serve(ctx context.Context, o Options) error {
 		MayManage: func(conn string) bool { return manage[conn] }}
 	logins.bind(ctx)
 	defer logins.Close()
+	sv.logins = logins
+	o.Monitor.attachLogins(logins)
+	defer o.Monitor.attachLogins(nil)
 	o.Accounts.onRemoved(logins.accountRemoved)
 	defer o.Accounts.onRemoved(nil)
 	// Every connection is set up before any goroutine starts, so the
@@ -224,13 +227,16 @@ func sweepGrants(data string, log *slog.Logger) {
 // server is one Serve: its loops and reporters, the executor they share, and
 // the way down.
 type server struct {
-	drain     *Drain
-	wait      time.Duration
-	store     *store.Store
-	pool      *Pool
-	exec      *Exec
-	sessions  *Collector
-	probe     *LoginProbe
+	drain    *Drain
+	wait     time.Duration
+	store    *store.Store
+	pool     *Pool
+	exec     *Exec
+	sessions *Collector
+	probe    *LoginProbe
+	// logins are the hub logins in flight, which a self-update's drain
+	// waits for as it waits for runs. Nil has none.
+	logins    *Logins
 	loops     []*Loop
 	reporters map[string]*Reporter
 	log       *slog.Logger
@@ -385,22 +391,60 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 	}()
 	draining, cancelling := s.drain.Draining(), s.drain.Cancelling()
 	var (
-		idle  <-chan struct{}
-		timer <-chan time.Time
+		idle    <-chan struct{}
+		timer   <-chan time.Time
+		bounded <-chan struct{}
+		logins  <-chan time.Time
+		// reported is how long an update's drain waits for the ends of
+		// hub logins to be carried to their hubs; zero until it starts.
+		reported time.Time
 	)
+	var stopWait func() bool
+	defer func() {
+		if stopWait != nil {
+			stopWait()
+		}
+	}()
+	wait := func() {
+		t := time.NewTimer(s.wait)
+		stopWait, timer = t.Stop, t.C
+	}
 	for {
 		select {
 		case <-draining:
 			draining = nil
+			if s.drain.ForUpdate() {
+				// A self-update waits on its runs however long they take
+				// (decision 0071). Its wait starts only if the owner or a
+				// hub asks for a stop too, and from that moment.
+				s.log.Warn("draining for a self-update: no new runs; the runs held finish, however long they take, and the runner re-executes as the new release", "reason", s.drain.Reason())
+				bounded = s.drain.Bounded()
+				continue
+			}
 			s.log.Warn("draining", "reason", s.drain.Reason(), "drain_wait", s.wait)
-			t := time.NewTimer(s.wait)
-			defer t.Stop()
-			timer = t.C
+			wait()
+		case <-bounded:
+			bounded = nil
+			s.log.Warn("draining: a stop was asked for during a self-update's drain, so the runner exits rather than re-executing, once the runs held end or the drain wait runs out", "reason", s.drain.Reason(), "drain_wait", s.wait)
+			wait()
 		case <-quiet:
 			// No loop starts anything from here on, so an idle executor
 			// stays idle.
 			quiet, idle = nil, s.exec.Idle()
 		case <-idle:
+			if s.loginsHeld(&reported) {
+				idle = nil
+				t := time.NewTicker(loginPoll)
+				defer t.Stop()
+				logins = t.C
+				continue
+			}
+			s.settle(ctx, stopped)
+			return
+		case <-logins:
+			if s.loginsHeld(&reported) {
+				continue
+			}
 			s.settle(ctx, stopped)
 			return
 		case <-timer:
@@ -422,6 +466,34 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 			return
 		}
 	}
+}
+
+// loginsHeld is whether a self-update's drain, its runs all ended, still
+// waits on hub logins. A login in flight has a person at the other end with a
+// code to paste, so it is let finish, as a run is. Its end then has to reach
+// its hub before the process goes: the process that follows has never heard
+// of it, and a hub that heard a login and then stops hearing it records it
+// failed (HUB.md §7). The loops are woken to carry it — nothing else brings a
+// sync forward for a login — and given flushWait, as the last delivery is,
+// so a hub that is down cannot hold the update. A stop ends the wait.
+func (s *server) loginsHeld(deadline *time.Time) bool {
+	if !s.drain.ForUpdate() {
+		return false
+	}
+	if s.logins.Busy() {
+		*deadline = time.Time{}
+		return true
+	}
+	if !s.logins.Owed() {
+		return false
+	}
+	if deadline.IsZero() {
+		*deadline = time.Now().Add(flushWait)
+		for _, l := range s.loops {
+			l.Wake()
+		}
+	}
+	return time.Now().Before(*deadline)
 }
 
 // settle waits, up to flushWait, until the spool and the outbox are empty.

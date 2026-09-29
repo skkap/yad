@@ -225,7 +225,7 @@ a running runner reads it when it starts — `yad --profile default service inst
 ```
 
 - **The spec wins** for every setting it can hold — name, labels, capacity,
-  each `[harness.*]`, `[sessions]`, `[drain]`, `[workdirs]` — and a setting
+  each `[harness.*]`, `[sessions]`, `[drain]`, `[workdirs]`, `[update]` — and a setting
   it leaves out goes back to yad's default. Change these in the spec, not on
   the machine: an edit made there is undone by the next `up`, which says so.
 - **Connections stay the machine's.** `yad connect` made them with a
@@ -242,6 +242,43 @@ Why it is shaped this way is in
 [0059](../docs/decisions/0059-up-brings-a-machines-config-onto-its-spec-and-never-removes-an-account.md).
 A yad older than `yad config apply` — an old `YAD_VERSION` — leaves the
 machine's copy alone as before, and says which newer yad does it.
+
+## Updating itself
+
+A machine's runner keeps to the yad `up` installed until the next `up` —
+unless its spec turns self-update on, in `config.toml` like every other
+setting:
+
+```toml
+[update]
+auto = true
+```
+
+Then the runner checks for a newer release every six hours, installs one that
+speaks the protocol its hubs use, and becomes it at the first moment it holds
+no run — or, after a day without one, once the runs it holds have finished —
+in the same process, so the service never stops
+([0071](../docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
+`yad-machine shell NAME yad status` shows the version it runs, the last check,
+and any release waiting or refused.
+Taking `auto = true` out of the spec and running `up` turns it off again.
+
+- **It is refused with a pinned `YAD_VERSION`.** A pin says one release and
+  self-update says the newest, so `up` stops before building anything and
+  says which to drop. `YAD_VERSION=latest`, or none, is not a pin.
+- **It gives the binary to the runner's user.** Without it the kit installs
+  yad root-owned in `/usr/local/bin`, so a run cannot replace the runner. A
+  runner that updates itself has to be able to, so with it on `up` installs
+  yad in the agent's `~/.local/bin` and makes `/usr/local/bin/yad` a link to
+  it; turning it off puts the root-owned file back and removes the agent's
+  copy. The root-owned binary guarded less than it looks — a run as the agent
+  can already rewrite the agent's systemd unit, which names the binary the
+  runner starts — but it is a line given up, and this is where.
+- **`YAD_REPO` goes with it.** An `up` with `YAD_REPO` set writes the fork
+  into the runner's unit, so the runner fetches its releases from there.
+- **`--yad PATH` is replaced too**, if the build carries a release version older
+  than the newest release. A build between tags carries the tag before it and
+  is replaced once a newer one exists; one with no version at all never is.
 
 ## Rebuilding
 

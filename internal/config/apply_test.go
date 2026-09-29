@@ -200,6 +200,31 @@ func TestApplyNeverRemovesAnAccount(t *testing.T) {
 	}
 }
 
+// Self-update is the spec's to decide on a work machine (decision 0071): apply
+// turns it on, and a spec that leaves it out turns it off again, as for every
+// setting the spec can hold.
+func TestApplyCarriesTheSelfUpdateOptIn(t *testing.T) {
+	p := testPaths(t)
+	writeConfig(t, p, "capacity = 2\n")
+	on, err := Apply(context.Background(), p, specFile(t, "capacity = 2\n[update]\nauto = true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(on.Changes) != 1 || on.Changes[0].String() != "update.auto = true (was false)" {
+		t.Errorf("changes %v, want update.auto turned on", on.Changes)
+	}
+	if c, err := Load(p); err != nil || !c.Update.Auto {
+		t.Fatalf("update.auto = %v, %v after a spec that turns it on", c.Update.Auto, err)
+	}
+	off, err := Apply(context.Background(), p, specFile(t, "capacity = 2\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(off.Changes) != 1 || off.Changes[0].String() != "update.auto = false (was true)" {
+		t.Errorf("changes %v, want update.auto back to its default", off.Changes)
+	}
+}
+
 // A machine's first up has no config.toml: Apply writes the spec's, private.
 func TestApplyWritesTheSpecWhereThereIsNoFile(t *testing.T) {
 	p := testPaths(t)

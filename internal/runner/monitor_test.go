@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/store/db"
 )
@@ -48,6 +49,51 @@ func TestMonitorFollowsTheLoop(t *testing.T) {
 	s, _ = m.Snapshot(context.Background())
 	if c := s.Connections["hub"]; c.State != ConnSyncing || c.LastSync.IsZero() || c.LastError != "connection refused" {
 		t.Errorf("hub back: %+v — the last error stays for the owner to read", c)
+	}
+}
+
+// Idle is the moment a self-update takes over at (decision 0071): the runner
+// set up, every unit of capacity free — none held by a run or by a sync that
+// may yet claim one — and no hub login waiting on a person.
+func TestMonitorIdle(t *testing.T) {
+	var none *Monitor
+	if none.Idle() {
+		t.Error("a nil monitor is idle")
+	}
+	m := NewMonitor()
+	pool := NewPool(v1.Capacity{Total: 2})
+	m.attach(pool, nil, nil)
+	if m.Idle() {
+		t.Error("idle before the runner is set up")
+	}
+	m.markReady()
+	if !m.Idle() {
+		t.Fatal("a ready runner with nothing in progress is not idle")
+	}
+	res := pool.Reserve("hub")
+	if m.Idle() {
+		t.Error("idle while a sync holds capacity it may claim with")
+	}
+	release, ok := res.Take("claude")
+	res.Close()
+	if !ok || m.Idle() {
+		t.Errorf("idle with a run holding a unit (taken %v)", ok)
+	}
+	release()
+	if !m.Idle() {
+		t.Error("not idle once the run let its unit go")
+	}
+	logins := &Logins{}
+	logins.init()
+	logins.live[account.Ref{Harness: "claude", Label: "main"}] = &hubLogin{}
+	m.attachLogins(logins)
+	if m.Idle() {
+		t.Error("idle while a hub login waits on a person")
+	}
+	m.attach(nil, nil, nil)
+	m.attachLogins(nil)
+	if m.Idle() {
+		t.Error("idle after Serve let its pool go")
 	}
 }
 

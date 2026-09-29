@@ -1051,7 +1051,7 @@ a rule for when to stop sending it:
 | `login_token` | `login_id`, `harness`, `account`, `token`, `add` | stores a `claude setup-token` token as the account's login; with `add`, as `start_login` | in every response until the runner reports the login — then forget the token |
 | `cancel_login` | `login_id` | ends the login `cancelled`; one it never had is reported `cancelled` all the same | in every response until the runner reports the login over |
 | `remove_account` | `harness`, `account` | removes the account as its owner's `yad account remove` does: listed nowhere from then on, a run on it finishes there, its home is deleted when the last one ends, and a login in flight on it ends `cancelled`. One it does not list is nothing to do | in every response until neither the runner's current capability document nor the sync's health lists the account, or the runner stops advertising `accounts` |
-| `update` | — | reserved; never send it | never |
+| `update` | — | reserved; never send it. A yad runner ignores it: it updates itself only when its owner turns that on ([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)) | never |
 
 **Features are promises, not decoration.** A runner advertises
 `protocol_features` in its capability document. They exist so a hub does not

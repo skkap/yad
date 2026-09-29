@@ -13,6 +13,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/fake"
 	hubdb "github.com/skkap/yad/internal/hub/store/db"
@@ -151,6 +152,110 @@ func TestHubDrainControl(t *testing.T) {
 	}
 }
 
+// A runner draining for a self-update is coming back, so its health does not
+// say draining — which would tell the hub it is leaving, and answer a drain
+// the hub asks for meanwhile before it is sent. The hub's drain then reaches
+// it and turns the update's drain into an exit (decision 0071).
+func TestAHubDrainReachesARunnerDrainingForAnUpdate(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	l := e.loop(t, 1)
+	l.Drain = NewDrain()
+	api := e.api(t)
+	mustSync(t, l)
+
+	l.Drain.Update("self-update to v0.9.0")
+	e.enqueue(t, testRun("a", "s1"))
+	res := mustSync(t, l)
+	if len(res.Runs) != 0 {
+		t.Errorf("offered %d runs to a runner draining for an update", len(res.Runs))
+	}
+	if h, err := hubHealth(t, e, l.RunnerID); err != nil || h.Draining || h.FreeCapacity.Total != 0 {
+		t.Errorf("health %+v, %v: want no capacity offered and no draining said", h, err)
+	}
+
+	if _, err := api.Drain(ctx, l.RunnerID); err != nil {
+		t.Fatal(err)
+	}
+	res = mustSync(t, l)
+	if !hasControl(res, v1.ControlDrain) {
+		t.Fatalf("the hub's drain did not reach a runner draining for an update: %+v", res.Controls)
+	}
+	if l.Drain.ForUpdate() {
+		t.Error("the hub's drain left the runner to re-exec")
+	}
+	mustSync(t, l)
+	if h, err := hubHealth(t, e, l.RunnerID); err != nil || !h.Draining {
+		t.Errorf("after the hub's drain, health %+v, %v: want draining", h, err)
+	}
+}
+
+// A hub login that starts as the update takes over has a person at the other
+// end: the update's drain waits for it as it waits for a run, and then for a
+// sync to carry its end to the hub, which the next process could not report.
+// A stop meanwhile ends that wait as it ends any other.
+func TestAnUpdateDrainWaitsForAHubLogin(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		end  func(d *Drain, logins *Logins, l *hubLogin)
+		// reported is whether the hub must have heard the login's end.
+		reported bool
+	}{
+		{"the login ends", func(_ *Drain, logins *Logins, l *hubLogin) {
+			logins.mu.Lock()
+			l.state = v1.LoginSucceeded
+			delete(logins.live, l.ref)
+			logins.mu.Unlock()
+		}, true},
+		{"a stop comes", func(d *Drain, _ *Logins, _ *hubLogin) { d.Stop("the owner") }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			l := e.loop(t, 1)
+			l.Clock = shortClock{}
+			d := NewDrain()
+			sv := e.server(l, e.executor(fakeHarness(fake.Script{Hang: true})), d, time.Hour)
+			logins := &Logins{}
+			logins.init()
+			login := &hubLogin{conn: l.Connection, id: "login-1", ref: account.Ref{Harness: "claude", Label: "main"},
+				method: v1.LoginByLink, state: v1.LoginWaiting, updated: time.Now()}
+			logins.byKey[loginKey{l.Connection, login.id}] = login
+			logins.live[login.ref] = login
+			sv.logins, l.Logins = logins, logins
+
+			done := make(chan error, 1)
+			go func() { done <- sv.run(context.Background()) }()
+			d.Update("self-update to v0.9.0")
+			select {
+			case err := <-done:
+				t.Fatalf("the update's drain ended with a hub login in flight: %v", err)
+			case <-time.After(2 * loginPoll):
+			}
+			tc.end(d, logins, login)
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(20 * time.Second):
+				t.Fatal("the drain did not end")
+			}
+			if tc.reported && logins.Owed() {
+				t.Error("the drain ended before any sync carried the login's end to its hub")
+			}
+		})
+	}
+}
+
+func hubHealth(t *testing.T, e *env, runnerID string) (v1.Health, error) {
+	t.Helper()
+	r, err := e.hubStore.GetRunner(context.Background(), runnerID)
+	if err != nil {
+		return v1.Health{}, err
+	}
+	return runnerHealth(r)
+}
+
 func hasControl(res v1.SyncResponse, kind v1.ControlKind) bool {
 	for _, c := range res.Controls {
 		if c.Kind == kind {
@@ -181,6 +286,16 @@ func TestWayDown(t *testing.T) {
 		{"the drain wait runs out", hangs, 50 * time.Millisecond, func(d *Drain, _ context.CancelFunc) { d.Begin("test") }, v1.RunCancelled, ClassRunnerStopping},
 		{"asked twice", hangs, time.Hour, func(d *Drain, _ context.CancelFunc) { d.Begin("test"); d.Cancel("test again") }, v1.RunCancelled, ClassRunnerStopping},
 		{"exit now", hangs, time.Hour, func(d *Drain, exit context.CancelFunc) { d.Begin("test"); exit() }, "", ""},
+		// A self-update never interrupts a run (decision 0071): its drain
+		// has no wait, so a run four times longer than the wait finishes.
+		{"a self-update's drain outlasts the wait", finishes, 50 * time.Millisecond, func(d *Drain, _ context.CancelFunc) { d.Update("test") }, v1.RunSucceeded, ""},
+		// Until someone asks for a stop: then it is an ordinary drain, and
+		// its wait runs from that moment.
+		{"a stop during a self-update's drain", hangs, 50 * time.Millisecond, func(d *Drain, _ context.CancelFunc) {
+			d.Update("test")
+			time.Sleep(100 * time.Millisecond) // past the wait, had it started with the drain
+			d.Stop("the owner")
+		}, v1.RunCancelled, ClassRunnerStopping},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -423,6 +538,51 @@ func TestOnSignals(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if closed(d.Cancelling()) {
 		t.Error("a first signal to a runner the hub drains cancelled its runs")
+	}
+}
+
+// A self-update's drain ends in a re-exec only while nobody else asks for a
+// drain: the owner's stop, a signal or a hub's drain each mean exit, and turn
+// it into an ordinary drain whose wait begins then. A runner already on its
+// way down is not taken over by an update.
+func TestAnUpdateDrainGivesWayToAnyOtherStop(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		other func(d *Drain) bool
+	}{
+		{"the owner's stop", func(d *Drain) bool { return d.Stop("socket") }},
+		{"a signal", func(d *Drain) bool { return d.Step("SIGTERM") == 1 }},
+		{"a hub's drain", func(d *Drain) bool { return d.Begin("the hub") }},
+		{"a cancel", func(d *Drain) bool { return d.Cancel("the wait") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewDrain()
+			if !d.Update("self-update to v0.9.0") || !d.IsDraining() || !d.ForUpdate() || closed(d.Bounded()) {
+				t.Fatal("Update did not begin an update drain")
+			}
+			if d.Update("again") {
+				t.Error("a second Update began anything")
+			}
+			if !tc.other(d) {
+				t.Errorf("%s during an update drain reports it did nothing", tc.name)
+			}
+			if d.ForUpdate() || !closed(d.Bounded()) || !d.IsDraining() {
+				t.Errorf("after %s: for update %v, bounded %v", tc.name, d.ForUpdate(), closed(d.Bounded()))
+			}
+		})
+	}
+
+	d := NewDrain()
+	d.Begin("the hub")
+	if d.Update("self-update") || d.ForUpdate() {
+		t.Error("an update took over a drain the hub began, and would re-exec a runner it asked to go")
+	}
+	// A signal during an update drain is still the owner's first step: the
+	// second is what cancels.
+	d = NewDrain()
+	d.Update("self-update")
+	if d.Step("SIGTERM") != 1 || closed(d.Cancelling()) {
+		t.Error("the first signal during an update drain cancelled")
 	}
 }
 

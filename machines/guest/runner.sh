@@ -13,6 +13,13 @@ stage=$1
 
 say() { printf -- '--> %s\n' "$*"; }
 
+# The fork `up` fetched yad from, which `yad service install` writes into the
+# unit, so a self-update fetches from it too (decision 0071).
+if [[ -f $stage/repo ]]; then
+    YAD_REPO=$(cat "$stage/repo")
+    export YAD_REPO
+fi
+
 # yad's own resolution for the default profile (internal/config/paths.go).
 cfg=${YAD_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/yad}/config.toml
 unit=yad-runner-default.service
