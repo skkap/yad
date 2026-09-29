@@ -206,6 +206,7 @@ type turn struct {
 	deadline time.Time        // when the oldest of them is late
 	late     string           // its method
 	refusal  *jsonrpc.RPCError
+	pages    int // pages of session/list read after the refusal
 	// modelSet and effortSet: each is asked for once, so an agent whose
 	// answer carries no options is not asked again for ever.
 	modelSet, effortSet bool
@@ -576,24 +577,39 @@ func (t *turn) prompt() {
 	}
 	// From here the session's updates are the run's: a fork's replay of the
 	// conversation it copies came before its answer, and none of it was.
+	//
+	// The prompt is queued before the lock is let go: Interrupt sends its
+	// cancel once it sees prompted, and a cancel queued ahead of the prompt
+	// would reach the agent with no turn to end, and the turn that followed
+	// would run to the end. The queue never blocks, so holding the lock
+	// across it costs the runner's event loop nothing.
 	t.prompted = true
-	t.mu.Unlock()
-	t.send("session/prompt", map[string]any{
+	id, err := t.conn.Send("session/prompt", map[string]any{
 		"sessionId": t.session,
 		"prompt":    []any{map[string]any{"type": "text", "text": t.spec.Brief.Instruction}},
 	})
+	t.mu.Unlock()
+	if err != nil {
+		t.tr.fail(adapter.ClassHarnessExited, fmt.Sprintf("%s stopped reading its input before session/prompt: %v", t.agent.Name, err))
+		t.stop()
+		return
+	}
+	t.wait[id] = "session/prompt"
 }
 
 // refused ends the run on a request the agent answered with an error. A
 // resume or a fork of a session the agent does not know is asked once more,
-// by listing the workdir's sessions: the agent's refusal says nothing a
-// runner can tell apart from any other failure, and the list does.
+// by listing its sessions: the agent's refusal says nothing a runner can tell
+// apart from any other failure, and the list does. The list is not narrowed
+// to the workdir, since a fork's own workdir is not the one the session it
+// forks was made in — measured on OpenCode 1.18.33, which forks across
+// directories and lists the source only when asked for every session.
 func (t *turn) refused(method string, e *jsonrpc.RPCError) {
 	switch method {
 	case "session/resume", "session/fork":
 		if t.caps.AgentCapabilities.SessionCapabilities.List != nil && t.refusal == nil {
 			t.refusal = e
-			t.send("session/list", map[string]any{"cwd": t.spec.Workdir})
+			t.send("session/list", map[string]any{})
 			return
 		}
 		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s refused %s: %s", t.agent.Name, method, e.Message))
@@ -611,9 +627,15 @@ func (t *turn) refused(method string, e *jsonrpc.RPCError) {
 	t.stop()
 }
 
-// missing ends a refused resume or fork: session_not_found when the agent's
-// own list of the workdir's sessions does not name the one asked for, the
-// agent's refusal otherwise.
+// listPages bounds the pages of session/list a refused resume or fork reads:
+// OpenCode answers a hundred sessions to a page, so a machine with more than
+// this many thousand is told the refusal rather than asked on for ever.
+const listPages = 50
+
+// missing reads one page of the agent's sessions after a refused resume or
+// fork, and asks for the next while there is one: session_not_found once no
+// page names the session asked for, the agent's refusal once one does — or
+// once the pages run past listPages, when nothing can be said.
 func (t *turn) missing(result json.RawMessage) {
 	want, what := t.asked, "resume"
 	if want == "" {
@@ -623,6 +645,7 @@ func (t *turn) missing(result json.RawMessage) {
 		Sessions []struct {
 			SessionID string `json:"sessionId"`
 		} `json:"sessions"`
+		NextCursor string `json:"nextCursor"`
 	}
 	json.Unmarshal(result, &r)
 	listed := slices.ContainsFunc(r.Sessions, func(s struct {
@@ -630,12 +653,17 @@ func (t *turn) missing(result json.RawMessage) {
 	}) bool {
 		return s.SessionID == want
 	})
-	if listed || r.Sessions == nil {
+	t.pages++
+	if !listed && r.Sessions != nil && r.NextCursor != "" && t.pages < listPages {
+		t.send("session/list", map[string]any{"cursor": r.NextCursor})
+		return
+	}
+	if listed || r.Sessions == nil || r.NextCursor != "" {
 		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s would not %s session %s: %s", t.agent.Name, what, want, t.refusal.Message))
 	} else if what == "fork" {
-		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("%s has no session %s to fork in this workdir — the forked session's conversation is gone; fork a session that has one, or start a new session", t.agent.Name, want))
+		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("%s has no session %s to fork on this runner — the forked session's conversation is gone; fork a session that has one, or start a new session", t.agent.Name, want))
 	} else {
-		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("%s has no session %s in this workdir — the session's conversation is gone; start a new session", t.agent.Name, want))
+		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("%s has no session %s on this runner — the session's conversation is gone; start a new session", t.agent.Name, want))
 	}
 	t.stop()
 }

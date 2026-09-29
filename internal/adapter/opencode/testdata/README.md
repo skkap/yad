@@ -19,10 +19,10 @@ names the machine. Only the latest recorded release is kept (decision 0067).
 | `effort` | `effort: high` set on `opencode/longcat-2.5-preview-free`, which has levels |
 | `effort-rejected` | an effort the model does not have: refused |
 | `context` | the context names a codeword, and the answer gives it: the instruction route reaches the model (decision 0050, 0072) |
-| `resume-missing` | `session/resume` of a session that does not exist, and the `session/list` that tells it apart |
+| `resume-missing` | `session/resume` of a session that does not exist, and the `session/list` of every session that tells it apart |
 | `resume` | a second turn in a session, resumed without a replay |
 | `resume-context` | a second turn whose context the first did not have, answered from it |
-| `fork` | `session/fork` of a session asked to remember a word, the replay before its answer, then a turn in the new session answering with the word |
+| `fork` | `session/fork` of a session asked to remember a word, from a workdir of the fork's own (`/fork-work`), the replay before its answer, then a turn in the new session answering with the word |
 | `fork-missing` | `session/fork` of a session that does not exist |
 | `interrupt` | `session/cancel` sent at the first text; the prompt answers `cancelled` |
 | `permission` | `bash` set to ask (`OPENCODE_CONFIG_CONTENT`), answered `allow_once` |

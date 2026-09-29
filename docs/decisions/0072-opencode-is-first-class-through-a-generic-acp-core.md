@@ -41,13 +41,20 @@ environment is, how its failures read, what its login check is. OpenCode's is
 
 - *Resume* is `session/resume`, which answers without replaying the
   conversation; `session/load` would replay all of it. A resume or a fork
-  the agent refuses is asked once more by `session/list` of the workdir: an
-  id the list does not name is `session_not_found`, since OpenCode 1.18.33
-  refuses a missing session with a bare `-32603 OpenCode service failure`
-  that a runner cannot tell from any other.
+  the agent refuses is asked once more by `session/list`, every page of it and not narrowed to
+  the workdir: an id no page names is `session_not_found`, since OpenCode
+  1.18.33 refuses a missing session with a bare `-32603 OpenCode service
+  failure` that a runner cannot tell from any other. Past fifty pages the
+  refusal is reported as it is.
 - *Fork* is `session/fork` (unstable in v1, and in OpenCode's capabilities):
   a new session holding a copy, which the fork's run then prompts
   ([0065](0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md)).
+  The fork's `cwd` is its own workdir, not the one the session it forks was
+  made in; measured on OpenCode 1.18.33 between two plain directories, and
+  recorded that way (`fork`). A `session/list` narrowed to the fork's
+  workdir does not name the session it forked, which is why the check above
+  is not narrowed. Between two git repositories OpenCode keeps sessions per
+  project, and a fork across them was not measured.
 - *Model and effort* are the session's config options of ACP's categories
   `model` and `thought_level`, each set by the agent's own option id; the
   words are the agent's, checked by the agent
@@ -55,7 +62,9 @@ environment is, how its failures read, what its login check is. OpenCode's is
   `thought_level` option refuses a run carrying an effort, before anything is
   asked. An effort is set on every run that has one, even when the option
   already shows it: the value shown can be the default the agent would pick.
-- *Interrupt* is `session/cancel`; the prompt then answers `cancelled`.
+- *Interrupt* is `session/cancel`; the prompt then answers `cancelled`. The
+  prompt is queued before an interrupt can see it was sent, so a cancel never
+  reaches the agent ahead of the turn it is for.
 - *Steer* does not exist in ACP v1. The adapter says so
   (`adapter.Steerer`), so the runner lists no `steer` for the harness
   ([0069](0069-a-per-run-feature-is-its-harnesss.md)) and a hub reading the

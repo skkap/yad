@@ -155,8 +155,11 @@ func TestRecord(t *testing.T) {
 			if s.resume {
 				spec.NativeSessionID = missingSession
 			}
+			forkWork := t.TempDir()
 			if s.fork {
-				spec.NativeSessionID, spec.ForkFrom = "", native
+				// A fork has a workdir of its own, as the runner gives every
+				// new session one (decision 0065).
+				spec.NativeSessionID, spec.ForkFrom, spec.Workdir = "", native, forkWork
 				if native == "" {
 					spec.ForkFrom = missingSession
 				}
@@ -180,6 +183,7 @@ func TestRecord(t *testing.T) {
 			}
 			scrubbed := scrub(raw.Bytes(), [][2]string{
 				{resolved(work), "/work"}, {work, "/work"},
+				{resolved(forkWork), "/fork-work"}, {forkWork, "/fork-work"},
 				{resolved(home.root), "/opencode-home"}, {home.root, "/opencode-home"},
 				{realHome, "/home/user"},
 			}, host)

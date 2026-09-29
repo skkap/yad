@@ -678,7 +678,7 @@ once its prompt is sent, are its events; a fork's replay comes before. An
 interrupt is `session/cancel`; ACP v1 has no steer, so none is advertised for
 OpenCode. A permission request is answered from the owner's `permission_mode`
 (`allow`, the default, or `reject`). A resume or fork OpenCode refuses is
-checked against `session/list` of the workdir, and one it does not list is
+checked against every page of `session/list`, and one no page lists is
 `session_not_found`. What is OpenCode's own is in `internal/adapter/opencode`:
 the run's context goes into its system prompt as an instruction file named in
 `OPENCODE_CONFIG_CONTENT`; its own HTTP server on 127.0.0.1 gets a random

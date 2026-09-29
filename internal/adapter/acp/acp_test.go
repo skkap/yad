@@ -118,3 +118,22 @@ func TestAnUnknownPermissionModeIsRefused(t *testing.T) {
 		t.Errorf("start: %v", err)
 	}
 }
+
+// A refused resume is session_not_found only when no page of the agent's
+// sessions names it: one on a later page was refused for another reason,
+// and a hub told the conversation is gone would abandon one that is not.
+func TestARefusedResumeReadsEveryPage(t *testing.T) {
+	for _, tc := range []struct {
+		fixture, class string
+	}{
+		{"resume-refused-second-page", adapter.ClassHarness},
+		{"resume-refused-gone", adapter.ClassSessionNotFound},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			_, o := play(t, tc.fixture, func(s *adapter.Spec) { s.NativeSessionID = "s0" })
+			if o.State != v1.RunFailed || o.Error.Class != tc.class {
+				t.Fatalf("outcome %s %+v", o.State, o.Error)
+			}
+		})
+	}
+}

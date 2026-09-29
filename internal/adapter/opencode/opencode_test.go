@@ -246,12 +246,14 @@ func TestTheContextJoinsTheOwnersInlineConfig(t *testing.T) {
 		t.Errorf("config %v", config)
 	}
 
-	t.Setenv(envConfig, `{ // not JSON`)
-	bad := &play{fixture: fixture(t, "plain")}
-	spec = bad.spec(t)
-	spec.Brief.Context = "You are terse."
-	if _, err := (Adapter{}).Start(context.Background(), spec); err == nil || !strings.Contains(err.Error(), envConfig) {
-		t.Errorf("start with unreadable inline config: %v", err)
+	for _, value := range []string{`{ // not JSON`, `null`, `[1]`, `"allow"`} {
+		t.Setenv(envConfig, value)
+		bad := &play{fixture: fixture(t, "plain")}
+		spec = bad.spec(t)
+		spec.Brief.Context = "You are terse."
+		if _, err := (Adapter{}).Start(context.Background(), spec); err == nil || !strings.Contains(err.Error(), envConfig) {
+			t.Errorf("start with inline config %s: %v", value, err)
+		}
 	}
 }
 

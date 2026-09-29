@@ -54,11 +54,14 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 func (a Adapter) agent() acp.Agent {
 	return acp.Agent{
 		ID: "opencode", Name: "OpenCode",
-		Args:       []string{"acp"},
-		Prepare:    prepare,
-		Classify:   classify,
-		ExitCode:   exitCode,
-		LoginCheck: []string{"auth", "list"},
+		Args:     []string{"acp"},
+		Prepare:  prepare,
+		Classify: classify,
+		ExitCode: exitCode,
+		// Its model list is its login check (account.statusArgs): on Zen's
+		// free models it runs with no credential, so `auth list` saying none
+		// would be no answer.
+		LoginCheck: []string{"models"},
 		Raw:        a.Raw,
 	}
 }
@@ -155,7 +158,9 @@ func ownerConfig() (map[string]any, error) {
 	if !set || strings.TrimSpace(value) == "" {
 		return config, nil
 	}
-	if err := json.Unmarshal([]byte(value), &config); err != nil {
+	// A JSON null decodes into a nil map, which would be written to below;
+	// only an object is configuration.
+	if err := json.Unmarshal([]byte(value), &config); err != nil || config == nil {
 		return nil, fmt.Errorf("%s in the runner's environment is not a JSON object yad can add the run's context to — make it plain JSON (no comments), or unset it", envConfig)
 	}
 	return config, nil

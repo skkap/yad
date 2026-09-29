@@ -1,0 +1,8 @@
+{">":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"resume":{},"list":{}}}}}
+{">":{"jsonrpc":"2.0","id":2,"method":"session/resume","params":{}}}
+{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"Internal error: OpenCode service failure","data":{"service":"session"}}}
+{">":{"jsonrpc":"2.0","id":3,"method":"session/list","params":{}}}
+{"jsonrpc":"2.0","id":3,"result":{"sessions":[{"sessionId":"s-other","cwd":"/w"}],"nextCursor":"c1"}}
+{">":{"jsonrpc":"2.0","id":4,"method":"session/list","params":{}}}
+{"jsonrpc":"2.0","id":4,"result":{"sessions":[{"sessionId":"s-third","cwd":"/w"}]}}
