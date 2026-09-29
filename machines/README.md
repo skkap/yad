@@ -258,7 +258,7 @@ Then the runner checks for a newer release every six hours, installs one that
 speaks the protocol its hubs use, and becomes it at the first moment it holds
 no run — or, after a day without one, once the runs it holds have finished —
 in the same process, so the service never stops
-([0069](../docs/decisions/0069-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
+([0071](../docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
 `yad-machine shell NAME yad status` shows the version it runs, the last check,
 and any release waiting or refused.
 Taking `auto = true` out of the spec and running `up` turns it off again.

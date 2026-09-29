@@ -93,7 +93,7 @@ type DrainConfig struct {
 	Wait Duration `toml:"wait"`
 }
 
-// UpdateConfig is the owner's opt-in to self-update (decision 0069). It is
+// UpdateConfig is the owner's opt-in to self-update (decision 0071). It is
 // config.toml's and nobody else's: no protocol field reaches it, so no hub can
 // turn it on, and `yad config apply` carries it like any other setting, which
 // is how a work machine's spec decides it.

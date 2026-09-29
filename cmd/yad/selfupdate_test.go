@@ -50,7 +50,7 @@ func selfUpdateChild() {
 }
 
 // `yad version --json` is what a runner asks a downloaded release before it
-// takes it (decision 0069), so what this build prints must read back as what
+// takes it (decision 0071), so what this build prints must read back as what
 // it is — and its plain line must read back too, since that is all a release
 // older than the flag prints.
 func TestVersionJSONNamesTheProtocols(t *testing.T) {

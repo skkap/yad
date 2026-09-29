@@ -52,7 +52,7 @@ func TestMonitorFollowsTheLoop(t *testing.T) {
 	}
 }
 
-// Idle is the moment a self-update takes over at (decision 0069): the runner
+// Idle is the moment a self-update takes over at (decision 0071): the runner
 // set up, every unit of capacity free — none held by a run or by a sync that
 // may yet claim one — and no hub login waiting on a person.
 func TestMonitorIdle(t *testing.T) {

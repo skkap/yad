@@ -155,7 +155,7 @@ func TestHubDrainControl(t *testing.T) {
 // A runner draining for a self-update is coming back, so its health does not
 // say draining — which would tell the hub it is leaving, and answer a drain
 // the hub asks for meanwhile before it is sent. The hub's drain then reaches
-// it and turns the update's drain into an exit (decision 0069).
+// it and turns the update's drain into an exit (decision 0071).
 func TestAHubDrainReachesARunnerDrainingForAnUpdate(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -286,7 +286,7 @@ func TestWayDown(t *testing.T) {
 		{"the drain wait runs out", hangs, 50 * time.Millisecond, func(d *Drain, _ context.CancelFunc) { d.Begin("test") }, v1.RunCancelled, ClassRunnerStopping},
 		{"asked twice", hangs, time.Hour, func(d *Drain, _ context.CancelFunc) { d.Begin("test"); d.Cancel("test again") }, v1.RunCancelled, ClassRunnerStopping},
 		{"exit now", hangs, time.Hour, func(d *Drain, exit context.CancelFunc) { d.Begin("test"); exit() }, "", ""},
-		// A self-update never interrupts a run (decision 0069): its drain
+		// A self-update never interrupts a run (decision 0071): its drain
 		// has no wait, so a run four times longer than the wait finishes.
 		{"a self-update's drain outlasts the wait", finishes, 50 * time.Millisecond, func(d *Drain, _ context.CancelFunc) { d.Update("test") }, v1.RunSucceeded, ""},
 		// Until someone asks for a stop: then it is an ordinary drain, and

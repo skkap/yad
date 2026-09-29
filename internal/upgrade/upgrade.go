@@ -3,7 +3,7 @@
 // deliberately is when a bad release is being rolled back. On the owner's
 // command, or on the owner's standing opt-in: `yad upgrade` calls it, and so
 // does internal/selfupdate when config.toml turns self-update on (decision
-// 0069). Never on a hub's say-so. There is no poller and no re-exec here —
+// 0071). Never on a hub's say-so. There is no poller and no re-exec here —
 // both are the self-update's — so every replacement of the binary, asked for
 // or scheduled, goes through the one order below.
 //
@@ -132,7 +132,7 @@ type Options struct {
 	// Vet, when set, judges the verified, executable binary before it
 	// replaces the target, and an error from it leaves the target as it was.
 	// A self-update asks the binary which protocol majors it speaks (decision
-	// 0069); `yad upgrade` sets none, since the owner chose the release.
+	// 0071); `yad upgrade` sets none, since the owner chose the release.
 	Vet func(ctx context.Context, staged string) error
 }
 

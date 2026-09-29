@@ -17,7 +17,7 @@ import (
 // cmdUpgrade replaces this binary with the newest tagged release, on the
 // owner's command. No hub message and no schedule reaches here — a runner the
 // owner has told to update itself does so through internal/selfupdate
-// (decision 0069) — and it restarts nothing: a runner already running holds
+// (decision 0071) — and it restarts nothing: a runner already running holds
 // the file it started from until someone restarts it, which is said out loud
 // rather than done.
 func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error {

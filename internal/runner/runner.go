@@ -415,7 +415,7 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 			draining = nil
 			if s.drain.ForUpdate() {
 				// A self-update waits on its runs however long they take
-				// (decision 0069). Its wait starts only if the owner or a
+				// (decision 0071). Its wait starts only if the owner or a
 				// hub asks for a stop too, and from that moment.
 				s.log.Warn("draining for a self-update: no new runs; the runs held finish, however long they take, and the runner re-executes as the new release", "reason", s.drain.Reason())
 				bounded = s.drain.Bounded()

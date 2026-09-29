@@ -15,7 +15,7 @@ var Commit = ""
 
 // About is `yad version --json`: what a binary is, in a form another yad can
 // read. A runner taking a release over asks the downloaded binary this before
-// it puts it in place (decision 0069), so the fields are a contract with
+// it puts it in place (decision 0071), so the fields are a contract with
 // every later release: added to, never renamed or removed.
 type About struct {
 	Version string `json:"version"`

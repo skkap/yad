@@ -133,7 +133,7 @@ type Status struct {
 	// hub is told the list is the catalog's, and why is the owner's to read
 	// (DEV-146). Nil from a daemon older than it.
 	ModelsFailures []ModelsFailure `json:"models_failures,omitempty"`
-	// Update is where self-update stands (decision 0069): nil when
+	// Update is where self-update stands (decision 0071): nil when
 	// config.toml leaves it off, and from a daemon older than it.
 	Update *Update `json:"update,omitempty"`
 }

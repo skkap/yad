@@ -63,7 +63,7 @@ func TestAHubRefusesARunnerBelowItsMinVersion(t *testing.T) {
 	}
 }
 
-// Decision 0069: self-update is the owner's opt-in in config.toml, and the
+// Decision 0071: self-update is the owner's opt-in in config.toml, and the
 // reserved control stays inert — a runner that acted on one would be
 // replacing its own binary on a remote's say-so.
 func TestTheUpdateControlIsIgnored(t *testing.T) {

@@ -374,7 +374,7 @@ ignored. A release that no longer speaks a protocol major a connection syncs
 over is refused. It takes over at the first idle moment, or after a drain
 once 24 hours pass without one; a run is never interrupted for it, and a stop
 asked for meanwhile wins. The pid stays, so a service manager sees no exit.
-_See_: [0069](docs/decisions/0069-a-runner-updates-itself-when-its-owner-turns-it-on.md), `internal/selfupdate`
+_See_: [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md), `internal/selfupdate`
 
 **Watchdog** — the runner's two timers on a run: an inactivity timeout on the
 event stream, which catches a wedged harness, and an optional wall-clock cap set

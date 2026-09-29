@@ -88,7 +88,7 @@ func (m *Monitor) attachLogins(l *Logins) {
 // of capacity is free — no run holds one, no claim awaits its hub's
 // acknowledgement, no sync holds any to offer — and no hub login is waiting
 // on a person. A self-update takes over only then, or after its drain
-// (decision 0069). A parked run holds no unit until it is due, and survives
+// (decision 0071). A parked run holds no unit until it is due, and survives
 // a restart in state.db, so it does not keep the runner busy.
 func (m *Monitor) Idle() bool {
 	if m == nil {

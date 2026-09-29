@@ -374,7 +374,7 @@ func TestNewSpec(t *testing.T) {
 	}
 
 	// A fork's install carries its repository, which a self-update in the
-	// unit fetches from (decision 0069).
+	// unit fetches from (decision 0071).
 	env["YAD_REPO"] = "someone/fork"
 	if sp, err := NewSpec(p, "/usr/local/bin/yad", "/usr/bin", h); err != nil || sp.Env["YAD_REPO"] != "someone/fork" {
 		t.Errorf("YAD_REPO in the unit: %v, %v", sp.Env, err)

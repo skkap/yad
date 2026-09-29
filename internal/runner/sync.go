@@ -546,7 +546,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	// release rather than exiting, which is what draining tells a hub. It
 	// offers no capacity meanwhile, so the hub offers it nothing — and a hub
 	// asking it to drain still hears no draining, so its drain control keeps
-	// coming until it turns the update's drain into an exit (decision 0069).
+	// coming until it turns the update's drain into an exit (decision 0071).
 	req.Health.Draining = draining && !l.Drain.ForUpdate()
 	// The document goes with the first sync of every process, after any move
 	// and whenever the hub asks; otherwise the fingerprint stands for it.

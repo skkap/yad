@@ -569,7 +569,7 @@ Two things about this that are not negotiable by anyone else:
 
 A runner replaces its own binary only if `config.toml` says `[update] auto =
 true`. No hub can turn that on, trigger it or pick the release
-([0069](decisions/0069-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
+([0071](decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
 What turning it on trusts, spelled out:
 
 - **The repository's GitHub releases** — `skkap/yad`, or the fork `YAD_REPO`
@@ -612,5 +612,5 @@ What turning it on trusts, spelled out:
 - [0038 — the owner trusts the hubs it connects](decisions/0038-the-owner-trusts-the-hubs-it-connects.md)
 - [0028 — a runner is a per-user service, with the owner's login PATH frozen into it](decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)
 - [0033 — sources reach only what the owner allows](decisions/0033-sources-reach-only-what-the-owner-allows.md)
-- [0069 — a runner updates itself when its owner turns it on](decisions/0069-a-runner-updates-itself-when-its-owner-turns-it-on.md)
+- [0071 — a runner updates itself when its owner turns it on](decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)
 - `ARCHITECTURE.md §8` is the same ground in one page, for someone reading the code.

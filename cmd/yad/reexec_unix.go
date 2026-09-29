@@ -10,7 +10,7 @@ import (
 
 // reexec replaces this process with the binary at path, with the same
 // arguments and environment: the pid stays, so launchd and systemd see no exit
-// and restart nothing (decision 0069). Only fds 0 to 2 cross it — every file
+// and restart nothing (decision 0071). Only fds 0 to 2 cross it — every file
 // Go opens is close-on-exec, and the daemon has closed its own before this.
 // It returns only on failure, and then the process exits with the error: a
 // service manager restarts a failed runner, and the binary it starts is the

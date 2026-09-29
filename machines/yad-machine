@@ -129,7 +129,7 @@ load_spec() {
 
 # self_update_on is whether a spec's config.toml turns self-update on —
 # `[update]` then `auto = true`, or the same as a dotted key or an inline table
-# (decision 0069). Read here, where no yad may be installed; yad reads the file
+# (decision 0071). Read here, where no yad may be installed; yad reads the file
 # for itself on the machine.
 self_update_on() {
 	awk '

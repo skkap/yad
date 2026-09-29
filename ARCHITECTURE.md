@@ -85,7 +85,7 @@ internal/hub             `yad hub`: huma server, store, submit/watch API
 internal/control         the Unix control socket, server and client
 internal/upgrade         `yad upgrade`: releases fetched over HTTPS, checksum, atomic replace
 internal/selfupdate      the owner's opt-in to self-update: the six-hourly check, the
-                         protocol check of a downloaded release, the wait for idle (0069)
+                         protocol check of a downloaded release, the wait for idle (0071)
 internal/conformance     the protocol conformance suite, run against any hub
 internal/shellword       every command yad prints for pasting, built from argv
                          and POSIX-quoted; shellwordtest runs one through sh
@@ -203,7 +203,7 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
 - **Control kinds**: `cancel`, `interrupt`, `steer`, `close_session`, `drain`,
   `report_capabilities`, `update` (reserved, and ignored: a runner updates
   itself only when its owner turns it on —
-  [0069](docs/decisions/0069-a-runner-updates-itself-when-its-owner-turns-it-on.md)), the four of hub
+  [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)), the four of hub
   login: `start_login`, `login_code`, `login_token`, `cancel_login`, and
   `remove_account`.
 - **Controls are not acknowledged**, so a hub repeats `cancel` and `interrupt`
@@ -1164,7 +1164,7 @@ git_timeout   = "10m"
 setup_timeout = "15m"
 
 [update]
-auto = true   # check for a newer release every 6 h, install it, re-exec at an idle moment — 0069; absent = never
+auto = true   # check for a newer release every 6 h, install it, re-exec at an idle moment — 0071; absent = never
 ```
 
 ### `state.db`
@@ -1292,7 +1292,7 @@ yad conformance <url> --token T [--second-token T2]
 yad upgrade [--check] [--force] [--tag v]
                                    replace this binary with the newest release
 yad version [--json]               the build; --json adds the protocol majors it
-                                   speaks, which a self-update asks a release (0069)
+                                   speaks, which a self-update asks a release (0071)
 ```
 
 `yad daemon start` backgrounds itself — it re-executes `yad daemon start
@@ -1318,7 +1318,7 @@ before it stops anything
 ([0027](docs/decisions/0027-stop-asks-then-signals-and-restart-checks-first.md)).
 
 **Self-update** is off unless `config.toml` says `[update] auto = true`
-([0069](docs/decisions/0069-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
+([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
 Then the daemon asks for the newest release every six hours, jittered by a
 tenth, with the one anonymous request `yad upgrade` makes, and a newer one
 goes through `internal/upgrade.Apply` — downloaded beside the binary,
@@ -1477,7 +1477,7 @@ line here is a reviewed change.
   which catches corruption and not a compromised release — signing is a
   separate decision — and it runs the downloaded binary once, as `version
   --json` with `HOME` alone, before trusting it with anything
-  ([0069](docs/decisions/0069-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
+  ([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
 - The owner trusts the hubs it connects, so YAD does not police what a hub
   sends ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)).
   Hub input and harness output are still data to YAD itself: never executed,

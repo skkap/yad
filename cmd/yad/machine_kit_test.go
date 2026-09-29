@@ -300,7 +300,7 @@ func TestKitUpWithAYadThatCannotApplySeedsOnce(t *testing.T) {
 }
 
 // A spec that turns self-update on while YAD_VERSION pins a release is refused
-// before anything is built (decision 0069): the runner would replace the pin
+// before anything is built (decision 0071): the runner would replace the pin
 // within hours. Every way config.toml can write the setting is read; a spec
 // that leaves it off, or a YAD_VERSION of latest, goes on to look for Lima —
 // which is absent here, and is the next thing up needs.

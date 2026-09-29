@@ -200,7 +200,7 @@ func TestApplyNeverRemovesAnAccount(t *testing.T) {
 	}
 }
 
-// Self-update is the spec's to decide on a work machine (decision 0069): apply
+// Self-update is the spec's to decide on a work machine (decision 0071): apply
 // turns it on, and a spec that leaves it out turns it off again, as for every
 // setting the spec can hold.
 func TestApplyCarriesTheSelfUpdateOptIn(t *testing.T) {

@@ -310,7 +310,7 @@ const (
 // gated is the controls HUB.md §7 says a hub sends only to a runner that advertised
 // the feature by name. The rest are not gated: cancel and report_capabilities
 // go to every v1 runner, and update is reserved — a runner ignores it, since
-// self-update is its owner's to turn on and never a hub's (decision 0069), so
+// self-update is its owner's to turn on and never a hub's (decision 0071), so
 // a hub sending one has broken no rule of HUB.md's.
 var gated = []v1.ControlKind{v1.ControlDrain, v1.ControlCloseSession, v1.ControlSteer, v1.ControlInterrupt,
 	v1.ControlStartLogin, v1.ControlLoginCode, v1.ControlLoginToken, v1.ControlCancelLogin, v1.ControlRemoveAccount}

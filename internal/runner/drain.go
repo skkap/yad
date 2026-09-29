@@ -30,7 +30,7 @@ type Drain struct {
 	draining   chan struct{}
 	cancelling chan struct{}
 	// update is a drain begun by a self-update and by nobody since (decision
-	// 0069): it has no drain wait, so no run it waits on is ever cancelled,
+	// 0071): it has no drain wait, so no run it waits on is ever cancelled,
 	// and the process re-executes at its end rather than exiting. bounded
 	// closes when anyone else asks for a drain or a stop, which makes it an
 	// ordinary one from then on.

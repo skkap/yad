@@ -158,7 +158,7 @@ func TestApplyReplacesTheBinary(t *testing.T) {
 	}
 }
 
-// A self-update runs the release before it is installed (decision 0069): Vet
+// A self-update runs the release before it is installed (decision 0071): Vet
 // sees the verified binary, executable, and a refusal from it leaves the
 // installed one exactly as it was.
 func TestApplyVetsTheVerifiedBinaryBeforeTheRename(t *testing.T) {

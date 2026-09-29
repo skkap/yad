@@ -43,7 +43,7 @@ func cleanLine(s string) string {
 	return strings.NewReplacer("\n", " ", "\t", " ").Replace(clean(s))
 }
 
-// printUpdate is the self-update, when config.toml has it on (decision 0069):
+// printUpdate is the self-update, when config.toml has it on (decision 0071):
 // where the schedule stands, then any release refused or waiting to take
 // over. The version running is the status's first line; a pending release is
 // the one installed on disk.

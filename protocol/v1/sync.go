@@ -144,7 +144,7 @@ const (
 	ControlReportCapabilities ControlKind = "report_capabilities"
 	// ControlUpdate is reserved (decision 0018), and a yad runner ignores it:
 	// it updates itself only when its owner's config.toml says so, never on
-	// a hub's say-so (decision 0069), and keeps reporting its version.
+	// a hub's say-so (decision 0071), and keeps reporting its version.
 	ControlUpdate ControlKind = "update"
 	// The hub-login controls (decision 0055), added within v1 and sent only
 	// to a runner advertising the "login" feature, as every kind added to

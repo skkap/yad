@@ -17,7 +17,7 @@ import (
 // legacyProtocols is what a release older than `yad version --json` speaks.
 // Every release before the field existed was built against protocol/v1 alone,
 // and v1 is the only major there has ever been, so reading such a release as
-// v1-only is a fact about the past rather than a guess (decision 0069). The
+// v1-only is a fact about the past rather than a guess (decision 0071). The
 // literal, not v1.Version: this names what old binaries spoke, which no later
 // build's constant can change.
 var legacyProtocols = []string{"1"}

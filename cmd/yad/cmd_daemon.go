@@ -199,7 +199,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	// An account change rebuilds the document now rather than at the next
 	// tick, so a hub hears of the new account within one sync.
 	rebuild := make(chan struct{}, 1)
-	// Off unless config.toml turns it on (decision 0069). The path is read
+	// Off unless config.toml turns it on (decision 0071). The path is read
 	// now, before a release can replace the file it names.
 	var updater *selfupdate.Updater
 	exe, _ := os.Executable()
@@ -288,7 +288,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				fmt.Fprintln(w, "\nshut down — runs cut short are reported lost at the next start")
 				log.Info("daemon stopped", "drained", false)
 			case drain.ForUpdate():
-				// A stop still wins here (decision 0069): the socket and the
+				// A stop still wins here (decision 0071): the socket and the
 				// signal handler are shut first, so no stop can be taken
 				// and then lost to the exec, and one already caught is
 				// counted before the drain is read again.

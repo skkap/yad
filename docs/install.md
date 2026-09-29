@@ -70,7 +70,7 @@ The profile goes after `service install` but *before* `daemon` —
 
 A runner can keep itself on the newest release. It is off unless you turn it
 on in `config.toml`, and nothing a hub sends can turn it on or trigger it
-([0069](decisions/0069-a-runner-updates-itself-when-its-owner-turns-it-on.md)):
+([0071](decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)):
 
 ```toml
 [update]

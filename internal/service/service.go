@@ -165,7 +165,7 @@ func NewSpec(p config.Paths, executable, path string, h Host) (Spec, error) {
 		env[k] = v
 	}
 	// The fork an install came from. A runner with self-update on fetches
-	// its releases from it (decision 0069); a unit without it would put
+	// its releases from it (decision 0071); a unit without it would put
 	// upstream's binary over a fork's at the next check.
 	if repo := h.Getenv(upgrade.RepoEnv); repo != "" {
 		env[upgrade.RepoEnv] = repo

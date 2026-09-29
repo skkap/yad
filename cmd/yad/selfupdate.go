@@ -20,7 +20,7 @@ import (
 // fake clock reaches.
 var selfUpdateTimings struct{ first, every, idleWait, poll time.Duration }
 
-// newUpdater is the self-update config.toml turned on (decision 0069), for the
+// newUpdater is the self-update config.toml turned on (decision 0071), for the
 // binary at exe. It reads releases where `yad upgrade` does, and hands the
 // takeover to the drain.
 func newUpdater(g global, cfg config.Config, exe string, drain *runner.Drain, monitor *runner.Monitor, log *slog.Logger) *selfupdate.Updater {

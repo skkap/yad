@@ -1,5 +1,5 @@
 // Package selfupdate is the runner keeping itself on the newest release, when
-// its owner has turned that on in config.toml (decision 0069): a check every
+// its owner has turned that on in config.toml (decision 0071): a check every
 // six hours, a download verified exactly as `yad upgrade` verifies one — it is
 // internal/upgrade that does it — and a takeover at the first idle moment, or
 // after a drain when none comes within a day.

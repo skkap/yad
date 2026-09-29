@@ -123,7 +123,7 @@ say "yad"
 # agent's instead: ~/.local/bin/yad, with /usr/local/bin/yad a link to it.
 # That gives up the root-owned binary on this machine alone, and it guarded
 # less than it looks: a run as the agent can already rewrite the agent's
-# systemd unit, which names the binary the runner starts (decision 0069).
+# systemd unit, which names the binary the runner starts (decision 0071).
 agent_home=$(getent passwd "$AGENT_USER" | cut -d: -f6)
 owed_dir=$agent_home/.local/state/yad-machine
 agent_yad=$agent_home/.local/bin/yad
