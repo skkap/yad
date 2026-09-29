@@ -18,6 +18,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/claude"
 	"github.com/skkap/yad/internal/adapter/codex"
+	"github.com/skkap/yad/internal/adapter/opencode"
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/probe"
@@ -33,7 +34,7 @@ import (
 // lister asks one harness for the models the login env points it at.
 type lister func(ctx context.Context, bin, dir string, env []string) ([]string, error)
 
-var listers = map[string]lister{"claude": claude.ListModels, "codex": codex.ListModels}
+var listers = map[string]lister{"claude": claude.ListModels, "codex": codex.ListModels, "opencode": opencode.ListModels}
 
 // ListModelsForTests, when set, answers in place of every harness, so a test
 // whose fake harness plays a run is not also started to list models.
@@ -284,7 +285,7 @@ func modelsOf(ctx context.Context, d harness.Detected, home string) modelsAnswer
 }
 
 // modelsRequest is what each harness is asked, as its owner would look it up.
-var modelsRequest = map[string]string{"claude": "list_models", "codex": "model/list"}
+var modelsRequest = map[string]string{"claude": "list_models", "codex": "model/list", "opencode": "`opencode models`"}
 
 // modelsReason is why an ask got no answer, with what to do about it, built
 // from what kind of failure err is and never from its text: the owner reads

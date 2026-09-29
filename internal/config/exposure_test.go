@@ -241,19 +241,20 @@ var privateWriters = map[string]bool{"WriteSecret": true, "writePrivate": true}
 
 func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 	excused := map[string]string{
-		"internal/config/credentials.go": "writePrivate: runner-id, credentials/* and hub-admin-token — all in privateFiles",
-		"internal/config/config.go":      "Save writes config.toml 0600 — in privateFiles, as the mode without the rotation",
-		"internal/config/identity.go":    "runner-id, in privateFiles",
-		"internal/config/update.go":      "config.toml.lock, empty: a lock beside config.toml, and holding nothing",
-		"cmd/yad/cmd_hub.go":             "WriteSecret for hub-admin-token, which is in privateFiles",
-		"internal/store/store.go":        "state.db and hub.db — both in privateFiles",
-		"internal/control/server.go":     "yad.sock and yad.lock: gone when the daemon stops, and inside the data directory this checks as a whole",
-		"internal/logfile/logfile.go":    "the daemon's log, inside the data directory this checks as a whole",
-		"cmd/yad/cmd_lifecycle.go":       "stderr.log, inside the data directory this checks as a whole",
-		"internal/runner/executor.go":    "a run's grant files, deleted when the run ends and inside the data directory",
-		"internal/workdir/hook.go":       "a marker file in a workdir, which holds no secret",
-		"internal/workdir/workdir.go":    "a marker file in a checkout, which holds no secret",
-		"internal/account/token.go":      "a token account's token, in its home inside the data directory this checks as a whole — and one others can read is refused rather than used (decision 0054)",
+		"internal/config/credentials.go":        "writePrivate: runner-id, credentials/* and hub-admin-token — all in privateFiles",
+		"internal/config/config.go":             "Save writes config.toml 0600 — in privateFiles, as the mode without the rotation",
+		"internal/config/identity.go":           "runner-id, in privateFiles",
+		"internal/config/update.go":             "config.toml.lock, empty: a lock beside config.toml, and holding nothing",
+		"cmd/yad/cmd_hub.go":                    "WriteSecret for hub-admin-token, which is in privateFiles",
+		"internal/store/store.go":               "state.db and hub.db — both in privateFiles",
+		"internal/control/server.go":            "yad.sock and yad.lock: gone when the daemon stops, and inside the data directory this checks as a whole",
+		"internal/logfile/logfile.go":           "the daemon's log, inside the data directory this checks as a whole",
+		"cmd/yad/cmd_lifecycle.go":              "stderr.log, inside the data directory this checks as a whole",
+		"internal/runner/executor.go":           "a run's grant files, deleted when the run ends and inside the data directory",
+		"internal/workdir/hook.go":              "a marker file in a workdir, which holds no secret",
+		"internal/workdir/workdir.go":           "a marker file in a checkout, which holds no secret",
+		"internal/account/token.go":             "a token account's token, in its home inside the data directory this checks as a whole — and one others can read is refused rather than used (decision 0054)",
+		"internal/adapter/opencode/opencode.go": "a run's context for OpenCode, in a directory of its own under the temp directory, removed when the run's OpenCode exits (decision 0070)",
 	}
 	root := filepath.Join("..", "..")
 	sources, err := moduleSources(root)
@@ -294,7 +295,7 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 		if !found {
 			continue
 		}
-		if _, ok := excused[rel]; !ok && !strings.Contains(rel, "/codextest/") {
+		if _, ok := excused[rel]; !ok && !strings.Contains(rel, "/codextest/") && !strings.Contains(rel, "/acptest/") {
 			t.Errorf("%s creates a 0600 file that privateFiles has never heard of — add it to privateFiles, or add it to this test's excused list with the reason it needs no warning of its own", rel)
 		}
 		delete(excused, rel)

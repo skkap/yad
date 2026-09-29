@@ -99,9 +99,9 @@ func TestDetectReadsVersionAndHonoursEnvPath(t *testing.T) {
 }
 
 func TestLookup(t *testing.T) {
-	// Claude and Codex have adapters; the rest are recognised, and nothing
+	// Claude, Codex and OpenCode have adapters; the rest are recognised, and nothing
 	// becomes first-class without one (AGENTS.md).
-	for _, id := range []string{"claude", "codex"} {
+	for _, id := range []string{"claude", "codex", "opencode"} {
 		if h, ok := Lookup(id); !ok || h.Kind != FirstClass {
 			t.Errorf("Lookup(%s) = %+v, %v", id, h, ok)
 		}

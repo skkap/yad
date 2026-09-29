@@ -6,10 +6,11 @@
 #
 #   scripts/smoke.sh claude    make smoke
 #   scripts/smoke.sh codex     make smoke-codex
+#   scripts/smoke.sh opencode  make smoke-opencode
 #
 # It spends a few cents of the logged-in account (the cheapest model, a
-# one-line answer and one file read), so it is run by hand — never in CI,
-# never from `make check`. SMOKE_MODEL overrides the model. Everything it
+# one-line answer and one file read) — OpenCode's on a free OpenCode Zen
+# model, nothing — so it is run by hand: never in CI, never from `make check`. SMOKE_MODEL overrides the model. Everything it
 # writes lives in a throwaway directory that is removed on exit; no token is
 # printed.
 set -euo pipefail
@@ -35,8 +36,15 @@ codex)
 	# said here, the cause is plain.
 	codex login status >/dev/null 2>&1 || { echo "smoke: codex is not logged in — run \`codex login\`" >&2; exit 2; }
 	;;
+opencode)
+	# A free model on OpenCode Zen, which needs no login and spends nothing.
+	model=${SMOKE_MODEL:-opencode/nemotron-3.5-lightning-free}
+	ask="Use the bash tool to run \`cat %s\`, then reply with its output only, on one line."
+	tool='^→ bash'
+	command -v opencode >/dev/null || { echo "smoke: opencode is not on PATH — install OpenCode" >&2; exit 2; }
+	;;
 *)
-	echo "smoke: no smoke for harness \"$harness\" — use claude or codex" >&2
+	echo "smoke: no smoke for harness \"$harness\" — use claude, codex or opencode" >&2
 	exit 2
 	;;
 esac

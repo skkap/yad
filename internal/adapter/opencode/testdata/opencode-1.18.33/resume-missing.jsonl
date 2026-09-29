@@ -1,0 +1,6 @@
+{">":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"yad","title":"YAD","version":"dev"},"protocolVersion":1}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"mcpCapabilities":{"http":true,"sse":true},"promptCapabilities":{"embeddedContext":true,"image":true},"sessionCapabilities":{"close":{},"fork":{},"list":{},"resume":{}}},"authMethods":[{"description":"Run `opencode auth login` in the terminal","name":"Login with opencode","id":"opencode-login"}],"agentInfo":{"name":"OpenCode","version":"1.18.33"}}}
+{">":{"jsonrpc":"2.0","id":2,"method":"session/resume","params":{"cwd":"/work","mcpServers":[],"sessionId":"ses_0000000000000000000000000000"}}}
+{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"Internal error: OpenCode service failure","data":{"service":"session"}}}
+{">":{"jsonrpc":"2.0","id":3,"method":"session/list","params":{"cwd":"/work"}}}
+{"jsonrpc":"2.0","id":3,"result":{"sessions":[]}}

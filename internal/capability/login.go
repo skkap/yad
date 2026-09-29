@@ -43,7 +43,7 @@ var (
 // not a "no", as the account probe has it.
 func DefaultLogins(ctx context.Context, found []harness.Detected, cfg config.Config) {
 	for i, d := range found {
-		if !d.Ready() || !account.CanLogIn(d.ID) || len(cfg.Harness[d.ID].Accounts) > 0 {
+		if !d.Ready() || !account.ChecksLogin(d.ID) || len(cfg.Harness[d.ID].Accounts) > 0 {
 			continue
 		}
 		e, w := defaultLogin(ctx, d)
@@ -76,7 +76,7 @@ func defaultLogin(ctx context.Context, d harness.Detected) (errMsg, warning stri
 	case err != nil:
 		a.warning = "yad could not tell whether it is logged in, and runs may fail — as the runner's user, " + probed(d).Try(command(d, account.StatusArgs(d.ID)), "what it says")
 	case !in:
-		a.err = "not logged in on this machine — as the runner's user, " + probed(d).Do(command(d, account.LoginArgs(d.ID)), "log it in")
+		a.err = "not logged in on this machine — as the runner's user, " + probed(d).Do(command(d, account.LoginCommandArgs(d.ID)), "log it in")
 	}
 	loginMu.Lock()
 	loginAsked[key] = a
