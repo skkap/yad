@@ -6,9 +6,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/control"
 	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
@@ -140,5 +142,72 @@ func TestAccountAddTakesTheRemovalMarkerOff(t *testing.T) {
 	}
 	if _, err := os.Stat(home); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A daemon that holds the lock and does not answer Keep may still hold the
+// label as doomed, and delete its home when the last run on it ends — in the
+// middle of the login (DEV-167). The add stops before the login and before it
+// takes the marker off, and says to run it again once the daemon answers.
+func TestAccountAddStopsWhenTheDaemonDoesNotAnswerKeep(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// socket is whether the daemon's socket is there to connect to: one
+		// that takes the request and never answers, or none while the lock
+		// is held.
+		socket bool
+	}{
+		{"takes the request and never answers", true},
+		{"holds the lock with no socket", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := accountHarness(t, claudeE2E)
+			interactive = func() bool { return false }
+			home, err := account.Ensure(p.Data, "claude", "tl")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := account.Mark(p.Data, "claude", "tl"); err != nil {
+				t.Fatal(err)
+			}
+			keepWait = 200 * time.Millisecond
+			t.Cleanup(func() { keepWait = 5 * time.Second })
+			// Claimed and never served: a connect lands in the listener's
+			// backlog, the request is written, and no answer ever comes.
+			wedged, err := control.Claim(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { wedged.Close() })
+			if !tc.socket {
+				if err := os.Remove(p.Socket()); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			old := stdin
+			stdin = strings.NewReader("sk-ant-oat01-not-a-real-token\n")
+			code, out, errs := yadIn(t, "account", "add", "claude", "tl", "--token", "-")
+			stdin = old
+			if code == 0 {
+				t.Fatalf("the add went ahead past a daemon that did not answer Keep:\n%s%s", out, errs)
+			}
+			if !account.Marked(p.Data, "claude", "tl") {
+				t.Error("the add took the removal marker off without the daemon's answer")
+			}
+			if account.TokenFileExists(home) {
+				t.Error("the add stored its token in a home the daemon may still delete")
+			}
+			if got := listedClaude(t, p); len(got) != 0 {
+				t.Errorf("config.toml lists %v", got)
+			}
+			if !strings.Contains(errs, "was not added") {
+				t.Errorf("the error does not say the account was not added: %s", errs)
+			}
+			shellwordtest.CheckEnv(t, onlyCommand(t, errs, "yad --profile default status"), dirsEnv(t),
+				"yad", "--profile", "default", "status")
+			shellwordtest.CheckEnv(t, onlyCommand(t, errs, "yad --profile default account add"), dirsEnv(t),
+				"yad", "--profile", "default", "account", "add", "claude", "tl", "--token", "-")
+		})
 	}
 }
