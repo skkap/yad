@@ -135,6 +135,11 @@ func TestE2EAPreUpgradeSourceTokenIsTakenOut(t *testing.T) {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
+	// The session's WT_SLOT, held under the cache's name then.
+	res, err := st.DB.Exec(`UPDATE slots SET repo = ?1 WHERE repo = ?2`, filepath.Base(stale), filepath.Base(caches[0]))
+	if n, _ := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("the session's slot: %d rows, %v", n, err)
+	}
 	st.Close()
 	for _, where := range []string{"state.db", filepath.Base(stale)} {
 		if held := tokenHeld(t, m.p.data, "FAKEt0ken"); !strings.Contains(strings.Join(held, " "), where) {
@@ -160,6 +165,10 @@ func TestE2EAPreUpgradeSourceTokenIsTakenOut(t *testing.T) {
 	rs := m.runnerStore()
 	if r := localRun(t, rs, "e2e-pre-1"); r.HadGrants == 0 {
 		t.Error("the run that carried the token can be rebuilt from its row, which no longer holds it")
+	}
+	var repo string
+	if err := rs.DB.QueryRow(`SELECT repo FROM slots`).Scan(&repo); err != nil || repo != filepath.Base(caches[0]) {
+		t.Errorf("the session's slot is held under %q (%v), want the cache's new name", repo, err)
 	}
 	// Once: a later start pays one lookup, not a read of every row.
 	if pending, err := rs.StartSweepPending(context.Background(), "source_credentials"); err != nil || pending {

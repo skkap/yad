@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 )
@@ -109,7 +110,9 @@ func (m *Manager) StaleCaches(ctx context.Context) ([]StaleCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	caches, err := filepath.Glob(filepath.Join(repos, "*.git"))
+	// Listed, not globbed: the data directory is the owner's path, and a '['
+	// in it would be read as a pattern and match nothing, every start.
+	caches, err := entries(repos, ".git")
 	if err != nil {
 		return nil, err
 	}
@@ -155,36 +158,61 @@ func (m *Manager) StaleCaches(ctx context.Context) ([]StaleCache, error) {
 }
 
 // CleanCache moves c to its Target when it has one, then takes the
-// credential out of its config. The config is last because it is how the
-// cache is found: a start that stops before it finds the cache again, under
-// either name, and finishes — at the new name it is its own target, which is
-// taken, so it stays.
+// credential out of its config; moved reports whether it now lives at
+// Target. The config is last because it is how the cache is found: a start
+// that stops before it finds the cache again, under either name, and
+// finishes — at the new name it is its own target, which is taken, so it
+// stays.
 //
 // The move keeps every session with a worktree of the cache: each worktree's
 // .git file, which names the cache's path, is pointed at the new one before
 // the rename. Until the rename it names a directory that is not there yet,
 // which the next attempt finds and leaves as it is.
-func (m *Manager) CleanCache(ctx context.Context, c StaleCache) error {
+func (m *Manager) CleanCache(ctx context.Context, c StaleCache) (moved bool, err error) {
 	m.init()
 	unlock, err := m.lockRepo(ctx, c.Path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer unlock()
 	cache := c.Path
 	if c.Target != "" {
-		moved, err := m.move(ctx, c.Path, c.Target)
-		if err != nil {
-			return err
+		if moved, err = m.move(ctx, c.Path, c.Target); err != nil {
+			return false, err
 		}
 		if moved {
 			cache = c.Target
 		}
 	}
 	if _, err := m.git(ctx, cache, "config", "remote.origin.url", c.origin); err != nil {
-		return fmt.Errorf("%s: %s", cache, redactURLs(err.Error()))
+		return moved, fmt.Errorf("%s: %s", cache, redactURLs(err.Error()))
 	}
-	return nil
+	return moved, nil
+}
+
+// entries is every entry of dir whose name ends in suffix, as a path; none
+// when dir is not there.
+func entries(dir, suffix string) ([]string, error) {
+	es, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range es {
+		if strings.HasSuffix(e.Name(), suffix) {
+			out = append(out, filepath.Join(dir, e.Name()))
+		}
+	}
+	return out, nil
+}
+
+// gone reports whether err says a path is not there, or is not what it was —
+// a file where a directory was: a worktree no longer this cache's.
+func gone(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.EISDIR)
 }
 
 // move renames the cache at from to to, with its worktrees pointed there
@@ -200,7 +228,7 @@ func (m *Manager) move(ctx context.Context, from, to string) (bool, error) {
 	if _, err := os.Lstat(to); !errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
-	admins, err := filepath.Glob(filepath.Join(from, "worktrees", "*"))
+	admins, err := entries(filepath.Join(from, "worktrees"), "")
 	if err != nil {
 		return false, err
 	}
@@ -231,21 +259,29 @@ func (m *Manager) move(ctx context.Context, from, to string) (bool, error) {
 // to instead of from in its .git file. The admin directory's gitdir file
 // names the worktree's .git, and neither moves with the cache, so both still
 // hold after the rename. A .git that names anything but from — to, already,
-// or a directory this is not — is left as it is.
+// or a directory this is not — is left as it is. A file that is there and
+// cannot be read is an error, not a worktree gone: moved past, its session
+// would name a cache that is no longer there, and nothing would find it again.
 func repoint(admin, from, to string) error {
 	b, err := os.ReadFile(filepath.Join(admin, "gitdir"))
-	if err != nil {
+	if gone(err) {
 		// Not a worktree git still knows; git worktree prune's to drop.
 		return nil
+	}
+	if err != nil {
+		return err
 	}
 	dotGit := strings.TrimSpace(string(b))
 	if !filepath.IsAbs(dotGit) {
 		dotGit = filepath.Join(admin, dotGit)
 	}
 	cur, err := os.ReadFile(dotGit)
-	if err != nil {
+	if gone(err) {
 		// The worktree is gone: nothing to point anywhere.
 		return nil
+	}
+	if err != nil {
+		return err
 	}
 	gitdir, ok := strings.CutPrefix(strings.TrimSpace(string(cur)), "gitdir: ")
 	if !ok {

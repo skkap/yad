@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // downgrade lays the cache out as a version before decision 0068 would have
@@ -74,7 +75,7 @@ func TestAStaleCacheLosesItsCredentialAndItsSessionsContinue(t *testing.T) {
 				t.Errorf("target %s, want %s", c.Target, current)
 			}
 		}
-		if err := f.m.CleanCache(ctx, c); err != nil {
+		if _, err := f.m.CleanCache(ctx, c); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -144,7 +145,7 @@ func TestAStaleCacheMovedButNotRewrittenIsFinished(t *testing.T) {
 	if err != nil || len(stale) != 1 || stale[0].Target != "" {
 		t.Fatalf("stale = %+v (%v), want the cache, staying where it is", stale, err)
 	}
-	if err := f.m.CleanCache(ctx, stale[0]); err != nil {
+	if _, err := f.m.CleanCache(ctx, stale[0]); err != nil {
 		t.Fatal(err)
 	}
 	if found := holding(t, f.m.Data, "FAKEt0ken"); len(found) > 0 {
@@ -193,11 +194,28 @@ func TestAStaleCacheThatCannotMoveKeepsItsSessions(t *testing.T) {
 	if err != nil || len(found) != 1 || found[0].Target == "" {
 		t.Fatalf("stale = %+v (%v), want the cache, to move", found, err)
 	}
+	// A worktree whose .git cannot be read is not passed over as gone: the
+	// cache stays, and the one pointed already is pointed back.
+	dotGit := filepath.Join(f.m.Data, "workdirs", "hub", "s2", ".git")
+	if err := os.Chmod(dotGit, 0); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := f.m.CleanCache(ctx, found[0])
+	if err := os.Chmod(dotGit, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err == nil || moved {
+		t.Fatalf("a move past an unreadable .git: moved %v, err %v", moved, err)
+	}
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("the cache moved anyway: %v", err)
+	}
+
 	repos := filepath.Dir(stale)
 	if err := os.Chmod(repos, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	err = f.m.CleanCache(ctx, found[0])
+	_, err = f.m.CleanCache(ctx, found[0])
 	if err := os.Chmod(repos, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +235,7 @@ func TestAStaleCacheThatCannotMoveKeepsItsSessions(t *testing.T) {
 	if err != nil || len(found) != 1 {
 		t.Fatalf("stale = %+v (%v), want the cache found again", found, err)
 	}
-	if err := f.m.CleanCache(ctx, found[0]); err != nil {
+	if _, err := f.m.CleanCache(ctx, found[0]); err != nil {
 		t.Fatal(err)
 	}
 	if held := holding(t, f.m.Data, "FAKEt0ken"); len(held) > 0 {
@@ -251,5 +269,22 @@ func TestScrubOf(t *testing.T) {
 	forms := Scrub{Old: "https://a&b@", New: "https://"}.Forms()
 	if len(forms) != 2 || forms[1].Old != "https://a\\u0026b@" {
 		t.Errorf("forms = %+v, want the JSON spelling too", forms)
+	}
+}
+
+// The data directory is the owner's path, and may hold what a glob reads as
+// a pattern; the caches under it are found all the same.
+func TestStaleCachesUnderAPatternlikeDataDirectory(t *testing.T) {
+	needGit(t)
+	m := &Manager{Data: filepath.Join(t.TempDir(), "yad[old]"), Slots: &fakeSlots{}, GitTimeout: time.Minute}
+	cache := filepath.Join(m.Data, "repos", "acme-0123456789abcdef.git")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sh(t, cache, "git", "init", "--quiet", "--bare")
+	sh(t, cache, "git", "config", "remote.origin.url", "https://"+fakeToken+"@example.invalid/acme.git")
+	found, err := m.StaleCaches(context.Background())
+	if err != nil || len(found) != 1 {
+		t.Fatalf("stale = %+v (%v), want the one cache", found, err)
 	}
 }

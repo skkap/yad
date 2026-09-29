@@ -964,23 +964,6 @@ func (q *Queries) ListWaitingRuns(ctx context.Context) ([]Run, error) {
 	return items, nil
 }
 
-const markRunHadGrants = `-- name: MarkRunHadGrants :exec
-UPDATE runs SET had_grants = 1 WHERE connection = ? AND id = ?
-`
-
-type MarkRunHadGrantsParams struct {
-	Connection string
-	ID         string
-}
-
-// A run whose source carried a credential cannot be rebuilt from its row
-// once the credential is out of it, as Loop.record has marked such a run
-// since decision 0068.
-func (q *Queries) MarkRunHadGrants(ctx context.Context, arg MarkRunHadGrantsParams) error {
-	_, err := q.db.ExecContext(ctx, markRunHadGrants, arg.Connection, arg.ID)
-	return err
-}
-
 const outboxDepth = `-- name: OutboxDepth :one
 SELECT count(*) FROM outbox
 `
@@ -1176,7 +1159,8 @@ func (q *Queries) ScrubOutbox(ctx context.Context, arg ScrubOutboxParams) (int64
 }
 
 const scrubRuns = `-- name: ScrubRuns :execrows
-UPDATE runs SET spec = replace(spec, ?1, ?2), reason = replace(reason, ?1, ?2)
+UPDATE runs SET spec = replace(spec, ?1, ?2), reason = replace(reason, ?1, ?2),
+  had_grants = CASE WHEN instr(spec, ?1) > 0 THEN 1 ELSE had_grants END
 WHERE instr(spec, ?1) > 0 OR instr(reason, ?1) > 0
 `
 
@@ -1187,7 +1171,9 @@ type ScrubRunsParams struct {
 
 // Every copy of a source credential an earlier version wrote, replaced where
 // it stands: the rest of the text keeps its bytes, which a JSON parse and
-// re-encode would not promise.
+// re-encode would not promise. A run whose spec changed, in its sources or
+// its brief, cannot be rebuilt from its row as it was sent, so it is marked
+// as Loop.record has marked one with a source credential since decision 0068.
 func (q *Queries) ScrubRuns(ctx context.Context, arg ScrubRunsParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, scrubRuns, arg.Old, arg.New)
 	if err != nil {

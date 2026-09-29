@@ -57,14 +57,8 @@ func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Man
 				if json.Unmarshal([]byte(r.Spec), &run) != nil {
 					continue
 				}
-				found := workdir.ScrubsOf(run.Sources)
-				for _, s := range found {
+				for _, s := range workdir.ScrubsOf(run.Sources) {
 					scrubs[s] = true
-				}
-				if len(found) > 0 {
-					if err := q.MarkRunHadGrants(ctx, db.MarkRunHadGrantsParams{Connection: r.Connection, ID: r.ID}); err != nil {
-						return err
-					}
 				}
 			}
 			sessions, err := q.SessionSourcesWithAt(ctx)
@@ -90,16 +84,6 @@ func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Man
 				rows += n
 			}
 		}
-		// Before the move, in this transaction: a move that then fails
-		// leaves the cache where it was, found again at the next start, and
-		// its sessions allocated a slot afresh — nothing worse.
-		for _, c := range caches {
-			if c.Target != "" {
-				if err := q.RenameSlotsRepo(ctx, db.RenameSlotsRepoParams{NewRepo: filepath.Base(c.Target), OldRepo: filepath.Base(c.Path)}); err != nil {
-					return err
-				}
-			}
-		}
 		if pending {
 			return q.StartSweepDone(ctx, sourceCredentialsSweep)
 		}
@@ -123,20 +107,29 @@ func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Man
 	if err != nil {
 		log.Warn("state.db could not be checkpointed, so pages from before the credentials an earlier version kept in source URLs were taken out may still be in it; the next start tries again, and SQLite does as the daemon stops", "err", err)
 	}
-	var cleaned, moved int
+	var cleaned, renamed int
 	for _, c := range caches {
-		if err := w.CleanCache(ctx, c); err != nil {
+		moved, err := w.CleanCache(ctx, c)
+		if moved {
+			renamed++
+			// Only once the cache is at its new name: a session in it keeps
+			// the WT_SLOT its setup hook derived ports from. A start stopped
+			// before this line leaves the rows under the old name, and such a
+			// session is given a slot afresh — its hook, done, is not run
+			// again.
+			if err := st.RenameSlotsRepo(ctx, db.RenameSlotsRepoParams{NewRepo: filepath.Base(c.Target), OldRepo: filepath.Base(c.Path)}); err != nil {
+				log.Warn("the WT_SLOTs of a bare cache moved to its name without a credential could not follow it; its sessions are given slots afresh", "err", err)
+			}
+		}
+		if err != nil {
 			log.Warn("the credential an earlier version kept in a bare cache's URL could not be taken out; the next start tries again", "err", err)
 			continue
 		}
 		cleaned++
-		if c.Target != "" {
-			moved++
-		}
 	}
 	if rows > 0 || cleaned > 0 {
 		log.Info("took out the credentials an earlier version kept from the source URLs it stored (decision 0068)",
-			"state_rows", rows, "caches", cleaned, "caches_renamed", moved)
+			"state_rows", rows, "caches", cleaned, "caches_renamed", renamed)
 	}
 }
 

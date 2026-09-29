@@ -359,17 +359,14 @@ SELECT connection, id, spec FROM runs WHERE instr(spec, '@') > 0;
 -- name: SessionSourcesWithAt :many
 SELECT connection, id, sources FROM sessions WHERE instr(sources, '@') > 0;
 
--- A run whose source carried a credential cannot be rebuilt from its row
--- once the credential is out of it, as Loop.record has marked such a run
--- since decision 0068.
--- name: MarkRunHadGrants :exec
-UPDATE runs SET had_grants = 1 WHERE connection = ? AND id = ?;
-
 -- Every copy of a source credential an earlier version wrote, replaced where
 -- it stands: the rest of the text keeps its bytes, which a JSON parse and
--- re-encode would not promise.
+-- re-encode would not promise. A run whose spec changed, in its sources or
+-- its brief, cannot be rebuilt from its row as it was sent, so it is marked
+-- as Loop.record has marked one with a source credential since decision 0068.
 -- name: ScrubRuns :execrows
-UPDATE runs SET spec = replace(spec, sqlc.arg(old), sqlc.arg(new)), reason = replace(reason, sqlc.arg(old), sqlc.arg(new))
+UPDATE runs SET spec = replace(spec, sqlc.arg(old), sqlc.arg(new)), reason = replace(reason, sqlc.arg(old), sqlc.arg(new)),
+  had_grants = CASE WHEN instr(spec, sqlc.arg(old)) > 0 THEN 1 ELSE had_grants END
 WHERE instr(spec, sqlc.arg(old)) > 0 OR instr(reason, sqlc.arg(old)) > 0;
 
 -- name: ScrubSessions :execrows

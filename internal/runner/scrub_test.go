@@ -33,6 +33,10 @@ func TestAStoredSourceCredentialLeavesStateDB(t *testing.T) {
 				 VALUES ('hub', 's1', 'claude', '/w', 1, 1, '[{"git":{"url":"` + url + `"}}]')`,
 				`INSERT INTO runs (connection, id, session_id, harness, state, spec, created_at, updated_at)
 				 VALUES ('hub', 'r1', 's1', 'claude', 'succeeded', '{"run_id":"r1","sources":[{"git":{"url":"` + url + `"}}]}', 1, 1)`,
+				// A run whose brief, not its sources, quotes the URL: its
+				// spec changes too, so it is no longer the run as sent.
+				`INSERT INTO runs (connection, id, session_id, harness, state, spec, created_at, updated_at)
+				 VALUES ('hub', 'r2', 's1', 'claude', 'succeeded', '{"run_id":"r2","brief":{"instruction":"clone ` + url + `"}}', 2, 2)`,
 				`INSERT INTO events (connection, run_id, seq, body) VALUES ('hub', 'r1', 1, '{"status":"fetching ` + url + `"}')`,
 				`PRAGMA wal_checkpoint(TRUNCATE)`,
 			} {
@@ -71,12 +75,14 @@ func TestAStoredSourceCredentialLeavesStateDB(t *testing.T) {
 					t.Errorf("%s still holds the token", f)
 				}
 			}
-			r, err := e.store.GetRun(ctx, dbRun("hub", "r1"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(r.Spec, "https://example.invalid/acme.git") || r.HadGrants == 0 {
-				t.Errorf("run r1 is stored as %s, had_grants %d", r.Spec, r.HadGrants)
+			for _, id := range []string{"r1", "r2"} {
+				r, err := e.store.GetRun(ctx, dbRun("hub", id))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(r.Spec, "https://example.invalid/acme.git") || r.HadGrants == 0 {
+					t.Errorf("run %s is stored as %s, had_grants %d", id, r.Spec, r.HadGrants)
+				}
 			}
 			if pending, err := e.store.StartSweepPending(ctx, sourceCredentialsSweep); err != nil || pending {
 				t.Errorf("the sweep is still owed (%v)", err)
