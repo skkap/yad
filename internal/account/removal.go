@@ -22,7 +22,7 @@ import (
 // indistinguishable from the one a `yad account add` in progress, or walked
 // away from, keeps on purpose for the next try (decision 0043), which must
 // never be deleted. The marker is the difference: the daemon's next start
-// finishes every unlisted home that carries it (Unfinished, Finish), and
+// finishes every unlisted home that carries it (Unfinished, SetAsideMarked, RemoveSetAside), and
 // touches none that does not.
 //
 // The home rather than state.db, because the CLI never writes state.db
@@ -54,8 +54,12 @@ func markerPath(data, harness, label string) string {
 // an account removed before it was ever logged in has no home to leave
 // behind, and a Keychain login left for its path is Prepare's to clear.
 //
-// Never through a link: a home is yad's own directory, but a marker name
-// that is a symlink would have the write land wherever it points.
+// Always a new file, never one opened where the name already was: a symlink
+// there would have the write land wherever it points, a hard link would have
+// the truncate reach the file it shares, and a FIFO would hold the open —
+// and with it config.toml's lock — until something wrote to it. Whatever
+// holds the name is unlinked first, which touches no other name, and the
+// marker is created exclusively in its place.
 func Mark(data, harness, label string) error {
 	if err := checkNames(harness, label); err != nil {
 		return err
@@ -72,12 +76,15 @@ func Mark(data, harness, label string) error {
 		return nil
 	}
 	path := filepath.Join(home, removingMarker)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("mark %s for removal: %w", home, err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return fmt.Errorf("mark %s for removal: %w", home, err)
 	}
-	// Chmod as well as the mode above: an existing file keeps its own, and
-	// umask may narrow a new one but never widen it.
+	// Chmod as well as the mode above, which umask may narrow but never
+	// widen; this pins it whatever the umask.
 	err = errors.Join(f.Chmod(0o600), write(f, markerText), f.Sync(), f.Close())
 	if err == nil {
 		err = syncDir(home)
@@ -93,8 +100,9 @@ func write(f *os.File, s string) error {
 	return err
 }
 
-// syncDir makes a new name in dir durable: fsync on the file alone makes its
-// contents durable, not the entry that finds it.
+// syncDir makes a change to dir's names durable — a marker made, or one taken
+// off: fsync on a file makes its contents durable, not the entry that finds
+// it.
 func syncDir(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
@@ -114,14 +122,24 @@ func Marked(data, harness, label string) bool {
 }
 
 // Unmark takes the marker off an account's home: the label is being added
-// again, and the home is the one being logged in now. A marker already gone,
-// or a home that is not there, is no error.
+// again, and the home is the one being logged in now. Durably, as Mark is:
+// a power cut that brought the marker back during the login would have the
+// next start delete the home being logged in. A marker already gone, or a
+// home that is not there, is no error.
 func Unmark(data, harness, label string) error {
 	if err := checkNames(harness, label); err != nil {
 		return err
 	}
-	if err := os.Remove(markerPath(data, harness, label)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("take the removal marker off %s: %w", HomeDir(data, harness, label), err)
+	home := HomeDir(data, harness, label)
+	err := os.Remove(markerPath(data, harness, label))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err == nil {
+		err = syncDir(home)
+	}
+	if err != nil {
+		return fmt.Errorf("take the removal marker off %s: %w", home, err)
 	}
 	return nil
 }
@@ -166,16 +184,4 @@ func SetAsideMarked(data, harness, label string) (bool, error) {
 		return false, nil
 	}
 	return true, SetAside(data, harness, label)
-}
-
-// Finish completes a removal the process that started it did not: a marked
-// home at the account's path is set aside, and every set-aside copy is
-// deleted with, on macOS, the Keychain login (RemoveSetAside). The caller has
-// made sure config.toml does not list the label and that nothing is in the
-// home; an unmarked home is left where it is either way.
-func Finish(data, harness, label string) error {
-	if _, err := SetAsideMarked(data, harness, label); err != nil {
-		return err
-	}
-	return RemoveSetAside(data, harness, label)
 }

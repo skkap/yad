@@ -526,7 +526,9 @@ func (m *Logins) claim(l *hubLogin) (home string, release func(), err error) {
 	var hold *accountHold
 	ok := true
 	if l.add {
-		hold = m.Accounts.takeForAdd(l.ref, l.id)
+		if hold, err = m.Accounts.takeForAdd(l.ref, l.id); err != nil {
+			return "", nil, err
+		}
 	} else {
 		hold, ok = m.Accounts.takeForLogin(l.ref, l.id)
 	}

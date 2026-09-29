@@ -48,6 +48,7 @@ func restart(t *testing.T, e *env) *Accounts {
 		t.Fatal(err)
 	}
 	a := NewAccounts(e.paths.Data, account.ListsOf(cfg))
+	a.usePaths(e.paths)
 	a.attach(context.Background(), e.store)
 	return a
 }
@@ -252,7 +253,11 @@ func TestAnAddTakesTheMarkerOff(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"a hub's add", func(a *Accounts, r account.Ref) { a.takeForAdd(r, "lg1") }},
+		{"a hub's add", func(a *Accounts, r account.Ref) {
+			if _, err := a.takeForAdd(r, "lg1"); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{"a reload of the label added", func(a *Accounts, r account.Ref) {
 			if _, err := a.Reload(context.Background(), claudeLists("work"), r, false); err != nil {
 				t.Fatal(err)
@@ -281,4 +286,73 @@ func TestAnAddTakesTheMarkerOff(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The daemon reads config.toml before its socket opens and sweeps after, so
+// `yad account remove` can mark a home and drop its label in between. The
+// sweep's lists still name the label; the file it reads under the lock does
+// not, and the removal is in flight rather than dead. Its marker stays, so a
+// daemon that dies before the Reload it is waiting on still leaves a home the
+// next start deletes.
+func TestAStartSweepLeavesARemovalInFlightMarked(t *testing.T) {
+	e := newEnv(t)
+	if err := config.Save(e.paths, accountConfig("work")); err != nil {
+		t.Fatal(err)
+	}
+	home := plantCredential(t, e.paths.Data, "work")
+	// Read at start, before the removal.
+	a := accountsOf(e.paths.Data, accountConfig("work"))
+	a.usePaths(e.paths)
+	if _, err := account.Unlist(context.Background(), e.paths, "claude", "work", func(bool) bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	a.attach(context.Background(), e.store)
+	if !account.Marked(e.paths.Data, "claude", "work") {
+		t.Fatal("the start sweep took the marker off a removal in flight")
+	}
+	if !exists(home) {
+		t.Fatal("the start sweep deleted a home its lists still name")
+	}
+	// The daemon dies before the CLI's word reaches Reload.
+	restart(t, e)
+	removalDone(t, e.paths.Data, "work")
+}
+
+// A hub's add whose marker cannot come off does not begin: its login would
+// write a home the next start deletes. The removal it would have cancelled
+// stands, and the last run on the account still deletes the home.
+func TestAHubAddThatCannotUnmarkDoesNotBegin(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root unlinks in a directory it may not write")
+	}
+	e := newEnv(t)
+	if err := config.Save(e.paths, accountConfig("work")); err != nil {
+		t.Fatal(err)
+	}
+	home := plantCredential(t, e.paths.Data, "work")
+	a := restart(t, e)
+	ref := account.Ref{Harness: "claude", Label: "work"}
+	h, _ := a.take(ref, "run-1")
+	if _, _, err := a.Remove(context.Background(), e.paths, ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := a.takeForAdd(ref, "lg1")
+	kerr := a.Keep(ref)
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err == nil || hold != nil {
+		t.Fatalf("takeForAdd = %v, %v; want no hold and an error", hold, err)
+	}
+	if kerr == nil {
+		t.Error("Keep said the pending deletion was cancelled with the marker still on")
+	}
+	if !account.Marked(e.paths.Data, "claude", "work") {
+		t.Fatal("the marker went")
+	}
+	a.release(h)
+	removalDone(t, e.paths.Data, "work")
 }

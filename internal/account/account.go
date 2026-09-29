@@ -583,7 +583,7 @@ func RemoveSetAside(data, harness, label string) error {
 //
 // A marked home whose label config.toml still lists is here too: the process
 // removing it died before the file changed. That removal did not happen, and
-// its caller decides by the lists (Finish is only for a label nothing lists).
+// its caller decides by config.toml, read under its lock.
 // A home with no marker is never here.
 func Unfinished(data string) ([]Ref, error) {
 	root := filepath.Join(data, "accounts")

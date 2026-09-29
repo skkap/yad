@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/skkap/yad/internal/config"
 )
@@ -58,29 +60,60 @@ func TestMarkWritesAPrivateMarkerInTheHome(t *testing.T) {
 	}
 }
 
-// A marker name that is a link is refused, and whatever it points at is left
-// as it was: the write must land in the home or nowhere.
-func TestMarkNeverWritesThroughALink(t *testing.T) {
-	data := t.TempDir()
-	home, err := Ensure(data, "claude", "work")
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := filepath.Join(t.TempDir(), "elsewhere")
-	if err := os.WriteFile(target, []byte("the owner's"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, filepath.Join(home, removingMarker)); err != nil {
-		t.Fatal(err)
-	}
-	if err := Mark(data, "claude", "work"); err == nil {
-		t.Error("the marker was written through a link")
-	}
-	if b, err := os.ReadFile(target); err != nil || string(b) != "the owner's" {
-		t.Errorf("the link's target changed: %q, %v", b, err)
-	}
-	if Marked(data, "claude", "work") {
-		t.Error("a link reads as the marker")
+// Whatever already holds the marker's name — a symlink, a hard link to
+// another file, a FIFO — is replaced by a new marker, and what it pointed at
+// or shared is left as it was: the write lands in the home or nowhere, and
+// never waits on a reader.
+func TestMarkReplacesWhateverHoldsItsName(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		plant func(t *testing.T, target, at string)
+	}{
+		{"symlink", func(t *testing.T, target, at string) {
+			if err := os.Symlink(target, at); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"hard link", func(t *testing.T, target, at string) {
+			if err := os.Link(target, at); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"fifo", func(t *testing.T, _, at string) {
+			if err := syscall.Mkfifo(at, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			data := t.TempDir()
+			home, err := Ensure(data, "claude", "work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Beside the home, so a hard link can reach it on any filesystem.
+			target := filepath.Join(filepath.Dir(home), "elsewhere")
+			if err := os.WriteFile(target, []byte("the owner's"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			c.plant(t, target, filepath.Join(home, removingMarker))
+			done := make(chan error, 1)
+			go func() { done <- Mark(data, "claude", "work") }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("Mark is still waiting on what held the marker's name")
+			}
+			if b, err := os.ReadFile(target); err != nil || string(b) != "the owner's" {
+				t.Errorf("the file the name led to changed: %q, %v", b, err)
+			}
+			if !Marked(data, "claude", "work") {
+				t.Error("the home is not marked")
+			}
+		})
 	}
 }
 
@@ -145,9 +178,9 @@ func TestUnfinishedFindsMarkedHomesOnly(t *testing.T) {
 }
 
 // Finishing a marked home deletes it and, on macOS, its Keychain login, the
-// Keychain first; an unmarked home is not Finish's, and the Keychain is not
+// Keychain first; an unmarked home is not the sweep's, and the Keychain is not
 // asked about it.
-func TestFinishDeletesAMarkedHomeWithItsKeychainLogin(t *testing.T) {
+func TestFinishingDeletesAMarkedHomeWithItsKeychainLogin(t *testing.T) {
 	t.Setenv("USER", "owner")
 	calls := useFakeSecurity(t, "found")
 	data := t.TempDir()
@@ -162,7 +195,7 @@ func TestFinishDeletesAMarkedHomeWithItsKeychainLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls()
-	if err := Finish(data, "claude", "work"); err != nil {
+	if err := finish(data, "claude", "work"); err != nil {
 		t.Fatal(err)
 	}
 	if want := deletes("owner", KeychainServices(home)...); !sameCalls(calls(), want) {
@@ -173,20 +206,20 @@ func TestFinishDeletesAMarkedHomeWithItsKeychainLogin(t *testing.T) {
 	}
 	assertNoSetAside(t, data, "claude", "work")
 
-	if err := Finish(data, "claude", "pending"); err != nil {
+	if err := finish(data, "claude", "pending"); err != nil {
 		t.Fatal(err)
 	}
 	if got := calls(); len(got) > 0 {
 		t.Errorf("the Keychain was asked about an unmarked home: %q", got)
 	}
 	if _, err := os.Stat(HomeDir(data, "claude", "pending")); err != nil {
-		t.Errorf("Finish touched an unmarked home: %v", err)
+		t.Errorf("finishing touched an unmarked home: %v", err)
 	}
 }
 
 // A Keychain that will not let go keeps the marked home, set aside, and the
 // next finish completes it: a home and its login still go together.
-func TestFinishKeepsAMarkedHomeTheKeychainHoldsOnTo(t *testing.T) {
+func TestFinishingKeepsAMarkedHomeTheKeychainHoldsOnTo(t *testing.T) {
 	t.Setenv("USER", "owner")
 	useFakeSecurity(t, "missing")
 	data := t.TempDir()
@@ -198,8 +231,8 @@ func TestFinishKeepsAMarkedHomeTheKeychainHoldsOnTo(t *testing.T) {
 	}
 	t.Setenv("ACCOUNT_TEST_SECURITY", "locked")
 	var kerr *KeychainError
-	if err := Finish(data, "claude", "work"); !errors.As(err, &kerr) {
-		t.Fatalf("Finish = %v, want a KeychainError", err)
+	if err := finish(data, "claude", "work"); !errors.As(err, &kerr) {
+		t.Fatalf("finish = %v, want a KeychainError", err)
 	}
 	if n := setAside(t, data, "claude", "work"); n != 1 {
 		t.Fatalf("%d copies set aside, want the one kept", n)
@@ -208,10 +241,19 @@ func TestFinishKeepsAMarkedHomeTheKeychainHoldsOnTo(t *testing.T) {
 		t.Error("the kept copy is not unfinished")
 	}
 	t.Setenv("ACCOUNT_TEST_SECURITY", "found")
-	if err := Finish(data, "claude", "work"); err != nil {
+	if err := finish(data, "claude", "work"); err != nil {
 		t.Fatal(err)
 	}
 	assertNoSetAside(t, data, "claude", "work")
+}
+
+// finish is what the daemon's start sweep does with an unlisted account
+// nothing holds (runner.Accounts.finish), without the lock it takes.
+func finish(data, harness, label string) error {
+	if _, err := SetAsideMarked(data, harness, label); err != nil {
+		return err
+	}
+	return RemoveSetAside(data, harness, label)
 }
 
 // Unlist marks the home before config.toml drops the label, under the file's
