@@ -54,8 +54,8 @@ func (Adapter) Forks() bool { return true }
 // Timings a test may shorten.
 var (
 	// handshakeTimeout bounds each step before the turn runs: initialize,
-	// thread/start or thread/resume, thread/inject_items on a resume with a
-	// context, turn/start. A resume loads the thread's
+	// thread/start, thread/resume or thread/fork, thread/inject_items on a
+	// resume or a fork with a context, turn/start. A resume loads the thread's
 	// whole rollout, so it is generous; an app-server that answers none of
 	// them in this long is wedged, and nothing else would notice until the
 	// inactivity watchdog, half an hour later.
@@ -492,8 +492,10 @@ func (t *turn) startThread() {
 	// conversation, so it survives compaction. On a resume or a fork Codex
 	// keeps it as the thread's and puts it before the model only when it
 	// rebuilds the thread's opening, at a compaction; until then the thread
-	// still opens with the first run's, so the run's context is also injected
-	// before its turn (injectContext, decisions 0050 and 0065).
+	// opens as it did before — with the context of the run that last
+	// compacted it or opened it, a fork with its source's — so the run's
+	// context is also injected before its turn (injectContext, decisions 0050
+	// and 0065).
 	if t.spec.Brief.Context != "" {
 		params["developerInstructions"] = t.spec.Brief.Context
 	}
