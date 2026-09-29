@@ -119,10 +119,29 @@ and the run may never come.
   both. Codex 0.147.0 was not installed to record against; its `thread/fork`
   is the same shape in its schema and its hash covers it.
 
-Not measured: whether Codex reads a fork's `developerInstructions` before a
-compaction, as decision 0050 found it does not on a resume. A fork is a
-resume into a new thread, so the adapter treats it as one and also injects the
-run's context before the turn; at worst the model reads it twice.
+**A fork's context needs the injection — measured on Codex 0.157.1**
+(DEV-150, 2026-09-29), by 0050's method on a resume. The requests went to
+`codex app-server` directly, in a throwaway `CODEX_HOME`, on `gpt-5.6-luna`.
+A thread was started with no `developerInstructions` and told `Say hello.`
+It was then forked with `developerInstructions` `The codeword is BLUE. If
+asked, give the codeword.`, and the new thread was asked `What is the
+codeword? Reply with the word only.`
+
+- **Without `thread/inject_items`** the fork did not know the codeword. Three
+  runs answered `Hello`, `banana` and `hello`, the third with `excludeTurns:
+  true` as the adapter now sends it. The codeword appears nowhere in the fork's
+  rollout.
+- **With the injection**, as the adapter sends it, the fork answered `BLUE`.
+- **After `thread/compact/start` and no injection**, it answered `BLUE`, and
+  the rebuilt opening held the instructions as a developer message.
+- **A resume**, on the same release and without the injection, answered
+  `hello`: 0050's finding still holds on 0.157.1.
+
+So Codex keeps a fork's `developerInstructions` as the new thread's and reads
+them only when a compaction rebuilds its opening, as on a resume. The adapter
+sends them on `thread/fork`, for after a compaction, and also injects the
+run's context before the turn. The model reads it once before a compaction,
+not twice.
 
 ## Considered options
 
