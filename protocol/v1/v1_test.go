@@ -316,6 +316,7 @@ func TestGrantNames(t *testing.T) {
 		// decision and the way round it.
 		{"ANTHROPIC_API_KEY", "0040"}, {"anthropic_api_key", "0040"}, {"ANTHROPIC_AUTH_TOKEN", "0040"},
 		{"CLAUDE_CODE_OAUTH_TOKEN", "0040"}, {"CLAUDE_CONFIG_DIR", "0040"}, {"Claude_Config_Dir", "0040"},
+		{"CLAUDE_SECURESTORAGE_CONFIG_DIR", "0040"},
 		{"ANTHROPIC_BASE_URL", "0040"}, {"ANTHROPIC_CUSTOM_HEADERS", "0040"},
 		{"ANTHROPIC_PROFILE", "0040"}, {"ANTHROPIC_FEDERATION_RULE_ID", "0040"},
 		{"ANTHROPIC_ORGANIZATION_ID", "0040"}, {"ANTHROPIC_CONFIG_DIR", "0040"},

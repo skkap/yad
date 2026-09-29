@@ -119,8 +119,12 @@ wanted any of this could simply ask the harness for it.
   other name on it that is set where the daemon starts is removed from every
   harness, setup hook and git it runs, and `yad doctor` names each one it finds
   ([0060](decisions/0060-the-owners-own-account-variables-are-removed-from-every-run.md)).
-  `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are the exception: with no accounts they
-  are the harness's own login, and an account's home replaces them. To bill
+  `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `CLAUDE_SECURESTORAGE_CONFIG_DIR` are
+  the exception: with no accounts they are the harness's own login, and an
+  account's home replaces them — the last one too, which every account sets
+  to its own home, since Claude would otherwise keep every account's login
+  where it names
+  ([0070](decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)). To bill
   runs through an API key, log an account in with it; for a project that
   needs the key itself, have the hub send it as a grant under another name.
 - **`IS_SANDBOX` is two facts that only make sense together.** It is an
@@ -315,6 +319,18 @@ Two consequences worth knowing before you start:
   is logged in at the console — and a Mac logs in one user automatically. Claude
   Code also keeps its login in that user's login Keychain, which only a GUI
   login unlocks. A work machine (`machines/`) is the way round both.
+
+The same Keychain holds each Claude **account's** login, rather than its home:
+Claude files it under a name made from the home's path, so deleting the
+directory alone would not log the account out, and the same label added again
+would run on the old subscription. `yad account remove`, and a hub's removal,
+delete those Keychain items with the home, and keep the home if the Keychain
+refuses (a locked one, say), printing the `security delete-generic-password`
+command that finishes it by hand. Adding an account where there is no home
+deletes any login left for that path first, and says so
+([0070](decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)).
+On Linux the login is a file inside the home, and removing the home is the
+whole of logging it out.
 
 ## Never root
 

@@ -837,6 +837,22 @@ for `codex`); the suite never runs a real harness.
   to have succeeded as well as the check. The token's year is counted
   from when it was stored; the month before, the harness report carries a
   warning and `yad account list` says so.
+- **On macOS a Claude home's login is in the Keychain, not the home**
+  ([0070](docs/decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)):
+  generic passwords `Claude Code-credentials-<h>` (the login) and
+  `Claude Code-<h>` (a Console API key), `<h>` the first eight hex digits of
+  the SHA-256 of the home's path, filed under `$USER`
+  (`account.KeychainServices`; read from claude 2.1.284, and the record says
+  how to re-check it). The items are part of the home. `account.RemoveSetAside`,
+  where every removal ends, deletes them with
+  `/usr/bin/security delete-generic-password -s … -a …` before the home, and
+  keeps the home when it cannot, giving the command to run by hand.
+  `account.Prepare` (`Ensure`) deletes any found for a path where it is about
+  to make a home, since those can only be a leftover, and `yad account add`
+  says when it did. Each account also sets `CLAUDE_SECURESTORAGE_CONFIG_DIR`
+  to its home, which Claude would hash in place of the home, so the owner's
+  own copy cannot put every account on one login. On Linux the login is
+  `.credentials.json` inside the home, and deleting the home deletes it.
 - **Every home shares the machine's config** (0054): each time a home is
   prepared, `CLAUDE.md`, `settings.json`, `skills/`, `commands/` and `agents/`
   (Claude) or `AGENTS.md` and `prompts/` (Codex) are linked from the
@@ -1395,7 +1411,8 @@ line here is a reviewed change.
   credential a harness uses or which home it logs in from
   (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
   `ANTHROPIC_PROFILE`, the federation pair, `ANTHROPIC_CONFIG_DIR`,
-  `CLAUDE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, every
+  `CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `ANTHROPIC_BASE_URL`,
+  `ANTHROPIC_CUSTOM_HEADERS`, every
   `CLAUDE_CODE_USE_*` provider switch, `CODEX_HOME`, `OPENAI_API_KEY`,
   `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`, `OPENAI_BASE_URL`,
   `CODEX_REFRESH_TOKEN_URL_OVERRIDE`, `AWS_BEARER_TOKEN_BEDROCK` — `accountGrantNames` in

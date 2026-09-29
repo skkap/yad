@@ -406,3 +406,57 @@ func TestARetriedRemovalFinishesAHomeLeftAside(t *testing.T) {
 		t.Error("the removal of work deleted what another account left aside")
 	}
 }
+
+// A removal that stopped half-way — its home set aside and not deleted,
+// which a Keychain that would not let go of its login leaves on purpose
+// (decision 0070) — is finished when the daemon starts, and when a hub asks
+// again for a removal it has already had, since the label is out of
+// config.toml and nothing else comes back to it.
+func TestARemovalThatStoppedHalfWayIsFinished(t *testing.T) {
+	ctx := context.Background()
+	halfRemoved := func(t *testing.T, data string) string {
+		t.Helper()
+		if _, err := account.Ensure(data, "claude", "gone"); err != nil {
+			t.Fatal(err)
+		}
+		if err := account.SetAside(data, "claude", "gone"); err != nil {
+			t.Fatal(err)
+		}
+		refs, err := account.Unfinished(data)
+		if err != nil || !slices.Equal(refs, []account.Ref{{Harness: "claude", Label: "gone"}}) {
+			t.Fatalf("Unfinished = %v, %v; want the account set aside", refs, err)
+		}
+		return account.HomeDir(data, "claude", "gone")
+	}
+	finished := func(t *testing.T, data string) {
+		t.Helper()
+		if refs, err := account.Unfinished(data); err != nil || len(refs) > 0 {
+			t.Errorf("still unfinished: %v, %v", refs, err)
+		}
+	}
+
+	t.Run("at start", func(t *testing.T) {
+		e := newEnv(t)
+		halfRemoved(t, e.paths.Data)
+		a := accountsOf(e.paths.Data, accountConfig("work"))
+		a.attach(ctx, e.store)
+		finished(t, e.paths.Data)
+	})
+	t.Run("when a hub asks again", func(t *testing.T) {
+		e := newEnv(t)
+		if err := config.Save(e.paths, accountConfig("work")); err != nil {
+			t.Fatal(err)
+		}
+		a := accountsOf(e.paths.Data, accountConfig("work"))
+		a.attach(ctx, e.store)
+		home := halfRemoved(t, e.paths.Data)
+		_, removed, err := a.Remove(ctx, e.paths, account.Ref{Harness: "claude", Label: "gone"})
+		if err != nil || removed {
+			t.Fatalf("Remove = %v, %v; want nothing new removed and no error", removed, err)
+		}
+		finished(t, e.paths.Data)
+		if exists(home) {
+			t.Error("finishing the removal made a home")
+		}
+	})
+}
