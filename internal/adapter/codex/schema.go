@@ -21,8 +21,8 @@ import (
 
 // Pinning the app-server protocol (DEV-22, decision 0037). The app-server is
 // marked experimental and Codex ships weekly; the adapter was written against
-// what `codex app-server generate-json-schema` says for the versions below.
-// A runner checks the installed version's schema against them and reports
+// what `codex app-server generate-json-schema` says for the version below.
+// A runner checks the installed version's schema against it and reports
 // drift as a warning in its capability document, before a run finds it.
 //
 // Only the adapter's surface is hashed — the methods it sends, the
@@ -30,18 +30,21 @@ import (
 // release that adds an unrelated method, or rewords a description, is not
 // drift; one that changes the shape of turn/completed is.
 
-// pinned maps each known surface hash to the Codex version it was recorded
-// from, in testdata/codex-<version>/codex_app_server_protocol.schemas.json.
-var pinned = map[string]string{
-	"ba72688c25317e21f6c09305957e982a080236247a21be597e12b80117c14ba5": "0.147.0",
-	"12304d548db40115a52970f347f208559bc933dcf4743770bc2182140dfa7586": "0.157.1",
-}
+// The one Codex release the adapter is pinned to, and its surface hash, from
+// testdata/codex-<version>/codex_app_server_protocol.schemas.json. Only the
+// latest recorded release is pinned (decision 0067): pinning a new one
+// replaces both, so a request may use what that release takes without a
+// branch per version, and an older codex gets the drift warning.
+const (
+	pinnedVersion = "0.157.1"
+	pinnedSum     = "12304d548db40115a52970f347f208559bc933dcf4743770bc2182140dfa7586"
+)
 
 // schemaFile is the bundle generate-json-schema writes, holding every
 // definition.
 const schemaFile = "codex_app_server_protocol.schemas.json"
 
-// schemaFileCap bounds the bundle read back. 0.147.0's is under a megabyte;
+// schemaFileCap bounds the bundle read back. 0.157.1's is under a megabyte;
 // one past this is not a schema, and the check reports a failed read.
 const schemaFileCap = 64 << 20
 
@@ -329,16 +332,11 @@ func schemaWarning(ctx context.Context, bin string) (warning string, final bool,
 		// unquoted: a JSON syntax error quotes what codex wrote.
 		return "yad could not check this codex's app-server protocol: the schema it generated is not one yad can read — runs may still work; run `codex app-server generate-json-schema --out DIR` on this machine to see what it writes", true, nil
 	}
-	if _, ok := pinned[sum]; ok {
+	if sum == pinnedSum {
 		return "", true, nil
 	}
-	known := make([]string, 0, len(pinned))
-	for _, v := range pinned {
-		known = append(known, v)
-	}
-	slices.Sort(known)
 	// The installed version is not repeated here: the report's version field
 	// beside the warning carries it, and the warning's text stays wholly the
 	// runner's.
-	return fmt.Sprintf("this codex's app-server protocol differs from the one this yad was built against (codex %s) in the parts the adapter uses — runs may fail; install a pinned codex or a yad that knows this one", strings.Join(known, ", ")), true, nil
+	return fmt.Sprintf("this codex's app-server protocol differs from the one this yad was built against (codex %s) in the parts the adapter uses — runs may fail; install codex %s or a yad that knows this one", pinnedVersion, pinnedVersion), true, nil
 }
