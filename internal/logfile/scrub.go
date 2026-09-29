@@ -31,9 +31,13 @@ import (
 // nothing after a changed line moves — the appending descriptor goes on at
 // the same end, and `yad daemon logs --follow`, which reads on from the
 // offset it had reached, neither misses a line nor starts one in its middle.
-// Hence no new may be longer than its old. A line is one write, so a crash
-// tears at most the one it was in. A backup is replaced whole, through a file
-// beside it.
+// Hence no new may be longer than its old. What this gives up to a rename's
+// atomicity: power lost before the sync can keep any page of the file as it
+// was, and a rewritten line that crosses into such a page keeps what of an
+// old lay past the boundary — never the whole of one, which a retry would
+// find, but a tail no old matches any more. A rename would instead make a
+// follower take the live file for a rotated one and print every backup again.
+// A backup is replaced whole, through a file beside it.
 func (l *File) Scrub(oldnew ...string) (removed []string, err error) {
 	if len(oldnew)%2 != 0 {
 		return nil, errors.New("logfile: Scrub takes old and new strings in pairs")
