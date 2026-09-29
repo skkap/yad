@@ -158,7 +158,7 @@ func (h *Hub) startLogin(ctx context.Context, in *startLoginInput) (*loginOutput
 		if err != nil {
 			return err
 		}
-		if err := refuseUnadvertised(r, v1.ControlStartLogin, capability.FeatureLogin, loginAtTheMachine(req.Harness, req.Account)); err != nil {
+		if err := refuseUnadvertised(r, req.Harness, v1.ControlStartLogin, capability.FeatureLogin, loginAtTheMachine(req.Harness, req.Account)); err != nil {
 			return err
 		}
 		if req.Add {

@@ -118,6 +118,20 @@ func Forks(a Adapter) bool {
 	return ok && f.Forks()
 }
 
+// Steerer is an adapter whose turns take a steer: more input handed to the
+// harness while its turn runs. One that is not still has Turn.Steer, which
+// refuses; the runner advertises steer for its harness only when it is one,
+// so no hub sends a steer that could only fail (decision 0069).
+type Steerer interface {
+	Steers() bool
+}
+
+// Steers reports whether an adapter's turns take a steer.
+func Steers(a Adapter) bool {
+	s, ok := a.(Steerer)
+	return ok && s.Steers()
+}
+
 // Turn is one run in flight.
 type Turn interface {
 	// Events yields normalised events in order and is closed when the turn ends.

@@ -43,7 +43,7 @@ var unchecked = []struct {
 }, {
 	rule:     "A close in closed_sessions is believed from the runner holding the session or the one its run was last offered to, whatever features it advertises, a repeat is the same news, and the runs still queued in a closed session end. Nothing is offered in a session the hub has sent close_session for until the close is reported.",
 	sections: []section{hubSessions},
-	why:      "this runner advertises no feature, so a hub never asks it to close a session, and the only sessions it has are the ones its held runs are in, which no runner closes; and seeing queued runs held back or ended needs a second run queued in the session, which only a hub's own queueing can arrange.",
+	why:      "this runner advertises no close_session, so a hub never asks it to close a session, and the only sessions it has are the ones its held runs are in, which no runner closes; and seeing queued runs held back or ended needs a second run queued in the session, which only a hub's own queueing can arrange.",
 }, {
 	rule:     "Offers only for a harness the runner can drive — first-class, present and without an error — and, among those, preferably one whose health says ready.",
 	sections: []section{hubOffers},

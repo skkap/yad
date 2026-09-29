@@ -196,7 +196,7 @@ func checks() []check {
 		run:     checkOfferedRunIsValid,
 	}, {
 		id:      "run/gated-features",
-		rule:    "Neither side uses what the other did not advertise: a run in a live session goes only to a runner advertising live_sessions, a run whose start_at is still ahead only to one advertising start_at, since any other runner starts it on arrival, a run carrying an effort only to one advertising effort, since any other runs the harness at its default, and a run opening a fork only to one advertising fork, since any other opens the session with none of the conversation it forks.",
+		rule:    "Neither side uses what the other did not advertise: a run in a live session goes only to a runner advertising live_sessions, a run whose start_at is still ahead only to one advertising start_at, since any other runner starts it on arrival, a run carrying an effort only to one advertising effort for the run's harness, since any other runs the harness at its default, and a run opening a fork only to one advertising fork for it, since any other opens the session with none of the conversation it forks. For the harness: a runner advertising harness_features is answered by that harness's own list, and this one lists nothing for its only harness while advertising both runner-wide.",
 		section: hubControls,
 		needs:   heldRun,
 		run:     checkGatedRunsAreNotOffered,
@@ -354,7 +354,7 @@ func checks() []check {
 		run:     checkLeaseOutlastsTheInterval,
 	}, {
 		id:      "versioning/controls-are-gated",
-		rule:    "Neither side uses what the other did not advertise: drain, close_session, steer and interrupt go only to a runner whose capability document advertises each by name, start_login, login_code, login_token and cancel_login only to one advertising login, remove_account and a login carrying add only to one advertising accounts, and this runner advertises none.",
+		rule:    "Neither side uses what the other did not advertise: drain and close_session go only to a runner whose capability document advertises each by name, steer and interrupt only to one advertising each for the harness of the run they name — in that harness's own list, when the runner advertises harness_features — start_login, login_code, login_token and cancel_login only to one advertising login, and remove_account and a login carrying add only to one advertising accounts. This runner advertises none of its own features, and steer and interrupt only runner-wide, beside harness_features and an empty list for its harness.",
 		section: hubControls,
 		needs:   credential,
 		run:     checkControlsAreGated,

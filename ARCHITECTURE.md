@@ -468,7 +468,19 @@ opening a session with a source on the machine does not go to a runner whose
 document says `path_sources: false`, which would refuse it
 ([0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)). A runner
 whose fingerprint moved without the document it promised is treated as
-advertising neither, until the document it is asked for arrives. `yad hub` advertises no
+advertising neither, until the document it is asked for arrives.
+
+`steer`, `interrupt`, `effort` and `fork` are **per-run features**: the harness
+a run targets decides them, not the runner. A runner lists each harness's in
+that harness's report (`features`) and advertises `harness_features` to say
+so; a hub reading it gates a run, and a control on a run, on the list of the
+run's harness. The runner-wide strings stay, for hubs that do not read the
+lists, and a runner lists one only while every first-class harness supports
+it — so one harness without a feature cannot switch it off for the others, and
+a hub reading only the strings is never told a run may use what its harness
+cannot ([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).
+`yad hub` gates on `capability.RunMayUse`, which reads the list when there is
+one and the string when there is not. `yad hub` advertises no
 `hub_features` of its own — it has nothing beyond the v1 baseline.
 
 Every enum in the document is closed for all of v1

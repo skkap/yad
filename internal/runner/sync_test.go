@@ -15,6 +15,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/capability"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/store/db"
 )
@@ -312,7 +313,7 @@ func TestRefusesAGrantThatMovesTheRunOffItsAccount(t *testing.T) {
 	}
 	h := &scriptedHub{offer: offer}
 	doc := drivableDoc("r", 1)
-	doc.Harnesses = append(doc.Harnesses, v1.HarnessReport{ID: "codex", Label: "Codex", Kind: "first-class", Present: true, Version: "0.130.0"})
+	doc.Harnesses = append(doc.Harnesses, v1.HarnessReport{ID: "codex", Label: "Codex", Kind: "first-class", Present: true, Version: "0.130.0", Features: capability.HarnessFeatures("codex")})
 	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
 		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
 
@@ -351,7 +352,7 @@ func TestRefusesAnEffortNotShapedLikeALevel(t *testing.T) {
 	}
 	h := &scriptedHub{offer: offer}
 	doc := drivableDoc("r", 3)
-	doc.Harnesses = append(doc.Harnesses, v1.HarnessReport{ID: "codex", Label: "Codex", Kind: "first-class", Present: true, Version: "0.147.0"})
+	doc.Harnesses = append(doc.Harnesses, v1.HarnessReport{ID: "codex", Label: "Codex", Kind: "first-class", Present: true, Version: "0.147.0", Features: capability.HarnessFeatures("codex")})
 	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
 		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
 

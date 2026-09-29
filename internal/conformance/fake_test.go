@@ -95,8 +95,8 @@ const (
 	// writes into its own sentence, not one the answer's printing covers.
 	flawTokenInTheCode   = "the code of a refusal is built from the bearer it was given"
 	flawOffersLiveMode   = "a run is offered in a live session to a runner advertising nothing"
-	flawOffersEffort     = "a run carrying an effort is offered to a runner advertising nothing"
-	flawOffersFork       = "a run opening a fork is offered to a runner advertising nothing"
+	flawOffersEffort     = "a run carrying an effort is offered to a runner whose harness lists no effort"
+	flawOffersFork       = "a run opening a fork is offered to a runner whose harness lists no fork"
 	flawGrantInTheOpen   = "a run's grant value comes back quoted in a later refusal"
 	flawRegistersAnyone  = "anyone registers, and the credential comes back under a name of the hub's own"
 	flawUngatedControl   = "a steer goes to a runner that never advertised one"

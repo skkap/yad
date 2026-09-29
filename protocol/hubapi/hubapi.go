@@ -36,8 +36,9 @@ type SubmitRequest struct {
 	Harness string         `json:"harness" minLength:"1" doc:"The harness to run, by its id in a runner's capability document: claude or codex."`
 	Model   string         `json:"model" minLength:"1" doc:"The model, in the harness's own terms, such as haiku or gpt-5.1-codex."`
 	// Effort is queued like any run; the hub offers it only to a runner
-	// advertising the effort feature, so on a fleet without one it waits.
-	Effort  string      `json:"effort,omitempty" doc:"How hard the harness thinks, in its own terms, such as low or high: at most 64 letters, digits, - and _, or the run is refused. Offered only to a runner advertising the effort feature. Absent: the harness's default."`
+	// advertising the effort feature for the run's harness, so on a fleet
+	// without one it waits.
+	Effort  string      `json:"effort,omitempty" doc:"How hard the harness thinks, in its own terms, such as low or high: at most 64 letters, digits, - and _, or the run is refused. Offered only to a runner advertising the effort feature for the run's harness. Absent: the harness's default."`
 	Brief   v1.Brief    `json:"brief"`
 	Sources []v1.Source `json:"sources,omitempty" doc:"What a new session's workdir is built from. A run continuing a session names the same sources or none."`
 	// Grants go to the runner with the run and are never returned by this API.
@@ -59,7 +60,7 @@ type SessionChoice struct {
 	// ForkFrom opens the session as a fork of another (decision 0065). It is
 	// checked at submit against everything the hub can see then, so a fork
 	// that could never be offered is refused rather than left queued.
-	ForkFrom string `json:"fork_from,omitempty" doc:"With new true: start the session as a fork of this one — its conversation begins as a copy of that session's, which goes on unchanged. Refused with 404 if the hub has no such session, and with 409 if it is closed or closing, of another harness, not yet claimed by any runner (fork it once one of its runs has started), or on a runner that does not advertise the fork feature. The fork runs on that session's runner, in a workdir of its own built from this run's sources."`
+	ForkFrom string `json:"fork_from,omitempty" doc:"With new true: start the session as a fork of this one — its conversation begins as a copy of that session's, which goes on unchanged. Refused with 404 if the hub has no such session, and with 409 if it is closed or closing, of another harness, not yet claimed by any runner (fork it once one of its runs has started), or on a runner that does not advertise the fork feature for its harness. The fork runs on that session's runner, in a workdir of its own built from this run's sources."`
 }
 
 // RunState is where a run is, as the hub sees it: the protocol's run states
