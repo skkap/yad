@@ -144,7 +144,11 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	sigs := make(chan os.Signal, 3)
 	signal.Notify(sigs, stopSignals...)
 	defer signal.Stop(sigs)
-	go runner.OnSignals(runCtx, sigs, drain, stop, log)
+	signalsDone := make(chan struct{})
+	go func() {
+		defer close(signalsDone)
+		runner.OnSignals(runCtx, sigs, drain, stop, log)
+	}()
 
 	// The one copy of the owner's account lists every part of the runner
 	// reads, and the one `yad account add` and `remove` reload through the
@@ -286,6 +290,28 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				fmt.Fprintln(w, "\nshut down — runs cut short are reported lost at the next start")
 				log.Info("daemon stopped", "drained", false)
 			case drain.ForUpdate():
+				// A stop still wins here (decision 0069): the socket and the
+				// signal handler are shut first, so no stop can be taken
+				// and then lost to the exec, and one already caught is
+				// counted before the drain is read again.
+				ctlStop()
+				<-ctlDone
+				signal.Stop(sigs)
+				stop()
+				<-signalsDone
+				for pending := true; pending; {
+					select {
+					case sig := <-sigs:
+						drain.Step("the runner received " + sig.String())
+					default:
+						pending = false
+					}
+				}
+				if !drain.ForUpdate() {
+					fmt.Fprintln(w, "\ndrained — a stop came as the self-update took over, so the runner exits; its next start is the new release")
+					log.Info("daemon stopped", "drained", true, "reason", drain.Reason())
+					return nil
+				}
 				fmt.Fprintln(w, "\ndrained for a self-update — re-executing as the new release")
 				log.Info("daemon re-executing as the new release", "reason", drain.Reason(), "path", exe)
 				return reexecError{path: exe}

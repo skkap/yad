@@ -13,6 +13,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
+	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/fake"
 	hubdb "github.com/skkap/yad/internal/hub/store/db"
@@ -149,6 +150,100 @@ func TestHubDrainControl(t *testing.T) {
 	if res := mustSync(t, l4); !hasControl(res, v1.ControlDrain) || !l4.Drain.IsDraining() {
 		t.Errorf("the process after that was not drained: %+v", res)
 	}
+}
+
+// A runner draining for a self-update is coming back, so its health does not
+// say draining — which would tell the hub it is leaving, and answer a drain
+// the hub asks for meanwhile before it is sent. The hub's drain then reaches
+// it and turns the update's drain into an exit (decision 0069).
+func TestAHubDrainReachesARunnerDrainingForAnUpdate(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	l := e.loop(t, 1)
+	l.Drain = NewDrain()
+	api := e.api(t)
+	mustSync(t, l)
+
+	l.Drain.Update("self-update to v0.9.0")
+	e.enqueue(t, testRun("a", "s1"))
+	res := mustSync(t, l)
+	if len(res.Runs) != 0 {
+		t.Errorf("offered %d runs to a runner draining for an update", len(res.Runs))
+	}
+	if h, err := hubHealth(t, e, l.RunnerID); err != nil || h.Draining || h.FreeCapacity.Total != 0 {
+		t.Errorf("health %+v, %v: want no capacity offered and no draining said", h, err)
+	}
+
+	if _, err := api.Drain(ctx, l.RunnerID); err != nil {
+		t.Fatal(err)
+	}
+	res = mustSync(t, l)
+	if !hasControl(res, v1.ControlDrain) {
+		t.Fatalf("the hub's drain did not reach a runner draining for an update: %+v", res.Controls)
+	}
+	if l.Drain.ForUpdate() {
+		t.Error("the hub's drain left the runner to re-exec")
+	}
+	mustSync(t, l)
+	if h, err := hubHealth(t, e, l.RunnerID); err != nil || !h.Draining {
+		t.Errorf("after the hub's drain, health %+v, %v: want draining", h, err)
+	}
+}
+
+// A hub login that starts as the update takes over has a person at the other
+// end: the update's drain waits for it as it waits for a run, and a stop
+// meanwhile ends that wait as it ends any other.
+func TestAnUpdateDrainWaitsForAHubLogin(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		end  func(d *Drain, logins *Logins, ref account.Ref)
+	}{
+		{"the login ends", func(_ *Drain, logins *Logins, ref account.Ref) {
+			logins.mu.Lock()
+			delete(logins.live, ref)
+			logins.mu.Unlock()
+		}},
+		{"a stop comes", func(d *Drain, _ *Logins, _ account.Ref) { d.Stop("the owner") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			l := e.loop(t, 1)
+			d := NewDrain()
+			sv := e.server(l, e.executor(fakeHarness(fake.Script{Hang: true})), d, time.Hour)
+			logins := &Logins{}
+			logins.init()
+			ref := account.Ref{Harness: "claude", Label: "main"}
+			logins.live[ref] = &hubLogin{}
+			sv.logins = logins
+
+			done := make(chan error, 1)
+			go func() { done <- sv.run(context.Background()) }()
+			d.Update("self-update to v0.9.0")
+			select {
+			case err := <-done:
+				t.Fatalf("the update's drain ended with a hub login in flight: %v", err)
+			case <-time.After(2 * loginPoll):
+			}
+			tc.end(d, logins, ref)
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(20 * time.Second):
+				t.Fatal("the drain did not end")
+			}
+		})
+	}
+}
+
+func hubHealth(t *testing.T, e *env, runnerID string) (v1.Health, error) {
+	t.Helper()
+	r, err := e.hubStore.GetRunner(context.Background(), runnerID)
+	if err != nil {
+		return v1.Health{}, err
+	}
+	return runnerHealth(r)
 }
 
 func hasControl(res v1.SyncResponse, kind v1.ControlKind) bool {

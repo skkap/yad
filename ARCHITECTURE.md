@@ -1301,10 +1301,11 @@ flag is read as v1-only. Once installed, the running process becomes it at the
 first idle moment — every unit of capacity free and no hub login in flight —
 through the one drain with no drain wait, or, after 24 hours without one,
 through the same drain regardless, which lets every run finish however long it
-takes. At the drain's end the daemon closes its socket, lock, `state.db` and
-log and `exec`s the same path with the same argv and environment, so the pid a
-service manager watches never exits. A stop or a hub's drain during it makes
-it an ordinary drain that exits. A failed check is a warning in the log and in
+takes, and any hub login in flight end. Its health offers no capacity and does
+not say `draining`, since the runner is coming back. At the drain's end the
+daemon closes its socket, lock, `state.db` and log and `exec`s the same path
+with the same argv and environment, so the pid a service manager watches never
+exits. A stop or a hub's drain during it makes it an ordinary drain that exits. A failed check is a warning in the log and in
 `yad status`, which also shows the last check, the next, and any release
 pending or refused.
 

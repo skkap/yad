@@ -96,11 +96,18 @@ fails — no network, a release with a bad checksum, a directory yad cannot
 write to — is a warning there and in the log, and the runner carries on.
 
 The binary has to be one the runner's user can replace, as for `yad
-upgrade`; a build with no release version (`make install` from a checkout
-between tags, `go build`) is never replaced, and `yad status` says so. To roll
-back a bad release, turn self-update off first, or the runner puts the newest
-release back within hours. From a fork, set `YAD_REPO` when you run `yad
-service install`: the unit keeps it, and the runner fetches from the fork.
+upgrade`. A `make install` from a checkout counts as the tag it was built
+after (`v0.3.1-4-gabc1234` is v0.3.1), so it is replaced once a newer release
+exists; a build with no release version at all (`go build`, a checkout with
+no tag) is never replaced, and `yad status` says so. To roll back a bad
+release, turn self-update off first, or the runner puts the newest release
+back within hours. From a fork, set `YAD_REPO` when you run `yad service
+install`: the unit keeps it, and the runner fetches from the fork.
+
+Every profile on a machine runs the one binary, and a runner vets a release
+against its own profile's hubs only. Profiles whose hubs speak different
+protocol versions — none do yet, since there is only v1 — should not share a
+binary that updates itself.
 
 Releases are built by CI on a `v*` tag: linux and darwin × amd64 and arm64,
 `CGO_ENABLED=0`, with a `checksums.txt` covering all four. To check a download

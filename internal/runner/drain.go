@@ -69,7 +69,11 @@ func (d *Drain) Update(reason string) bool {
 
 // ForUpdate reports whether the drain under way is a self-update's and nobody
 // has asked for a drain or a stop since: its end is a re-exec, not an exit.
+// A nil Drain never drains.
 func (d *Drain) ForUpdate() bool {
+	if d == nil {
+		return false
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.update
@@ -223,6 +227,9 @@ const (
 	// is down does not hold an exit that loses nothing — the spool and the
 	// outbox are replayed at the next start.
 	flushWait = 30 * time.Second
+	// loginPoll is how often a self-update's drain looks again at a hub
+	// login it is waiting for; a login says nothing when it ends.
+	loginPoll = time.Second
 	// settledPoll is how often the last delivery checks what is still owed.
 	// The reporters say nothing when they finish, and the store is the truth.
 	settledPoll = 100 * time.Millisecond

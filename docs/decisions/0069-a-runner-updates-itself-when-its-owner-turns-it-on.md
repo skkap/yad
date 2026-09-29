@@ -70,7 +70,20 @@ What building it settled:
   signal or a hub's `drain` during an update's drain turns it into an
   ordinary one: the drain wait starts then, and the process exits instead of
   re-executing, since each of them asked for a runner that is not taking work.
-  Its next start is the new binary.
+  Its next start is the new binary. So a hub's drain can reach it, a runner
+  draining for an update does not say `draining` in its health — it is not
+  leaving — and offers no capacity instead. The socket and the signal handler
+  are shut before the drain is read for the last time, so a stop cannot be
+  taken and then lost to the exec.
+- **A hub login in flight is waited for** like a run, when the update's drain
+  reaches its end with one still going.
+- **Profiles share the binary, and vet alone.** A runner vets a release
+  against its own profile's connections; a second profile on the machine runs
+  what the first installed at its next start. With v1 the only major there has
+  been, no release can differ between them. Profiles whose hubs speak
+  different majors should not share a self-updating binary; seeing every
+  profile's connections from one would need profiles to be enumerable, which
+  they are not — each may keep its directories anywhere.
 - **An exec that fails exits the process with the reason.** The service
   manager's restart-on-failure then starts the binary already in place, which
   is the new one.

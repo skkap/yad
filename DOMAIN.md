@@ -356,8 +356,9 @@ reboot or a retiring machine does. A draining runner keeps syncing, so leases
 renew and results land, and says `draining` in its health.
 _Rules_: Stop signals are counted: the first drains, the second cancels the runs
 held, the third exits at once. A drain lets runs finish for the owner's drain
-wait, then cancels them — all but a self-update's, which has no wait. The
-hub's `drain` control is the first step.
+wait, then cancels them — all but a self-update's, which has no wait, and does
+not say `draining` either, since the runner comes back. The hub's `drain`
+control is the first step.
 _See_: [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md), `internal/runner/drain.go`
 
 **Self-update** — the runner replacing its own binary with a newer release and

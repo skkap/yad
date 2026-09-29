@@ -132,6 +132,7 @@ func Serve(ctx context.Context, o Options) error {
 		MayManage: func(conn string) bool { return manage[conn] }}
 	logins.bind(ctx)
 	defer logins.Close()
+	sv.logins = logins
 	o.Monitor.attachLogins(logins)
 	defer o.Monitor.attachLogins(nil)
 	o.Accounts.onRemoved(logins.accountRemoved)
@@ -226,13 +227,16 @@ func sweepGrants(data string, log *slog.Logger) {
 // server is one Serve: its loops and reporters, the executor they share, and
 // the way down.
 type server struct {
-	drain     *Drain
-	wait      time.Duration
-	store     *store.Store
-	pool      *Pool
-	exec      *Exec
-	sessions  *Collector
-	probe     *LoginProbe
+	drain    *Drain
+	wait     time.Duration
+	store    *store.Store
+	pool     *Pool
+	exec     *Exec
+	sessions *Collector
+	probe    *LoginProbe
+	// logins are the hub logins in flight, which a self-update's drain
+	// waits for as it waits for runs. Nil has none.
+	logins    *Logins
 	loops     []*Loop
 	reporters map[string]*Reporter
 	log       *slog.Logger
@@ -390,6 +394,7 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 		idle    <-chan struct{}
 		timer   <-chan time.Time
 		bounded <-chan struct{}
+		logins  <-chan time.Time
 	)
 	var stopWait func() bool
 	defer func() {
@@ -424,6 +429,22 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 			// stays idle.
 			quiet, idle = nil, s.exec.Idle()
 		case <-idle:
+			if s.drain.ForUpdate() && s.logins.Busy() {
+				// A login a hub started just as the update took over is
+				// someone at the other end with a code to paste: it is let
+				// finish, as a run is, unless a stop comes meanwhile.
+				idle = nil
+				t := time.NewTicker(loginPoll)
+				defer t.Stop()
+				logins = t.C
+				continue
+			}
+			s.settle(ctx, stopped)
+			return
+		case <-logins:
+			if s.drain.ForUpdate() && s.logins.Busy() {
+				continue
+			}
 			s.settle(ctx, stopped)
 			return
 		case <-timer:
