@@ -395,6 +395,9 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 		timer   <-chan time.Time
 		bounded <-chan struct{}
 		logins  <-chan time.Time
+		// reported is how long an update's drain waits for the ends of
+		// hub logins to be carried to their hubs; zero until it starts.
+		reported time.Time
 	)
 	var stopWait func() bool
 	defer func() {
@@ -429,10 +432,7 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 			// stays idle.
 			quiet, idle = nil, s.exec.Idle()
 		case <-idle:
-			if s.drain.ForUpdate() && s.logins.Busy() {
-				// A login a hub started just as the update took over is
-				// someone at the other end with a code to paste: it is let
-				// finish, as a run is, unless a stop comes meanwhile.
+			if s.loginsHeld(&reported) {
 				idle = nil
 				t := time.NewTicker(loginPoll)
 				defer t.Stop()
@@ -442,7 +442,7 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 			s.settle(ctx, stopped)
 			return
 		case <-logins:
-			if s.drain.ForUpdate() && s.logins.Busy() {
+			if s.loginsHeld(&reported) {
 				continue
 			}
 			s.settle(ctx, stopped)
@@ -466,6 +466,34 @@ func (s *server) wayDown(ctx context.Context, ended []chan struct{}, stopped <-c
 			return
 		}
 	}
+}
+
+// loginsHeld is whether a self-update's drain, its runs all ended, still
+// waits on hub logins. A login in flight has a person at the other end with a
+// code to paste, so it is let finish, as a run is. Its end then has to reach
+// its hub before the process goes: the process that follows has never heard
+// of it, and a hub that heard a login and then stops hearing it records it
+// failed (HUB.md §7). The loops are woken to carry it — nothing else brings a
+// sync forward for a login — and given flushWait, as the last delivery is,
+// so a hub that is down cannot hold the update. A stop ends the wait.
+func (s *server) loginsHeld(deadline *time.Time) bool {
+	if !s.drain.ForUpdate() {
+		return false
+	}
+	if s.logins.Busy() {
+		*deadline = time.Time{}
+		return true
+	}
+	if !s.logins.Owed() {
+		return false
+	}
+	if deadline.IsZero() {
+		*deadline = time.Now().Add(flushWait)
+		for _, l := range s.loops {
+			l.Wake()
+		}
+	}
+	return time.Now().Before(*deadline)
 }
 
 // settle waits, up to flushWait, until the spool and the outbox are empty.

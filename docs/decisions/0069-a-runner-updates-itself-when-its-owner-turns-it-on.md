@@ -76,7 +76,11 @@ What building it settled:
   are shut before the drain is read for the last time, so a stop cannot be
   taken and then lost to the exec.
 - **A hub login in flight is waited for** like a run, when the update's drain
-  reaches its end with one still going.
+  reaches its end with one still going — and then its end is carried to its
+  hub, for up to the thirty seconds the last delivery gets, since the process
+  that follows has never heard of it and a hub records a login it stops
+  hearing about as failed. A `start_login` taken after that is left
+  unreported, so the hub repeats it to the new process.
 - **Profiles share the binary, and vet alone.** A runner vets a release
   against its own profile's connections; a second profile on the machine runs
   what the first installed at its next start. With v1 the only major there has

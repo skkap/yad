@@ -191,30 +191,37 @@ func TestAHubDrainReachesARunnerDrainingForAnUpdate(t *testing.T) {
 }
 
 // A hub login that starts as the update takes over has a person at the other
-// end: the update's drain waits for it as it waits for a run, and a stop
-// meanwhile ends that wait as it ends any other.
+// end: the update's drain waits for it as it waits for a run, and then for a
+// sync to carry its end to the hub, which the next process could not report.
+// A stop meanwhile ends that wait as it ends any other.
 func TestAnUpdateDrainWaitsForAHubLogin(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		end  func(d *Drain, logins *Logins, ref account.Ref)
+		end  func(d *Drain, logins *Logins, l *hubLogin)
+		// reported is whether the hub must have heard the login's end.
+		reported bool
 	}{
-		{"the login ends", func(_ *Drain, logins *Logins, ref account.Ref) {
+		{"the login ends", func(_ *Drain, logins *Logins, l *hubLogin) {
 			logins.mu.Lock()
-			delete(logins.live, ref)
+			l.state = v1.LoginSucceeded
+			delete(logins.live, l.ref)
 			logins.mu.Unlock()
-		}},
-		{"a stop comes", func(d *Drain, _ *Logins, _ account.Ref) { d.Stop("the owner") }},
+		}, true},
+		{"a stop comes", func(d *Drain, _ *Logins, _ *hubLogin) { d.Stop("the owner") }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
 			l := e.loop(t, 1)
+			l.Clock = shortClock{}
 			d := NewDrain()
 			sv := e.server(l, e.executor(fakeHarness(fake.Script{Hang: true})), d, time.Hour)
 			logins := &Logins{}
 			logins.init()
-			ref := account.Ref{Harness: "claude", Label: "main"}
-			logins.live[ref] = &hubLogin{}
-			sv.logins = logins
+			login := &hubLogin{conn: l.Connection, id: "login-1", ref: account.Ref{Harness: "claude", Label: "main"},
+				method: v1.LoginByLink, state: v1.LoginWaiting, updated: time.Now()}
+			logins.byKey[loginKey{l.Connection, login.id}] = login
+			logins.live[login.ref] = login
+			sv.logins, l.Logins = logins, logins
 
 			done := make(chan error, 1)
 			go func() { done <- sv.run(context.Background()) }()
@@ -224,7 +231,7 @@ func TestAnUpdateDrainWaitsForAHubLogin(t *testing.T) {
 				t.Fatalf("the update's drain ended with a hub login in flight: %v", err)
 			case <-time.After(2 * loginPoll):
 			}
-			tc.end(d, logins, ref)
+			tc.end(d, logins, login)
 			select {
 			case err := <-done:
 				if err != nil {
@@ -232,6 +239,9 @@ func TestAnUpdateDrainWaitsForAHubLogin(t *testing.T) {
 				}
 			case <-time.After(20 * time.Second):
 				t.Fatal("the drain did not end")
+			}
+			if tc.reported && logins.Owed() {
+				t.Error("the drain ended before any sync carried the login's end to its hub")
 			}
 		})
 	}
