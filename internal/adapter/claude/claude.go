@@ -44,6 +44,10 @@ func (Adapter) AppliesEffort() bool { return true }
 // under a --session-id YAD chooses for the fork (decision 0065).
 func (Adapter) Forks() bool { return true }
 
+// Steers: a steer is another user message on Claude's stdin, which Claude
+// reads at its next tool boundary or after the turn.
+func (Adapter) Steers() bool { return true }
+
 // Timings a test may shorten.
 var (
 	// exitGrace is how long Claude gets to exit once its last result is in and

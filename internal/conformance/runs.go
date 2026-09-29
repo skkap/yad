@@ -330,20 +330,22 @@ func checkEventsAfterTheRunEnds(ctx context.Context, s *session) error {
 
 // checkGatedRunsAreNotOffered is the offer side of HUB.md's feature rule: the
 // four things in a run that only a runner advertising a feature may be
-// given. This runner advertises none, so it must be offered none of them.
+// given. This runner advertises start_at and live_sessions not at all, and
+// effort and fork only runner-wide, beside harness_features and an empty list
+// for its harness, so it must be offered none of them.
 func checkGatedRunsAreNotOffered(_ context.Context, s *session) error {
 	for _, run := range s.offers {
 		switch {
 		case run.Session.Mode == v1.SessionLive:
-			return brokenf("the hub offered run %s in a live session, which goes only to a runner advertising live_sessions; this runner advertises no feature at all", run.RunID)
+			return brokenf("the hub offered run %s in a live session, which goes only to a runner advertising live_sessions; this runner does not advertise it", run.RunID)
 		case run.StartAt != nil && run.StartAt.After(time.Now()):
 			return brokenf("the hub offered run %s with a start_at still ahead (%s), which goes only to a runner advertising start_at — any other starts it on arrival, which is the one thing that moment exists to prevent",
 				run.RunID, run.StartAt.UTC().Format(time.RFC3339))
 		case run.Effort != "":
-			return brokenf("the hub offered run %s with effort %q, which goes only to a runner advertising effort — any other runs the harness at its default and says nothing of it",
+			return brokenf("the hub offered run %s with effort %q, which goes only to a runner advertising effort for the run's harness — any other runs the harness at its default and says nothing of it; this runner advertises harness_features, and its harness's list, the answer for its runs, has no effort",
 				run.RunID, run.Effort)
 		case run.Session.ForkFrom != "":
-			return brokenf("the hub offered run %s opening session %s as a fork of %s, which goes only to a runner advertising fork — any other opens the session with none of the conversation it forks",
+			return brokenf("the hub offered run %s opening session %s as a fork of %s, which goes only to a runner advertising fork for the run's harness — any other opens the session with none of the conversation it forks; this runner advertises harness_features, and its harness's list, the answer for its runs, has no fork",
 				run.RunID, run.Session.ID, run.Session.ForkFrom)
 		}
 	}

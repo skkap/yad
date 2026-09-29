@@ -377,8 +377,17 @@ func (s *session) missing(need requirement) string {
 }
 
 // doc is the capability document the suite advertises: one harness nobody
-// queues runs for, and no protocol feature at all, so a hub that sends a
+// queues runs for, and no feature of the runner's own, so a hub that sends a
 // control it must gate on one has broken HUB.md's feature rule visibly.
+//
+// The four per-run features are advertised runner-wide, beside
+// harness_features and an empty list for the one harness: a document saying
+// that runs on that harness may use none of them. A hub gating on the
+// runner-wide strings would offer this runner an effort or a fork and send it
+// a steer; one gating on the harness's list, as HUB.md §7 asks of a runner
+// advertising harness_features, sends none (decision 0069). No yad runner
+// sends this — its runner-wide strings only ever say what every harness may
+// use — which is what makes it a probe rather than a document to route on.
 func (s *session) doc() v1.Capabilities {
 	return v1.Capabilities{
 		RunnerID:   s.runner,
@@ -390,10 +399,16 @@ func (s *session) doc() v1.Capabilities {
 			ID: s.opts.Harness, Label: "yad conformance", Kind: "first-class", Present: true,
 			Version: buildinfo.Version,
 		}},
-		Capacity:   v1.Capacity{Total: advertisedCapacity},
-		ObservedAt: time.Now().UTC(),
+		Capacity:         v1.Capacity{Total: advertisedCapacity},
+		ProtocolFeatures: perRunFeatures,
+		ObservedAt:       time.Now().UTC(),
 	}
 }
+
+// perRunFeatures is what the suite advertises runner-wide: the features the
+// harness a run targets decides, and harness_features, which says that
+// harness's own list — empty here — is the answer for its runs.
+var perRunFeatures = []string{"steer", "interrupt", "effort", "fork", "harness_features"}
 
 // runsWanted is the most the suite holds at once: one run for the event and
 // result rules, one to leave unrenewed for the lease to lapse.

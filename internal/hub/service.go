@@ -218,8 +218,16 @@ func (h *Hub) refuseUnforkable(ctx context.Context, forkFrom string) error {
 	if err != nil {
 		return err
 	}
-	if advertises(doc, capability.FeatureFork) {
+	// Asked of the source's harness, which a fork keeps: the runner refuses
+	// a fork into another (decision 0065), and the feature is the harness's
+	// (decision 0069).
+	if capability.RunMayUse(doc, src.Harness, capability.FeatureFork) {
 		return nil
+	}
+	if advertises(doc, capability.FeatureHarnessFeatures) {
+		return Fail(http.StatusConflict, v1.CodeConflict,
+			fmt.Sprintf("session %q is on runner %s, which does not advertise the %q feature for harness %q and cannot fork it", forkFrom, r.ID, capability.FeatureFork, src.Harness),
+			"start a new session")
 	}
 	return Fail(http.StatusConflict, v1.CodeConflict,
 		fmt.Sprintf("session %q is on runner %s, which does not advertise the %q feature and cannot fork it", forkFrom, r.ID, capability.FeatureFork),

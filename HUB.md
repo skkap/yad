@@ -682,7 +682,9 @@ the free capacity it gives you.
 in the future goes only to a runner advertising `start_at`; a run carrying an
 `effort` only to one advertising `effort`; a run whose `session.mode` is
 `live` only to one advertising `live_sessions` (none does yet). §7 has the
-table. Unlike a `start_at`, an `effort` never lapses: on a fleet that
+table. An `effort` and a `fork_from` are the run's harness's to take: when the
+runner advertises `harness_features`, ask the list in that harness's report,
+not the runner-wide string (§7). Unlike a `start_at`, an `effort` never lapses: on a fleet that
 advertises none the run stays queued, and a run continuing a session bound to
 a runner that does not advertise it (§8) is never offered at all — tell
 whoever submitted it, or submit it without the effort.
@@ -1068,6 +1070,22 @@ asked for it.
 | `login` | the four login controls. A runner advertising it reports each login in `logins` |
 | `accounts` | `add` on `start_login` and `login_token`, and the `remove_account` control. Per hub: a runner advertises it only to a hub its owner lets add and remove accounts, and only beside `login`, so its fingerprint for you may differ from another hub's |
 | `live_sessions` | a run whose `session.mode` is `live` — offer one only to a runner that advertises it. The spec lists `live` as an enum value and connects it to no feature, so this pairing exists only here |
+| `harness_features` | nothing by itself: it says each harness report carries `features`, the per-run features a run on that harness may use, and that those lists — not the runner-wide strings — answer for `steer`, `interrupt`, `effort` and `fork` |
+
+**`steer`, `interrupt`, `effort` and `fork` are the harness's.** Whether a
+run may use one depends on the harness it targets: a harness driven one way
+may fork and not take a steer, another the reverse. A runner advertising
+`harness_features` lists each harness's in its report's `features`, and then
+that list is the whole answer for runs on that harness — absent means none,
+and a harness the document does not list takes nothing. Gate a run's `effort`
+and `fork_from`, and a `steer` or `interrupt` for a run, on the list of the
+run's `harness`. The runner-wide strings stay, for a hub that does not read
+the lists: a yad runner lists one there only while every harness it drives
+supports it, so a hub going by them alone is never wrong, only more cautious
+than it needs to be — it holds back a Claude run's steer because another
+harness on the runner takes none. Without `harness_features`, the runner-wide
+strings are the answer for every harness
+([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).
 
 **A feature gates what you send, never what you accept** ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)).
 Whatever a runner reports — a close, a state, an event — is taken on its own
@@ -1102,7 +1120,7 @@ set. Gate it because a runner without the feature drops a
 field it does not know and runs the harness at its default, and the run
 succeeds with nothing to say it was not what you asked for. A runner that
 advertises `effort` but is handed one for a harness whose effort it cannot set
-refuses the run, class `refused`; both harnesses yad drives today take one.
+refuses the run, class `refused`. A hub gating on that harness's own list (`harness_features`) never sends it one.
 
 **Hub login** ([0055](docs/decisions/0055-a-hub-may-log-an-account-in-by-link-or-by-token.md))
 lets your UI log a runner's account in without a shell on the machine: by
@@ -1527,7 +1545,11 @@ command exits 0 when nothing failed and 1 otherwise.
 **What it does to your hub.** It spends the registration token you give it and
 registers a runner advertising a harness no real run asks for —
 `yad-conformance`, or `--harness` — so a suite pointed at a live hub is offered
-nothing anyone was waiting on.
+nothing anyone was waiting on. It advertises none of the runner's own
+features, and `steer`, `interrupt`, `effort` and `fork` runner-wide beside
+`harness_features` and an empty list for its harness: runs on it may use none
+of them, and a hub going by the runner-wide strings alone is caught offering
+one (§7). No yad runner sends that pairing; it is there to be read.
 
 **Queue at least three runs for that harness first, and be able to offer two
 at once.** The lease rules need two runs held simultaneously — one to report on,
@@ -1598,7 +1620,7 @@ is something **your hub still has to get right** with nothing to catch you:
 | Hub logins — `start_login` and `login_token` repeated until the runner reports the login, `login_code` while it reports it `waiting`, `cancel_login` until it reports it over; a token held only until the runner reports its login; a login the runner reported and then leaves out ended `failed`; a login ended on the hub's word only while never sent, and a sent one unheard for thirty minutes ended `failed` with its token blanked, a runner's later report still replacing that end | only your own API starts a login, outside v1, and the suite advertises no `login` feature to be sent one. What is checked: that no login control reaches it, and that a sync carrying `logins` is taken |
 | Adding and removing accounts — `add` and `remove_account` only while the runner advertises `accounts` to you, and `remove_account` repeated until neither its capability document nor its health lists the account, or `accounts` is no longer advertised | only your own API adds or removes an account, outside v1, and the suite advertises no `accounts` feature to be sent either. What is checked: that neither reaches it |
 | Sessions staying put — first claim binds the session to that runner, later runs to that runner alone, one at a time — and `session.new` set right | needs two runs in one session, which only your own queueing can arrange |
-| Closes in `closed_sessions` believed from the holder or the last-offered runner, whatever features it advertises, a repeat taken as the same news, and the runs queued in a closed session ended; nothing offered in a session you have sent `close_session` for until the close is reported | the suite advertises no feature, so no hub asks it to close a session, and the only sessions it has hold its runs, which no runner closes; the queued runs need a second run in the session |
+| Closes in `closed_sessions` believed from the holder or the last-offered runner, whatever features it advertises, a repeat taken as the same news, and the runs queued in a closed session ended; nothing offered in a session you have sent `close_session` for until the close is reported | the suite advertises no `close_session`, so no hub asks it to close a session, and the only sessions it has hold its runs, which no runner closes; the queued runs need a second run in the session |
 | Offers only for a harness the runner can drive — first-class, present, no `error` — and preferably one whose health says `ready` | the suite is offered only what you queued for the one harness it advertises; seeing another offered needs a run queued for it |
 | Lapsed leases found by a timer as well as by a sync | anything the suite sends to find out is itself a request you could settle leases on, so a hub that settles them only when asked looks the same |
 | A known runner id re-registers only with a token issued for that runner | such a token comes from your own API, outside v1; trying the second token on the first runner's id could spend it before the runner it is for |
@@ -1655,7 +1677,7 @@ checks; the rest is yours to get right.
 - [ ] Offers within `free_capacity`, both `total` and each `by_harness`, as sent — [§4](#who-may-be-offered-what) (C)
 - [ ] Offers only for harnesses that are first-class, present and error-free — [§4](#who-may-be-offered-what)
 - [ ] Every offered run passes the rules the schema cannot state — [§4](#rules-the-schema-cannot-state) (C)
-- [ ] `start_at` still ahead, `effort`, `fork_from` and `live` sessions only to runners advertising them — [§7](#7-controls-and-features) (C)
+- [ ] `start_at` still ahead, `effort`, `fork_from` and `live` sessions only to runners advertising them — `effort` and `fork_from` on the run's harness's own list when the runner advertises `harness_features` — [§7](#7-controls-and-features) (C)
 - [ ] A run opening a session with a source on the machine not offered to a runner whose document says `path_sources: false` — [§4](#who-may-be-offered-what)
 - [ ] `report_capabilities` when the fingerprint moves without a document — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync refused when its body's `runner_id` or its capability document's differs from the path, or its credential is another runner's — [§3](#post-runnersrunnersync) (C)
@@ -1682,7 +1704,7 @@ checks; the rest is yours to get right.
 - [ ] `cancel` and `interrupt` repeated until the run ends; `steer` sent once; `drain` and `close_session` repeated until answered — [§7](#7-controls-and-features)
 - [ ] Login controls only to a runner advertising `login`, each repeated until `logins` answers it; a sync carrying `logins` taken; a token held only until the runner reports its login; a login ended on your word only while never sent; a sent login unheard for thirty minutes ended `failed` and its token blanked; a login reported and then left out ended `failed` — [§7](#7-controls-and-features) (C, as far as the gate and taking the reports)
 - [ ] `add` and `remove_account` only to a runner advertising `accounts` to you; `remove_account` repeated until neither the capability document nor health lists the account, or `accounts` is no longer advertised — [§7](#7-controls-and-features) (C, as far as the gate)
-- [ ] No gated control to a runner that does not advertise its feature — [§7](#7-controls-and-features) (C, as far as a runner advertising none)
+- [ ] No gated control to a runner that does not advertise its feature — `steer` and `interrupt` on the list of the run's harness when the runner advertises `harness_features` — [§7](#7-controls-and-features) (C, as far as a runner advertising none of its own and an empty list for its harness)
 - [ ] Sessions bound by their first claim, later runs to that runner only, one at a time; `session.new` set right — [§8](#8-sessions)
 - [ ] Nothing offered in a session you have sent `close_session` for until its close is reported — [§8](#8-sessions)
 - [ ] Closes in `closed_sessions` believed from the holder or the last-offered runner, whatever features it advertises; queued runs in a closed session ended — [§8](#8-sessions)

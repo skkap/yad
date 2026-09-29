@@ -15,7 +15,7 @@ type Capabilities struct {
 	Harnesses        []HarnessReport `json:"harnesses" doc:"Every harness in the runner's catalog, installed or not. A run may be offered only for a harness whose kind is first-class, present is true and error is empty."`
 	HostTools        []HostTool      `json:"host_tools,omitempty" doc:"The non-harness tools a run may need, as they exist on this runner. A tool is usable when present is true and error is empty, and, for a tool that has a login, when logged_in is true as well. A tool that is missing or broken is reported rather than left out."`
 	Capacity         Capacity        `json:"capacity" doc:"How many runs the runner executes at once, and the owner's per-harness caps. The configured size, not what is free now: that is each sync's health.free_capacity."`
-	ProtocolFeatures []string        `json:"protocol_features,omitempty" doc:"The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session, effort, fork, login and accounts; live_sessions is reserved. accounts is per hub: a runner lists it only to a hub its owner lets add and remove accounts, and only beside login, so two hubs of one runner may be sent different lists and fingerprints. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."`
+	ProtocolFeatures []string        `json:"protocol_features,omitempty" doc:"The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session, effort, fork, login, accounts and harness_features; live_sessions is reserved. steer, interrupt, effort and fork are per-run features, which the harness a run targets decides: listed here only while every harness this runner drives supports them, and, beside harness_features, in each harness's own features, which are then the answer for runs on that harness. accounts is per hub: a runner lists it only to a hub its owner lets add and remove accounts, and only beside login, so two hubs of one runner may be sent different lists and fingerprints. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."`
 	// PathSources is sent only as false, so the document of every runner
 	// that takes them — and of every runner older than the field — is the
 	// same, fingerprint included (decision 0062).
@@ -54,6 +54,11 @@ type HarnessReport struct {
 	// PATH has the harness. A hub may show them or prefer a runner without;
 	// they never make a harness refuse runs, which Error does. The same rule
 	// as Error binds them (DEV-67).
+	// Features is per harness because a harness decides them: an adapter that
+	// cannot fork must not switch fork off for the harnesses that can
+	// (decision 0069). Read only beside harness_features, which is what tells
+	// an absent list, meaning none, from a runner older than the field.
+	Features []string `json:"features,omitempty" doc:"The per-run features a run on this harness may use: steer, interrupt, effort and fork. Read it only when protocol_features lists harness_features: then it is the whole answer for runs on this harness, in place of those four runner-wide strings, and absent means none. Without harness_features, go by the runner-wide strings. Ignore strings you do not know."`
 	Warnings []string `json:"warnings,omitempty" doc:"What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine: a path configured for it that names nothing, so the one on PATH is used; a Codex whose protocol differs from the one the runner was built against. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
@@ -36,13 +37,22 @@ func advertises(doc v1.Capabilities, feature string) bool {
 // (ARCHITECTURE.md §2), and a control is not acknowledged: one sent to a
 // runner that ignores it would look to the caller exactly like one that
 // landed, and the run would go on running.
-func refuseUnadvertised(r db.Runner, kind v1.ControlKind, feature, alternative string) error {
+//
+// harness is the one the control is about. A per-run feature is asked of it
+// (decision 0069), and one its runner advertises for other harnesses and not
+// this one is not an upgrade away, so the answer offers only the alternative.
+func refuseUnadvertised(r db.Runner, harness string, kind v1.ControlKind, feature, alternative string) error {
 	doc, err := storedDoc(r)
 	if err != nil {
 		return err
 	}
-	if advertises(doc, feature) {
+	if capability.RunMayUse(doc, harness, feature) {
 		return nil
+	}
+	if slices.Contains(capability.RunFeatures(), feature) && advertises(doc, capability.FeatureHarnessFeatures) {
+		return Fail(http.StatusConflict, v1.CodeConflict,
+			fmt.Sprintf("runner %s does not advertise the %q feature for harness %q; it would ignore the %s", r.ID, feature, harness, kind),
+			strings.TrimPrefix(alternative, ", or "))
 	}
 	return Fail(http.StatusConflict, v1.CodeConflict,
 		fmt.Sprintf("runner %s does not advertise the %q feature; it would ignore the %s", r.ID, feature, kind),
