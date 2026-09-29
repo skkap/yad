@@ -236,6 +236,12 @@ type Loop struct {
 	// so any number of runs ending before the loop looks is one early sync.
 	wake     chan struct{}
 	wakeOnce sync.Once
+	// inHand are the runs this loop started whose capacity has not come
+	// back, which a wake reads from the executor's goroutines: a run that
+	// has ended with its capacity still out is one whose release is about
+	// to wake the loop again.
+	inHand   map[string]struct{}
+	inHandMu sync.Mutex
 	// lastSync is when the last sync ended, on Clock, which the early
 	// sync's gap is measured from.
 	lastSync time.Time
@@ -256,6 +262,7 @@ func (l *Loop) init() {
 		l.echoes = map[string]v1.ClosedSession{}
 		l.quiesced = make(chan struct{})
 		l.cancelled = map[string]bool{}
+		l.inHand = map[string]struct{}{}
 	}
 	if l.Clock == nil {
 		l.Clock = realClock{}
@@ -361,6 +368,15 @@ func (l *Loop) Run(ctx context.Context) error {
 					// retry.
 					continue
 				}
+				if l.capacityDue(ctx) {
+					// The result can reach the hub before the run's
+					// capacity comes back — the executor writes one,
+					// then gives the other — and a sync in between
+					// offers none, so the hub has nothing to hand
+					// over and the early sync is spent (DEV-156).
+					// The release wakes this loop again.
+					continue
+				}
 				wake = nil
 				now := l.Clock.Now()
 				early := l.lastSync.Add(earlySyncGap)
@@ -400,6 +416,35 @@ func (l *Loop) wakes() chan struct{} {
 func (l *Loop) resultDue(ctx context.Context) bool {
 	due, err := l.Store.DueOutbox(ctx, db.DueOutboxParams{Connection: l.Connection, NextAttemptAt: time.Now().UnixMilli()})
 	return err == nil && len(due) > 0
+}
+
+// capacityDue is whether a run this loop started has ended in the store and
+// not yet given its capacity back. A store that cannot be read holds nothing:
+// the sync goes as it would have before, and lists what it can.
+func (l *Loop) capacityDue(ctx context.Context) bool {
+	l.inHandMu.Lock()
+	ids := make([]string, 0, len(l.inHand))
+	for id := range l.inHand {
+		ids = append(ids, id)
+	}
+	l.inHandMu.Unlock()
+	if len(ids) == 0 {
+		return false
+	}
+	held, err := l.Store.ListHeldRuns(ctx, l.Connection)
+	if err != nil {
+		return false
+	}
+	going := map[string]bool{}
+	for _, r := range held {
+		going[r.ID] = true
+	}
+	for _, id := range ids {
+		if !going[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // Quiesced is closed once the loop will start no more runs: it has begun a
@@ -685,9 +730,20 @@ func (l *Loop) start(ctx context.Context, c Claim) {
 	// usage limit, a stop — goes through its release, so this is the one
 	// place a run's end brings the next sync forward.
 	if release := c.Release; release != nil {
+		id := c.Run.RunID
+		l.inHandMu.Lock()
+		l.inHand[id] = struct{}{}
+		l.inHandMu.Unlock()
 		c.Release = func() {
 			release()
+			// The wake goes under the same lock as the run leaves inHand,
+			// so a loop that finds no capacity due has its wake already
+			// waiting, and empties it as the sync begins rather than
+			// leaving it to bring a second one forward.
+			l.inHandMu.Lock()
+			delete(l.inHand, id)
 			l.Wake()
+			l.inHandMu.Unlock()
 		}
 	}
 	l.Executor.Start(ctx, c)
