@@ -356,3 +356,28 @@ func TestAHubAddThatCannotUnmarkDoesNotBegin(t *testing.T) {
 	a.release(h)
 	removalDone(t, e.paths.Data, "work")
 }
+
+// The other way round: the daemon loaded the lists without a label whose
+// marked home was waiting, and the owner listed it again before the sweep —
+// by hand, or with `yad account add`, whose word to the daemon waits for this
+// start. The file lists it, so its home is kept and the marker comes off.
+func TestAStartSweepKeepsAHomeTheFileListsAgain(t *testing.T) {
+	e := newEnv(t)
+	if err := config.Save(e.paths, accountConfig("work")); err != nil {
+		t.Fatal(err)
+	}
+	home := plantCredential(t, e.paths.Data, "work")
+	if err := account.Mark(e.paths.Data, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	// Read at start, before the label was listed again.
+	a := accountsOf(e.paths.Data, accountConfig())
+	a.usePaths(e.paths)
+	a.attach(context.Background(), e.store)
+	if !exists(filepath.Join(home, ".credentials.json")) {
+		t.Fatal("the start sweep deleted a home config.toml lists")
+	}
+	if account.Marked(e.paths.Data, "claude", "work") {
+		t.Error("the marker is still on a home config.toml lists")
+	}
+}

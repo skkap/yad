@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -38,6 +39,17 @@ func TestMarkWritesAPrivateMarkerInTheHome(t *testing.T) {
 	}
 	if !Marked(data, "claude", "work") {
 		t.Error("a marked home does not read as marked")
+	}
+	// Written under a fresh name and renamed into place, which leaves
+	// nothing of the write behind.
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), removingMarker+".") {
+			t.Errorf("left in the home: %s", e.Name())
+		}
 	}
 	for range 2 {
 		if err := Unmark(data, "claude", "work"); err != nil {

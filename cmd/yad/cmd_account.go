@@ -126,18 +126,24 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	}
 	// Before the home is made or reused: a label removed while a run was on
 	// it has a home the daemon deletes when that run ends, which could be in
-	// the middle of this login (decision 0043). Nothing to act on if it fails:
-	// with no daemon there is nothing pending, and a daemon that cannot
-	// answer this will not answer the change either, which says so.
+	// the middle of this login (decision 0043). Nothing to act on if no
+	// daemon answers: with none running, nothing is pending in memory, and a
+	// daemon that cannot answer this will not answer the change either,
+	// which says so.
 	// Bounded tighter than a change: the daemon reads nothing for this, and
 	// the owner is waiting for the login to start.
 	kctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	_, _ = tellDaemon(kctx, g.paths, control.AccountChange{Harness: id, Label: label, Keep: true})
+	_, err = tellDaemon(kctx, g.paths, control.AccountChange{Harness: id, Label: label, Keep: true})
 	cancel()
+	// A daemon that answered no still means to delete this home when its
+	// last run ends, whatever is done here; the login must not start in it.
+	if refused, ok := errors.AsType[*daemonRefusal](err); ok {
+		return fmt.Errorf("%s account %q was not added: %w — then run `%s` again", id, label, refused, again)
+	}
 	// The daemon takes the removal marker off with the pending deletion;
 	// with none running, nothing else would, and its next start would delete
 	// the home this login is about to use (DEV-160).
-	if err := account.Unmark(g.paths.Data, id, label); err != nil {
+	if err := account.Reclaim(ctx, g.paths, id, label); err != nil {
 		return fmt.Errorf("%s account %q was not added: %w — then run `%s` again", id, label, err, again)
 	}
 	home, cleared, err := account.Prepare(g.paths.Data, id, label)

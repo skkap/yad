@@ -182,22 +182,33 @@ on purpose for the next try (0043).
   of what is listed, so the account keeps its home and its runs. The start
   takes the marker off and logs that the removal did not happen, so a later
   hand edit of the file is not read as this removal. Running the removal
-  again removes it. The start decides this from `config.toml` read under its
-  lock, not from the lists the daemon loaded before its socket opened. A
-  `yad account remove` in that gap has already marked the home and written
-  the file, and is waiting for the daemon to answer. That removal is in
-  flight, not dead, and its marker stays.
+  again removes it.
+- **The start decides by `config.toml` as it reads then, under its lock.**
+  It does not use the lists the daemon loaded before its socket opened, since
+  both can have changed in that gap. A `yad account remove` may have marked a
+  home and dropped its label, and be waiting for the daemon to answer. That
+  removal is in flight: the label is still in the daemon's lists, so the
+  start leaves it for the `Reload` it is waiting on, and its marker stays. A
+  `yad account add` or a hand edit may have listed a label again. The file
+  lists it, so its home is kept. The lock is the one `Unlist` holds from the
+  marker to the write, so the start never sees a removal half-done.
 - **An add takes the marker off.** This covers `yad account add` (the
   daemon's `Keep`, and the CLI itself when no daemon runs), a hub's add, and a
   reload that lists the label again. Each does it with the in-memory flag,
   before the login, so a daemon that dies during the login does not delete
-  the home at its next start. The unlink is synced, as the marker is. An add
-  whose marker will not come off does not begin, and the removal it would
-  have cancelled stands whole.
+  the home at its next start. The unlink is synced, as the marker is. An
+  unlink that cannot be synced is undone, so an error always means the
+  marker is still there. An add whose marker will not come off does not
+  begin, and the removal it would have cancelled stands whole. The same goes
+  for a daemon that refuses `Keep`. The CLI takes the marker off under
+  `config.toml`'s lock (`account.Reclaim`), so a daemon starting at that
+  moment never looks at the marker and moves the home in the gap between.
 - **The marker stays out of the harness's way.** Neither Claude nor Codex
-  uses the name. It sits at the top of the home, and is always a new file:
-  whatever held the name — a symlink, a hard link, a FIFO — is unlinked
-  first, and the marker is created with `O_EXCL|O_NOFOLLOW`. Nothing the home links to — the shared transcripts, the
+  uses the name. It sits at the top of the home and is always a new file,
+  written under a fresh `O_EXCL` name and renamed over whatever held the
+  name. That replaces a symlink, a hard link or a FIFO without touching what
+  it led to. It also never leaves the name empty, so marking a home again
+  never unmarks it for a moment. Nothing the home links to — the shared transcripts, the
   machine's shared config (0054) — is named like it, so it never reaches
   another account or the owner's own harness. A run making its home again
   (`Ensure`) leaves it where it is: only an add takes it off.

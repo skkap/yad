@@ -337,38 +337,50 @@ func (a *Accounts) finishRemovals(ctx context.Context) {
 	}
 }
 
-// finishAtStart is finish for the start sweep, which alone meets a marked
-// home under a label the daemon's lists still name. That is one of two
-// things, and only config.toml as it reads now can tell them apart — the
-// lists are the file as the daemon read it before its socket opened:
+// finishAtStart is finish for the start sweep, decided by config.toml as it
+// reads now, under its lock, rather than by the lists the daemon loaded
+// before its socket opened. Both can have changed between: `yad account
+// remove` may have marked a home and dropped its label, its word to the
+// daemon waiting on this start, and `yad account add` or a hand edit may have
+// listed a label again. The lock is the one account.Unlist holds from the
+// marker to the write and account.Reclaim holds to take a marker off, so the
+// sweep never sees a removal or an add half-done.
 //
-//   - a removal that died between its marker and the write, and so never
-//     happened: the file still lists the label, the account keeps its home,
-//     and the marker comes off, so a later hand edit is not read as this
-//     removal; kept says so;
-//   - a removal in flight: `yad account remove` has marked the home and
-//     written the file since, and its word to the daemon waits for this
-//     start. That Reload finishes it, and the marker stays for the next
-//     start if this daemon dies first.
+//   - Listed in the file: the removal died between its marker and the write
+//     and never happened. The account keeps its home, and the marker comes
+//     off, so a later hand edit is not read as this removal; kept says so.
+//   - Listed in neither the file nor the lists: a marked home nothing holds
+//     is set aside, as finish does. Listed in the lists alone is a removal
+//     in flight, which the Reload it is waiting on finishes.
 //
-// The file is read under its lock, which account.Unlist holds from the marker
-// to the write, so a removal is never caught between the two.
+// Every set-aside copy is deleted either way.
 func (a *Accounts) finishAtStart(ctx context.Context, r account.Ref) (kept bool, err error) {
 	a.mu.Lock()
-	listed, p := a.lists.Has(r), a.paths
+	p := a.paths
 	a.mu.Unlock()
-	if !listed {
+	if p.Config == "" {
 		return false, a.finish(r)
 	}
-	if p.Config != "" && account.Marked(a.data, r.Harness, r.Label) {
-		_, err = config.Update(ctx, p, func(c *config.Config) (bool, error) {
-			if !account.ListsOf(*c).Has(r) {
+	_, err = config.Update(ctx, p, func(c *config.Config) (bool, error) {
+		if account.ListsOf(*c).Has(r) {
+			if !account.Marked(a.data, r.Harness, r.Label) {
 				return false, nil
 			}
 			kept = true
 			return false, account.Unmark(a.data, r.Harness, r.Label)
-		})
-	}
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		// Listed in memory and not in the file is a removal in flight: the
+		// Reload it is waiting on finishes it, and until then a run may
+		// still take the account. Its marker stays for the next start if
+		// this daemon dies first.
+		if a.lists.Has(r) || len(a.held[r]) > 0 {
+			return false, nil
+		}
+		_, err := account.SetAsideMarked(a.data, r.Harness, r.Label)
+		return false, err
+	})
 	return kept, errors.Join(err, account.RemoveSetAside(a.data, r.Harness, r.Label))
 }
 

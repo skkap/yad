@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"syscall"
 
 	"github.com/skkap/yad/internal/config"
 )
@@ -57,9 +56,11 @@ func markerPath(data, harness, label string) string {
 // Always a new file, never one opened where the name already was: a symlink
 // there would have the write land wherever it points, a hard link would have
 // the truncate reach the file it shares, and a FIFO would hold the open —
-// and with it config.toml's lock — until something wrote to it. Whatever
-// holds the name is unlinked first, which touches no other name, and the
-// marker is created exclusively in its place.
+// and with it config.toml's lock — until something wrote to it. The marker is
+// written under a fresh name and renamed over the old one, which replaces
+// whatever held the name without touching what it led to, and leaves no
+// moment with no marker there: a home marked before, marked again by Reload,
+// is never briefly unmarked.
 func Mark(data, harness, label string) error {
 	if err := checkNames(harness, label); err != nil {
 		return err
@@ -75,21 +76,23 @@ func Mark(data, harness, label string) error {
 		// same; the start sweep has no business deleting what it is.
 		return nil
 	}
-	path := filepath.Join(home, removingMarker)
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("mark %s for removal: %w", home, err)
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	// CreateTemp opens with O_EXCL and 0600: a new file of its own, never
+	// one something else put there.
+	f, err := os.CreateTemp(home, removingMarker+".new-*")
 	if err != nil {
 		return fmt.Errorf("mark %s for removal: %w", home, err)
 	}
-	// Chmod as well as the mode above, which umask may narrow but never
-	// widen; this pins it whatever the umask.
+	tmp := f.Name()
+	// Chmod as well, which pins the mode whatever the umask did.
 	err = errors.Join(f.Chmod(0o600), write(f, markerText), f.Sync(), f.Close())
+	if err == nil {
+		err = os.Rename(tmp, filepath.Join(home, removingMarker))
+	}
 	if err == nil {
 		err = syncDir(home)
 	}
 	if err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("mark %s for removal: %w", home, err)
 	}
 	return nil
@@ -126,6 +129,11 @@ func Marked(data, harness, label string) bool {
 // a power cut that brought the marker back during the login would have the
 // next start delete the home being logged in. A marker already gone, or a
 // home that is not there, is no error.
+//
+// An error means the marker is still there. An unlink that could not be made
+// durable is undone, since its caller keeps the removal standing on an error,
+// and a removal standing in memory with no marker on disk is the state this
+// file exists to prevent.
 func Unmark(data, harness, label string) error {
 	if err := checkNames(harness, label); err != nil {
 		return err
@@ -136,12 +144,28 @@ func Unmark(data, harness, label string) error {
 		return nil
 	}
 	if err == nil {
-		err = syncDir(home)
+		if err = syncDir(home); err != nil {
+			err = errors.Join(err, Mark(data, harness, label))
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("take the removal marker off %s: %w", home, err)
 	}
 	return nil
+}
+
+// Reclaim is Unmark for `yad account add`, under config.toml's lock: a
+// daemon's start sweep decides whether a marked home goes under the same
+// lock, so an add taking the marker off with no daemon to ask is never
+// caught between the sweep's look at the marker and its move of the home.
+func Reclaim(ctx context.Context, p config.Paths, harness, label string) error {
+	if err := checkNames(harness, label); err != nil {
+		return err
+	}
+	_, err := config.Update(ctx, p, func(*config.Config) (bool, error) {
+		return false, Unmark(p.Data, harness, label)
+	})
+	return err
 }
 
 // Unlist is the start of every removal that changes config.toml: the home is
