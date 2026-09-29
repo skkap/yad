@@ -109,16 +109,24 @@ func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Man
 	}
 	var cleaned, renamed int
 	for _, c := range caches {
+		// A session in a moved cache keeps the WT_SLOT its setup hook derived
+		// ports from, and the number stays taken for the cache's next
+		// session. The rows go first and come back if the cache did not
+		// move: a start stopped between the two finds the cache where it
+		// was, with the same target, and does both again.
+		old, moving := filepath.Base(c.Path), filepath.Base(c.Target)
+		if c.Target != "" {
+			if err := st.RenameSlotsRepo(ctx, db.RenameSlotsRepoParams{NewRepo: moving, OldRepo: old}); err != nil {
+				log.Warn("the WT_SLOTs of a bare cache could not follow it to its name without a credential, so it stays where it is; the next start tries again", "err", err)
+				c.Target = ""
+			}
+		}
 		moved, err := w.CleanCache(ctx, c)
 		if moved {
 			renamed++
-			// Only once the cache is at its new name: a session in it keeps
-			// the WT_SLOT its setup hook derived ports from. A start stopped
-			// before this line leaves the rows under the old name, and such a
-			// session is given a slot afresh — its hook, done, is not run
-			// again.
-			if err := st.RenameSlotsRepo(ctx, db.RenameSlotsRepoParams{NewRepo: filepath.Base(c.Target), OldRepo: filepath.Base(c.Path)}); err != nil {
-				log.Warn("the WT_SLOTs of a bare cache moved to its name without a credential could not follow it; its sessions are given slots afresh", "err", err)
+		} else if c.Target != "" {
+			if err := st.RenameSlotsRepo(ctx, db.RenameSlotsRepoParams{NewRepo: old, OldRepo: moving}); err != nil {
+				log.Warn("the WT_SLOTs of a bare cache that did not move could not be given back its name; its sessions are given slots afresh", "err", err)
 			}
 		}
 		if err != nil {
