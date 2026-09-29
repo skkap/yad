@@ -50,7 +50,7 @@ confines what the machine reaches beyond itself.
 **Codex is pinned to a version the adapter was recorded against.** The latest
 Codex is usually newer than yad's recorded app-server protocol, and `yad doctor`
 warns about it. A test in `internal/adapter/codex` fails when the kit's default
-is not one of `pinned`.
+is not the one pinned, `pinnedVersion` ([0067](0067-only-the-latest-recorded-harness-protocol-is-pinned.md)).
 
 **`config.toml` is seeded once.** After the first `up`, `yad connect` and
 `yad account add` write the machine's copy; replacing it on the next `up` would

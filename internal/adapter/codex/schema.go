@@ -283,7 +283,7 @@ var (
 )
 
 // SchemaWarning compares the installed codex's app-server protocol with the
-// pinned ones and returns a readiness warning, or "" when it matches. It is
+// pinned one and returns a readiness warning, or "" when it matches. It is
 // asked on every capability probe, so an answer is kept per binary and
 // version — an upgrade changes the version and is checked again — and a
 // check that could not run is kept only for schemaRetry.
