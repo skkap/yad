@@ -81,8 +81,9 @@ func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Man
 				}
 			}
 		}
-		// A log line is slog's JSON, which escapes as a stored spec does, so
-		// the forms state.db's text may hold are the forms the log may.
+		// A log line is slog's JSON: a quote or a backslash escaped as in a
+		// stored spec, '&', '<' and '>' left as they are, as in a reason.
+		// The forms state.db's text may hold cover both.
 		if len(scrubs) > 0 && scrubLog != nil {
 			var oldnew []string
 			for s := range scrubs {
