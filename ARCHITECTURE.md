@@ -333,8 +333,9 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   take once a run it holds ends, and `yad hub` does
   ([0063](docs/decisions/0063-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)).
   The runner does not wait that long either: a run ending — its capacity back,
-  and its result at the hub or none owed — brings its connection's next sync
-  forward, to no sooner than 1 s after the last; runs ending together bring
+  and its result handled (at the hub, refused for good or put off to a retry)
+  or none owed — brings its connection's next sync forward, to no sooner than
+  1 s after the last; runs ending together bring
   one ([0066](docs/decisions/0066-a-run-ending-brings-its-connections-next-sync-forward.md)).
 
 ### Run
