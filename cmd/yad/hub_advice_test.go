@@ -56,7 +56,7 @@ func TestReRegistrationAdviceNamesTheServedDatabase(t *testing.T) {
 				t.Helper()
 				body, _ := json.Marshal(v1.RegisterRequest{Capabilities: v1.Capabilities{
 					RunnerID: "r1", Name: "r1", YadVersion: "dev", OS: "linux", Arch: "amd64",
-					ProtocolFeatures: capability.Features(), Capacity: v1.Capacity{Total: 1}, Harnesses: []v1.HarnessReport{},
+					ProtocolFeatures: capability.Features(nil), Capacity: v1.Capacity{Total: 1}, Harnesses: []v1.HarnessReport{},
 				}})
 				req := httptest.NewRequest("POST", hub.BasePath+"/runners/register", bytes.NewReader(body))
 				req.Header.Set("Authorization", "Bearer "+tok)

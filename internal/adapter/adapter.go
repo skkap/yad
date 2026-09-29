@@ -103,8 +103,9 @@ func AppliesEffort(a Adapter) bool {
 }
 
 // Forker is an adapter that opens a session as a fork of another session's
-// conversation (Spec.ForkFrom). The runner advertises the fork feature only
-// while every first-class adapter is one, and refuses a fork for a harness
+// conversation (Spec.ForkFrom). The runner advertises the fork feature for
+// each harness whose adapter is one — runner-wide only while every harness it
+// can drive is (decision 0069) — and refuses a fork for a harness
 // whose adapter is not, rather than start the conversation empty: the hub
 // asked for the fork's history, and a run without it would answer as if it
 // had it (decision 0065).

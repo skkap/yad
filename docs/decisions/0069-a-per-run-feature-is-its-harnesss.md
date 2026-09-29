@@ -1,4 +1,5 @@
 ---
+status: amended on 2026-09-30 (DEV-168) — the runner-wide strings are computed over the harnesses the machine can drive, not the build's catalog, and a machine that can drive none lists no per-run feature
 date: 2026-09-30
 ---
 
@@ -41,7 +42,7 @@ only more cautious than it needs to be, holding back a Claude run's steer
 because another harness this build drives takes none. "Every first-class
 harness" is the build's catalog, not what is installed on the machine: the
 strings stay a fact about the build, as they were, rather than moving with
-detection.
+detection. *(Amended below, DEV-168: every harness the machine can drive.)*
 
 **Gating reads the run's harness.** `capability.RunMayUse(doc, harness,
 feature)` is the one rule: the harness's list beside `harness_features`, the
@@ -59,6 +60,50 @@ advertises and the adapter that drives its runs cannot come apart. The
 runner's own refusals stay as they were: an effort or a fork handed to an
 adapter that cannot is refused, class `refused`, and a steer to a turn that
 takes none is an `error` event, class `steer_failed`.
+
+## Amendment: over what the machine can drive (DEV-168)
+
+OpenCode became first-class on the same day (DEV-44,
+[0073](0073-opencode-is-first-class-through-a-generic-acp-core.md)), and ACP
+v1 has no steer. Under the build's catalog every yad runner stopped
+advertising `steer` runner-wide — including the many with no OpenCode
+installed — and a hub reading only the runner-wide strings, Zumino's today,
+stopped steering any run. The owner decided on 2026-09-30 that the strings
+follow the machine.
+
+**The runner-wide strings are computed over the harnesses this machine can
+drive**: `capability.Features(reports)` lists a per-run feature when there is
+at least one report that is `Drivable` — first-class, present, no `error` —
+and every such report's `features` has it. A harness in the catalog and not
+installed, one installed whose probe failed or whose default login is
+missing, and a recognised one take nothing away. They are read from the
+reports in the same document, so the two cannot disagree. A runner without
+OpenCode advertises `steer`, `interrupt`, `effort` and `fork` runner-wide
+again; one with OpenCode installed and working advertises `interrupt`,
+`effort` and `fork`. Each harness's list is unchanged.
+
+**A machine that can drive nothing lists no per-run feature.** It takes no
+run, so a per-run feature has nothing to apply to; saying all four because
+no harness objects would be true of nothing. It also keeps the strings moving
+the safe way for a hub that reads only them: a feature appears when the first
+harness is installed, rather than being advertised on an empty machine and
+vanishing when that harness turns out to lack it.
+
+**The fingerprint carries the change.** The strings and the reports are in
+one document, so installing or removing a harness — or one's probe starting
+or stopping to fail — moves both and the fingerprint with them; a hub
+re-reads the document when the fingerprint moves (HUB.md §3, the sync)
+and never holds strings from one detection beside reports from another. The
+price, weighed and rejected below before this amendment, is that a hub
+reading only the strings sees a runner lose `steer` when OpenCode is
+installed on it. That is the truth about the runs it may then be sent — one
+may target OpenCode — and the cost of the other rule, every runner losing
+`steer` whether or not it has OpenCode, was a hub that steers nothing.
+
+The conformance suite's document is unchanged, and still a probe: a yad
+runner's runner-wide strings still only name what every harness it can drive
+lists, with OpenCode or without it, which a test in `internal/conformance`
+checks against both machines.
 
 ## The conformance suite
 
@@ -100,3 +145,6 @@ catalog. More generous to older hubs on a machine without the harness that
 lacks a feature, at the price of the strings changing when a harness is
 installed — which a hub reading only them would see as the runner losing a
 feature mid-life. The build's catalog keeps the meaning they had.
+*(Chosen after all by the amendment above: the catalog rule cost every
+runner its runner-wide steer the moment one harness without it became
+first-class.)*

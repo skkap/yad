@@ -19,7 +19,7 @@ import (
 func managing(id string, labels ...string) v1.SyncRequest {
 	r := first(id, 1)
 	r.Fingerprint = "fp-accounts-" + id
-	r.Capabilities.ProtocolFeatures = append(capability.Features(), capability.FeatureAccounts)
+	r.Capabilities.ProtocolFeatures = append(capability.Features(r.Capabilities.Harnesses), capability.FeatureAccounts)
 	for _, l := range labels {
 		r.Capabilities.Harnesses[0].Accounts = append(r.Capabilities.Harnesses[0].Accounts, v1.AccountReport{Label: l, State: v1.AccountFree})
 	}

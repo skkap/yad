@@ -320,7 +320,7 @@ func TestUpdateControlIsReservedAndUnhandled(t *testing.T) {
 	if !containsKind(v1.ControlKinds(), v1.ControlUpdate) {
 		t.Fatal("the update control is no longer reserved in the protocol")
 	}
-	for _, f := range capability.Features() {
+	for _, f := range doc("r1").ProtocolFeatures {
 		if f == string(v1.ControlUpdate) {
 			t.Fatal("a runner advertises update; a hub never triggers a self-update (decision 0071)")
 		}
@@ -341,20 +341,29 @@ func containsKind(kinds []v1.ControlKind, want v1.ControlKind) bool {
 	return false
 }
 
-// perHarness is a runner's first sync with a second first-class harness,
-// opencode, whose own list has interrupt alone. Its runner-wide strings then
-// drop what opencode cannot do, as a yad runner's do, and a hub reading them
-// alone would refuse Claude's runs their effort and steer as well (decision
-// 0069).
+// perHarness is a runner's first sync with a second first-class harness
+// installed, opencode, whose own list here has interrupt alone — narrower than
+// OpenCode's real one, so that effort is gated as well as steer. Its
+// runner-wide strings then drop what opencode cannot do, as a yad runner's do
+// on such a machine, and a hub reading them alone would refuse Claude's runs
+// their effort and steer as well (decision 0069).
 func perHarness(id string, free int) v1.SyncRequest {
+	return beside(id, free, capability.FeatureInterrupt)
+}
+
+// withOpenCode is a runner's first sync with OpenCode installed beside
+// Claude, listing what its adapter does.
+func withOpenCode(id string, free int) v1.SyncRequest {
+	return beside(id, free, capability.HarnessFeatures("opencode")...)
+}
+
+func beside(id string, free int, features ...string) v1.SyncRequest {
 	r := first(id, free)
 	r.Capabilities.Harnesses = append(r.Capabilities.Harnesses, v1.HarnessReport{
 		ID: "opencode", Label: "OpenCode", Kind: "first-class", Present: true, Version: "1.18.33",
-		Features: []string{capability.FeatureInterrupt},
+		Features: features,
 	})
-	r.Capabilities.ProtocolFeatures = slices.DeleteFunc(slices.Clone(r.Capabilities.ProtocolFeatures), func(f string) bool {
-		return f == capability.FeatureSteer || f == capability.FeatureEffort || f == capability.FeatureFork
-	})
+	r.Capabilities.ProtocolFeatures = capability.Features(r.Capabilities.Harnesses)
 	return r
 }
 
@@ -407,5 +416,70 @@ func TestAPerRunFeatureIsGatedOnTheRunsHarness(t *testing.T) {
 	}
 	if k := kindsOf(res); !k[v1.ControlSteer] || !k[v1.ControlInterrupt] {
 		t.Errorf("controls delivered: %v, want claude's steer and opencode's interrupt", k)
+	}
+}
+
+// The same runner on both machines a yad runner reports: without OpenCode its
+// runner-wide strings carry steer, so a hub reading only them steers its
+// Claude runs; installing OpenCode moves its fingerprint, yad hub asks for the
+// document before offering against it, and with the document come the
+// OpenCode runs and runner-wide strings without steer. A Claude run's steer
+// still goes through, on its own list, and an OpenCode run's is refused
+// (decision 0069).
+func TestInstallingOpenCodeReachesTheHubAsANewDocument(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "cli")
+	cred := f.register(t, "r1")
+	without := first("r1", 1)
+	if !slices.Contains(without.Capabilities.ProtocolFeatures, capability.FeatureSteer) {
+		t.Fatalf("a runner with claude alone advertises %v runner-wide, without steer", without.Capabilities.ProtocolFeatures)
+	}
+	f.held(t, "r1", cred, "c1", without)
+	if code, e := f.api(t, "POST", "/runs/c1/steer", tok, hubapi.SteerRequest{Text: "try the other file"}, nil); code != http.StatusOK {
+		t.Fatalf("steer on claude without opencode: %d %+v", code, e)
+	}
+	if !kindsOf(f.mustSync(t, "r1", cred, req("r1", 0, claimed("c1")...)))[v1.ControlSteer] {
+		t.Fatal("the steer was not delivered")
+	}
+
+	with := withOpenCode("r1", 1)
+	with.Fingerprint = capability.Fingerprint(*with.Capabilities)
+	if with.Fingerprint == capability.Fingerprint(*without.Capabilities) {
+		t.Fatal("installing opencode left the fingerprint where it was")
+	}
+	if slices.Contains(with.Capabilities.ProtocolFeatures, capability.FeatureSteer) {
+		t.Fatalf("a runner with opencode advertises steer runner-wide: %v", with.Capabilities.ProtocolFeatures)
+	}
+	oc := run("oc1", "s-oc1")
+	oc.Harness = "opencode"
+	f.enqueue(t, oc)
+	moved := req("r1", 1, claimed("c1")...)
+	moved.Fingerprint = with.Fingerprint
+	res := f.mustSync(t, "r1", cred, moved)
+	if !kindsOf(res)[v1.ControlReportCapabilities] || len(res.Runs) != 0 {
+		t.Fatalf("a moved fingerprint: controls %v, offered %v; want the document asked for and nothing offered", kindsOf(res), ids(res.Runs))
+	}
+	with.Runs = claimed("c1")
+	if got := ids(f.mustSync(t, "r1", cred, with).Runs); !slices.Equal(got, []string{"oc1"}) {
+		t.Fatalf("offered %v once the document with opencode arrived, want [oc1]", got)
+	}
+	holding := req("r1", 0, claimed("c1", "oc1")...)
+	holding.Fingerprint = with.Fingerprint
+	f.mustSync(t, "r1", cred, holding)
+
+	if code, e := f.api(t, "POST", "/runs/c1/steer", tok, hubapi.SteerRequest{Text: "and the next one"}, nil); code != http.StatusOK {
+		t.Errorf("steer on claude beside opencode: %d %+v", code, e)
+	}
+	if code, e := f.api(t, "POST", "/runs/oc1/steer", tok, hubapi.SteerRequest{Text: "try the other file"}, nil); code != http.StatusConflict {
+		t.Errorf("steer on opencode: %d %+v, want 409", code, e)
+	}
+	res = f.mustSync(t, "r1", cred, holding)
+	for _, c := range res.Controls {
+		if c.Kind == v1.ControlSteer && c.RunID != "c1" {
+			t.Errorf("a steer went to run %s", c.RunID)
+		}
+	}
+	if !kindsOf(res)[v1.ControlSteer] {
+		t.Error("claude's steer beside opencode was not delivered")
 	}
 }
