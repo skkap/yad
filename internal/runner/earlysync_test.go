@@ -455,3 +455,96 @@ func TestAResultPutOffToARetryStillBringsTheSyncForward(t *testing.T) {
 		t.Error("the result was never tried")
 	}
 }
+
+// syncHook runs during as each sync reaches the hub: after the sync has read
+// the free capacity it offers.
+type syncHook struct {
+	Hub
+	during func()
+}
+
+func (s syncHook) Sync(ctx context.Context, runnerID string, req v1.SyncRequest) (v1.SyncResponse, error) {
+	s.during()
+	return s.Hub.Sync(ctx, runnerID, req)
+}
+
+// A run's capacity can come back in the middle of an ordinary sync, once
+// that sync has emptied the loop's wake: its result already with the hub, the
+// release is all that is left of its end. Back before the sync reads the free
+// capacity, the sync offers it, and the release's wake has nothing new to
+// bring forward (DEV-157). Back after, the sync offered none, and the wake
+// brings the next one forward as ever.
+func TestAReleaseDuringAnIntervalSync(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// atHub gives the capacity back as the sync reaches the hub, not
+		// before it reads the free capacity.
+		atHub bool
+		want  []time.Duration
+	}{
+		{"before the sync reads the free capacity", false, []time.Duration{0, 15 * time.Second, 15 * time.Second}},
+		{"after the sync has read it", true, []time.Duration{0, 15 * time.Second, 15 * time.Second, earlySyncGap}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newEarlyRig(t, 1, testRun("a", "s1"))
+			g.byHand = true
+			g.holds = map[string]chan struct{}{"a": make(chan struct{})}
+			// inside, when it holds one, is run by the next sync, once.
+			inside := make(chan func(), 1)
+			hook := func() {
+				select {
+				case f := <-inside:
+					f()
+				default:
+				}
+			}
+			if tc.atHub {
+				g.reportTo = g.l.Hub.(*hubclient.Client)
+				g.l.Hub = syncHook{Hub: g.l.Hub, during: hook}
+			} else {
+				// The capability document is read as the sync begins,
+				// before anything it tells the hub.
+				caps := g.l.Capabilities
+				g.l.Capabilities = func() v1.Capabilities {
+					hook()
+					return caps()
+				}
+			}
+			g.run(t, func(ctx context.Context, cancel context.CancelFunc) {
+				if d := g.next(t); d != 15*time.Second {
+					t.Fatalf("waited %s with a running and nothing queued, want the hub's 15s", d)
+				}
+				close(g.gates["a"])
+				g.ended(t, "a")
+				g.reporter.Flush(ctx)
+				g.delivered(t, "a")
+				// The delivery's wake, let go: a's capacity is still out.
+				g.heard(t)
+				inside <- func() {
+					close(g.holds["a"])
+					// The release's wake is the last thing it does.
+					deadline := time.Now().Add(10 * time.Second)
+					for len(g.l.wakes()) == 0 {
+						if time.Now().After(deadline) {
+							t.Error("a never gave its capacity back")
+							return
+						}
+						time.Sleep(time.Millisecond)
+					}
+				}
+				g.clock.fire(15 * time.Second)
+				if d := g.next(t); d != 15*time.Second {
+					t.Fatalf("waited %s after the interval sync, want the hub's 15s", d)
+				}
+				// Once the loop has taken the release's wake, whatever
+				// it asks of the clock for it is asked before it looks
+				// again, and so before it sees the cancel.
+				g.heard(t)
+				cancel()
+			})
+			if got := g.clock.recorded(); !slices.Equal(got, tc.want) {
+				t.Errorf("waits %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

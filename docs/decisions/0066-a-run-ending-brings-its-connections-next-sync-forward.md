@@ -21,7 +21,8 @@ changes.
 
 - **One signal, per connection.** The wake is a one-slot channel on the loop,
   emptied as each sync begins: every run that ends before that sync reads the
-  store is answered by it, so ten runs ending together are one early sync, and
+  free capacity and the store is answered by it — a wake that lands in between
+  is let go (DEV-157) — so ten runs ending together are one early sync, and
   another connection's loop is not woken for a run it does not hold.
 - **Not before the result is in.** A hub learns a run ended from its result,
   not from a sync: until then the sync lists the run as running, so the

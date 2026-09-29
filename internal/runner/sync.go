@@ -236,6 +236,14 @@ type Loop struct {
 	// so any number of runs ending before the loop looks is one early sync.
 	wake     chan struct{}
 	wakeOnce sync.Once
+	// woken is whether a wake has come since the last sync began reading
+	// what it tells the hub. The channel is emptied as a sync begins, and a
+	// wake that lands between that and the reads — a run's capacity back in
+	// the middle of an ordinary sync — is one the sync has already answered:
+	// it offered the capacity, and an early sync after it would tell the
+	// hub nothing new (DEV-157).
+	woken   bool
+	wokenMu sync.Mutex
 	// inHand are the runs this loop started whose capacity has not come
 	// back, which a wake reads from the executor's goroutines: a run that
 	// has ended with its capacity still out is one whose release is about
@@ -359,6 +367,9 @@ func (l *Loop) Run(ctx context.Context) error {
 			case <-timer:
 				break waiting
 			case <-wake:
+				if !l.wokenSinceSync() {
+					continue
+				}
 				if l.resultDue(ctx) {
 					// The hub learns a run has ended from its result,
 					// not from a sync: one that goes first still lists
@@ -396,6 +407,11 @@ func (l *Loop) Run(ctx context.Context) error {
 // effect and offer the capacity it freed. It never blocks, and wakes before
 // the loop looks are one.
 func (l *Loop) Wake() {
+	// Marked before the signal goes, so a loop that takes the signal
+	// finds the mark.
+	l.wokenMu.Lock()
+	l.woken = true
+	l.wokenMu.Unlock()
 	select {
 	case l.wakes() <- struct{}{}:
 	default:
@@ -407,6 +423,14 @@ func (l *Loop) Wake() {
 func (l *Loop) wakes() chan struct{} {
 	l.wakeOnce.Do(func() { l.wake = make(chan struct{}, 1) })
 	return l.wake
+}
+
+// wokenSinceSync is whether a wake came after the last sync began reading
+// what it tells the hub, and so is one it did not answer.
+func (l *Loop) wokenSinceSync() bool {
+	l.wokenMu.Lock()
+	defer l.wokenMu.Unlock()
+	return l.woken
 }
 
 // resultDue is whether a result of this connection's is waiting for the
@@ -467,16 +491,15 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 		}
 		defer l.quiescedOnce.Do(func() { close(l.quiesced) })
 	}
-	held, err := l.Store.ListHeldRuns(ctx, l.Connection)
-	if err != nil {
-		return v1.SyncResponse{}, err
-	}
-	reporting, err := l.Store.ListReportingRuns(ctx, l.Connection)
-	if err != nil {
-		return v1.SyncResponse{}, err
-	}
 	doc := l.document()
 	fp := capability.Fingerprint(doc)
+	// From here the sync reads everything a wake could be for: a run's
+	// release is its capacity back after its state is in the store, so
+	// the capacity is read first, and a release it takes in has its state
+	// read too. A wake before this point is answered by this sync.
+	l.wokenMu.Lock()
+	l.woken = false
+	l.wokenMu.Unlock()
 	res := emptyReservation()
 	if l.Executor != nil && !draining && l.mayClaim() {
 		res = l.Pool.Reserve(l.Connection)
@@ -486,6 +509,14 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 		l.Pool.Pass(l.Connection)
 	}
 	defer res.Close()
+	held, err := l.Store.ListHeldRuns(ctx, l.Connection)
+	if err != nil {
+		return v1.SyncResponse{}, err
+	}
+	reporting, err := l.Store.ListReportingRuns(ctx, l.Connection)
+	if err != nil {
+		return v1.SyncResponse{}, err
+	}
 
 	// Account states, once per sync: the health this request carries, the
 	// parked runs it holds capacity for and the claim after the hub's reply
