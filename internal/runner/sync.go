@@ -21,6 +21,7 @@ import (
 	"github.com/skkap/yad/internal/logfile"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
+	"github.com/skkap/yad/internal/workdir"
 )
 
 // Timings on the runner's side of ARCHITECTURE.md §2. The interval is the
@@ -761,11 +762,13 @@ type sessionGone string
 func (g sessionGone) Error() string { return string(g) }
 
 // record writes the claim: the session when the run opens one, and the run as
-// claimed, without its grants — grants never touch this machine's disk. It
-// reports whether it created the session.
+// claimed, without its grants or the credential a source's URL carried —
+// neither touches this machine's disk (decisions 0009, 0067). It reports
+// whether it created the session.
 func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err error) {
 	stored := run
 	stored.Grants = nil
+	stored.Sources = workdir.StoredSources(run.Sources)
 	spec, err := json.Marshal(stored)
 	if err != nil {
 		return false, err
@@ -774,9 +777,11 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 	// Whether, not how many and never which: the only question anything asks
 	// of it is whether a run parked on a usage limit can be rebuilt by a
 	// later process, and a grant's name says as much about what a hub sent as
-	// its value does.
+	// its value does. A source's credential is one more thing the row cannot
+	// hold: without it a later process would fetch with the machine's own,
+	// and fail or reach a repository the hub did not mean.
 	var hadGrants int64
-	if len(run.Grants) > 0 {
+	if len(run.Grants) > 0 || workdir.CarriesCredential(run.Sources) {
 		hadGrants = 1
 	}
 	err = l.Store.Tx(ctx, func(q *db.Queries) error {

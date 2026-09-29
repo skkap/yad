@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -347,11 +348,14 @@ func TestASessionKeepsItsSources(t *testing.T) {
 	}
 }
 
-// The refusal of a continuation naming other sources names the session's own,
-// and a credential in one of their URLs is taken out first: the refusal goes
-// to the hub and the daemon's log (decision 0064). file://…@localhost is a
-// URL with userinfo that reaches a repository on this machine, so no network.
-func TestASourceRefusalCarriesNoRecordedToken(t *testing.T) {
+// A credential in a source's URL is the run's, not the session's (decision
+// 0067): the run's spec and the session's sources are stored without it, a
+// continuation sending the same URL with another credential, or none, names
+// the same sources, and the refusal of one naming others names the session's
+// without it — the refusal goes to the hub and the daemon's log (decision
+// 0064). file://…@localhost is a URL with userinfo that reaches a repository
+// on this machine, so no network.
+func TestASourcesCredentialIsNotTheSessions(t *testing.T) {
 	e := newEnv(t)
 	root := t.TempDir()
 	bare := gitRepo(t, root, "#!/bin/sh\n")
@@ -360,12 +364,36 @@ func TestASourceRefusalCarriesNoRecordedToken(t *testing.T) {
 	x := e.sourcedExec(root, h)
 
 	const token = "ghp_FAKEt0kenFAKEt0ken"
+	withToken := func(tok string) []v1.Source {
+		return []v1.Source{{Git: &v1.GitSource{URL: "file://" + tok + "@localhost" + bare}}}
+	}
 	first := testRun("a", "s1")
-	first.Sources = []v1.Source{{Git: &v1.GitSource{URL: "file://" + token + "@localhost" + bare}}}
+	first.Sources = withToken(token)
 	runOne(t, e, l, x, first)
 	if r := hubResult(t, e, "a"); r.State != v1.RunSucceeded {
 		t.Fatalf("first run: %+v (error %+v)", r, r.Error)
 	}
+	if s := session(t, e, "s1").Sources.String; strings.Contains(s, "FAKEt0ken") || !strings.Contains(s, "file://localhost"+bare) {
+		t.Errorf("the session's sources are recorded as %s", s)
+	}
+	row, err := e.store.GetRun(context.Background(), dbRun("hub", "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(row.Spec, "FAKEt0ken") || row.HadGrants == 0 {
+		t.Errorf("the run is stored as %s, had_grants %d; want no token, and a run a later process cannot rebuild", row.Spec, row.HadGrants)
+	}
+
+	for i, src := range [][]v1.Source{withToken("ghp_another"), {{Git: &v1.GitSource{URL: "file://localhost" + bare}}}} {
+		id := fmt.Sprintf("same%d", i)
+		same := continued(id, "s1")
+		same.Sources = src
+		runOne(t, e, l, x, same)
+		if r := hubResult(t, e, id); r.State != v1.RunSucceeded {
+			t.Errorf("a continuation naming the same repository with another credential or none: %+v (error %+v)", r, r.Error)
+		}
+	}
+
 	changed := continued("b", "s1")
 	changed.Sources = []v1.Source{{Path: root}}
 	runOne(t, e, l, x, changed)
@@ -373,7 +401,7 @@ func TestASourceRefusalCarriesNoRecordedToken(t *testing.T) {
 	if r.Error == nil || r.Error.Class != workdir.ClassSourceRefused {
 		t.Fatalf("a continuation naming other sources: %+v", r)
 	}
-	if strings.Contains(r.Error.Message, "FAKEt0ken") || !strings.Contains(r.Error.Message, "redacted@localhost") {
+	if strings.Contains(r.Error.Message, "FAKEt0ken") || !strings.Contains(r.Error.Message, "file://localhost") {
 		t.Errorf("message = %q, want the session's source named without its token", r.Error.Message)
 	}
 }

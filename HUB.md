@@ -755,7 +755,7 @@ these are the ones worth acting on:
 | `session_closed` | failed | the run names a session the runner has closed or is closing. Start a new session |
 | `resume_rejected` | failed | the harness had no conversation to continue: the transcript is gone. Start a new session |
 | `session_mismatch` | failed | the harness ran under another session id; the conversation's context is lost |
-| `grants_lost` | lost | a run parked on a usage limit was picked up by a later runner process, and its grants did not survive. Submit a new run, with its grants |
+| `grants_lost` | lost | a run parked on a usage limit was picked up by a later runner process, and its grants, or the credential in a source's URL, did not survive. Submit a new run, with them |
 | `max_wait_exceeded` | timed_out | it waited longer than `max_wait_ms` for a free account |
 | `wall_clock_timeout`, `inactivity_timeout` | timed_out | stopped by the run's own caps |
 | `source_refused` | failed | a source breaks the owner's rules — a path outside the allowed directories, any source on the machine at a runner whose document says `path_sources: false`, a transport the runner does not use |
@@ -1380,6 +1380,18 @@ A run parked on a usage limit keeps its grants in the process that claimed
 it; if that process dies, the run is reported `lost` with class `grants_lost`.
 Submit a new run with grants your submitter gives you — the old values are
 already blanked.
+
+**A credential in a git source's URL is a grant too.** An `https` URL may carry
+one in its userinfo — `https://<token>@host/org/repo`, or `user:password@` —
+and the runner fetches that repository with it, for that run alone: it keeps
+the URL without it in its cache, its store, its log and the run's events, and
+gives it to git only in the environment of the run's fetch, never argv. A later
+run in the session may send another credential or none and still names the
+same source; one without it is fetched with the machine's own credentials. Like
+a grant, it does not survive the runner restarting while the run waits: send
+it again with the run the `grants_lost` result asks for. An `ssh` URL's user is
+its login name, and one with a password is refused
+([0067](docs/decisions/0067-a-credential-in-a-source-url-is-the-runs-alone.md)).
 
 ## 10. Errors and `next_action`
 

@@ -1233,7 +1233,9 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 		if sources == nil {
 			sources = []v1.Source{}
 		}
-		body, _ := json.Marshal(sources)
+		// Without the credential a URL carried: the session outlives the
+		// run, and the credential was the run's (decision 0067).
+		body, _ := json.Marshal(workdir.StoredSources(sources))
 		if err := e.Store.SetSessionSources(bg, db.SetSessionSourcesParams{
 			Sources: sql.NullString{String: string(body), Valid: true}, Connection: c.Connection, ID: c.Run.Session.ID,
 		}); err != nil {
@@ -1299,15 +1301,20 @@ func (e *Exec) sessionSources(ctx context.Context, c Claim) (sources []v1.Source
 	if len(c.Run.Sources) == 0 {
 		return sources, false, nil
 	}
-	want, _ := json.Marshal(c.Run.Sources)
-	if string(want) != sess.Sources.String {
+	// Compared without the credential a URL carries, which is the run's and
+	// not the session's: a later run may send another token, or none, for
+	// the same repository. The run's own sources are returned, credential and
+	// all, since a worktree left half made is fetched again.
+	want, _ := json.Marshal(workdir.StoredSources(c.Run.Sources))
+	had, _ := json.Marshal(workdir.StoredSources(sources))
+	if string(want) != string(had) {
 		// Not the recorded JSON as stored: a git URL in it may carry a
 		// token, and this goes to the hub and the log (decision 0064).
 		shown, _ := json.Marshal(workdir.ShownSources(sources))
 		return nil, false, &workdir.Error{Class: workdir.ClassSourceRefused,
 			Msg: "the run names sources other than the ones its session's workdir was built from (" + string(shown) + ") — send the same sources, or none, to continue it; start a new session for others"}
 	}
-	return sources, false, nil
+	return c.Run.Sources, false, nil
 }
 
 // workdir returns the session's workdir, creating it on first use, the

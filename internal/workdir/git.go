@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/skkap/yad/internal/config"
@@ -43,6 +44,12 @@ const gitOutputCap = 1 << 20
 // and returns its trimmed stdout. Every argument is YAD's own or has passed
 // source.go's checks; none reaches a shell.
 func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, error) {
+	return m.gitEnv(ctx, dir, nil, args...)
+}
+
+// gitEnv is git with env added after gitEnv: a source's credential, for the
+// commands that talk to its remote and no others.
+func (m *Manager) gitEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, m.GitTimeout)
 	defer cancel()
 	argv := args
@@ -56,7 +63,7 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 			return "", errors.New("git could not be started: this runner has no git — install git on the runner's PATH, or point YAD_GIT_PATH at one")
 		}
 	}
-	p, err := supervise.Start(ctx, supervise.Spec{Path: bin, Args: argv, Env: gitEnv, NoTTY: true})
+	p, err := supervise.Start(ctx, supervise.Spec{Path: bin, Args: argv, Env: append(slices.Clip(gitEnv), env...), NoTTY: true})
 	if err != nil {
 		// Not the exec error: it names the binary by its path, which may be
 		// under the owner's home, and this reaches the hub in the run's result.
@@ -102,7 +109,8 @@ var urlInText = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s'"<>]+`)
 
 // redactURLs is s with every URL in it passed through config.RedactURL. git
 // quotes the remote it failed to reach, and a hub-sent URL may carry a token
-// as its user — the one shape parseRemote lets through — or in its query,
+// in its query, or as a user where parseRemote did not take it out — an ssh
+// URL's, which ssh reads as the login name —
 // which git's reason would otherwise carry to the hub in the run's error and
 // to the daemon's log (decision 0064). Whether git anonymises the URL itself
 // depends on its version and the message, so it is not relied on. It catches
