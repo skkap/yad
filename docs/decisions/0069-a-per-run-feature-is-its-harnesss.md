@@ -75,8 +75,8 @@ follow the machine.
 drive**: `capability.Features(reports)` lists a per-run feature when there is
 at least one report that is `Drivable` — first-class, present, no `error` —
 and every such report's `features` has it. A harness in the catalog and not
-installed, one installed whose probe failed or whose default login is
-missing, and a recognised one take nothing away. They are read from the
+present, one present whose probe failed or whose default login is missing,
+and a recognised one take nothing away. They are read from the
 reports in the same document, so the two cannot disagree. A runner without
 OpenCode advertises `steer`, `interrupt`, `effort` and `fork` runner-wide
 again; one with OpenCode installed and working advertises `interrupt`,
@@ -91,7 +91,8 @@ vanishing when that harness turns out to lack it.
 
 **The fingerprint carries the change.** The strings and the reports are in
 one document, so installing or removing a harness — or one's probe starting
-or stopping to fail — moves both and the fingerprint with them; a hub
+or stopping to fail — moves the reports and the fingerprint, and the strings
+with them whenever it changes what every drivable harness shares; a hub
 re-reads the document when the fingerprint moves (HUB.md §3, the sync)
 and never holds strings from one detection beside reports from another. The
 price, weighed and rejected below before this amendment, is that a hub

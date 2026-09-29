@@ -1088,9 +1088,10 @@ the lists: a yad runner lists one there only while every harness it can
 drive — first-class, present, no `error` — supports it, and none while it can
 drive nothing, so a hub going by them alone is never wrong, only more cautious
 than it needs to be — it holds back a Claude run's steer because another
-harness on the runner takes none. They move when a harness is installed or
-removed, together with the harness reports and the fingerprint, so a hub that
-re-reads the document when the fingerprint moves always has the two in
+harness on the runner takes none. Adding, removing or breaking a harness
+moves the harness reports and the fingerprint, and the runner-wide strings
+with them whenever it changes what every drivable harness shares, so a hub
+that re-reads the document when the fingerprint moves always has the two in
 agreement. Without `harness_features`, the runner-wide
 strings are the answer for every harness
 ([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).

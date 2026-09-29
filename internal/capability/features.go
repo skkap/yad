@@ -68,7 +68,7 @@ func HarnessFeatures(id string) []string {
 
 // everyDrivable is whether there is a harness in reports that can take a run
 // on this machine, and every one lists feature. Drivable's rule decides which
-// count, so a first-class harness that is not installed, or whose probe
+// count, so a first-class harness that is not present, or whose probe
 // failed, takes nothing from the rest. It reads each report's own list, so
 // the runner-wide string and the lists in one document cannot disagree.
 func everyDrivable(reports []v1.HarnessReport, feature string) bool {

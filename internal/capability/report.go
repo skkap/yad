@@ -34,12 +34,12 @@ import (
 //
 // A per-run feature — one a run's harness decides, RunFeatures — is listed
 // here only while every harness this machine can drive (Drivable: first-class,
-// installed, its probe passed) lists it: a hub that reads only these strings
-// must never be told a run may use one its harness cannot. It is over what is
-// installed, not the build's catalog, so that a harness this machine does not
-// have — OpenCode, which takes no steer — takes nothing from those it does.
-// Installing or removing one changes the reports, so the document and its
-// fingerprint move together and a hub re-reads both. With no harness to drive
+// present, no error) lists it: a hub that reads only these strings must never
+// be told a run may use one its harness cannot. It is over the harnesses
+// detected here, not the build's catalog, so that a harness this machine does
+// not have — OpenCode, which takes no steer — takes nothing from those it
+// does. The strings come from the reports they are sent beside, so a change
+// to either moves the one fingerprint and a hub re-reads both. With no harness to drive
 // none is listed: there is no run for one to apply to, and a hub reading only
 // these strings then sees a feature appear when the first harness is installed
 // rather than vanish when it is one that lacks it. Each harness's own list,

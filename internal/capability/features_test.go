@@ -64,7 +64,7 @@ func perRun(features []string) []string {
 // use, not what every harness the build knows may: a runner without OpenCode
 // advertises steer, so a hub reading only the strings steers its Claude and
 // Codex runs, and one with OpenCode does not, since a run there may target a
-// harness with no steer. A harness that is installed but cannot take a run,
+// harness with no steer. A harness that is present but cannot take a run,
 // or is only recognised, takes nothing from the rest; a machine that can
 // drive nothing advertises no per-run feature (decision 0069).
 func TestTheRunnerWideStringsAreWhatEveryDrivableHarnessMayUse(t *testing.T) {
@@ -84,7 +84,7 @@ func TestTheRunnerWideStringsAreWhatEveryDrivableHarnessMayUse(t *testing.T) {
 		{"claude alone", machine("claude"), all},
 		{"with opencode", machine("claude", "codex", "opencode"), HarnessFeatures("opencode")},
 		{"opencode alone", machine("opencode"), HarnessFeatures("opencode")},
-		{"opencode installed and unable to take a run", brokenOpenCode, all},
+		{"opencode present and unable to take a run", brokenOpenCode, all},
 		{"a recognised harness beside claude", machine("claude", "gemini", "cursor"), all},
 		{"nothing to drive", machine(), nil},
 		{"only recognised harnesses", machine("gemini"), nil},

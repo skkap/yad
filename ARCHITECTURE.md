@@ -483,12 +483,13 @@ that harness's report (`features`) and advertises `harness_features` to say
 so; a hub reading it gates a run, and a control on a run, on the list of the
 run's harness. The runner-wide strings stay, for hubs that do not read the
 lists, and a runner lists one only while every harness it can drive —
-first-class, installed, passing its probes (`capability.Drivable`) — supports
-it, and none while it can drive nothing. One harness without a feature cannot
-switch it off for the others, a harness a machine does not have cannot switch
-it off there, and a hub reading only the strings is never told a run may use
-what its harness cannot. Installing or removing a harness moves the strings
-with the reports, in one document under one fingerprint
+first-class, present, no `error` (`capability.Drivable`) — supports it, and
+none while it can drive nothing. One harness without a feature cannot switch
+it off for the others, a harness a machine does not have cannot switch it off
+there, and a hub reading only the strings is never told a run may use what
+its harness cannot. The strings are computed from the reports in the same
+document, so whenever a harness coming or going changes what every drivable
+one shares, they move with the reports under the one fingerprint
 ([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).
 `yad hub` gates on `capability.RunMayUse`, which reads the list when there is
 one and the string when there is not. `yad hub` advertises no
