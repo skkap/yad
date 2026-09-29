@@ -104,7 +104,7 @@ func sameCalls(a, b [][]string) bool {
 // The names are pinned to values worked out outside Go — `printf '%s' <path> |
 // shasum -a 256`, the first eight hex digits — so that a change here that
 // still agrees with itself cannot pass. The naming itself is claude
-// 2.1.284's (decision 0069 says where to read it again).
+// 2.1.284's (decision 0070 says where to read it again).
 func TestKeychainServicesArePinned(t *testing.T) {
 	for _, c := range []struct {
 		home string

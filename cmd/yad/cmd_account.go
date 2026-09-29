@@ -439,7 +439,7 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 // keychainGone is what a removal says about the login a harness keeps
 // outside the home, where it keeps one: without it an owner who knows Claude
 // logs in to the Keychain would read "the home is gone" and wonder about the
-// rest (decision 0069).
+// rest (decision 0070).
 func keychainGone(harness string) string {
 	if !account.KeychainLogin(harness) {
 		return ""

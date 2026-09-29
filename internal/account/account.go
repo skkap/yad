@@ -195,7 +195,7 @@ func (a Account) Report() v1.AccountReport {
 // a property of the path either way, but where the login lives is not: on
 // Linux Claude's is a plain file inside the home, and on macOS it is a
 // Keychain item named after the home's path, which outlives the directory
-// unless yad deletes it (keychain.go, decision 0069).
+// unless yad deletes it (keychain.go, decision 0070).
 var homeVar = map[string]string{
 	"claude": "CLAUDE_CONFIG_DIR",
 	"codex":  "CODEX_HOME",
@@ -204,7 +204,7 @@ var homeVar = map[string]string{
 // storageVar is the variable a harness reads where it keeps its login from,
 // when that is not the home: Claude's CLAUDE_SECURESTORAGE_CONFIG_DIR, which
 // it hashes into its Keychain item's name on macOS and under which it writes
-// .credentials.json elsewhere, in place of CLAUDE_CONFIG_DIR (decision 0069).
+// .credentials.json elsewhere, in place of CLAUDE_CONFIG_DIR (decision 0070).
 // Every account sets it to its own home, the same path as the home variable,
 // so the login is where it would be without it. It is set rather than only
 // removed because the owner's copy passes supervise.Scrub as the home
@@ -309,7 +309,7 @@ func Ensure(data, harness, label string) (string, error) {
 // home it makes where there was none starts with no login, and on macOS a
 // login Claude kept for that path in the Keychain — from an account removed
 // before this was done, or by a removal that died half-way — is deleted
-// before the home exists (decision 0069). Without that, a label added again
+// before the home exists (decision 0070). Without that, a label added again
 // would run on the subscription it had before, which is the one thing
 // removing it was meant to end. An item that cannot be deleted stops the
 // home being made.
@@ -537,7 +537,7 @@ func SetAside(data, harness, label string) error {
 // It is where every removal ends — `yad account remove` with no daemon, and
 // the daemon's for the owner or a hub, at once or when the last run lets go —
 // so it is also where the login Claude keeps for the home in the macOS
-// Keychain is deleted (decision 0069). The Keychain goes first: if it cannot,
+// Keychain is deleted (decision 0070). The Keychain goes first: if it cannot,
 // the copies are kept and the error says so, and the next removal of the
 // label tries both again. A home and its Keychain login go together or not at
 // all.
@@ -574,7 +574,7 @@ func RemoveSetAside(data, harness, label string) error {
 
 // Unfinished is every account with a home set aside for deletion and not yet
 // deleted, in a stable order: a removal whose delete failed — a Keychain that
-// would not let go of its login (decision 0069), a disk error — or whose
+// would not let go of its login (decision 0070), a disk error — or whose
 // process died. The daemon finishes each at start (RemoveSetAside), since
 // nothing else would: the label is out of config.toml, so no report names it
 // and no hub asks about it again.

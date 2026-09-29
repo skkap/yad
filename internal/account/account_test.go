@@ -128,7 +128,7 @@ func TestEnv(t *testing.T) {
 	}{
 		// The login's storage is pointed at the home too, so an owner's own
 		// CLAUDE_SECURESTORAGE_CONFIG_DIR cannot put every account on one
-		// login (decision 0069).
+		// login (decision 0070).
 		{"claude", "/h", []string{"CLAUDE_CONFIG_DIR=/h", "CLAUDE_SECURESTORAGE_CONFIG_DIR=/h"}},
 		{"codex", "/h", []string{"CODEX_HOME=/h"}},
 		{"gemini", "/h", nil},

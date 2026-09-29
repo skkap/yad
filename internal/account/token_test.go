@@ -39,7 +39,7 @@ func TestATokenAccountHandsItsTokenToItsRuns(t *testing.T) {
 	// The command yad prints for this account never carries the token, and
 	// carries both variables that point claude at the account's login: in a
 	// shell that exports CLAUDE_SECURESTORAGE_CONFIG_DIR, one naming only the
-	// home would ask about another login (decision 0069).
+	// home would ask about another login (decision 0070).
 	s := suggest("claude", "claude", home, []string{"auth", "status"})
 	if strings.Contains(s, "not-a-real-token") {
 		t.Errorf("the suggested command carries the token: %s", s)

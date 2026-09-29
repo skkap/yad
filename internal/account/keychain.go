@@ -22,7 +22,7 @@ import (
 // On macOS, Claude does not keep the login of a home it is pointed at with
 // CLAUDE_CONFIG_DIR inside that home. It keeps it in the user's login
 // Keychain, as a generic password whose name is derived from the home's
-// path (decision 0069, DEV-134). Deleting the home leaves the item behind,
+// path (decision 0070, DEV-134). Deleting the home leaves the item behind,
 // and a home made again at the same path — the same label added again —
 // finds it: the new account runs on the old subscription, and `yad account
 // list` calls it free before anyone has logged it in.

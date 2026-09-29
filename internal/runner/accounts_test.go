@@ -409,7 +409,7 @@ func TestARetriedRemovalFinishesAHomeLeftAside(t *testing.T) {
 
 // A removal that stopped half-way — its home set aside and not deleted,
 // which a Keychain that would not let go of its login leaves on purpose
-// (decision 0069) — is finished when the daemon starts, and when a hub asks
+// (decision 0070) — is finished when the daemon starts, and when a hub asks
 // again for a removal it has already had, since the label is out of
 // config.toml and nothing else comes back to it.
 func TestARemovalThatStoppedHalfWayIsFinished(t *testing.T) {

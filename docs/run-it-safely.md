@@ -124,7 +124,7 @@ wanted any of this could simply ask the harness for it.
   account's home replaces them — the last one too, which every account sets
   to its own home, since Claude would otherwise keep every account's login
   where it names
-  ([0069](decisions/0069-a-claude-accounts-keychain-login-goes-with-its-home.md)). To bill
+  ([0070](decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)). To bill
   runs through an API key, log an account in with it; for a project that
   needs the key itself, have the hub send it as a grant under another name.
 - **`IS_SANDBOX` is two facts that only make sense together.** It is an
@@ -328,7 +328,7 @@ delete those Keychain items with the home, and keep the home if the Keychain
 refuses (a locked one, say), printing the `security delete-generic-password`
 command that finishes it by hand. Adding an account where there is no home
 deletes any login left for that path first, and says so
-([0069](decisions/0069-a-claude-accounts-keychain-login-goes-with-its-home.md)).
+([0070](decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)).
 On Linux the login is a file inside the home, and removing the home is the
 whole of logging it out.
 

@@ -351,7 +351,7 @@ func scrubbed(name string) bool {
 // environment; with an account, the account's home is appended after it and
 // wins. CLAUDE_SECURESTORAGE_CONFIG_DIR is the same kind of variable — where
 // Claude keeps that login, when it is not the home — and every account sets
-// it to its own home the same way (decision 0069). internal/account's tests
+// it to its own home the same way (decision 0070). internal/account's tests
 // hold this set to the variables an account sets, so a harness that gains
 // one cannot be missed here.
 var harnessHomes = []string{"CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "CODEX_HOME"}

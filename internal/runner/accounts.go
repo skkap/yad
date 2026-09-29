@@ -274,7 +274,7 @@ func (a *Accounts) attach(ctx context.Context, st *store.Store) {
 
 // finishRemovals completes every removal that stopped half-way: a home set
 // aside and not deleted, and on macOS the Keychain login that went with it
-// (decision 0069). Nothing else comes back to one. Its label is out of
+// (decision 0070). Nothing else comes back to one. Its label is out of
 // config.toml, so no report names the account and a hub that asked for the
 // removal has stopped asking; the owner's own `yad account remove` again is
 // the one other way it is finished.

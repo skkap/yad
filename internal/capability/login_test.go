@@ -202,7 +202,7 @@ func TestTheLoginCommandRunsAsPrinted(t *testing.T) {
 }
 
 // An owner who moved Claude's home and set CLAUDE_SECURESTORAGE_CONFIG_DIR
-// empty keeps the default Keychain login (decision 0069). The printed login
+// empty keeps the default Keychain login (decision 0070). The printed login
 // carries that empty value, which sh hands on as set and empty: without it
 // the pasted login would make a second login the runner never reads.
 func TestTheLoginCommandKeepsAnEmptyStorageDir(t *testing.T) {

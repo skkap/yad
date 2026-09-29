@@ -113,7 +113,7 @@ func command(d harness.Detected, args []string) string {
 
 // Where Claude keeps its login is the exception to "empty is unset": set
 // empty, CLAUDE_SECURESTORAGE_CONFIG_DIR means the owner's default login
-// whatever CLAUDE_CONFIG_DIR says (decision 0069), so it is carried as it is
+// whatever CLAUDE_CONFIG_DIR says (decision 0070), so it is carried as it is
 // — an empty value is no path to keep off the wire.
 func homePrefix(id string) string {
 	var prefix string

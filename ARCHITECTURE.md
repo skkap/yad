@@ -838,7 +838,7 @@ for `codex`); the suite never runs a real harness.
   from when it was stored; the month before, the harness report carries a
   warning and `yad account list` says so.
 - **On macOS a Claude home's login is in the Keychain, not the home**
-  ([0069](docs/decisions/0069-a-claude-accounts-keychain-login-goes-with-its-home.md)):
+  ([0070](docs/decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)):
   generic passwords `Claude Code-credentials-<h>` (the login) and
   `Claude Code-<h>` (a Console API key), `<h>` the first eight hex digits of
   the SHA-256 of the home's path, filed under `$USER`

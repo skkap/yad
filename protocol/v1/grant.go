@@ -126,7 +126,7 @@ var accountGrantNames = map[string]string{
 	"ANTHROPIC_ORGANIZATION_ID":    "with ANTHROPIC_FEDERATION_RULE_ID puts Claude on a federated credential ranked above the account's login",
 	"ANTHROPIC_CONFIG_DIR":         "chooses the directory Claude reads Anthropic profiles from, and a federation profile there ranks above the account's login",
 	"CLAUDE_CONFIG_DIR":            "is the home Claude reads its login from, which is the account itself",
-	// Read from claude 2.1.284's code (decision 0069): set, it replaces the
+	// Read from claude 2.1.284's code (decision 0070): set, it replaces the
 	// home in the name of the macOS Keychain item Claude keeps the login in,
 	// and in where it writes .credentials.json elsewhere — and set empty, it
 	// means the owner's own default login.
