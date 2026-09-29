@@ -89,3 +89,7 @@ type Slot struct {
 	Connection string
 	SessionID  string
 }
+
+type StartSweep struct {
+	Name string
+}

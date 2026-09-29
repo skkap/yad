@@ -102,6 +102,9 @@ func Serve(ctx context.Context, o Options) error {
 		Data: o.Paths.Data, Roots: w.EffectiveRoots(), PathSourcesOff: !w.AllowsPathSources(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
 		Slots: st,
 	}
+	// Before any run is claimed or any workdir collected: it may move a bare
+	// cache out from under both.
+	scrubSourceCredentials(ctx, st, workdirs, o.Log)
 	sessions := &Collector{
 		Store: st, Workdirs: filepath.Join(o.Paths.Data, "workdirs"),
 		IdleTTL: o.Config.Sessions.IdleTTL.Duration, DiskFloor: int64(o.Config.Sessions.DiskFloor),

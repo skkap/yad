@@ -313,8 +313,7 @@ func link(target, dest string) error {
 // setup hook.
 func (m *Manager) checkout(ctx context.Context, req Request, it item) error {
 	r := it.git
-	cache := filepath.Join(m.Data, "repos", r.name+"-"+digest(r.key)+".git")
-	fresh, err := m.worktree(ctx, req, it, cache)
+	fresh, cache, err := m.worktree(ctx, req, it, filepath.Join(m.Data, "repos", cacheName(*r)))
 	if err != nil {
 		return err
 	}
@@ -327,23 +326,30 @@ func (m *Manager) checkout(ctx context.Context, req Request, it item) error {
 	})
 }
 
+// cacheName is the directory under <data>/repos that holds r's bare cache.
+func cacheName(r remote) string {
+	return r.name + "-" + digest(r.key) + ".git"
+}
+
 // worktree adds the worktree, or finds it already there. fresh is true when
-// it was added now.
-func (m *Manager) worktree(ctx context.Context, req Request, it item, cache string) (fresh bool, err error) {
-	failed := func(err error) (bool, error) {
+// it was added now; used is the bare cache the worktree belongs to — cache,
+// or for a session an earlier version opened, the cache it made then
+// (sameOrigin).
+func (m *Manager) worktree(ctx context.Context, req Request, it item, cache string) (fresh bool, used string, err error) {
+	failed := func(err error) (bool, string, error) {
 		if ctx.Err() != nil {
-			return false, ctx.Err()
+			return false, "", ctx.Err()
 		}
 		// The source whole first: redactURLs cuts a URL where its pattern
 		// stops, after which the source is no longer found whole.
-		return false, &Error{Class: ClassSourceFailed, Msg: redactURLs(redactSource(err.Error(), it.git.url))}
+		return false, "", &Error{Class: ClassSourceFailed, Msg: redactURLs(redactSource(err.Error(), it.git.url))}
 	}
 	// The fetch, the ref the new worktree creates and a half-made worktree's
 	// removal are one repository's business at a time; the run that follows
 	// is not, and neither is the setup hook.
 	unlock, err := m.lockRepo(ctx, cache)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer unlock()
 	if _, err := os.Lstat(filepath.Join(it.dest, ".git")); err == nil {
@@ -352,7 +358,19 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 			return failed(fmt.Errorf("the session's workdir %s holds a checkout git cannot read (%v) — start a new session", it.dest, err))
 		}
 		if !samePath(common, cache) {
-			return failed(fmt.Errorf("the session's workdir %s holds a checkout of another repository (%s) — a session keeps its sources; start a new session for %s", it.dest, common, it.git.name))
+			// A version before decision 0068 named the cache by the URL
+			// with its credential, and the daemon's start could not move it
+			// to the name used now, which another cache of the repository
+			// already had (StaleCache.Target): the session goes on in it.
+			if !m.sameOrigin(ctx, common, it.git.url) {
+				return failed(fmt.Errorf("the session's workdir %s holds a checkout of another repository (%s) — a session keeps its sources; start a new session for %s", it.dest, common, it.git.name))
+			}
+			unlockCommon, err := m.lockRepo(ctx, common)
+			if err != nil {
+				return false, "", err
+			}
+			defer unlockCommon()
+			cache = common
 		}
 		gitDir, err := m.git(ctx, it.dest, "rev-parse", "--absolute-git-dir")
 		if err != nil {
@@ -360,7 +378,7 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 		}
 		if _, err := os.Stat(filepath.Join(gitDir, checkedOut)); err == nil {
 			req.Emit(v1.Event{Kind: v1.EventStatus, Status: fmt.Sprintf("continuing in the session's worktree of %s", it.git.name)})
-			return false, nil
+			return false, cache, nil
 		}
 		// An add that was killed — a cancel, the git timeout, the runner
 		// stopping — leaves .git in place and the tree half filled, and git's
@@ -393,7 +411,7 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 		return failed(fmt.Errorf("the worktree's checkout could not be recorded: %w", err))
 	}
 	req.Emit(v1.Event{Kind: v1.EventStatus, Status: fmt.Sprintf("worktree of %s on %s from %s", it.git.name, it.branch, from)})
-	return true, nil
+	return true, cache, nil
 }
 
 // fetch brings the bare cache up to date, creating it on first use. The cache

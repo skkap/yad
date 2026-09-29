@@ -343,3 +343,49 @@ SELECT spec FROM runs WHERE connection = ? AND session_id = ? ORDER BY created_a
 
 -- name: SetSessionSources :exec
 UPDATE sessions SET sources = ? WHERE connection = ? AND id = ?;
+
+-- A sweep a migration left for the daemon's start (0009_start_sweeps.sql).
+-- name: StartSweepPending :one
+SELECT EXISTS (SELECT 1 FROM start_sweeps WHERE name = ?);
+
+-- name: StartSweepDone :exec
+DELETE FROM start_sweeps WHERE name = ?;
+
+-- The rows whose JSON may name a git URL with userinfo, for the source
+-- credential sweep to read (decision 0068). Every such URL has an '@'.
+-- name: RunSpecsWithAt :many
+SELECT connection, id, spec FROM runs WHERE instr(spec, '@') > 0;
+
+-- name: SessionSourcesWithAt :many
+SELECT connection, id, sources FROM sessions WHERE instr(sources, '@') > 0;
+
+-- A run whose source carried a credential cannot be rebuilt from its row
+-- once the credential is out of it, as Loop.record has marked such a run
+-- since decision 0068.
+-- name: MarkRunHadGrants :exec
+UPDATE runs SET had_grants = 1 WHERE connection = ? AND id = ?;
+
+-- Every copy of a source credential an earlier version wrote, replaced where
+-- it stands: the rest of the text keeps its bytes, which a JSON parse and
+-- re-encode would not promise.
+-- name: ScrubRuns :execrows
+UPDATE runs SET spec = replace(spec, sqlc.arg(old), sqlc.arg(new)), reason = replace(reason, sqlc.arg(old), sqlc.arg(new))
+WHERE instr(spec, sqlc.arg(old)) > 0 OR instr(reason, sqlc.arg(old)) > 0;
+
+-- name: ScrubSessions :execrows
+UPDATE sessions SET sources = replace(sources, sqlc.arg(old), sqlc.arg(new))
+WHERE instr(sources, sqlc.arg(old)) > 0;
+
+-- name: ScrubEvents :execrows
+UPDATE events SET body = replace(body, sqlc.arg(old), sqlc.arg(new))
+WHERE instr(body, sqlc.arg(old)) > 0;
+
+-- name: ScrubOutbox :execrows
+UPDATE outbox SET body = replace(body, sqlc.arg(old), sqlc.arg(new)), last_error = replace(last_error, sqlc.arg(old), sqlc.arg(new))
+WHERE instr(body, sqlc.arg(old)) > 0 OR instr(last_error, sqlc.arg(old)) > 0;
+
+-- A bare cache moved to the name it has now keeps its sessions' WT_SLOTs.
+-- OR IGNORE: a slot the new name already holds stays that session's, and the
+-- one under the old name is freed with its session.
+-- name: RenameSlotsRepo :exec
+UPDATE OR IGNORE slots SET repo = sqlc.arg(new_repo) WHERE repo = sqlc.arg(old_repo);
