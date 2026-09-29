@@ -157,13 +157,14 @@ func (s *server) remove(ctx context.Context, conn string) (Removal, error) {
 	s.forget(conn)
 	stop, ended := s.stops[conn], s.endedBy[conn]
 	s.mu.Unlock()
-	if stop == nil || out.Already {
-		// No loop of its own to wait for, or one already ended: the rest is
-		// safe to do again, and says what is left of it now.
+	if stop == nil {
+		// No loop of its own: nothing is syncing it, and the rest is safe.
 		return s.finishRemoval(ctx, conn, out)
 	}
 	// The loop's own goroutine ends what the connection left once the loop
 	// has stopped, so a loop slower than this request still has it done.
+	// A repeated request waits for that stop too: what it ends before then
+	// may be a claim the loop is still starting.
 	stop()
 	select {
 	case <-ended:
@@ -173,10 +174,11 @@ func (s *server) remove(ctx context.Context, conn string) (Removal, error) {
 	s.mu.Lock()
 	done, retired := s.retirements[conn]
 	s.mu.Unlock()
-	if !retired {
+	if !retired || out.Already {
 		// The loop had stopped before the removal was asked — on a fault,
-		// or just past its goroutine's look — so nothing retired it, and
-		// with the loop stopped it is safe to do here.
+		// or just past its goroutine's look — so nothing retired it; or this
+		// is a request again, which says what is left of it now. The loop
+		// has stopped, so either is safe to do here.
 		return s.finishRemoval(ctx, conn, out)
 	}
 	done.Removal.Known, done.Removal.Already = out.Known, out.Already
