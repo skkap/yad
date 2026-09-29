@@ -33,6 +33,8 @@ type Handler struct {
 	// AccountsChanged re-reads config.toml's account lists and acts on the
 	// one account the owner changed.
 	AccountsChanged func(ctx context.Context, change AccountChange) (AccountResult, error)
+	// ConnectionRemoved lets go of a connection config.toml no longer lists.
+	ConnectionRemoved func(ctx context.Context, connection string) (ConnectionRemoval, error)
 }
 
 // Daemon is one process's hold on its profile: the lock, and the socket.
@@ -63,6 +65,13 @@ const connDeadline = 10 * time.Second
 // after it: a daemon that gave up at connDeadline would answer with a timeout
 // for a check that was about to answer.
 const AccountsDeadline = 30 * time.Second
+
+// RemovalDeadline bounds an OpConnectionRemoved, on both ends. The loop it
+// stops may be in the middle of a sync, which the stop cuts short, and the
+// store writes after it are one per session and run of that connection:
+// seconds on a busy runner, never the connDeadline's ten on a healthy one.
+// The runs it cancels are not waited for.
+const RemovalDeadline = 30 * time.Second
 
 // Claim makes this process the profile's daemon: it takes the lock, removes a
 // socket a dead daemon left behind, and listens. A profile whose daemon is
@@ -206,6 +215,20 @@ func (d *Daemon) answer(ctx context.Context, conn *net.UnixConn, h Handler) {
 			break
 		}
 		res.Account = &result
+	case OpConnectionRemoved:
+		if h.ConnectionRemoved == nil {
+			res.Error = "this daemon cannot let a connection go while it runs — `" + d.paths.Command("daemon", "restart") + "` ends what the removed connection left, now that config.toml no longer lists it"
+			break
+		}
+		conn.SetDeadline(time.Now().Add(RemovalDeadline))
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), RemovalDeadline)
+		removed, err := h.ConnectionRemoved(rctx, req.Connection)
+		cancel()
+		if err != nil {
+			res.Error = err.Error()
+			break
+		}
+		res.Removed = &removed
 	default:
 		res.Error = fmt.Sprintf("unknown request %q — the CLI and the daemon are different yad versions; `%s` after an upgrade", strings.TrimSpace(req.Op), d.paths.Command("daemon", "restart"))
 	}

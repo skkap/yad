@@ -120,7 +120,9 @@ Report what is **material**, not merely true.
 - **Lost is final**, even against a later `succeeded` from the runner (0023).
 - **Multica is read for shapes, never code** (0014). A missing Multica feature is
   not a defect.
-- **No self-update in v1** (0018).
+- **Self-update is the owner's opt-in** in `config.toml`, never a hub's
+  (0071, superseding 0018's "no self-update"); the `update` control stays
+  reserved and ignored.
 - **Tests never spend a token or touch the network**. Loopback `httptest` and
   in-process hubs are the norm. Fixtures under `testdata/<harness>-<version>/`
   are recorded from real harnesses and replayed.

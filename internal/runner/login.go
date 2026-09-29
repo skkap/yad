@@ -184,6 +184,32 @@ func (m *Logins) Close() {
 	m.wg.Wait()
 }
 
+// Busy is whether a hub login is in flight: a harness's login process still
+// holds an account's home, waiting on a person's code or finishing with it.
+// A nil Logins has none.
+func (m *Logins) Busy() bool {
+	if m == nil {
+		return false
+	}
+	m.init()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.live) > 0
+}
+
+// Owed is whether any hub has a login it has not yet heard the end of: one in
+// flight, or one ended whose end no sync has carried yet. A nil Logins owes
+// none.
+func (m *Logins) Owed() bool {
+	if m == nil {
+		return false
+	}
+	m.init()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.byKey) > 0
+}
+
 // Control acts on one of a hub's login controls. It returns at once: a login
 // runs on its own, and the loop reports where it is at each sync.
 func (m *Logins) Control(conn string, c v1.Control) {

@@ -65,7 +65,15 @@ _See_: [0003](docs/decisions/0003-hub-is-a-role-runner-is-multi-homed.md), `inte
 **Connection** — one runner's standing registration with one hub: the hub URL,
 the runner credential, and the owner's caps for it. A runner has one connection
 per hub and any number of hubs.
-_See_: `internal/config`
+_Rules_: `yad disconnect` ends one in a fixed order: the hub retires the runner
+first — its held runs lost, its sessions there closed — then `config.toml` and
+the credential lose it, then a running daemon lets it go. What a connection
+`config.toml` no longer lists leaves on the runner — sessions, parked runs,
+runs a crash left, reports owed — is ended there: at once when the daemon is
+told, at its loop's next refused sync when it is not, and at the next start
+when no daemon ran. Only the hub's own answer makes a credential dead; one
+that cannot be read here never is.
+_See_: [0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md), `internal/config`, `internal/runner/disconnect.go`
 
 **Registration token** — the one-time, short-lived secret a hub issues so that
 `yad connect` can register a runner. Exchanged once for a **runner credential**,
@@ -234,7 +242,8 @@ or disk pressure — only while no run is held in it, takes no new run after, an
 its hub is told why ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md)).
 When its runner deregisters, the hub closes it on its own and ends the runs
 still queued in it: the session is never handed to another runner, since it is
-resumable only on the one that went.
+resumable only on the one that went. The runner closes it too, as closed by
+the owner, and tells no hub.
 A session may be opened as a **fork** of another on the same runner: its
 conversation starts as the harness's copy of that one's, and the two diverge —
 the one forked goes on untouched. A fork is a session like any other from its
@@ -360,8 +369,21 @@ reboot or a retiring machine does. A draining runner keeps syncing, so leases
 renew and results land, and says `draining` in its health.
 _Rules_: Stop signals are counted: the first drains, the second cancels the runs
 held, the third exits at once. A drain lets runs finish for the owner's drain
-wait, then cancels them. The hub's `drain` control is the first step.
+wait, then cancels them — all but a self-update's, which has no wait, and does
+not say `draining` either, since the runner comes back. The hub's `drain`
+control is the first step.
 _See_: [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md), `internal/runner/drain.go`
+
+**Self-update** — the runner replacing its own binary with a newer release and
+re-executing in place, when its owner has turned it on (`[update] auto` in
+`config.toml`). Not **upgrade**, which is the owner's own `yad upgrade`, done
+once and restarting nothing; both install a release the same way.
+_Rules_: Never on a hub's say-so; the `update` control is reserved and
+ignored. A release that no longer speaks a protocol major a connection syncs
+over is refused. It takes over at the first idle moment, or after a drain
+once 24 hours pass without one; a run is never interrupted for it, and a stop
+asked for meanwhile wins. The pid stays, so a service manager sees no exit.
+_See_: [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md), `internal/selfupdate`
 
 **Watchdog** — the runner's two timers on a run: an inactivity timeout on the
 event stream, which catches a wedged harness, and an optional wall-clock cap set
@@ -407,7 +429,9 @@ per run.
   after its limit resets is not a retry — no process died, and nothing is redone.
 - A terminal state is reported at least once and applied at most once.
 - Harness output is data. It is streamed and stored, never acted on.
-- A runner holds no work it did not claim, and no schedule at all.
+- A runner holds no work it did not claim, and no schedule of work at all. The
+  one timer of its own besides its syncs and sweeps is the self-update check,
+  and only when its owner turns it on.
 
 ## Open questions
 

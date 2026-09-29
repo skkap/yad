@@ -47,3 +47,19 @@ func (p Paths) RunnerID() (string, error) {
 	}
 	return id, nil
 }
+
+// KnownRunnerID is RunnerID for a command that must not make one: a profile
+// with no id has never registered as any runner, and a new id would name one
+// no hub has heard of. ok is false when there is none.
+func (p Paths) KnownRunnerID() (id string, ok bool, err error) {
+	path := filepath.Join(p.Config, "runner-id")
+	b, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", false, nil
+	case err != nil:
+		return "", false, fmt.Errorf("read %s: %w — fix its ownership or permissions", path, err)
+	}
+	id = strings.TrimSpace(string(b))
+	return id, id != "", nil
+}

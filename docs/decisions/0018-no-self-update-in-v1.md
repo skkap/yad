@@ -1,5 +1,6 @@
 ---
 date: 2026-09-18
+status: superseded in part by 0071 — a runner updates itself when config.toml turns it on, never on a hub's say-so; the update control stays reserved and ignored
 ---
 
 # No self-update in v1, but the protocol and the runner are ready for it

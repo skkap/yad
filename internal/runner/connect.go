@@ -17,6 +17,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/shellword"
+	"github.com/skkap/yad/internal/store"
 )
 
 // Connect registers this runner with the hub at hubURL, exchanging the
@@ -91,6 +92,11 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		return conn, none, notes, err
 	}
 
+	if existing < 0 {
+		if err := leftoverName(ctx, p, name); err != nil {
+			return conn, none, notes, err
+		}
+	}
 	if err := p.Ensure(); err != nil {
 		return conn, none, notes, err
 	}
@@ -149,6 +155,36 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		}
 	}
 	return conn, res, notes, nil
+}
+
+// leftoverName refuses a new connection a name the state database still holds
+// leftovers under: a connection disconnected while no daemon ran, or before
+// the daemon was told, whose sessions, runs and owed reports the daemon has
+// not ended yet (decision 0072). The store keys everything by connection
+// name, so a new hub under that name would inherit them — its reporter would
+// send the old hub's events to the new one. Checked before the token is
+// spent, from the database read-only. A database that is not there holds
+// nothing; one that cannot be read is refused rather than guessed about — one
+// migration behind is the usual reason, which a daemon restart mends — since
+// the cost of a wrong guess is one hub's events delivered to another.
+func leftoverName(ctx context.Context, p config.Paths, name string) error {
+	st, err := store.OpenProfile(ctx, p)
+	if errors.Is(err, store.ErrNoState) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("whether a removed connection left anything under the name %q could not be read (%w), and a new hub under it would inherit it — connect again once it can be, or under another --name", name, err)
+	}
+	defer st.Close()
+	left, err := st.ConnectionsWithLeftovers(ctx)
+	if err != nil {
+		return fmt.Errorf("whether a removed connection left anything under the name %q could not be read (%w) — connect again, or under another --name", name, err)
+	}
+	if !slices.Contains(left, name) {
+		return nil
+	}
+	return fmt.Errorf("%q was the name of a connection removed from this runner, and what it left here is not ended yet — `%s` ends it when a daemon is running, and `%s` when none is; or connect this hub under another --name",
+		name, p.Command("disconnect", name), p.Command("daemon", "start"))
 }
 
 var notName = regexp.MustCompile(`[^a-z0-9_-]+`)

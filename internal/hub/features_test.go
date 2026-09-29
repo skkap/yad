@@ -313,15 +313,16 @@ func kindsOf(res v1.SyncResponse) map[v1.ControlKind]bool {
 	return out
 }
 
-// Decision 0018: v1 has no self-update. The control name is reserved so the
-// machinery is there when it is built, and nothing acts on it meanwhile.
+// Decisions 0018 and 0071: the control name is reserved, and nothing sends
+// or acts on it — a runner updates itself only when its owner's config.toml
+// says so, never on a hub's say-so.
 func TestUpdateControlIsReservedAndUnhandled(t *testing.T) {
 	if !containsKind(v1.ControlKinds(), v1.ControlUpdate) {
 		t.Fatal("the update control is no longer reserved in the protocol")
 	}
 	for _, f := range capability.Features() {
 		if f == string(v1.ControlUpdate) {
-			t.Fatal("a runner advertises update; v1 has no self-update (decision 0018)")
+			t.Fatal("a runner advertises update; a hub never triggers a self-update (decision 0071)")
 		}
 	}
 	// Nothing in the hub ever queues one: a control kind reaches a runner

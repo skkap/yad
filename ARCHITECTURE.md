@@ -84,6 +84,8 @@ internal/hubapiclient    the caller side of yad hub's service API
 internal/hub             `yad hub`: huma server, store, submit/watch API
 internal/control         the Unix control socket, server and client
 internal/upgrade         `yad upgrade`: releases fetched over HTTPS, checksum, atomic replace
+internal/selfupdate      the owner's opt-in to self-update: the six-hourly check, the
+                         protocol check of a downloaded release, the wait for idle (0071)
 internal/conformance     the protocol conformance suite, run against any hub
 internal/shellword       every command yad prints for pasting, built from argv
                          and POSIX-quoted; shellwordtest runs one through sh
@@ -199,8 +201,9 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   heard a window, never that the account has no limits; a window the harness
   did not mention keeps its last value rather than reading zero.
 - **Control kinds**: `cancel`, `interrupt`, `steer`, `close_session`, `drain`,
-  `report_capabilities`, `update` (reserved —
-  [0018](docs/decisions/0018-no-self-update-in-v1.md)), the four of hub
+  `report_capabilities`, `update` (reserved, and ignored: a runner updates
+  itself only when its owner turns it on —
+  [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)), the four of hub
   login: `start_login`, `login_code`, `login_token`, `cancel_login`, and
   `remove_account`.
 - **Controls are not acknowledged**, so a hub repeats `cancel` and `interrupt`
@@ -803,11 +806,16 @@ for `codex`); the suite never runs a real harness.
   and frees its slots — which retries a removal that failed and touches
   nothing outside `<data>/workdirs`.
   The collector runs whether or not any hub is connected: the disk is the
-  machine's, and a hub disconnected while no daemon ran leaves sessions no
-  hub will ever close.
+  machine's. It also ends what the store holds of a connection `config.toml`
+  no longer lists — its runs no process holds end `lost`, its sessions close
+  as closed by the owner and are reported to nobody, and what it owed its hub
+  is dropped — so a hub disconnected while no daemon ran, or while the daemon
+  was not told, leaves nothing behind
+  ([0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md)).
   A missing last-used timestamp is unknown, never ancient: the TTL counts from
   the sweep that first sees it. Every close goes to the session's hub in
-  `closed_sessions`.
+  `closed_sessions`, but for those of a removed connection, which has no hub
+  left to hear it.
 
 ### Accounts and usage limits
 
@@ -1167,6 +1175,9 @@ roots         = ["/home/me/src"]  # where path sources and local git URLs may po
 path_sources  = false             # refuse path sources and local git URLs altogether, whatever roots says; absent = take them — 0062
 git_timeout   = "10m"
 setup_timeout = "15m"
+
+[update]
+auto = true   # check for a newer release every 6 h, install it, re-exec at an idle moment — 0071; absent = never
 ```
 
 ### `state.db`
@@ -1185,7 +1196,8 @@ daemon's log files in that transaction too, through `logfile.File.Scrub`). The d
 writer: the CLI opens it read-only, and a change the CLI makes goes through the
 control socket
 ([0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md),
-[0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md)).
+[0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md),
+[0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md)).
 
 ### `hub.db`
 
@@ -1218,13 +1230,20 @@ yad doctor                         what is installed, what YAD can drive, and wh
 yad harnesses [--json]             the capability document, as a hub receives it but for
                                    the accounts feature, added per connection (0057)
 yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
-yad disconnect <name>              not built: its coordination with a running
-                                   daemon is being designed (DEV-81); it refuses
-                                   and says so
+yad disconnect <name> [--now] [--force]
+                                   the hub retires the runner, config.toml and the
+                                   credential lose the connection, then a running
+                                   daemon lets it go live — its loop stops, its runs
+                                   are cancelled, its sessions close — or the next
+                                   start ends what it left (0072). Refuses while its
+                                   runs are in progress; --now goes on and the hub
+                                   records them lost; --force goes on past a hub
+                                   that cannot be asked or will not agree
 yad daemon start|stop|restart|status|logs [-f] [-n N]
                                    the runner process
 yad status [--json]                connections, capacity, runs, sessions and recent
-                                   errors — via the socket
+                                   errors — via the socket; with self-update on, the
+                                   last check and any release pending or refused
 yad sessions [--json]              the sessions held: workdir, runs, last use — read
                                    from state.db read-only, so the daemon may be down
 yad sessions close [--connection c] <id>
@@ -1292,6 +1311,8 @@ yad conformance <url> --token T [--second-token T2]
                                    the first one's run
 yad upgrade [--check] [--force] [--tag v]
                                    replace this binary with the newest release
+yad version [--json]               the build; --json adds the protocol majors it
+                                   speaks, which a self-update asks a release (0071)
 ```
 
 `yad daemon start` backgrounds itself — it re-executes `yad daemon start
@@ -1315,6 +1336,26 @@ signal cancels the runs held, a third exits at once — and falls back to
 signals; `restart` checks every credential locally
 before it stops anything
 ([0027](docs/decisions/0027-stop-asks-then-signals-and-restart-checks-first.md)).
+
+**Self-update** is off unless `config.toml` says `[update] auto = true`
+([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
+Then the daemon asks for the newest release every six hours, jittered by a
+tenth, with the one anonymous request `yad upgrade` makes, and a newer one
+goes through `internal/upgrade.Apply` — downloaded beside the binary,
+checked against `checksums.txt`, then run as `version --json` with `HOME`
+alone before the rename: a release that no longer speaks the protocol major a
+connection syncs over is refused and left uninstalled, and one older than the
+flag is read as v1-only. Once installed, the running process becomes it at the
+first idle moment — every unit of capacity free and no hub login in flight —
+through the one drain with no drain wait, or, after 24 hours without one,
+through the same drain regardless, which lets every run finish however long it
+takes, and any hub login in flight end and reach its hub. Its health offers no capacity and does
+not say `draining`, since the runner is coming back. At the drain's end the
+daemon closes its socket, lock, `state.db` and log and `exec`s the same path
+with the same argv and environment, so the pid a service manager watches never
+exits. A stop or a hub's drain during it makes it an ordinary drain that exits. A failed check is a warning in the log and in
+`yad status`, which also shows the last check, the next, and any release
+pending or refused.
 
 ## §6 Dependencies
 
@@ -1390,6 +1431,9 @@ line here is a reviewed change.
 - **No release is downloaded.** `internal/upgrade` fakes the release source
   outright, and reads what the installed binary held *at the moment the
   download ran* to prove nothing was replaced before the checksum was checked.
+  `internal/selfupdate` fakes the source and the clock; its end-to-end test
+  serves a release from a loopback server and re-executes a real runner
+  process into a script that runs the test binary as the new version.
   `gh` itself, and `scripts/install.sh` around it, are tested against a `gh`
   that is a shell script on `PATH` — which proves the argv, the checksum gate
   and where the binary lands, and proves nothing about a real GitHub release.
@@ -1447,6 +1491,13 @@ line here is a reviewed change.
   API only the third.
 - Permission mode and sandbox are runner configuration per harness; no protocol
   field can set them — [0015](docs/decisions/0015-owner-environment-is-the-trust-boundary.md).
+- Self-update is the owner's alone: off unless `config.toml` turns it on, no
+  protocol field reaches it, and the reserved `update` control is ignored. A
+  release it takes is checked against `checksums.txt` from the same release,
+  which catches corruption and not a compromised release — signing is a
+  separate decision — and it runs the downloaded binary once, as `version
+  --json` with `HOME` alone, before trusting it with anything
+  ([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
 - The owner trusts the hubs it connects, so YAD does not police what a hub
   sends ([0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md)).
   Hub input and harness output are still data to YAD itself: never executed,
@@ -1513,7 +1564,7 @@ than complete in one.
 | **E6** | accounts and usage limits — failover, waiting, restart survival |
 | **E7** | many hubs — shared capacity, caps, grants, host tools, conformance suite |
 | **E8** | operating it — health, metrics, versioning, packaging |
-| **E9** | later — the backlog: self-update, live sessions, release, ACP, … |
+| **E9** | later — the backlog: live sessions, release, ACP, … |
 
 ## §10 What Multica taught
 

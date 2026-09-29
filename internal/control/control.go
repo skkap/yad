@@ -34,10 +34,17 @@ const (
 // only then answers, so the CLI can say what happened rather than what will.
 const OpAccountsChanged = "accounts_changed"
 
+// OpConnectionRemoved is `yad disconnect` telling the daemon that config.toml
+// no longer lists a connection, whose hub has already been told (decision
+// 0072). The daemon stops that connection's loop, cancels its runs in hand
+// and ends what it leaves here, and answers once it has.
+const OpConnectionRemoved = "connection_removed"
+
 // Request is what the CLI asks.
 type Request struct {
-	Op string `json:"op"` // "status", OpStop, OpConfirm, "close_session" or OpAccountsChanged
-	// Connection and Session name the session to close.
+	Op string `json:"op"` // "status", OpStop, OpConfirm, "close_session", OpAccountsChanged or OpConnectionRemoved
+	// Connection and Session name the session to close; Connection alone
+	// names the connection removed.
 	Connection string `json:"connection,omitempty"`
 	Session    string `json:"session,omitempty"`
 	// Account is the account an OpAccountsChanged is about.
@@ -83,10 +90,33 @@ type Response struct {
 	Closed *SessionClose `json:"closed,omitempty"`
 	// Account is what the daemon did with an OpAccountsChanged.
 	Account *AccountResult `json:"account,omitempty"`
+	// Removed is what the daemon did with an OpConnectionRemoved.
+	Removed *ConnectionRemoval `json:"removed,omitempty"`
 	// Confirm is the daemon holding a stop until the CLI confirms it. A stop
 	// answered without it came from a daemon older than the exchange, which
 	// acted on the request alone.
 	Confirm bool `json:"confirm,omitempty"`
+}
+
+// ConnectionRemoval is what the daemon did with a connection the owner
+// removed.
+type ConnectionRemoval struct {
+	// Known is whether the daemon started with the connection configured;
+	// one connected since was never synced by it.
+	Known bool `json:"known"`
+	// Already is a connection the daemon had removed before: an earlier
+	// request, or its loop finding the hub refused the credential.
+	Already bool `json:"already,omitempty"`
+	// Stopped are the runs in hand it cancelled; Ended the runs held with
+	// no process — parked, or left by an earlier process — it ended.
+	Stopped []string `json:"stopped,omitempty"`
+	Ended   []string `json:"ended,omitempty"`
+	// Closed are the connection's sessions closed now, and Closing those
+	// that close once the run in them ends. Their workdirs go after.
+	Closed  int `json:"closed"`
+	Closing int `json:"closing"`
+	// Remaining is how many connections the daemon still syncs.
+	Remaining int `json:"remaining"`
 }
 
 // SessionClose is what `yad sessions close` did.
@@ -133,6 +163,46 @@ type Status struct {
 	// hub is told the list is the catalog's, and why is the owner's to read
 	// (DEV-146). Nil from a daemon older than it.
 	ModelsFailures []ModelsFailure `json:"models_failures,omitempty"`
+	// Update is where self-update stands (decision 0071): nil when
+	// config.toml leaves it off, and from a daemon older than it.
+	Update *Update `json:"update,omitempty"`
+}
+
+// Update is the runner's self-update. The version this process runs is
+// Status.Version; a release installed and not yet taken over is Pending.
+type Update struct {
+	// Off is why nothing is checked, with what to do: a build that carries
+	// no release version.
+	Off       string     `json:"off,omitempty"`
+	LastCheck *time.Time `json:"last_check,omitempty"`
+	// LastError is why the last check failed; empty when it succeeded.
+	LastError string     `json:"last_error,omitempty"`
+	Latest    string     `json:"latest,omitempty"`
+	NextCheck *time.Time `json:"next_check,omitempty"`
+	// Pending is a newer release already installed in place of this
+	// binary, which the runner becomes at its first idle moment, or after a
+	// drain once By has passed.
+	Pending *PendingUpdate `json:"pending,omitempty"`
+	// Refused is a newer release the runner will not take, and why.
+	Refused *RefusedUpdate `json:"refused,omitempty"`
+}
+
+// PendingUpdate is a release on disk the running process has not yet become.
+type PendingUpdate struct {
+	Tag   string    `json:"tag"`
+	Since time.Time `json:"since"`
+	By    time.Time `json:"by"`
+	// Swapping is set once the runner has stopped taking work for it, and
+	// Reason says why then: an idle moment, or By passing.
+	Swapping bool   `json:"swapping,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// RefusedUpdate is a newer release left uninstalled.
+type RefusedUpdate struct {
+	Tag    string    `json:"tag"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 // ModelsFailure is one login's failed ask for its models.

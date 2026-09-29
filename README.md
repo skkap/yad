@@ -178,7 +178,7 @@ in on its own first — `claude`, `codex` — because YAD uses their logins.
 
 Or build it from source with Go 1.27: `git clone https://github.com/skkap/yad &&
 cd yad && make install`. Pinning a version, upgrading with `yad upgrade`,
-forks, and checking a download by hand are in
+letting a runner update itself, forks, and checking a download by hand are in
 **[docs/install.md](docs/install.md)**.
 
 ## Try it: a hub, a runner and one run
@@ -228,15 +228,20 @@ It runs as you, never as root, restarts after a crash, and drains on stop: no
 new runs, and the ones it holds get time to finish. Details, and what to re-run
 after an upgrade, are in [docs/install.md](docs/install.md#run-it-as-a-service).
 
+To have it keep itself on the newest release, put `[update] auto = true` in
+`config.toml`: it checks every six hours, verifies a release as `yad upgrade`
+does, and takes it over at a moment it holds no run, without the service ever
+stopping. Off unless you say so, and never on a hub's say-so
+([docs/install.md](docs/install.md#self-update)).
+
 ## Status
 
 Everything above works today. **No release has been tagged yet**, so until the
 first one the install script has nothing to fetch — build from source.
 
-Not built yet: `yad disconnect`, so a runner cannot yet leave a hub on its own;
-live sessions, which would keep one harness process across runs (reserved in
-the protocol); and adapters for Gemini CLI, GitHub Copilot CLI, OpenCode and
-Cursor Agent, which `yad doctor` recognises but will not run.
+Not built yet: live sessions, which would keep one harness process across runs
+(reserved in the protocol); and adapters for Gemini CLI, GitHub Copilot CLI,
+OpenCode and Cursor Agent, which `yad doctor` recognises but will not run.
 
 ## Documentation
 

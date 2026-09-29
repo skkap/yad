@@ -24,7 +24,15 @@ import (
 	"github.com/skkap/yad/internal/supervise"
 )
 
-func cmdVersion(w io.Writer) error {
+func cmdVersion(args []string, w io.Writer) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "print the version, commit and protocol majors as JSON, as a runner taking a release over reads them")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *asJSON {
+		return writeJSON(w, buildinfo.Current())
+	}
 	if buildinfo.Commit != "" {
 		_, err := fmt.Fprintf(w, "yad %s (%s)\n", buildinfo.Version, buildinfo.Commit)
 		return err

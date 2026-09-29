@@ -565,6 +565,29 @@ Two things about this that are not negotiable by anyone else:
   says so in the run's events (`approval declined: …`). A sandbox the model can
   always talk its way out of is not a sandbox.
 
+## Updates are yours to turn on
+
+A runner replaces its own binary only if `config.toml` says `[update] auto =
+true`. No hub can turn that on, trigger it or pick the release
+([0071](decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
+What turning it on trusts, spelled out:
+
+- **The repository's GitHub releases** — `skkap/yad`, or the fork `YAD_REPO`
+  names — fetched without a login. A release is checked against the
+  `checksums.txt` published beside it, which catches a corrupted download and
+  not a release someone else published: there is no signature yet. Anyone
+  who can publish a release there can put code on the machine within six
+  hours. Leave it off, and run `yad upgrade` yourself, if that is more than you
+  want.
+- **A binary the runner can replace.** So can a run, which is the same user —
+  as it can for any yad installed in `~/.local/bin`. On a work machine the kit
+  installs yad root-owned so a run cannot; turning self-update on in the spec
+  gives the binary to the runner's user instead
+  ([machines/README.md](../machines/README.md#updating-itself)).
+- **The downloaded binary is run once before it is installed**, as `yad
+  version --json`, with `HOME` and nothing else of the runner's environment,
+  to ask which protocol versions it speaks.
+
 ## A checklist, if you want one
 
 - [ ] A machine, VM or container you would let an unknown repository run code on
@@ -577,6 +600,8 @@ Two things about this that are not negotiable by anyone else:
 - [ ] `[workdirs] roots` set, if a hub should be able to check out less than
       your whole home directory — or `path_sources = false`, if nothing on
       the machine at all
+- [ ] `[update] auto` decided: on to follow releases by itself, off to
+      upgrade by hand
 - [ ] `yad service install` run as that user, after PATH is what you want it
 - [ ] On Linux, lingering decided one way or the other
 
@@ -587,4 +612,5 @@ Two things about this that are not negotiable by anyone else:
 - [0038 — the owner trusts the hubs it connects](decisions/0038-the-owner-trusts-the-hubs-it-connects.md)
 - [0028 — a runner is a per-user service, with the owner's login PATH frozen into it](decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)
 - [0033 — sources reach only what the owner allows](decisions/0033-sources-reach-only-what-the-owner-allows.md)
+- [0071 — a runner updates itself when its owner turns it on](decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)
 - `ARCHITECTURE.md §8` is the same ground in one page, for someone reading the code.

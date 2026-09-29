@@ -500,9 +500,12 @@ stops syncing.
 `401 unauthorized`; `403 unauthorized` for another runner's credential; `413`
 for a body of a mebibyte or more.
 
-A current yad runner does not call `deregister` yet: `yad disconnect`, which
-will, is still being designed. Implement it anyway; the conformance suite
-lists it among the rules it cannot check (§12).
+A yad runner calls `deregister` when its owner runs `yad disconnect`, before
+it forgets the credential. It takes a `401 unauthorized` or any
+`runner_revoked` in reply as a credential you have already retired — that is
+how running the command again after a half-finished one completes — and
+anything else as a refusal that leaves the runner registered with you. The
+conformance suite lists `deregister` among the rules it cannot check (§12).
 
 ## 4. Runs
 
@@ -1051,7 +1054,7 @@ a rule for when to stop sending it:
 | `login_token` | `login_id`, `harness`, `account`, `token`, `add` | stores a `claude setup-token` token as the account's login; with `add`, as `start_login` | in every response until the runner reports the login — then forget the token |
 | `cancel_login` | `login_id` | ends the login `cancelled`; one it never had is reported `cancelled` all the same | in every response until the runner reports the login over |
 | `remove_account` | `harness`, `account` | removes the account as its owner's `yad account remove` does: listed nowhere from then on, a run on it finishes there, its home is deleted when the last one ends, and a login in flight on it ends `cancelled`. One it does not list is nothing to do | in every response until neither the runner's current capability document nor the sync's health lists the account, or the runner stops advertising `accounts` |
-| `update` | — | reserved; never send it | never |
+| `update` | — | reserved; never send it. A yad runner ignores it: it updates itself only when its owner turns that on ([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)) | never |
 
 **Features are promises, not decoration.** A runner advertises
 `protocol_features` in its capability document. They exist so a hub does not
