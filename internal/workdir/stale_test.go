@@ -155,6 +155,81 @@ func TestAStaleCacheMovedButNotRewrittenIsFinished(t *testing.T) {
 	}
 }
 
+// A move that fails leaves every worktree pointed at the cache where it is,
+// so its session continues, and a cache whose config cannot be read is
+// reported rather than passed over as credential-free. Both are found again,
+// and finished, once the fault clears.
+func TestAStaleCacheThatCannotMoveKeepsItsSessions(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permissions this test takes away")
+	}
+	f := newFixture(t)
+	served := t.TempDir()
+	newOrigin(t, served, "acme", map[string]string{"README": "v1\n"})
+	cs := newCredServer(t, served, fakeToken, "")
+	url := "https://" + fakeToken + "@" + strings.TrimPrefix(cs.srv.URL, "https://") + "/acme.git"
+	current := filepath.Join(f.m.Data, "repos", "acme-"+digest(cs.srv.URL+"/acme.git")+".git")
+	for _, s := range []string{"s1", "s2"} {
+		if _, _, err := f.prepare(s, gitSource(url, "", "")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stale := downgrade(t, current, url)
+	ctx := context.Background()
+
+	config := filepath.Join(stale, "config")
+	if err := os.Chmod(config, 0); err != nil {
+		t.Fatal(err)
+	}
+	found, err := f.m.StaleCaches(ctx)
+	if err == nil || len(found) != 0 {
+		t.Errorf("an unreadable config: found %+v, err %v; want it reported", found, err)
+	}
+	if err := os.Chmod(config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	found, err = f.m.StaleCaches(ctx)
+	if err != nil || len(found) != 1 || found[0].Target == "" {
+		t.Fatalf("stale = %+v (%v), want the cache, to move", found, err)
+	}
+	repos := filepath.Dir(stale)
+	if err := os.Chmod(repos, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	err = f.m.CleanCache(ctx, found[0])
+	if err := os.Chmod(repos, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err == nil {
+		t.Fatal("the move succeeded in a directory that refuses it")
+	}
+	if strings.Contains(err.Error(), "FAKEt0ken") {
+		t.Errorf("the error names the token: %v", err)
+	}
+	for _, s := range []string{"s1", "s2"} {
+		if _, ev, err := f.prepare(s, gitSource(url, "", "")); err != nil || !strings.Contains(ev.statuses(), "continuing") {
+			t.Errorf("%s after a move that failed: %v\n%s", s, err, ev.statuses())
+		}
+	}
+
+	found, err = f.m.StaleCaches(ctx)
+	if err != nil || len(found) != 1 {
+		t.Fatalf("stale = %+v (%v), want the cache found again", found, err)
+	}
+	if err := f.m.CleanCache(ctx, found[0]); err != nil {
+		t.Fatal(err)
+	}
+	if held := holding(t, f.m.Data, "FAKEt0ken"); len(held) > 0 {
+		t.Errorf("the data directory holds the token: %v", held)
+	}
+	for _, s := range []string{"s1", "s2"} {
+		if _, _, err := f.prepare(s, gitSource(url, "", "")); err != nil {
+			t.Errorf("%s after the move: %v", s, err)
+		}
+	}
+}
+
 func TestScrubOf(t *testing.T) {
 	for _, tc := range []struct {
 		raw string

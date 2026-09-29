@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"path/filepath"
 
@@ -108,13 +109,19 @@ func scrubSourceCredentials(ctx context.Context, st *store.Store, w *workdir.Man
 		log.Warn("the credentials an earlier version kept in source URLs could not be taken out of state.db; the next start tries again", "err", err)
 		return
 	}
-	if rows > 0 {
-		// The rewritten pages reach state.db itself at a checkpoint; until
-		// then the old ones, credential and all, are still in it.
-		// secure_delete zeroes what the update freed.
-		if _, err := st.DB.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-			log.Warn("state.db could not be checkpointed after the credentials an earlier version kept were taken out; SQLite does so on its own later", "err", err)
-		}
+	// The rewritten pages reach state.db itself at a checkpoint; until then
+	// the old ones, credential and all, are still in it (secure_delete zeroes
+	// what the update freed, in the new page). At every start, not only one
+	// that rewrote something: a start killed between its commit and this line
+	// leaves the next one nothing to rewrite and the old pages still in the
+	// file. After a clean stop the WAL is empty and this costs nothing.
+	var busy, frames, done int
+	err = st.DB.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &frames, &done)
+	if err == nil && busy != 0 {
+		err = errors.New("a reader held the database")
+	}
+	if err != nil {
+		log.Warn("state.db could not be checkpointed, so pages from before the credentials an earlier version kept in source URLs were taken out may still be in it; the next start tries again, and SQLite does as the daemon stops", "err", err)
 	}
 	var cleaned, moved int
 	for _, c := range caches {

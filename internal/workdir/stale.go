@@ -120,7 +120,15 @@ func (m *Manager) StaleCaches(ctx context.Context) ([]StaleCache, error) {
 		// Read before git is asked: every daemon start comes here, and a
 		// config with no '@' in it holds no userinfo.
 		b, err := os.ReadFile(filepath.Join(cache, "config"))
-		if err != nil || !bytes.Contains(b, []byte("@")) {
+		if err != nil {
+			// A directory without one is no cache of this runner's; one
+			// that cannot be read may still hold a credential.
+			if !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		if !bytes.Contains(b, []byte("@")) {
 			continue
 		}
 		origin, err := m.git(ctx, cache, "config", "--get", "remote.origin.url")
@@ -197,18 +205,24 @@ func (m *Manager) move(ctx context.Context, from, to string) (bool, error) {
 		return false, err
 	}
 	moved := func(admin string) string { return filepath.Join(to, "worktrees", filepath.Base(admin)) }
-	for _, admin := range admins {
+	// Pointed back on any failure before the rename, so the sessions go on
+	// in the cache where it is until a later start moves it.
+	back := func(err error, pointed []string) (bool, error) {
+		errs := []error{err}
+		for _, admin := range pointed {
+			if err := repoint(admin, moved(admin), admin); err != nil {
+				errs = append(errs, fmt.Errorf("the worktree of %s could not be pointed back at it (%w) — its session fails until a later start moves the cache", admin, err))
+			}
+		}
+		return false, errors.Join(errs...)
+	}
+	for i, admin := range admins {
 		if err := repoint(admin, admin, moved(admin)); err != nil {
-			return false, err
+			return back(err, admins[:i])
 		}
 	}
 	if err := os.Rename(from, to); err != nil {
-		// Pointed back, so the sessions go on in the cache where it is
-		// until a later start moves it.
-		for _, admin := range admins {
-			repoint(admin, moved(admin), admin)
-		}
-		return false, err
+		return back(err, admins)
 	}
 	return true, nil
 }
