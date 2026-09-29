@@ -723,10 +723,17 @@ func (t *turn) request(m *jsonrpc.Message) {
 	// A one-time answer before a standing one: the owner's setting is asked
 	// again for every request, and a standing answer would outlive a change
 	// to it within the session.
+	//
+	// Once the turn is interrupted, every request is answered cancelled,
+	// as ACP v1 asks of a client that has sent session/cancel: nothing more
+	// of an ending turn is approved.
+	t.mu.Lock()
+	ours, interrupted := p.SessionID == t.session, t.interrupted
+	t.mu.Unlock()
 	chosen := ""
 	for _, k := range kinds {
 		for _, o := range p.Options {
-			if o.Kind == k && chosen == "" {
+			if o.Kind == k && chosen == "" && !interrupted {
 				chosen = o.OptionID
 			}
 		}
@@ -736,9 +743,6 @@ func (t *turn) request(m *jsonrpc.Message) {
 	} else {
 		t.conn.Reply(m.ID, map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": chosen}})
 	}
-	t.mu.Lock()
-	ours := p.SessionID == t.session
-	t.mu.Unlock()
 	if ours && (chosen == "" || t.answer == PermissionReject) {
 		t.tr.text.Flush()
 		t.tr.status("permission declined: " + firstNonEmpty(p.ToolCall.Title, "a tool call"))

@@ -206,6 +206,40 @@ func TestAnInterruptNeverOvertakesThePrompt(t *testing.T) {
 	}
 }
 
+// A permission asked for after the turn is interrupted is answered cancelled,
+// whatever the owner's setting: ACP v1 asks it of a client that has sent
+// session/cancel, and nothing more of an ending turn is approved.
+func TestAPermissionAfterAnInterruptIsCancelled(t *testing.T) {
+	fixture, _ := filepath.Abs(filepath.Join("testdata", "agent", "permission-after-cancel.jsonl"))
+	log := filepath.Join(t.TempDir(), "log.jsonl")
+	spec := adapter.Spec{
+		RunID: "r1", Binary: os.Args[0], Workdir: t.TempDir(), Model: "a",
+		Env:   []string{acptest.EnvFixture + "=" + fixture, acptest.EnvLog + "=" + log, "GORACE=atexit_sleep_ms=0"},
+		Brief: v1.Brief{Instruction: "do it"},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	tr, err := Start(ctx, testAgent, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for e := range tr.Events() {
+		if e.Kind == v1.EventText {
+			tr.Interrupt()
+		}
+	}
+	if o := tr.Wait(); o.State != v1.RunCancelled {
+		t.Fatalf("outcome %s %+v", o.State, o.Error)
+	}
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `\"outcome\":{\"outcome\":\"cancelled\"}`) || strings.Contains(string(b), `\"optionId\":\"once\"`) {
+		t.Errorf("the permission after the cancel was not answered cancelled:\n%s", b)
+	}
+}
+
 // A refused resume is session_not_found only when no page of the agent's
 // sessions names it: one on a later page was refused for another reason,
 // and a hub told the conversation is gone would abandon one that is not.
