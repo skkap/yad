@@ -136,8 +136,8 @@ _See_: [0005](docs/decisions/0005-pull-by-periodic-sync.md)
 
 ### The harness
 
-**Harness** — a coding-agent CLI installed on the runner: `claude`, `codex`. Not
-a persona, not an assistant, not a Zumino participant.
+**Harness** — a coding-agent CLI installed on the runner: `claude`, `codex`,
+`opencode`. Not a persona, not an assistant, not a Zumino participant.
 _Avoid_: agent — it means a PAT holder in Zumino, a resident's folder in
 yashiki and a persona in Multica; provider; executor; engine
 _See_: `internal/harness`
@@ -152,9 +152,12 @@ _See_: `internal/harness/catalog.go`
 
 **Adapter** — the code that drives one harness: spawn, translate its stream into
 events, resume, steer, interrupt, read usage. One package per first-class
-harness.
-_Avoid_: driver, provider, backend, runtime
-_See_: [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md), `internal/adapter`
+harness; a harness that speaks the Agent Client Protocol has a small one over
+the shared **ACP core** (`internal/adapter/acp`), which drives the protocol
+and leaves the harness's own ways — its context route, its failures — to it.
+_Avoid_: driver, provider, backend, runtime; agent for a harness spoken to over
+ACP — ACP's own word for it, which here stays the protocol's
+_See_: [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md), [0072](docs/decisions/0072-opencode-is-first-class-through-a-generic-acp-core.md), `internal/adapter`
 
 **Account** — one harness login (subscription) on a runner, with its own harness
 home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), logged in by the harness's own login —
@@ -173,7 +176,9 @@ run's credential is its account's and nothing else: a variable that would
 choose another — an API key, a profile, a base URL — refuses the run when a
 hub sends it as a grant, and is removed from every run when the owner's
 environment holds it; a harness is asked whether an account can take a run in
-the environment its runs get.
+the environment its runs get. OpenCode has no accounts: it runs on its own
+login, checked by whether it offers a model
+([0072](docs/decisions/0072-opencode-is-first-class-through-a-generic-acp-core.md)).
 _Kinds_: free | limited | needs_login
 _See_: [0013](docs/decisions/0013-accounts-fail-over-and-limited-runs-wait.md),
 [0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md),
@@ -207,7 +212,9 @@ work.
 
 **Effort** — how hard the harness thinks on one run, in the harness's own
 words: Claude Code's `--effort` (`low` … `max`), Codex's reasoning effort
-(`low` … `xhigh`, more for some models). Optional; absent is the harness's
+(`low` … `xhigh`, more for some models), OpenCode's effort option — the
+variants its model has, such as `low` … `high`, and none for some models.
+Optional; absent is the harness's
 default. Chosen per run, like the model, and never checked by the runner — the
 harness decides which levels exist.
 _See_: [0049](docs/decisions/0049-a-runs-effort-is-the-harnesss-word.md)
@@ -351,9 +358,10 @@ with a resume time, and survives a runner restart.
 _See_: `protocol/v1/run.go`
 
 **Interrupt** — end the current turn and keep the session: Claude's `interrupt`
-control request, Codex's `turn/interrupt`. **Cancel** — end the run, escalating
-from interrupt to the process group's signals. **Steer** — add input to a turn
-already running.
+control request, Codex's `turn/interrupt`, ACP's `session/cancel`. **Cancel** —
+end the run, escalating from interrupt to the process group's signals.
+**Steer** — add input to a turn already running; a harness driven over ACP
+takes none.
 
 **Drain** — stop claiming, let live runs finish, then exit. What an upgrade, a
 reboot or a retiring machine does. A draining runner keeps syncing, so leases

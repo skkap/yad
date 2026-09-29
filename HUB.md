@@ -1110,9 +1110,11 @@ schedule is yours, and it makes runs.
 `model`, and not an enum: the levels are each harness's own, they differ by
 model, and they grow with harness releases. Claude Code takes `low`, `medium`,
 `high`, `xhigh` and `max`; Codex takes the reasoning levels its model lists —
-`low` to `xhigh` for most, `max` or `ultra` for some. A runner checks no name,
-only the shape §4 gives, and hands the word to the harness: Claude's `--effort`, and the `effort` of
-Codex's `turn/start`. A level the harness does not take fails the run with
+`low` to `xhigh` for most, `max` or `ultra` for some; OpenCode the effort
+variants its model has, `low` to `high` for many and none for some, whose run
+then fails before anything is asked. A runner checks no name,
+only the shape §4 gives, and hands the word to the harness: Claude's `--effort`, the `effort` of
+Codex's `turn/start`, and OpenCode's effort option over ACP. A level the harness does not take fails the run with
 class `harness_error` and the harness's own words — Claude warns and would
 carry on at its default, so the runner stops it before it starts working and
 fails it with that warning. Absent, the harness uses its default, on every run: a

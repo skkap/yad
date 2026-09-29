@@ -1,6 +1,6 @@
 package acp
 
-// Pinning the protocol (decisions 0067 and 0070). The core was written
+// Pinning the protocol (decisions 0067 and 0072). The core was written
 // against one release of the ACP schema, kept whole in
 // testdata/acp-schema-<version>/: the unstable bundle, because session/fork
 // and a prompt's usage are in it and not yet in the stable one. Only the

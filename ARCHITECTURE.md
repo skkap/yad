@@ -42,12 +42,13 @@ a run, runs a harness, streams what happened, and says whether it is alive.
    │  workdirs · accounts · control socket       │
    ├─────────────────────────────────────────────┤
    │ adapters: claude (stream-json) · codex      │   one per first-class harness
-   │           (app-server) · fake (tests)       │
+   │           (app-server) · opencode (ACP) ·   │
+   │           fake (tests)                      │
    ├─────────────────────────────────────────────┤
    │ supervisor: process group · watchdogs ·     │
    │             cancel ladder · env scrub       │
    └─────────────────────────────────────────────┘
-        claude · codex · gh · git · docker …      host
+        claude · codex · opencode · gh · git …    host
 ```
 
 - **Multi-homed runner, hub as a role** — [0003](docs/decisions/0003-hub-is-a-role-runner-is-multi-homed.md).
@@ -75,6 +76,9 @@ internal/service         yad service: launchd agent and systemd user unit, login
 internal/adapter         the Adapter interface and event normalisation
 internal/adapter/claude  stream-json both ways
 internal/adapter/codex   app-server JSON-RPC
+internal/adapter/jsonrpc the line-delimited JSON-RPC client Codex and ACP share
+internal/adapter/acp     a generic Agent Client Protocol v1 core (0072)
+internal/adapter/opencode OpenCode over the ACP core: its context route, server password, failures
 internal/adapter/fake    a scripted harness for tests
 internal/supervise       spawn, process groups, watchdogs, cancel ladder
 internal/workdir         sources, bare caches, worktrees, setup hook, slots, GC
@@ -663,13 +667,36 @@ An installed codex whose slice differs, an older one included, is still
 driven, with a warning on the harness in the capability document and in
 `yad doctor`.
 
+**OpenCode** — [0072](docs/decisions/0072-opencode-is-first-class-through-a-generic-acp-core.md):
+`opencode acp`, the Agent Client Protocol v1 over stdin and stdout, driven by a
+generic core (`internal/adapter/acp`) that knows nothing of OpenCode:
+`initialize` → `session/new`, `session/resume` (no replay) or `session/fork` →
+`session/set_config_option` for the model and, when the run has one, the
+effort (ACP's `thought_level` option) → one `session/prompt`, whose answer —
+its stop reason and usage — decides the run. Only the run's session's updates,
+once its prompt is sent, are its events; a fork's replay comes before. An
+interrupt is `session/cancel`; ACP v1 has no steer, so none is advertised for
+OpenCode. A permission request is answered from the owner's `permission_mode`
+(`allow`, the default, or `reject`). A resume or fork OpenCode refuses is
+checked against `session/list` of the workdir, and one it does not list is
+`session_not_found`. What is OpenCode's own is in `internal/adapter/opencode`:
+the run's context goes into its system prompt as an instruction file named in
+`OPENCODE_CONFIG_CONTENT`; its own HTTP server on 127.0.0.1 gets a random
+`OPENCODE_SERVER_PASSWORD` per run; `OPENCODE_*` from a run's grants is
+dropped; its models are `opencode models`, which is also its login check;
+failures are classified by ACP code and `errorName`, and a Zen usage limit by
+its words. The release is the pin (1.18.33), and the core's schema surface is
+hashed against ACP 1.23.0's.
+
 **Fixtures.** Every adapter test replays recorded JSONL named by harness version
 (`internal/adapter/claude/testdata/claude-2.1.276/*.jsonl`,
-`internal/adapter/codex/testdata/codex-0.157.1/*.jsonl` — both directions of
+`internal/adapter/codex/testdata/codex-0.157.1/*.jsonl`,
+`internal/adapter/opencode/testdata/opencode-1.18.33/*.jsonl` — both directions of
 the conversation, ours wrapped as `{">": …}`) through a fake harness process.
 Recording new ones is a manual step, behind a build tag (`YAD_REAL_HARNESS=1 go
 test -tags realharness -run TestRecord ./internal/adapter/claude/`, and the same
-for `codex`); the suite never runs a real harness.
+for `codex` and `opencode`, whose recordings run on OpenCode Zen's free models in
+a throwaway home and spend nothing); the suite never runs a real harness.
 
 ### Supervisor
 
@@ -1144,6 +1171,9 @@ approval = "never"
 cap      = 2
 accounts = ["personal"]
 
+[harness.opencode]
+permission_mode = "allow"   # how OpenCode's permission requests are answered: allow (the default) or reject — 0072
+
 [[connection]]
 name = "yashiki"
 url  = "https://ashikaga.tail.ts.net/yad/v1"
@@ -1367,7 +1397,9 @@ line here is a reviewed change.
   tests re-execute it as a fake `claude` that plays a recorded stream and reads
   stdin as Claude does (`CLAUDE_TEST_FIXTURE=<file>`); the Codex adapter's, as
   a fake `codex app-server` that answers each request the recording answered
-  (`internal/adapter/codex/codextest`, `CODEX_TEST_FIXTURE=<file>`).
+  (`internal/adapter/codex/codextest`, `CODEX_TEST_FIXTURE=<file>`); the ACP
+  core's and OpenCode's, as a fake ACP agent that does the same over ACP
+  (`internal/adapter/acp/acptest`, `ACP_TEST_FIXTURE=<file>`).
   Re-executed children set `GORACE=atexit_sleep_ms=0`, or each costs a second.
 - **The runner is tested against `yad hub`**, in process, on a random port, and
   **`yad hub` is tested against the conformance suite** — `internal/conformance`,
@@ -1396,18 +1428,22 @@ line here is a reviewed change.
   writes a file, and the harness answers with what it read there. One runner
   with both harnesses drives a run of each at once. And Codex's recorded
   resume, missing rollout and interrupt play as recorded
-  (`e2e_codex_test.go`).
+  (`e2e_codex_test.go`). OpenCode is not in that matrix — its fake keeps no
+  sessions — and `e2e_opencode_test.go` runs its own: a run through the
+  runner and the hub, a steer the hub refuses from OpenCode's feature list,
+  and an interrupt.
   `internal/workdir`'s tests use local bare repositories, and a loopback TLS
   server for a remote that asks for a password or never answers — and git's
   own `git-http-backend` behind one, answering only one credential, for a
   URL that carries it; `e2e_credential_test.go` runs that twice in one
   session and finds the token nowhere under the data directory.
 - **Real harnesses** only behind `//go:build realharness` and
-  `YAD_REAL_HARNESS=1`, run by hand — and `make smoke` and `make
-  smoke-codex`, the same path as the end-to-end tests with the real `claude`
-  or `codex`, the built binary and `yad hub serve` (`scripts/smoke.sh
-  <harness>`; a few cents of haiku or gpt-5.6-luna, `SMOKE_MODEL` to change
-  it).
+  `YAD_REAL_HARNESS=1`, run by hand — and `make smoke`, `make
+  smoke-codex` and `make smoke-opencode`, the same path as the end-to-end
+  tests with the real `claude`, `codex` or `opencode`, the built binary and
+  `yad hub serve` (`scripts/smoke.sh <harness>`; a few cents of haiku or
+  gpt-5.6-luna, and nothing for a free OpenCode Zen model; `SMOKE_MODEL` to
+  change it).
 - **No release is downloaded.** `internal/upgrade` fakes the release source
   outright, and reads what the installed binary held *at the moment the
   download ran* to prove nothing was replaced before the checksum was checked.

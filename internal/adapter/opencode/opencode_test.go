@@ -163,7 +163,7 @@ func text(events []v1.Event, kind v1.EventKind) string {
 // A new session's turn: the answer is the last message, its reasoning is
 // thinking, its usage is the prompt's, and its context reaches OpenCode as an
 // instruction file, never in argv — beside a password for OpenCode's own
-// server that is new on every run (decision 0070).
+// server that is new on every run (decision 0072).
 func TestPlainRun(t *testing.T) {
 	p := &play{fixture: fixture(t, "plain")}
 	spec := p.spec(t)
@@ -232,7 +232,8 @@ func TestEachRunHasItsOwnPassword(t *testing.T) {
 // A context the owner's environment already configures OpenCode inline for
 // is added to that configuration, not put in its place.
 func TestTheContextJoinsTheOwnersInlineConfig(t *testing.T) {
-	p := &play{fixture: fixture(t, "plain"), env: map[string]string{envConfig: `{"instructions":["/etc/team.md"],"share":"disabled"}`}}
+	t.Setenv(envConfig, `{"instructions":["/etc/team.md"],"share":"disabled"}`)
+	p := &play{fixture: fixture(t, "plain")}
 	spec := p.spec(t)
 	spec.Brief.Context = "You are terse."
 	run(t, spec, nil)
@@ -245,11 +246,45 @@ func TestTheContextJoinsTheOwnersInlineConfig(t *testing.T) {
 		t.Errorf("config %v", config)
 	}
 
-	bad := &play{fixture: fixture(t, "plain"), env: map[string]string{envConfig: `{ // not JSON`}}
+	t.Setenv(envConfig, `{ // not JSON`)
+	bad := &play{fixture: fixture(t, "plain")}
 	spec = bad.spec(t)
 	spec.Brief.Context = "You are terse."
 	if _, err := (Adapter{}).Start(context.Background(), spec); err == nil || !strings.Contains(err.Error(), envConfig) {
 		t.Errorf("start with unreadable inline config: %v", err)
+	}
+}
+
+// OpenCode's own variables are the owner's to set: a hub's grant of one —
+// permissions, inline config naming a provider and its key, credentials, the
+// server's password — never reaches OpenCode, while the owner's own does.
+func TestAGrantCannotConfigureOpenCode(t *testing.T) {
+	t.Setenv("OPENCODE_DISABLE_AUTOUPDATE", "1")
+	p := &play{fixture: fixture(t, "plain"), env: map[string]string{
+		"OPENCODE_PERMISSION":   `"allow"`,
+		envConfig:               `{"permission":"allow"}`,
+		"OPENCODE_AUTH_CONTENT": `{"anthropic":{"type":"api","key":"sk-hub"}}`,
+		envPassword:             "the-hubs-password",
+		"PROJECT_TOKEN":         "kept",
+	}}
+	spec := p.spec(t)
+	for i, kv := range spec.Env {
+		if strings.HasPrefix(kv, acptest.EnvWatch+"=") {
+			spec.Env[i] += ",OPENCODE_PERMISSION,OPENCODE_AUTH_CONTENT,OPENCODE_DISABLE_AUTOUPDATE,PROJECT_TOKEN"
+		}
+	}
+	run(t, spec, nil)
+	env := p.seen(t).env
+	for _, name := range []string{"OPENCODE_PERMISSION", envConfig, "OPENCODE_AUTH_CONTENT"} {
+		if v, ok := env[name]; ok {
+			t.Errorf("the grant %s reached OpenCode: %q", name, v)
+		}
+	}
+	if env[envPassword] == "the-hubs-password" || len(env[envPassword]) != 2*passwordBytes {
+		t.Errorf("the server's password is not the runner's own")
+	}
+	if env["OPENCODE_DISABLE_AUTOUPDATE"] != "1" || env["PROJECT_TOKEN"] != "kept" {
+		t.Errorf("the owner's variable or the project's grant did not reach OpenCode: %v", env)
 	}
 }
 

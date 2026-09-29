@@ -4,7 +4,7 @@
 // session/resume for one the agent already has or session/fork for a fork,
 // then session/set_config_option for the run's model and effort, then one
 // session/prompt, whose answer ends the turn; session/cancel interrupts it
-// (decision 0070).
+// (decision 0072).
 //
 // The protocol is the core; what is the harness's own — how to start it,
 // how the run's context reaches its model, what its failures mean — is an
@@ -34,7 +34,7 @@ import (
 
 // ProtocolVersion is the ACP major version the core speaks. v2 is in alpha
 // and drops session/load and modes; an agent that answers initialize with
-// another version is not driven (decision 0070).
+// another version is not driven (decision 0072).
 const ProtocolVersion = 1
 
 // Agent is everything about one ACP agent that is not the protocol's.
@@ -43,10 +43,12 @@ type Agent struct {
 	ID, Name string
 	// Args start the agent's ACP server on its stdin and stdout.
 	Args []string
-	// Prepare readies one run: the variables the agent needs beyond the
-	// run's own — how the run's context reaches its model, a secret for a
-	// server it opens — and what to remove once the agent has exited. It
-	// must not put a secret in argv or in anything it returns but env.
+	// Prepare readies one run: the environment the agent gets in place of
+	// spec.Env — the run's own, less what only the owner may set, plus how
+	// the run's context reaches its model and a secret for a server the agent
+	// opens — and what to remove once the agent has exited. It must not put a
+	// secret in argv or in anything it returns but env. Nil passes spec.Env
+	// as it is.
 	Prepare func(spec adapter.Spec) (env []string, cleanup func(), err error)
 	// Classify reads a prompt the agent answered with an error: which class
 	// of failure it is, in the agent's own structure where it gives one.
@@ -137,11 +139,11 @@ func Start(ctx context.Context, agent Agent, spec adapter.Spec) (adapter.Turn, e
 	env := slices.Clone(spec.Env)
 	cleanup := func() {}
 	if agent.Prepare != nil {
-		extra, done, err := agent.Prepare(spec)
+		prepared, done, err := agent.Prepare(spec)
 		if err != nil {
 			return nil, err
 		}
-		env = append(env, extra...)
+		env = prepared
 		if done != nil {
 			cleanup = done
 		}
@@ -243,7 +245,7 @@ func (t *turn) Wait() adapter.Outcome {
 
 // Steer is refused: ACP v1 has no way to add input to a turn that is
 // running, and a second session/prompt is a second turn, which is a second
-// run (decision 0070). The runner advertises no steer for a harness driven
+// run (decision 0072). The runner advertises no steer for a harness driven
 // here, so a hub that reads it sends none.
 func (t *turn) Steer(string) error {
 	return fmt.Errorf("%s takes no input while a turn runs — send this as a new run in the same session", t.agent.Name)

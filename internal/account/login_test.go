@@ -41,6 +41,9 @@ func TestMain(m *testing.M) {
 const credentialFile = ".credentials.json"
 
 func fakeHarness(id string, args []string) int {
+	if id == "opencode" {
+		return fakeOpenCode(args)
+	}
 	home := os.Getenv("CLAUDE_CONFIG_DIR")
 	if id == "codex" {
 		home = os.Getenv("CODEX_HOME")
@@ -130,6 +133,57 @@ func fakeHarness(id string, args []string) int {
 	}
 	fmt.Fprintf(os.Stderr, "unexpected argv %q\n", cmd)
 	return 2
+}
+
+// fakeOpenCode answers `opencode models` as OpenCode does: a line per
+// model, provider/model — Zen's free models with no login at all — or, with
+// ACCOUNT_TEST_OPENCODE_MODELS=none, nothing, and with =fails, exit 1.
+func fakeOpenCode(args []string) int {
+	if strings.Join(args, " ") != "models" {
+		fmt.Fprintf(os.Stderr, "unexpected argv %q\n", args)
+		return 2
+	}
+	switch os.Getenv("ACCOUNT_TEST_OPENCODE_MODELS") {
+	case "none":
+		return 0
+	case "fails":
+		fmt.Fprintln(os.Stderr, "Error: something about /home/owner/.config")
+		return 1
+	}
+	fmt.Println("opencode/big-pickle\nopencode/nemotron-3.5-lightning-free")
+	return 0
+}
+
+// OpenCode's login is whether it offers a model: it runs on free models with
+// no credential at all, so a list with any is yes, an empty one is no, and a
+// list that failed is no answer (decision 0072).
+func TestOpenCodesLoginIsWhetherItOffersAModel(t *testing.T) {
+	bin := self(t, "opencode")
+	for _, tc := range []struct {
+		models  string
+		in, err bool
+	}{
+		{"", true, false},
+		{"none", false, false},
+		{"fails", false, true},
+	} {
+		t.Run(tc.models, func(t *testing.T) {
+			t.Setenv("ACCOUNT_TEST_OPENCODE_MODELS", tc.models)
+			in, err := LoggedIn(context.Background(), "opencode", bin, "")
+			if in != tc.in || (err != nil) != tc.err {
+				t.Fatalf("in=%v err=%v", in, err)
+			}
+			if err != nil && strings.Contains(err.Error(), "/home/owner") {
+				t.Errorf("the error quotes what OpenCode printed: %v", err)
+			}
+		})
+	}
+	if !ChecksLogin("opencode") || CanLogIn("opencode") {
+		t.Error("yad checks OpenCode's login and cannot run one: it has no account homes here")
+	}
+	if got := strings.Join(LoginCommandArgs("opencode"), " "); got != "auth login" {
+		t.Errorf("the login an owner runs: %q", got)
+	}
 }
 
 // self is this test binary, standing in for the harness.

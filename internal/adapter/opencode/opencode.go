@@ -1,5 +1,5 @@
 // Package opencode drives OpenCode through `opencode acp`, the Agent Client
-// Protocol core in internal/adapter/acp (decision 0070). What is OpenCode's
+// Protocol core in internal/adapter/acp (decision 0072). What is OpenCode's
 // own is here: how the run's context reaches its model, the password on the
 // server it opens, what its failures mean, and the one release it is pinned
 // to.
@@ -44,7 +44,7 @@ func (Adapter) AppliesEffort() bool { return true }
 // and pinned with the release (PinnedVersion).
 func (Adapter) Forks() bool { return true }
 
-// Steers is false: ACP v1 has no steer (decision 0070).
+// Steers is false: ACP v1 has no steer (decision 0072).
 func (Adapter) Steers() bool { return false }
 
 func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, error) {
@@ -68,7 +68,7 @@ const (
 	// envPassword is the password OpenCode's own HTTP server takes. `opencode
 	// acp` serves the agent from a server it opens on 127.0.0.1 and talks to
 	// itself over it; without a password, anything on the machine that finds
-	// the port drives the session with the run's credentials (decision 0070).
+	// the port drives the session with the run's credentials (decision 0072).
 	envPassword = "OPENCODE_SERVER_PASSWORD"
 	// envConfig is inline configuration OpenCode merges over every file it
 	// reads, and the route the run's context takes (decision 0050).
@@ -85,25 +85,40 @@ const passwordBytes = 32
 // base name, so the name is fixed and holds no glob character.
 const contextFile = "context.md"
 
-// prepare readies one run: a fresh password for OpenCode's server, and the
-// run's context as an instruction file OpenCode puts in its system prompt.
+// prepare readies one run: the run's environment without OpenCode's own
+// variables, a fresh password for OpenCode's server, and the run's context as
+// an instruction file OpenCode puts in its system prompt.
+//
+// OPENCODE_* is OpenCode's configuration — its permissions
+// (OPENCODE_PERMISSION), inline config that can name a provider and its key
+// (OPENCODE_CONFIG_CONTENT), its credentials (OPENCODE_AUTH_CONTENT) — and a
+// run's environment carries a hub's grants: a hub must never widen what a
+// harness may do on the owner's machine (AGENTS.md), so none of them passes,
+// as Claude's adapter drops IS_SANDBOX. The owner's own, set in the runner's
+// environment, reach OpenCode as they would reach it at a terminal.
 //
 // The context is OpenCode's equivalent of Claude's appended system prompt:
 // config.instructions are read into the system prompt of every request the
 // model gets, so they are outside the conversation, survive a compaction and
 // reach a resumed or forked session's next turn as they reach a new one's.
 // Measured on 1.18.33: a new session told nothing asked for a codeword the
-// instructions named, and its fork, answered it (decision 0070).
+// instructions named, and its fork, answered it (decision 0072).
 func prepare(spec adapter.Spec) ([]string, func(), error) {
 	secret := make([]byte, passwordBytes)
 	if _, err := rand.Read(secret); err != nil {
 		return nil, nil, &adapter.LocalError{Msg: "no password could be made for OpenCode's server on this runner", Err: err}
 	}
-	env := []string{envPassword + "=" + hex.EncodeToString(secret)}
+	env := make([]string, 0, len(spec.Env)+2)
+	for _, kv := range spec.Env {
+		if name, _, _ := strings.Cut(kv, "="); !strings.HasPrefix(name, "OPENCODE_") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, envPassword+"="+hex.EncodeToString(secret))
 	if spec.Brief.Context == "" {
 		return env, nil, nil
 	}
-	config, err := ownerConfig(spec.Env)
+	config, err := ownerConfig()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -130,23 +145,18 @@ func prepare(spec adapter.Spec) ([]string, func(), error) {
 	return append(env, envConfig+"="+string(b)), cleanup, nil
 }
 
-// ownerConfig is the inline configuration the run would have had without
-// yad's: a grant's, else the runner's own environment's. Its keys are kept
-// and the context is added to its instructions, since the variable holds one
-// value and the last one set wins.
-func ownerConfig(env []string) (map[string]any, error) {
+// ownerConfig is the inline configuration the owner gives OpenCode in the
+// runner's own environment. Its keys are kept and the context is added to
+// its instructions, since the variable holds one value and the last one set
+// wins.
+func ownerConfig() (map[string]any, error) {
 	value, set := os.LookupEnv(envConfig)
-	for _, kv := range env {
-		if k, v, ok := strings.Cut(kv, "="); ok && k == envConfig {
-			value, set = v, true
-		}
-	}
 	config := map[string]any{}
 	if !set || strings.TrimSpace(value) == "" {
 		return config, nil
 	}
 	if err := json.Unmarshal([]byte(value), &config); err != nil {
-		return nil, fmt.Errorf("%s is set for this run and is not a JSON object yad can add the run's context to — make it plain JSON (no comments), or unset it", envConfig)
+		return nil, fmt.Errorf("%s in the runner's environment is not a JSON object yad can add the run's context to — make it plain JSON (no comments), or unset it", envConfig)
 	}
 	return config, nil
 }

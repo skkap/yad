@@ -33,7 +33,7 @@ type SubmitRequest struct {
 	RunID string `json:"run_id,omitempty" doc:"Chosen by the caller to make a retried submit idempotent; generated when absent."`
 	// Session absent starts a new session with a generated id.
 	Session *SessionChoice `json:"session,omitempty" doc:"The session the run belongs to. Absent: a new session with a generated id."`
-	Harness string         `json:"harness" minLength:"1" doc:"The harness to run, by its id in a runner's capability document: claude or codex."`
+	Harness string         `json:"harness" minLength:"1" doc:"The harness to run, by its id in a runner's capability document: claude, codex or opencode."`
 	Model   string         `json:"model" minLength:"1" doc:"The model, in the harness's own terms, such as haiku or gpt-5.1-codex."`
 	// Effort is queued like any run; the hub offers it only to a runner
 	// advertising the effort feature for the run's harness, so on a fleet

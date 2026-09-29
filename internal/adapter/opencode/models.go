@@ -16,7 +16,7 @@ import (
 // PinnedVersion is the one OpenCode release the adapter was recorded
 // against (testdata/opencode-<version>). OpenCode has no way to print the ACP
 // surface it speaks, so the pin is the release: another one is driven, with
-// a warning, as an unpinned Codex is (decisions 0037, 0067, 0070).
+// a warning, as an unpinned Codex is (decisions 0037, 0067, 0072).
 const PinnedVersion = "1.18.33"
 
 // VersionWarning is the capability document's warning for an OpenCode that
@@ -32,7 +32,7 @@ func VersionWarning(version string) string {
 
 // modelsArgs lists the models OpenCode offers the login it runs on, without
 // a session — so without a token, and without the session/new that ACP's
-// own config options need, which OpenCode would keep (decision 0070).
+// own config options need, which OpenCode would keep (decision 0072).
 var modelsArgs = []string{"models"}
 
 // modelName is the shape of what `opencode models` prints: provider/model.
