@@ -157,7 +157,7 @@ With no account, runs use the harness's own home (`~/.claude`), and whatever
 else runs from it runs beside them: a background `claude` there once left
 every run on a Mac silent from its first second. An account is a
 home of its own, which nothing but yad's runs uses
-([0074](docs/decisions/0074-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md)).
+([0075](docs/decisions/0075-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md)).
 A run whose harness says nothing at all in its first two minutes is stopped
 and ends `harness_silent`, with the end of what the harness wrote to stderr
 and the command to try it by hand (`[supervise] first_output` in

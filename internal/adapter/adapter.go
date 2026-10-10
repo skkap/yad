@@ -189,7 +189,7 @@ type Outcome struct {
 	APIRetries int
 	// Stderr is the end of the harness's stderr as StderrTail gives it, for
 	// an error the runner writes itself: a watchdog that stopped the turn
-	// has nothing else to say why the harness was silent (decision 0074).
+	// has nothing else to say why the harness was silent (decision 0075).
 	Stderr string
 	// Check is the harness command for the owner to run by hand in the
 	// turn's home, as the adapter's own errors give it (Spec.HarnessCheck),

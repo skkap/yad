@@ -24,7 +24,7 @@ const minSecret = 8
 const Redacted = "[redacted]"
 
 // StderrTail is the end of what a harness wrote to stderr as a run's error
-// may quote it (decision 0074): its last StderrLines non-empty lines, at most
+// may quote it (decision 0075): its last StderrLines non-empty lines, at most
 // StderrBytes, joined by " | " into one line, with every value yad put in the
 // harness's environment (env — the account's token, its home, the run's
 // grants) replaced first. Those are the credentials yad itself handed the

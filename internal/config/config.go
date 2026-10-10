@@ -87,7 +87,7 @@ type SessionsConfig struct {
 type SuperviseConfig struct {
 	Inactivity Duration `toml:"inactivity"`
 	// FirstOutput is how long a run's harness may go from its start to its
-	// first event before it is stopped as silent (decision 0074). Unset or
+	// first event before it is stopped as silent (decision 0075). Unset or
 	// "0s" is the default, as for inactivity; a value at or above the
 	// inactivity timeout leaves that timeout alone to decide.
 	FirstOutput Duration `toml:"first_output"`
@@ -256,7 +256,7 @@ const (
 	// start under its 60 s handshake bound — fit inside two minutes,
 	// and a harness wedged before its first word (DEV-170: three runs sat
 	// for 3+ minutes) is told apart 28 minutes sooner than the inactivity
-	// timeout would (decision 0074).
+	// timeout would (decision 0075).
 	DefaultFirstOutput = 2 * time.Minute
 	DefaultDrainWait   = 30 * time.Minute
 	// Enough headroom for a build or a checkout to finish without the disk

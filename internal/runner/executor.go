@@ -49,7 +49,7 @@ const (
 	// ClassHarnessSilent — the harness produced no event at all within the
 	// owner's first-output timeout of its start and was stopped: one wedged
 	// before its first word, which the inactivity timeout would leave
-	// running for half an hour (decision 0074). The state is timed_out.
+	// running for half an hour (decision 0075). The state is timed_out.
 	ClassHarnessSilent = "harness_silent"
 	// ClassWallClock — the run outlived its wall-clock cap and was stopped.
 	ClassWallClock = "wall_clock_timeout"
@@ -1270,7 +1270,7 @@ func (e *Exec) firstOutput() time.Duration {
 
 // stoppedDetail is what a watchdog's error adds to its own sentence: the end
 // of the harness's stderr, the one account of what it was doing, and for a
-// harness silent from its start, how to see where it stops (decision 0074).
+// harness silent from its start, how to see where it stops (decision 0075).
 // Run on a default login, the likeliest cause known (DEV-170) is a harness
 // that hangs in a home it shares with another of its kind running there, and
 // an account is a home of its own.

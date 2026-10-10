@@ -763,7 +763,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   `[supervise] first_output`; a run's lower inactivity still wins): a
   harness that says nothing at all is wedged before its first word, and has
   no work to throw away
-  ([0074](docs/decisions/0074-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md)).
+  ([0075](docs/decisions/0075-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md)).
   It sits in the executor, so it covers every adapter. A watchdog that fires
   climbs the same ladder, starting with the interrupt, which keeps the session
   resumable. The run is
@@ -1217,7 +1217,7 @@ disk_floor = "5GiB"   # below this free under the workdirs, idle sessions go; "0
 
 [supervise]
 inactivity   = "30m"   # stop a run whose harness emits no event this long; a run may lower it
-first_output = "2m"    # the same, before the harness's first event: harness_silent — 0074
+first_output = "2m"    # the same, before the harness's first event: harness_silent — 0075
 
 [drain]
 wait = "30m"   # how long a drain lets runs finish before cancelling them — 0029
