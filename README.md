@@ -149,7 +149,10 @@ needs and nothing it does not:
 `yad account add claude main --token -` with a token from `claude setup-token`,
 made on any computer with a browser and pasted at the prompt (or piped in),
 or `yad account add codex main --device` with a code entered anywhere. Add more accounts under other labels and the
-runner uses them in turn.
+runner uses them in turn. A token account works for anything its runs start
+that calls `claude` too — a reviewer, a script — with no shell setup: the
+token is also kept as Claude's own login in the account's home
+([0076](docs/decisions/0076-a-token-accounts-home-carries-its-login-and-every-account-shares-the-machines-plugins.md)).
 
 **On a machine you share with other Claude users — or with your own
 everyday `claude` — give yad an account rather than the default login.**

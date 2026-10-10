@@ -103,9 +103,19 @@ func (x *loginE2E) secretsStayPut(t *testing.T, secrets ...string) {
 	log, syncs := x.log.String(), x.hub.all()
 	var files []string
 	filepath.WalkDir(x.e.paths.Data, func(path string, d fs.DirEntry, err error) error {
-		if err == nil && d.Type().IsRegular() && filepath.Base(path) != "yad-oauth-token" {
-			files = append(files, path)
+		if err != nil || !d.Type().IsRegular() {
+			return nil
 		}
+		// The two places a token account's token is kept on purpose, both
+		// 0600 in its home: its file, and Claude's login for the claudes a
+		// run starts (decision 0076).
+		if name := filepath.Base(path); name == "yad-oauth-token" || name == ".credentials.json" && filepath.Base(filepath.Dir(filepath.Dir(path))) == "claude" {
+			if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+				t.Errorf("%s is not 0600 (%v)", path, err)
+			}
+			return nil
+		}
+		files = append(files, path)
 		return nil
 	})
 	for _, s := range secrets {

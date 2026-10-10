@@ -890,6 +890,27 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   to have succeeded as well as the check. The token's year is counted
   from when it was stored; the month before, the harness report carries a
   warning and `yad account list` says so.
+  Claude Code hands `CLAUDE_CODE_OAUTH_TOKEN` to no child it starts, so the
+  home also carries the token as Claude's own login
+  ([0076](docs/decisions/0076-a-token-accounts-home-carries-its-login-and-every-account-shares-the-machines-plugins.md)):
+  `.credentials.json` (`0600`), the token under `claudeAiOauth` in the shape
+  Claude gives the variable, marked `yadTokenLogin`. A claude the run starts
+  (revmux's reviewers, a script) finds it through the home variables. It is
+  read from the Keychain on macOS when there is no item for the home, and it
+  is the store on Linux. `SetToken` writes it, `ClearToken` removes it, and
+  every `account.Ensure` brings it in line, so older token accounts get it at
+  their next run. Only a marked login with no refresh token is yad's; a login
+  Claude made is never touched. `account.OwnLogin` takes it out before it
+  asks, since claude would say yes to it. On macOS, Claude moves the file
+  into the home's Keychain item the first time it saves anything else in
+  its store, such as a plugin's MCP state on the first run, and the item
+  then outranks the file. So `SetToken` deletes the home's Keychain items
+  before it writes, and `account.BeforeLoginBesideToken` deletes them, with
+  the file login, before a login of Claude's own starts beside a token. It
+  also leaves a `.yad-login-beside-token` mark until the login ends, an hour
+  at most, so a run starting during the login does not write the copy back.
+  If the Keychain will not let go, the token is not stored or the login does
+  not start, and the error gives the delete to run by hand.
 - **On macOS a Claude home's login is in the Keychain, not the home**
   ([0070](docs/decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)):
   generic passwords `Claude Code-credentials-<h>` (the login) and
@@ -907,10 +928,16 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   own copy cannot put every account on one login. On Linux the login is
   `.credentials.json` inside the home, and deleting the home deletes it.
 - **Every home shares the machine's config** (0054): each time a home is
-  prepared, `CLAUDE.md`, `settings.json`, `skills/`, `commands/` and `agents/`
-  (Claude) or `AGENTS.md` and `prompts/` (Codex) are linked from the
-  harness's default home when the account has none of its own. Never a
-  credential, never a file the harness keeps state in.
+  prepared, `CLAUDE.md`, `settings.json`, `skills/`, `commands/`, `agents/`
+  and `plugins/` (Claude) or `AGENTS.md` and `prompts/` (Codex) are linked
+  from the harness's default home when the account has none of its own.
+  Never a credential, never a file the harness keeps a login's state in.
+  `plugins/` is the machine's state rather than a login's, and the shared
+  `settings.json` enables plugins by name (0076). Claude makes an empty
+  `plugins/` in a home that has none, so one holding only that default
+  (`installed_plugins.json` and `known_marketplaces.json` recording
+  nothing, and empty directories) is replaced by the link at the next run.
+  Anything else in it is the account's own and stays.
 - **Adding and removing reach a running daemon live**
   ([0043](docs/decisions/0043-the-cli-never-writes-state-and-account-changes-reach-the-daemon-live.md)).
   The CLI never writes `state.db`: both commands change `config.toml` and send

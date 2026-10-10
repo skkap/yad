@@ -170,9 +170,10 @@ _See_: [0006](docs/decisions/0006-claude-by-stream-json-codex-by-app-server.md),
 **Account** — one harness login (subscription) on a runner, with its own harness
 home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), logged in by the harness's own login —
 or, for Claude, a **token account**: a `claude setup-token` token the owner
-pipes in, which yad keeps in the home and hands to the account's runs. Every
-home shares the machine's own instructions, settings and skills from the
-harness's default home. Added by the owner at the machine, or by a hub the
+pipes in, which yad keeps in the home and hands to the account's runs, and to
+the claudes they start as the home's own login. Every home shares the
+machine's own instructions, settings, skills and plugins from the harness's
+default home. Added by the owner at the machine, or by a hub the
 owner allows to (a **hub login** with `add`); either way it is the machine's,
 and every connected hub's runs rotate through it — the free account whose
 window resets soonest takes the next run. Hubs see an account's label, state
