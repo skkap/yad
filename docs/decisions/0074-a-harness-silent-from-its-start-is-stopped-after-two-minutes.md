@@ -111,7 +111,7 @@ to catch a harness that cannot answer. Every check that would have caught this
 hang means running the model, which spends a token and needs the network, and
 the suite may do neither. A cheap proxy, such as another `claude` process
 running from the same home, is not reliable enough to decide readiness. That
-work is a follow-up ticket.
+work is DEV-175.
 
 ## Considered options
 
