@@ -183,11 +183,11 @@ func (lc loginCLI) device(ctx context.Context, l hubapi.Login) error {
 
 // token is the token way: read from stdin, never from argv, sent once.
 func (lc loginCLI) token(ctx context.Context, runnerID, harness, label string) error {
-	b, err := io.ReadAll(io.LimitReader(stdin, 64<<10))
+	tok, err := readToken(ctx, lc.stderr, "token", wholeInput)
 	if err != nil {
-		return fmt.Errorf("read the token from stdin: %w", err)
+		return err
 	}
-	tok := strings.TrimSpace(string(b))
+	tok = strings.TrimSpace(tok)
 	if err := account.CheckToken(tok); err != nil {
 		return fmt.Errorf("%s — pipe it in: `%s`", err, lc.hf.command(lc.verb("token"), runnerID, harness, label))
 	}
@@ -305,24 +305,13 @@ func (lc loginCLI) statusCommand(l hubapi.Login) string {
 // readLine is one line of r, trimmed, or ctx's end: a person may walk away
 // from the prompt, and Ctrl-C must still end the command.
 func readLine(ctx context.Context, r io.Reader) (string, error) {
-	type line struct {
-		s   string
-		err error
-	}
-	got := make(chan line, 1)
-	go func() {
+	return awaitRead(ctx, func() (string, error) {
 		s, err := bufio.NewReader(io.LimitReader(r, 64<<10)).ReadString('\n')
 		if errors.Is(err, io.EOF) {
 			err = nil
 		}
-		got <- line{strings.TrimSpace(s), err}
-	}()
-	select {
-	case l := <-got:
-		return l.s, l.err
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
+		return strings.TrimSpace(s), err
+	})
 }
 
 // command is a `yad hub` command acting on the hub and admin token this one

@@ -70,6 +70,12 @@ type Status struct {
 	Running   bool
 	PID       int
 	Detail    string // the manager's own words for the state, for the owner
+	// LogFile is the log the installed unit names, read back from its file.
+	// It is the one thing in a unit that says which profile directories it
+	// runs under: a label is only a profile's name, and a unit carrying
+	// another YAD_DATA_DIR is a different runner with the same one. Empty
+	// when there is no file to read.
+	LogFile string
 }
 
 // Manager installs, removes and inspects one platform's units.
@@ -87,6 +93,14 @@ type Manager interface {
 	// error.
 	Uninstall(ctx context.Context, profile string) error
 	Status(ctx context.Context, profile string) (Status, error)
+	// Start starts the profile's loaded unit now, and leaves one already
+	// running as it is. A daemon the manager starts is one it watches and
+	// restarts after a crash; one `yad daemon start` spawns is not (DEV-173).
+	Start(ctx context.Context, profile string) error
+	// StartCommand and RestartCommand are the manager's own commands for the
+	// unit, as argv, for an error to offer when yad cannot run them itself.
+	StartCommand(profile string) []string
+	RestartCommand(profile string) []string
 }
 
 // Host is the machine a Manager acts on — the seams tests replace.
@@ -175,9 +189,14 @@ func NewSpec(p config.Paths, executable, path string, h Host) (Spec, error) {
 		Executable: executable,
 		Env:        env,
 		WorkingDir: h.Home,
-		LogFile:    filepath.Join(p.Data, "logs", "service.log"),
+		LogFile:    LogFile(p),
 	}, nil
 }
+
+// LogFile is where a profile's unit sends the runner's standard output and
+// error. It is under the profile's data directory, which is what tells the
+// profile's unit apart from one of the same name for other directories.
+func LogFile(p config.Paths) string { return filepath.Join(p.Data, "logs", "service.log") }
 
 // writeFile replaces a unit file atomically: a service manager that reads a
 // half-written plist or unit loads nothing, or worse, loads the fragment.

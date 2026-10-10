@@ -16,7 +16,7 @@ import (
 // (decision 0054). Claude reads no such file: yad hands the token to each of
 // the account's runs as tokenVar and to its login check, and writes it into
 // the home's credentials file for the claudes a run starts, which are never
-// handed tokenVar (tokenlogin.go, decision 0074).
+// handed tokenVar (tokenlogin.go, decision 0075).
 const tokenFile = "yad-oauth-token"
 
 // tokenVar is the variable Claude Code takes a `claude setup-token` token
@@ -57,7 +57,7 @@ func CheckToken(token string) error {
 // meanwhile reads the old token or the new one and never half of either.
 //
 // On macOS it first deletes the login Claude keeps for the home in the
-// Keychain (decision 0074). Claude moves the home's credentials file there
+// Keychain (decision 0075). Claude moves the home's credentials file there
 // the first time it saves anything else in its store — an MCP server's
 // OAuth, which a shared plugin's server does at once — and from then on that
 // item outranks the file, so a claude a run starts would keep an old token,

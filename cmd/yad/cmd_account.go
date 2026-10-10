@@ -25,13 +25,13 @@ const accountUsage = "usage: yad account add <harness> <label> [--token - | --de
 // the control socket, which re-reads the lists and writes what follows. With
 // no daemon running nothing is written, and the daemon catches up at start.
 
-func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error {
+func cmdAccount(ctx context.Context, g global, args []string, w, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(accountUsage)
 	}
 	switch args[0] {
 	case "add":
-		return accountAdd(ctx, g, args[1:], w)
+		return accountAdd(ctx, g, args[1:], w, stderr)
 	case "list":
 		return accountList(ctx, g, args[1:], w)
 	case "remove":
@@ -59,7 +59,7 @@ func cmdAccount(ctx context.Context, g global, args []string, w io.Writer) error
 // its runs. It needs no terminal, so a provisioning script can do it.
 // --device is Codex's own login by device code: a link and a code to enter on
 // any other machine.
-func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error {
+func accountAdd(ctx context.Context, g global, args []string, w, stderr io.Writer) error {
 	fs := flag.NewFlagSet("account add", flag.ContinueOnError)
 	tokenFlag := fs.String("token", "", "`-`: read a `claude setup-token` token from stdin and run the account on it, with no login here")
 	device := fs.Bool("device", false, "log Codex in with a device code, entered on any other machine")
@@ -103,11 +103,10 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 	if useToken {
 		// Read before anything is made, so a command with nothing piped in
 		// leaves no home behind.
-		b, err := io.ReadAll(io.LimitReader(stdin, 64<<10))
+		tok, err = readToken(ctx, stderr, "token", wholeInput)
 		if err != nil {
-			return fmt.Errorf("read the token from stdin: %w", err)
+			return fmt.Errorf("%s account %q was not added: %w", id, label, err)
 		}
-		tok = string(b)
 		if err := account.CheckToken(tok); err != nil {
 			return fmt.Errorf("%s account %q was not added: %w", id, label, err)
 		}
@@ -177,7 +176,7 @@ func accountAdd(ctx context.Context, g global, args []string, w io.Writer) error
 		// without it (account.LoginEnv), since a token handed to either would
 		// outrank the login and make the check say yes to it (decision 0054).
 		// Its copies do go, so the check finds only what the login made
-		// (decision 0074); a login walked away from gets them back at the
+		// (decision 0075); a login walked away from gets them back at the
 		// account's next run, once this command has returned.
 		besideToken, err := account.BeforeLoginBesideToken(id, home)
 		if err != nil {

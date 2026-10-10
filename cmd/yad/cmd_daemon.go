@@ -53,6 +53,10 @@ type startFlags struct {
 	foreground bool
 	interval   time.Duration
 	wait       time.Duration
+	// intervalSet is --interval given on the command line: a service unit
+	// runs the command it was installed with, which carries none, so a start
+	// through the service manager cannot honour it.
+	intervalSet bool
 }
 
 func (s *startFlags) register(fs *flag.FlagSet) {
@@ -60,7 +64,9 @@ func (s *startFlags) register(fs *flag.FlagSet) {
 	fs.DurationVar(&s.wait, "wait", 15*time.Second, "how long a background start waits for the daemon to answer")
 }
 
-func (s startFlags) check() error {
+// check runs once fs is parsed.
+func (s *startFlags) check(fs *flag.FlagSet) error {
+	fs.Visit(func(f *flag.Flag) { s.intervalSet = s.intervalSet || f.Name == "interval" })
 	if s.interval <= 0 {
 		return fmt.Errorf("--interval must be positive, got %s — the default is 15s", s.interval)
 	}
@@ -78,7 +84,7 @@ func daemonStart(ctx context.Context, g global, args []string, w io.Writer) erro
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if err := s.check(); err != nil {
+	if err := s.check(fs); err != nil {
 		return err
 	}
 	if s.foreground {

@@ -861,7 +861,11 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   `--device-auth`, for a machine with no browser.
 - **A token account** ([0054](docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md)):
   `yad account add claude tl --token -` reads a `claude setup-token` token
-  from stdin — never argv — and needs no terminal. It is kept in the home as
+  from stdin — never argv — and needs no terminal. At one it asks for the
+  token, reads a single line with echo off and goes on at Enter; piped, it
+  reads the whole input. Every `--token -` (`yad connect`,
+  `yad conformance`, `yad hub login token`) reads through the same
+  `readToken`, and Ctrl-C ends any of them. It is kept in the home as
   `yad-oauth-token` (`0600`; one others can read is not used) and reaches the
   account's runs and its login check as `CLAUDE_CODE_OAUTH_TOKEN`, after the
   home variable, so a printed command never carries it. Claude's login check
@@ -879,7 +883,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   warning and `yad account list` says so.
   Claude Code hands `CLAUDE_CODE_OAUTH_TOKEN` to no child it starts, so the
   home also carries the token as Claude's own login
-  ([0074](docs/decisions/0074-a-token-accounts-home-carries-its-login-and-every-account-shares-the-machines-plugins.md)):
+  ([0075](docs/decisions/0075-a-token-accounts-home-carries-its-login-and-every-account-shares-the-machines-plugins.md)):
   `.credentials.json` (`0600`), the token under `claudeAiOauth` in the shape
   Claude gives the variable, marked `yadTokenLogin`. A claude the run starts
   (revmux's reviewers, a script) finds it through the home variables. It is
@@ -920,7 +924,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   from the harness's default home when the account has none of its own.
   Never a credential, never a file the harness keeps a login's state in.
   `plugins/` is the machine's state rather than a login's, and the shared
-  `settings.json` enables plugins by name (0074). Claude makes an empty
+  `settings.json` enables plugins by name (0075). Claude makes an empty
   `plugins/` in a home that has none, so one holding only that default
   (`installed_plugins.json` and `known_marketplaces.json` recording
   nothing, and empty directories) is replaced by the link at the next run.
@@ -1291,7 +1295,8 @@ yad doctor                         what is installed, what YAD can drive, and wh
                                    this machine or profile is reachable by other users
 yad harnesses [--json]             the capability document, as a hub receives it but for
                                    the accounts feature, added per connection (0057)
-yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
+yad connect <url> --token T|-      register with a hub (- reads the token from stdin,
+                                   asking for it at a terminal — 0020)
 yad disconnect <name> [--now] [--force]
                                    the hub retires the runner, config.toml and the
                                    credential lose the connection, then a running
@@ -1398,6 +1403,13 @@ signal cancels the runs held, a third exits at once — and falls back to
 signals; `restart` checks every credential locally
 before it stops anything
 ([0027](docs/decisions/0027-stop-asks-then-signals-and-restart-checks-first.md)).
+A profile whose runner is its launchd job or systemd user unit is started by
+that service manager, by `start` and by `restart` after its stop, so the new
+daemon is one the manager watches. The unit is told apart from one of the same
+label for other directories by the log file it names, and when the manager
+cannot be asked while the unit file is there, both refuse with the manager's
+own command
+([0074](docs/decisions/0074-a-service-is-started-by-its-service-manager.md)).
 
 **Self-update** is off unless `config.toml` says `[update] auto = true`
 ([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).

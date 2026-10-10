@@ -209,7 +209,7 @@ type KeychainError struct {
 	Commands []string
 	Cause    string
 	// So is what was not done for want of the delete, when it is neither of
-	// the above: a token not stored, a login not started (decision 0074).
+	// the above: a token not stored, a login not started (decision 0075).
 	So string
 }
 

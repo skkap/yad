@@ -658,7 +658,7 @@ func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 		dir, _ = os.UserHomeDir()
 	}
 	// The token's copies go before the login starts, so its check finds
-	// only what the login made (decision 0074).
+	// only what the login made (decision 0075).
 	besideToken, err := account.BeforeLoginBesideToken(h, home)
 	if err != nil {
 		log.Error("a hub login could not take the stored token's copies out of the home before it started", "err", err)

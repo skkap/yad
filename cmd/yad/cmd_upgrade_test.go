@@ -125,17 +125,19 @@ func TestCheckLineBlamesTheUnreadableSide(t *testing.T) {
 	}
 }
 
-// The restart advice names a profile, so the commands it offers have to act on
-// that profile: a bare `yad service install` would bootstrap a supervised unit
-// for the default profile, which is a state change nobody asked for (0028).
+// The restart advice names a profile, so the command it offers has to act on
+// that profile. It is one command: a restart of a service goes through its
+// service manager (DEV-173), so `yad service install` — which would bootstrap
+// a unit for a profile nobody meant to run as a service (0028) — is not
+// offered at all.
 func TestRestartAdviceCarriesTheProfile(t *testing.T) {
-	for _, c := range []struct{ profile, wantService, wantDaemon string }{
-		{"work", "`yad --profile work service install`", "`yad --profile work daemon restart`"},
-		{"default", "`yad service install`", "`yad daemon restart`"},
+	for _, c := range []struct{ profile, wantDaemon string }{
+		{"work", "`yad --profile work daemon restart`"},
+		{"default", "`yad daemon restart`"},
 	} {
 		line := restartAdvice(config.Paths{Profile: c.profile, Config: t.TempDir(), Data: t.TempDir()})
-		if !strings.Contains(line, c.wantService) {
-			t.Errorf("profile %s: advice %q, want it to offer %s", c.profile, line, c.wantService)
+		if strings.Contains(line, "service install") {
+			t.Errorf("profile %s: advice %q offers a service install", c.profile, line)
 		}
 		if !strings.Contains(line, c.wantDaemon) {
 			t.Errorf("profile %s: advice %q, want it to offer %s", c.profile, line, c.wantDaemon)
@@ -171,7 +173,7 @@ func TestRestartNoteOffersACommandOnlyWhereItKnowsTheProfile(t *testing.T) {
 		if !strings.Contains(note, "pid 4711") {
 			t.Errorf("note %q does not name the runner it found", note)
 		}
-		for _, want := range []string{"`yad --profile work service install`", "`yad --profile work daemon restart`"} {
+		for _, want := range []string{"`yad --profile work daemon restart`"} {
 			if !strings.Contains(note, want) {
 				t.Errorf("note %q, want it to offer %s", note, want)
 			}

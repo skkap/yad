@@ -61,14 +61,13 @@ func TestCheckLineCommandsRunAsPrinted(t *testing.T) {
 
 func TestRestartAdviceRunsAsPrinted(t *testing.T) {
 	for _, tc := range []struct {
-		profile         string
-		service, daemon []string
+		profile string
+		daemon  []string
 	}{
-		{"work", []string{"yad", "--profile", "work", "service", "install"}, []string{"yad", "--profile", "work", "daemon", "restart"}},
-		{config.DefaultProfile, []string{"yad", "service", "install"}, []string{"yad", "daemon", "restart"}},
+		{"work", []string{"yad", "--profile", "work", "daemon", "restart"}},
+		{config.DefaultProfile, []string{"yad", "daemon", "restart"}},
 	} {
 		line := restartAdvice(config.Paths{Profile: tc.profile, Config: t.TempDir(), Data: t.TempDir()})
-		shellwordtest.Check(t, onlyCommand(t, line, strings.Join(tc.service[:len(tc.service)-1], " ")), tc.service...)
 		shellwordtest.Check(t, onlyCommand(t, line, strings.Join(tc.daemon[:len(tc.daemon)-1], " ")), tc.daemon...)
 	}
 }

@@ -19,7 +19,8 @@ import (
 	"github.com/skkap/yad/internal/config"
 )
 
-// stdin is where `--token -` reads from; a variable so tests can supply one.
+// stdin is where `--token -` reads from (readToken); a variable so tests can
+// supply one.
 var stdin io.Reader = os.Stdin
 
 // global is what every command can see.
@@ -78,19 +79,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "service":
 		cmdErr = cmdService(ctx, g, rest, stdout)
 	case "connect":
-		cmdErr = cmdConnect(ctx, g, rest, stdout)
+		cmdErr = cmdConnect(ctx, g, rest, stdout, stderr)
 	case "status":
 		cmdErr = cmdStatus(ctx, g, rest, stdout)
 	case "sessions":
 		cmdErr = cmdSessions(ctx, g, rest, stdout)
 	case "account":
-		cmdErr = cmdAccount(ctx, g, rest, stdout)
+		cmdErr = cmdAccount(ctx, g, rest, stdout, stderr)
 	case "config":
 		cmdErr = cmdConfig(ctx, g, rest, stdout)
 	case "upgrade":
 		cmdErr = cmdUpgrade(ctx, g, rest, stdout)
 	case "conformance":
-		cmdErr = cmdConformance(ctx, rest, stdout)
+		cmdErr = cmdConformance(ctx, rest, stdout, stderr)
 	case "disconnect":
 		cmdErr = cmdDisconnect(ctx, g, rest, stdout)
 	case "agents":
@@ -153,8 +154,8 @@ usage: yad [--profile name] <command> [flags]
   account add <harness> <label> [--token - | --device]
                       run the harness's own login in a home of its own, with
                       you at the terminal (--device: Codex's link and code);
-                      or --token -: store a claude setup-token token read
-                      from stdin, for a machine with no browser
+                      or --token -: store a claude setup-token token pasted
+                      at its prompt or piped in, for a machine with no browser
   account list [--json]
                       the accounts this runner has, and the state of each
   account remove <harness> <label> [--yes]
