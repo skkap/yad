@@ -695,7 +695,7 @@ components:
           description: "The harness to run, by its id in the capability document: claude, codex or opencode today. Offer a run only to a runner whose document shows this harness first-class, present and without an error."
           type: string
         inactivity_ms:
-          description: "Stop the run when the harness emits no event for this many milliseconds; it ends timed_out with class inactivity_timeout. It can only lower the owner's own timeout (30 minutes unless they changed it), never raise it. Absent or 0: the owner's."
+          description: "Stop the run when the harness emits no event for this many milliseconds; it ends timed_out with class inactivity_timeout. It can only lower the owner's own timeout (30 minutes unless they changed it), never raise it. Absent or 0: the owner's. Until the harness's first event a shorter timeout of the owner's applies as well (2 minutes unless they changed it); a harness that emits nothing within it ends timed_out with class harness_silent."
           format: int64
           type: integer
         max_wait_ms:
@@ -735,7 +735,7 @@ components:
       additionalProperties: true
       properties:
         class:
-          description: "What kind of failure, for a program to act on: refused, session_closed, resume_rejected, usage_limit, prompt_too_long, source_refused, setup_failed, inactivity_timeout and others. Not a closed set: a class you do not know is a failure to show, not to parse."
+          description: "What kind of failure, for a program to act on: refused, session_closed, resume_rejected, usage_limit, prompt_too_long, source_refused, setup_failed, inactivity_timeout, harness_silent and others. Not a closed set: a class you do not know is a failure to show, not to parse."
           type: string
         message:
           description: What happened, for a person. At most 1 MiB.

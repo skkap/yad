@@ -311,11 +311,12 @@ loop:
 	exitErr := t.p.Wait()
 
 	t.mu.Lock()
+	stderr := t.p.Stderr()
 	e := ended{
 		interrupted: t.interrupted,
 		cancelled:   t.ctx.Err() != nil,
 		exitErr:     exitErr,
-		stderr:      t.p.Stderr(),
+		stderr:      adapter.StderrTail(stderr, t.spec.Env, len(stderr) >= supervise.StderrTail),
 		asked:       t.asked,
 		check:       t.spec.HarnessCheck("codex", "login", "status"),
 	}

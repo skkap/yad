@@ -107,6 +107,11 @@ func TestMain(m *testing.M) {
 		wedgedDaemon()
 		return
 	}
+	// The suite run over SSH on a Mac would otherwise have doctor call every
+	// logged-out Claude it sets up unknown (keychainLocked); the test that
+	// wants SSH sets it itself.
+	os.Unsetenv("SSH_CONNECTION")
+	os.Unsetenv("SSH_TTY")
 	os.Exit(m.Run())
 }
 

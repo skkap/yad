@@ -18,7 +18,16 @@ It needs no login and no token: it reads the newest release from GitHub, puts
 and tells you if that directory is not on your `PATH`. Then `yad doctor`, which
 shows which harnesses it can drive. A harness has to be installed and logged in
 on its own first — `claude`, `codex` — because YAD uses the harness's own login
-and keeps no token of its own.
+and keeps no token of its own. On a machine where other people's `claude`, or
+your own, also runs from that login, add a yad account instead
+(`yad account add claude main --token -`): it is a home nothing else uses, and
+a harness sharing its home with another one running there can hang before its
+first word.
+
+Over SSH on a Mac, `yad doctor` cannot read Claude's login: macOS keeps the
+login keychain locked in an SSH session, and doctor says so rather than call
+Claude logged out. Run it in a terminal on the Mac itself, or after
+`security unlock-keychain` in the SSH session.
 
 ## From source
 

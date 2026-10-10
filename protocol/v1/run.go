@@ -42,7 +42,7 @@ type Run struct {
 	StartAt      *time.Time `json:"start_at,omitempty" doc:"A moment the run must not start before, once. While it is ahead, offer the run only to a runner advertising start_at, which claims it and holds it; once it has passed, any runner may take it."`
 	MaxWaitMS    int64      `json:"max_wait_ms,omitempty" doc:"The most milliseconds the run may spend waiting for a free account, summed over every wait. Past it the run ends timed_out with error class max_wait_exceeded. Absent or 0: no cap."`
 	WallClockMS  int64      `json:"wall_clock_ms,omitempty" doc:"The most milliseconds the harness may run, summed over the run's turns and not counting waits. Past it the run is stopped and ends timed_out with class wall_clock_timeout. Absent or 0: no cap."`
-	InactivityMS int64      `json:"inactivity_ms,omitempty" doc:"Stop the run when the harness emits no event for this many milliseconds; it ends timed_out with class inactivity_timeout. It can only lower the owner's own timeout (30 minutes unless they changed it), never raise it. Absent or 0: the owner's."`
+	InactivityMS int64      `json:"inactivity_ms,omitempty" doc:"Stop the run when the harness emits no event for this many milliseconds; it ends timed_out with class inactivity_timeout. It can only lower the owner's own timeout (30 minutes unless they changed it), never raise it. Absent or 0: the owner's. Until the harness's first event a shorter timeout of the owner's applies as well (2 minutes unless they changed it); a harness that emits nothing within it ends timed_out with class harness_silent."`
 }
 
 // SessionMode is how the runner holds the harness process for a session.

@@ -86,6 +86,11 @@ type SessionsConfig struct {
 // SuperviseConfig holds the owner's watchdog defaults; a run may lower them.
 type SuperviseConfig struct {
 	Inactivity Duration `toml:"inactivity"`
+	// FirstOutput is how long a run's harness may go from its start to its
+	// first event before it is stopped as silent (decision 0074). Unset or
+	// "0s" is the default, as for inactivity; a value at or above the
+	// inactivity timeout leaves that timeout alone to decide.
+	FirstOutput Duration `toml:"first_output"`
 }
 
 // DrainConfig governs the runner's way down (decision 0029).
@@ -244,7 +249,16 @@ const (
 	DefaultCapacity   = 4
 	DefaultIdleTTL    = 14 * 24 * time.Hour
 	DefaultInactivity = 30 * time.Minute
-	DefaultDrainWait  = 30 * time.Minute
+	// A harness that is working says so within seconds: Claude's init
+	// frame, Codex's and an ACP agent's started status once their handshake
+	// is answered. The slow starts known so far — Claude connecting its MCP
+	// servers or running a SessionStart hook first, an ACP agent's cold
+	// start under its 60 s handshake bound — fit inside two minutes,
+	// and a harness wedged before its first word (DEV-170: three runs sat
+	// for 3+ minutes) is told apart 28 minutes sooner than the inactivity
+	// timeout would (decision 0074).
+	DefaultFirstOutput = 2 * time.Minute
+	DefaultDrainWait   = 30 * time.Minute
 	// Enough headroom for a build or a checkout to finish without the disk
 	// filling under it, and small enough that a laptop with a modest disk is
 	// not always under it: then every idle session would go at every sweep.
@@ -263,7 +277,7 @@ func Default() Config {
 	return Config{
 		Capacity:  DefaultCapacity,
 		Sessions:  SessionsConfig{IdleTTL: Duration{DefaultIdleTTL}, DiskFloor: DefaultDiskFloor},
-		Supervise: SuperviseConfig{Inactivity: Duration{DefaultInactivity}},
+		Supervise: SuperviseConfig{Inactivity: Duration{DefaultInactivity}, FirstOutput: Duration{DefaultFirstOutput}},
 		Drain:     DrainConfig{Wait: Duration{DefaultDrainWait}},
 		Workdirs:  WorkdirsConfig{GitTimeout: Duration{DefaultGitTimeout}, SetupTimeout: Duration{DefaultSetupTimeout}},
 	}

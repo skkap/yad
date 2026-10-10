@@ -151,6 +151,18 @@ made on any computer with a browser, or `yad account add codex main --device`
 with a code entered anywhere. Add more accounts under other labels and the
 runner uses them in turn.
 
+**On a machine you share with other Claude users — or with your own
+everyday `claude` — give yad an account rather than the default login.**
+With no account, runs use the harness's own home (`~/.claude`), and whatever
+else runs from it runs beside them: a background `claude` there once left
+every run on a Mac silent from its first second. An account is a
+home of its own, which nothing but yad's runs uses
+([0074](docs/decisions/0074-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md)).
+A run whose harness says nothing at all in its first two minutes is stopped
+and ends `harness_silent`, with the end of what the harness wrote to stderr
+and the command to try it by hand (`[supervise] first_output` in
+`config.toml` changes the two minutes).
+
 When the machine has no convenient shell — a VM, a container, a box somewhere
 else — **the hub can do it instead**, if it supports it. It shows **Log in**
 beside an account the runner reports as needing one: follow the link and

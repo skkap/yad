@@ -46,6 +46,11 @@ const (
 	// ClassInactivity — the harness produced no event for the inactivity
 	// timeout and was stopped.
 	ClassInactivity = "inactivity_timeout"
+	// ClassHarnessSilent — the harness produced no event at all within the
+	// owner's first-output timeout of its start and was stopped: one wedged
+	// before its first word, which the inactivity timeout would leave
+	// running for half an hour (decision 0074). The state is timed_out.
+	ClassHarnessSilent = "harness_silent"
 	// ClassWallClock — the run outlived its wall-clock cap and was stopped.
 	ClassWallClock = "wall_clock_timeout"
 	// ClassAdapter — the adapter ended the turn without a terminal state.
@@ -810,6 +815,9 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		prog.absorb(out, w, turnStarted, time.Now())
 		e.setSpent(bg, c, prog.spent)
 		res := e.result(out, w, &prog)
+		if w.stopped != "" && res.Error != nil && res.Error.Class == w.stopped {
+			res.Error.Message += e.stoppedDetail(w.stopped, run, out, hasAccount)
+		}
 		if res.Error != nil {
 			res.Error.Class = hubClass(res.Error.Class, resumed)
 		}
@@ -891,7 +899,7 @@ type watch struct {
 	native       string
 }
 
-// stream spools the turn's events until it closes them, under the two
+// stream spools the turn's events until it closes them, under the
 // watchdogs and the hub's controls. wallLeft is what remains of the run's
 // wall-clock cap, not the cap itself: the cap belongs to the run, so a run
 // that took three turns across two accounts gets one budget between them
@@ -903,7 +911,11 @@ func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.T
 	w := watch{firstEventMS: -1, native: native, lastSeq: lastSeq}
 	log := e.Log.With("connection", c.Connection, "run", c.Run.RunID)
 	idleFor := e.inactivity(c.Run)
-	idle := time.NewTimer(idleFor)
+	// Until the first event the timer runs to the first-output timeout, and
+	// from it to the inactivity timeout. One timer, so a run whose own
+	// inactivity is the shorter is stopped for that, as it asked.
+	silentFor := min(e.firstOutput(), idleFor)
+	idle := time.NewTimer(silentFor)
 	defer idle.Stop()
 	var wall <-chan time.Time
 	if wallLeft > 0 {
@@ -983,6 +995,10 @@ func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.T
 			e.control(ctx, c, &w, turn, ctl)
 		case <-idle.C:
 			w.stalls++
+			if w.firstEventMS < 0 && silentFor < idleFor {
+				stop(ClassHarnessSilent, fmt.Sprintf("the harness produced no event in the first %s of the run and was stopped", silentFor))
+				break
+			}
 			stop(ClassInactivity, fmt.Sprintf("the harness produced no event for %s and was stopped", idleFor))
 		case <-wall:
 			stop(ClassWallClock, fmt.Sprintf("the run reached its wall-clock cap of %s and was stopped", time.Duration(c.Run.WallClockMS)*time.Millisecond))
@@ -1241,6 +1257,41 @@ func (e *Exec) inactivity(run v1.Run) time.Duration {
 		d = min(d, time.Duration(run.InactivityMS)*time.Millisecond)
 	}
 	return d
+}
+
+// firstOutput is the owner's first-output timeout. A run cannot change it;
+// its own inactivity, when shorter, ends a silent start first (stream).
+func (e *Exec) firstOutput() time.Duration {
+	if d := e.Config.Supervise.FirstOutput.Duration; d > 0 {
+		return d
+	}
+	return config.DefaultFirstOutput
+}
+
+// stoppedDetail is what a watchdog's error adds to its own sentence: the end
+// of the harness's stderr, the one account of what it was doing, and for a
+// harness silent from its start, how to see where it stops (decision 0074).
+// Run on a default login, the likeliest cause known (DEV-170) is a harness
+// that hangs in a home it shares with another of its kind running there, and
+// an account is a home of its own.
+func (e *Exec) stoppedDetail(class string, run v1.Run, out adapter.Outcome, hasAccount bool) string {
+	var s string
+	if out.Stderr != "" {
+		s += "; its stderr ended: " + out.Stderr
+	}
+	if class != ClassHarnessSilent {
+		return s
+	}
+	if out.Check != "" {
+		s += " — run it by hand on the runner to see whether it answers: " + out.Check
+	} else {
+		s += " — check it on the runner with `" + e.Paths.RemoteCommand("doctor") + "`"
+	}
+	if !hasAccount {
+		s += "; if it hangs on a machine where other people's " + run.Harness + " runs from the same login, give yad an account with a home of its own: `" +
+			e.Paths.RemoteCommand("account", "add", run.Harness, "<label>") + "`"
+	}
+	return s
 }
 
 // prepare builds the run's workdir from its sources (internal/workdir), with

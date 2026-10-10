@@ -121,6 +121,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		effort:    spec.Effort,
 		forkFrom:  forkFrom(spec),
 		check:     spec.HarnessCheck("claude", "-p", "hello"),
+		env:       spec.Env,
 		frames:    make(chan []byte, 16),
 		written:   1,
 		q:         adapter.NewQueue(),
@@ -302,6 +303,9 @@ type turn struct {
 	forkFrom string
 	// check is the login check for the owner, in the run's account home.
 	check string
+	// env is what yad added to Claude's environment, whose values its
+	// stderr is quoted without (adapter.StderrTail).
+	env []string
 	// effort is the run's effort; effortRefused, Claude's own words refusing
 	// it, once they are seen; working, that Claude has begun the turn's work,
 	// after which nothing is gained by stopping it early.
@@ -525,11 +529,13 @@ loop:
 	removeFile(contextFile)
 
 	t.mu.Lock()
+	stderr := t.p.Stderr()
 	e := ended{
 		interrupted: t.interrupted,
 		cancelled:   t.ctx.Err() != nil,
 		exitErr:     exitErr,
-		stderr:      t.p.Stderr(),
+		stderr:      stderr,
+		tail:        adapter.StderrTail(stderr, t.env, len(stderr) >= supervise.StderrTail),
 		final:       t.settled,
 		check:       t.check,
 	}

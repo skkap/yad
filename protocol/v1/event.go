@@ -71,7 +71,7 @@ type Usage struct {
 
 // RunError classifies a failure so a hub can act on it without parsing text.
 type RunError struct {
-	Class   string `json:"class" doc:"What kind of failure, for a program to act on: refused, session_closed, resume_rejected, usage_limit, prompt_too_long, source_refused, setup_failed, inactivity_timeout and others. Not a closed set: a class you do not know is a failure to show, not to parse."`
+	Class   string `json:"class" doc:"What kind of failure, for a program to act on: refused, session_closed, resume_rejected, usage_limit, prompt_too_long, source_refused, setup_failed, inactivity_timeout, harness_silent and others. Not a closed set: a class you do not know is a failure to show, not to parse."`
 	Message string `json:"message" doc:"What happened, for a person. At most 1 MiB."`
 }
 
