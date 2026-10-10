@@ -49,11 +49,16 @@ func (w *watched) String() string {
 // echoes says whether the terminal f echoes what is typed into it.
 func echoes(t *testing.T, f *os.File) bool {
 	t.Helper()
+	return termios(t, f).Lflag&syscall.ECHO != 0
+}
+
+func termios(t *testing.T, f *os.File) syscall.Termios {
+	t.Helper()
 	var tio syscall.Termios
 	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ptyGetAttr, uintptr(unsafe.Pointer(&tio))); e != 0 {
 		t.Fatalf("read the terminal's settings: %v", e)
 	}
-	return tio.Lflag&syscall.ECHO != 0
+	return tio
 }
 
 // The bug in DEV-171, through a real terminal: an owner pastes a token into
@@ -171,5 +176,27 @@ func TestTerminalEchoOff(t *testing.T) {
 	restore()
 	if !echoes(t, slave) {
 		t.Error("restore left echo off")
+	}
+
+	// A terminal left raw: Enter would arrive as \r, which ends no line, and
+	// Ctrl-C as a byte rather than SIGINT. Reading the token turns both back
+	// on, and restore puts the raw settings back as they were.
+	raw := termios(t, slave)
+	raw.Lflag &^= syscall.ICANON | syscall.ISIG
+	raw.Iflag &^= syscall.ICRNL
+	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, slave.Fd(), ptySetAttr, uintptr(unsafe.Pointer(&raw))); e != 0 {
+		t.Fatalf("make the terminal raw: %v", e)
+	}
+	restore, _, err = terminalEchoOff(slave)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := termios(t, slave)
+	if got.Lflag&syscall.ICANON == 0 || got.Lflag&syscall.ISIG == 0 || got.Iflag&syscall.ICRNL == 0 {
+		t.Errorf("a raw terminal stays raw while the token is read: lflag %#x iflag %#x", got.Lflag, got.Iflag)
+	}
+	restore()
+	if got := termios(t, slave); got.Lflag != raw.Lflag || got.Iflag != raw.Iflag {
+		t.Errorf("restore did not put the raw settings back: lflag %#x iflag %#x", got.Lflag, got.Iflag)
 	}
 }

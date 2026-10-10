@@ -21,8 +21,9 @@ var echoOff = func(r io.Reader) (restore func(), isTerm bool, err error) {
 	return terminalEchoOff(f)
 }
 
-// readToken is a `--token -` value: every command that takes a secret on
-// stdin reads it here. Piped in, it is read as piped says, as it always was.
+// readToken is a `--token -` value: every command that takes a token on
+// stdin reads it here (`hub login start --code -` reads a login code, not a
+// token, through readLine alone). Piped in, it is read as piped says, as it always was.
 // Typed at a terminal it is one line, asked for, kept off the screen, and
 // ended by Enter — a person never sends the end of input a pipe does, so a
 // read to the end looked hung (DEV-171). Ctrl-C ends it either way: main

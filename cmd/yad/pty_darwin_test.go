@@ -8,7 +8,7 @@ import (
 	"unsafe"
 )
 
-const ptyGetAttr = syscall.TIOCGETA
+const ptyGetAttr, ptySetAttr = syscall.TIOCGETA, syscall.TIOCSETA
 
 // openPTY is posix_openpt, grantpt, unlockpt and ptsname by hand: the
 // standard library has the ioctls but not the calls, and a module for four

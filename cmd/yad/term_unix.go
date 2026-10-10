@@ -8,11 +8,11 @@ import (
 	"unsafe"
 )
 
-// terminalEchoOff makes the one change golang.org/x/term's ReadPassword
-// makes, with the standard library's ioctl rather than a module that would
-// need a line in ARCHITECTURE.md §6. Echo goes off and nothing else:
-// canonical mode stays, so Enter ends the line and the terminal edits it, and
-// ISIG stays, so Ctrl-C is still SIGINT.
+// terminalEchoOff makes the changes golang.org/x/term's ReadPassword makes,
+// with the standard library's ioctl rather than a module that would need a
+// line in ARCHITECTURE.md §6. Echo goes off; canonical mode, ISIG and ICRNL
+// go on, even on a terminal a crashed program left raw: Enter must end the
+// line as a newline readLine sees, and Ctrl-C must still be SIGINT.
 //
 // A file is a terminal only if it answers the terminal's own ioctl. A
 // character device is not enough: /dev/null is one, and a command run with
@@ -25,6 +25,8 @@ func terminalEchoOff(f *os.File) (restore func(), isTerm bool, err error) {
 	}
 	quiet := was
 	quiet.Lflag &^= syscall.ECHO
+	quiet.Lflag |= syscall.ICANON | syscall.ISIG
+	quiet.Iflag |= syscall.ICRNL
 	if err := ioctlTermios(fd, termiosSet, &quiet); err != nil {
 		return nil, true, err
 	}
