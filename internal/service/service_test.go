@@ -1003,6 +1003,38 @@ func TestStatusThatCannotAskStillReadsTheUnit(t *testing.T) {
 	}
 }
 
+// With no user bus, a stale unit in a directory the manager never reads must
+// not decide for the live one: units that disagree on their log are
+// reported with none, which the caller cannot take for another runner's.
+func TestSystemdStatusWithNoBusAndUnitsThatDisagree(t *testing.T) {
+	r := &fakeRunner{answer: func(string, int) ([]byte, error) {
+		return nil, errors.New("Failed to connect to bus: No medium found")
+	}}
+	h := host(t, r)
+	s := &Systemd{Host: h}
+	write := func(dir, log string) {
+		sp := specIn(t, h)
+		sp.LogFile = log
+		unit, err := s.Render(sp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, s.Name("work")), unit, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config := filepath.Join(h.Home, ".config", "systemd", "user")
+	write(config, "/elsewhere/logs/service.log")
+	write(filepath.Join(h.Home, ".local", "share", "systemd", "user"), "/mine/logs/service.log")
+	st, err := s.Status(context.Background(), "work")
+	if err == nil || !st.Installed || st.LogFile != "" || st.File != filepath.Join(config, s.Name("work")) {
+		t.Errorf("status %+v, %v; want an installed unit with no log", st, err)
+	}
+}
+
 // Status reads back the log the installed unit names, unescaped as each
 // format escapes it: it is what tells this profile's unit from one of the
 // same name for other directories.

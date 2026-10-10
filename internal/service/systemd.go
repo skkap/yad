@@ -316,20 +316,28 @@ func (s *Systemd) Status(ctx context.Context, profile string) (Status, error) {
 		return Status{}, err
 	}
 	if err := s.resolve(ctx); err != nil {
+		// Every directory is looked in: which one the manager reads is what
+		// it cannot be asked, so a file earlier in the list may be a stale
+		// one it never loads. Files that disagree on their log say nothing
+		// about which is the runner's, and are reported with no log.
 		st := Status{Name: s.Name(profile), File: s.File(profile)}
 		for _, dir := range s.unitDirs() {
 			file := filepath.Join(dir, s.Name(profile))
 			ok, serr := exists(file)
 			if serr != nil {
-				// Unreadable is not absent: File names it, Installed stays
+				// Unreadable is not absent: File names it, Installed is
 				// false, and the caller's own look at it fails the same way.
-				st.File = file
-				break
+				return Status{Name: st.Name, File: file}, err
 			}
-			if ok {
-				st.File, st.Installed = file, true
-				st.LogFile = installedLog(file, unitLog, unescapeSpecifiers)
-				break
+			if !ok {
+				continue
+			}
+			log := installedLog(file, unitLog, unescapeSpecifiers)
+			switch {
+			case !st.Installed:
+				st.File, st.Installed, st.LogFile = file, true, log
+			case log != st.LogFile:
+				st.LogFile = ""
 			}
 		}
 		return st, err
