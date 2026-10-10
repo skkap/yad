@@ -6,7 +6,8 @@
 // its own but one. The harness logs itself in, inside its own home, and nothing
 // here copies, moves or prints what that login writes — on macOS Claude
 // writes it to the Keychain under the home's name, and yad only ever deletes
-// that item, with the home (keychain.go). The exception is
+// that item: with the home (keychain.go), and for a token account where it
+// would outrank the token (tokenlogin.go). The exception is
 // a token account (decision 0054): a `claude setup-token` token the owner
 // piped in, kept 0600 in the account's home and handed to that account's runs
 // in their environment, and written 0600 into the home's .credentials.json in

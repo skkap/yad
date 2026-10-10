@@ -657,6 +657,13 @@ func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 	if dir == "" {
 		dir, _ = os.UserHomeDir()
 	}
+	// The token's copies go before the login starts, so its check finds
+	// only what the login made (decision 0074).
+	if err := account.BeforeLoginBesideToken(h, home); err != nil {
+		log.Error("a hub login could not take the stored token's copies out of the home before it started", "err", err)
+		m.end(l, v1.LoginFailed, fmt.Sprintf("%s's own login could not be started — `%s` at the machine says why", h, m.Paths.RemoteCommand("daemon", "logs")))
+		return
+	}
 	// No terminal: the login is driven over pipes, and one that wanted a
 	// person at a terminal fails at once rather than waiting for nobody.
 	//

@@ -55,8 +55,20 @@ func CheckToken(token string) error {
 // SetToken stores a token as the account's credential, replacing any before
 // it. The file is 0600, written beside and renamed over, so a run starting
 // meanwhile reads the old token or the new one and never half of either.
+//
+// On macOS it first deletes the login Claude keeps for the home in the
+// Keychain (decision 0074). Claude moves the home's credentials file there
+// the first time it saves anything else in its store — an MCP server's
+// OAuth, which a shared plugin's server does at once — and from then on that
+// item outranks the file, so a claude a run starts would keep an old token,
+// or a login the token replaced, for ever. With it gone, the file is the
+// login again.
 func SetToken(home, token string) error {
 	if err := CheckToken(token); err != nil {
+		return err
+	}
+	// First, so that a Keychain that will not let go leaves nothing changed.
+	if err := forgetTokenCopy(home, "the token is not stored: the login there would go on outranking it for the claudes a run starts"); err != nil {
 		return err
 	}
 	token = strings.TrimSpace(token)

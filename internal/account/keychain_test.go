@@ -400,3 +400,79 @@ func assertNoSetAside(t *testing.T, data, harness, label string) {
 		t.Errorf("%d copies of the home are left set aside", n)
 	}
 }
+
+// Claude copies a token home's credentials file into the Keychain the first
+// time it saves anything else in its store, and that copy outranks the file
+// from then on (decision 0074). So storing a token deletes it first, and a
+// login made beside a token starts with neither copy there; a Keychain that
+// will not let go changes nothing.
+func TestATokensKeychainCopyGoesBeforeItCouldOutrankIt(t *testing.T) {
+	const tok = "sk-ant-oat01-x"
+	for _, tc := range []struct {
+		name, mode string
+		token      bool // a token stored before the call
+		call       func(home string) error
+		wantErr    bool
+		// calls says whether security is asked to delete the home's items.
+		calls bool
+		// tokenAfter is the token the account has after the call, and
+		// loginAfter whether its credentials file holds yad's login.
+		tokenAfter string
+		loginAfter bool
+	}{
+		{name: "storing a token", mode: "login", call: func(h string) error { return SetToken(h, tok) },
+			calls: true, tokenAfter: tok, loginAfter: true},
+		{name: "storing a token the Keychain will not let go of", mode: "locked", call: func(h string) error { return SetToken(h, tok) },
+			wantErr: true, calls: true},
+		{name: "a login beside a token", mode: "login", token: true, call: func(h string) error { return BeforeLoginBesideToken("claude", h) },
+			calls: true, tokenAfter: tok},
+		{name: "a login beside a token the Keychain will not let go of", mode: "locked", token: true,
+			call: func(h string) error { return BeforeLoginBesideToken("claude", h) }, wantErr: true, calls: true, tokenAfter: tok, loginAfter: true},
+		{name: "a login with no token beside it", mode: "login", call: func(h string) error { return BeforeLoginBesideToken("claude", h) }},
+		{name: "a codex login", mode: "login", token: true, call: func(h string) error { return BeforeLoginBesideToken("codex", h) },
+			tokenAfter: tok, loginAfter: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("USER", "owner")
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			home, err := Ensure(t.TempDir(), "claude", "tl")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.token {
+				if err := SetToken(home, tok); err != nil {
+					t.Fatal(err)
+				}
+			}
+			calls := useFakeSecurity(t, tc.mode)
+			err = tc.call(home)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want an error: %v", err, tc.wantErr)
+			}
+			if err != nil {
+				ke, ok := errors.AsType[*KeychainError](err)
+				if !ok || ke.So == "" || !strings.Contains(err.Error(), "delete-generic-password") {
+					t.Errorf("the error does not say what was not done and how to delete the item by hand: %v", err)
+				}
+			}
+			want := [][]string(nil)
+			if tc.calls {
+				want = deletes("owner", KeychainServices(home)...)
+			}
+			if got := calls(); !sameCalls(got, want) {
+				t.Errorf("security was asked %q, want %q", got, want)
+			}
+			if got := token(home); got != tc.tokenAfter {
+				t.Errorf("the stored token is %q, want %q", got, tc.tokenAfter)
+			}
+			c, err := readCredentials(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.ours != tc.loginAfter {
+				t.Errorf("the credentials file holds yad's login: %v, want %v", c.ours, tc.loginAfter)
+			}
+		})
+	}
+}

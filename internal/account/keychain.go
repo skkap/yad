@@ -208,10 +208,16 @@ type KeychainError struct {
 	// Commands delete the items one by one, as the owner pastes them.
 	Commands []string
 	Cause    string
+	// So is what was not done for want of the delete, when it is neither of
+	// the above: a token not stored, a login not started (decision 0074).
+	So string
 }
 
 func (e *KeychainError) Error() string {
 	cmds := "`" + strings.Join(e.Commands, "` and `") + "`"
+	if e.So != "" {
+		return fmt.Sprintf("the login claude keeps for %s in the macOS Keychain could not be deleted (%s), so %s; %s deletes it by hand", e.Home, e.Cause, e.So, cmds)
+	}
 	if e.Leftover {
 		return fmt.Sprintf("claude has a login in the macOS Keychain for %s from an account removed before, and it could not be deleted (%s), so the home is not made — a new account there would run on that old login; %s deletes it by hand", e.Home, e.Cause, cmds)
 	}

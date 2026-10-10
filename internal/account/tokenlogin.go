@@ -165,6 +165,37 @@ func syncTokenLogin(home string) error {
 	return writeCredentials(home, c.doc)
 }
 
+// forgetTokenCopy deletes the Keychain items Claude keeps for a token
+// account's home, on macOS, saying what was not done when one will not go.
+// Claude copies the credentials file there, token and all, the first time it
+// saves anything else in its store, and the copy outranks the file from then
+// on (decision 0074).
+func forgetTokenCopy(home, so string) error {
+	_, err := forgetKeychain("claude", home, false)
+	if ke, ok := errors.AsType[*KeychainError](err); ok {
+		ke.So = so
+	}
+	return err
+}
+
+// BeforeLoginBesideToken readies a token account's home for a login of
+// Claude's own (`yad account add` without --token, a hub's link login): the
+// token's copies are taken out of the home — its login in the credentials
+// file, and on macOS whatever Claude copied of it into the Keychain — so the
+// check after the login (OwnLogin) can only find a login the login made. The
+// token itself stays stored, for the runs still on the account, until that
+// check says yes; a login walked away from gets its copy back at the next
+// run. Nothing is done for a home with no token file.
+func BeforeLoginBesideToken(harness, home string) error {
+	if !CanUseToken(harness) || !TokenFileExists(home) {
+		return nil
+	}
+	if err := forgetTokenCopy(home, "the login does not start: its check would find the token's copy there and call the login made"); err != nil {
+		return err
+	}
+	return dropTokenLogin(home)
+}
+
 // dropTokenLogin takes a token's login out of the home's credentials file,
 // leaving the token itself stored: for a check of whether a login made
 // beside the token took, which claude would otherwise answer with the token.

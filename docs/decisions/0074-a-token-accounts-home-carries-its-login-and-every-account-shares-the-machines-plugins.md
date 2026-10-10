@@ -39,9 +39,17 @@ token, which the API refuses.
   the two home variables, as a nested claude is, `claude auth status` says
   `loggedIn: true`, `authMethod: claude.ai`, and `claude --print` gets
   `401 OAuth access token is invalid`. So the file's token is the one sent.
-  An empty home says "Not logged in". No Keychain item appeared. The same
-  check through this branch's `yad account add claude probe --token -`, in
-  a throwaway profile, gave the same answers.
+  An empty home says "Not logged in". The same check through this branch's
+  `yad account add claude probe --token -`, in a throwaway profile, gave the
+  same answers.
+- **On macOS Claude then moves the file into the Keychain.** In that second
+  check the home had the machine's plugins. Their MCP servers made Claude
+  save discovery state (`mcpOAuth`) into its credential store. A save goes to
+  the Keychain first, and when the Keychain had no item, Claude writes the
+  whole store there (the file's contents, with the token) and deletes the
+  file. From then on the Keychain item outranks the file. So with any
+  plugin that has an MCP server, this happens on the first run, not as a
+  corner case.
 - **The empty `plugins/` in an account's home is Claude's, not yad's.** yad
   never made one. Claude makes `plugins/` with an empty
   `installed_plugins.json` in any home that has none, and 0054's list did not
@@ -82,6 +90,20 @@ prints, logs or sends it.
   status` would answer yes to the file just as it does to the variable, so
   `account.OwnLogin` takes yad's login out of the file first. The token
   stays stored, and the next preparation writes the login back while it is.
+- **On macOS the token's Keychain copy goes when it could mislead.** The
+  Keychain item for the home is deleted (0070's delete, both items) in two
+  places. `SetToken` deletes it before it writes, or the copy of an old
+  token, or a login the token replaces, would go on outranking the file for
+  every nested claude. `account.BeforeLoginBesideToken` deletes it before
+  `yad account add` without `--token` or a hub's link login starts, or the
+  check after the login would find the token's copy and call a login that
+  never happened a success. If the Keychain will not let go, a locked one
+  say, nothing else changes. The token is not stored, or the login does not
+  start, and the error gives the delete to run by hand. Between those two
+  moments the copy stays, and it holds the token the file holds, since
+  only `SetToken` changes the token, and `SetToken` deletes the copy first.
+  The `mcpOAuth` state Claude kept for the home goes with the item, and
+  Claude makes it again.
 
 **Every Claude account shares the machine's `plugins/`**, linked like
 `skills/`. 0054 shares "never a file the harness keeps state in" because two
@@ -109,12 +131,19 @@ token file beside it. The hook works only for a shell that reads that file
 (zsh, and none of `sh`, `bash -c` or a script's exec), and it is a step each
 machine's owner must know to take. The fix belongs in yad.
 
-**Write the login to the macOS Keychain.** That is the store Claude reads
-first, so it would outrank any other login in the home. But it needs
-`security add-generic-password` with the secret on stdin, a Keychain that is
-unlocked whenever a token is stored (a hub's token login included), and a
-second copy that removal must find. The file needs none of that, and Claude
-reads it when the Keychain has nothing.
+**Write the login to the macOS Keychain and keep it in step there.** That
+is the store Claude reads first. Keeping it in step means reading the item
+on every run, its secret included, to see whose login it holds, and writing
+it with `security add-generic-password` and the secret on stdin. That is a
+Keychain call per run and a credential of Claude's read into yad. Deleting
+the item at the two moments it could mislead gets the same answer with the
+one call 0070 already makes.
+
+**Leave the Keychain alone and accept the limit.** An earlier draft of this
+record did that, on the reading that Claude moves the file only after some
+rare save. The second measurement above showed the move happens on the
+first run with any MCP plugin. After that, a rotated token and a login made
+beside the token would both have gone wrong on every Mac.
 
 **Point `CLAUDE_SECURESTORAGE_CONFIG_DIR` at a directory holding only the
 token's login.** On macOS that moves the Keychain name too (0070), so it is a
@@ -128,19 +157,16 @@ what the owner's workaround was, and it is what works.
 
 ## Limits
 
-- **On macOS, a token rotation can miss a nested claude.** If Claude ever
-  saves something else into a token home's credential store, the save goes
-  to the Keychain, the store it tries first. An MCP server's OAuth is one
-  such save. When the Keychain had no item, Claude copies the file's
-  contents into it and deletes the file. From then on the Keychain item
-  outranks the file. The next preparation writes the file again, but after
-  a token rotation a nested claude keeps the old token from the Keychain
-  until that item is deleted. The run itself is unaffected, since it has the
-  variable. The fix by hand is the `security delete-generic-password`
-  commands 0070 describes, and the next run puts the login back as the
-  file. Clearing the Keychain on every `SetToken` was not done: it can
-  fail on a locked Keychain in the middle of a hub's login, and it would
-  delete a working login of the owner's.
+- **A token yad stops using keeps its Keychain copy on macOS.** That is a
+  token file others came to be able to read, which `yad account list` shows
+  as `token ignored`. Its file login goes at the next run, but Claude's
+  Keychain copy stays until the token is stored again or a login replaces
+  it. The owner is already told to revoke that token, and revoking it ends
+  the copy too.
+- **Storing a token on macOS deletes a working login of the account's own**
+  that Claude kept in the Keychain, when the account was logged in its own
+  way before. The token outranks that login in every run already. Leaving
+  it would put a nested claude on a different credential from the run's.
 - **This is Claude's private code**, as 0070's naming is. The line that
   re-checks the store's order against an upgrade:
 

@@ -888,10 +888,14 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   every `account.Ensure` brings it in line, so older token accounts get it at
   their next run. Only a marked login with no refresh token is yad's; a login
   Claude made is never touched. `account.OwnLogin` takes it out before it
-  asks, since claude would say yes to it. The limit: on macOS, a Keychain
-  item Claude made for the home later (when it saves an MCP server's OAuth,
-  say) outranks the file, so after a token rotation a nested claude keeps
-  the old token until that item is deleted.
+  asks, since claude would say yes to it. On macOS, Claude moves the file
+  into the home's Keychain item the first time it saves anything else in
+  its store, such as a plugin's MCP state on the first run, and the item
+  then outranks the file. So `SetToken` deletes the home's Keychain items
+  before it writes, and `account.BeforeLoginBesideToken` deletes them, with
+  the file login, before a login of Claude's own starts beside a token. If
+  the Keychain will not let go, the token is not stored or the login does
+  not start, and the error gives the delete to run by hand.
 - **On macOS a Claude home's login is in the Keychain, not the home**
   ([0070](docs/decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)):
   generic passwords `Claude Code-credentials-<h>` (the login) and
