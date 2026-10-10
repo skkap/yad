@@ -14,7 +14,9 @@ import (
 
 // tokenFile is where a token account keeps its token, inside its own home
 // (decision 0054). Claude reads no such file: yad hands the token to each of
-// the account's runs as tokenVar, and to its login check, and to nothing else.
+// the account's runs as tokenVar and to its login check, and writes it into
+// the home's credentials file for the claudes a run starts, which are never
+// handed tokenVar (tokenlogin.go, decision 0076).
 const tokenFile = "yad-oauth-token"
 
 // tokenVar is the variable Claude Code takes a `claude setup-token` token
@@ -53,8 +55,20 @@ func CheckToken(token string) error {
 // SetToken stores a token as the account's credential, replacing any before
 // it. The file is 0600, written beside and renamed over, so a run starting
 // meanwhile reads the old token or the new one and never half of either.
+//
+// On macOS it first deletes the login Claude keeps for the home in the
+// Keychain (decision 0076). Claude moves the home's credentials file there
+// the first time it saves anything else in its store — an MCP server's
+// OAuth, which a shared plugin's server does at once — and from then on that
+// item outranks the file, so a claude a run starts would keep an old token,
+// or a login the token replaced, for ever. With it gone, the file is the
+// login again.
 func SetToken(home, token string) error {
 	if err := CheckToken(token); err != nil {
+		return err
+	}
+	// First, so that a Keychain that will not let go leaves nothing changed.
+	if err := forgetTokenCopy(home, "the token is not stored: the login there would go on outranking it for the claudes a run starts"); err != nil {
 		return err
 	}
 	token = strings.TrimSpace(token)
@@ -74,7 +88,10 @@ func SetToken(home, token string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), filepath.Join(home, tokenFile))
+	if err := os.Rename(tmp.Name(), filepath.Join(home, tokenFile)); err != nil {
+		return err
+	}
+	return syncTokenLogin(home)
 }
 
 // ClearToken removes an account's stored token, so it logs in the harness's
@@ -86,10 +103,10 @@ func ClearToken(home string) error {
 		return nil
 	}
 	err := os.Remove(filepath.Join(home, tokenFile))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
-	return err
+	return syncTokenLogin(home)
 }
 
 // readToken is the account's token file read the one way every caller reads

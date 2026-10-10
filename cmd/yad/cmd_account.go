@@ -175,6 +175,14 @@ func accountAdd(ctx context.Context, g global, args []string, w, stderr io.Write
 		// leaves the account exactly as it was. The login and its check run
 		// without it (account.LoginEnv), since a token handed to either would
 		// outrank the login and make the check say yes to it (decision 0054).
+		// Its copies do go, so the check finds only what the login made
+		// (decision 0076); a login walked away from gets them back at the
+		// account's next run, once this command has returned.
+		besideToken, err := account.BeforeLoginBesideToken(id, home)
+		if err != nil {
+			return fmt.Errorf("%s account %q was not added: %w, and then run `%s` again", id, label, err, again)
+		}
+		defer besideToken()
 		fmt.Fprintf(w, "%s account %q: running %s's own login in %s\n", id, label, id, home)
 		fmt.Fprintln(w, "yad keeps no token for this account; whatever the login writes stays in that directory.")
 		var extra []string

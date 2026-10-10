@@ -115,7 +115,16 @@ func TestHubLoginThroughTheCLI(t *testing.T) {
 		filepath.WalkDir(m.p.data, func(path string, e fs.DirEntry, err error) error {
 			// hub.db is this test's hub, still open; the store's own test
 			// proves what its file keeps once it has closed.
-			if err != nil || !e.Type().IsRegular() || filepath.Base(path) == "yad-oauth-token" || strings.HasPrefix(filepath.Base(path), "hub.db") {
+			if err != nil || !e.Type().IsRegular() || strings.HasPrefix(filepath.Base(path), "hub.db") {
+				return nil
+			}
+			// The two places a token account's token is kept on purpose,
+			// both 0600 in its home: its file, and Claude's login for the
+			// claudes a run starts (decision 0076).
+			if name := filepath.Base(path); name == "yad-oauth-token" || name == ".credentials.json" && filepath.Base(filepath.Dir(filepath.Dir(path))) == "claude" {
+				if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+					t.Errorf("%s is not 0600 (%v)", path, err)
+				}
 				return nil
 			}
 			if b, err := os.ReadFile(path); err == nil && strings.Contains(string(b), secret) {

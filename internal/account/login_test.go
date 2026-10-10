@@ -36,8 +36,10 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// credentialFile is where the fake harness keeps its pretend credential. Its
-// contents never matter: nothing in YAD ever reads them.
+// credentialFile is where the fake harness keeps its pretend credential, in
+// the shape claude writes a login of its own: one with a refresh token, which
+// yad reads only to know it is not a token's (decision 0076) and so never
+// touches.
 const credentialFile = ".credentials.json"
 
 func fakeHarness(id string, args []string) int {
@@ -66,7 +68,7 @@ func fakeHarness(id string, args []string) int {
 		// A real login prints a URL and a code, and this is the closest the
 		// fake gets: something on stdout that must never reach a YAD log.
 		fmt.Println("paste this code: TOP-SECRET-LOGIN-CODE")
-		os.WriteFile(filepath.Join(home, credentialFile), []byte(`{"token":"sk-not-a-real-token"}`), 0o600)
+		os.WriteFile(filepath.Join(home, credentialFile), []byte(`{"claudeAiOauth":{"accessToken":"sk-not-a-real-token","refreshToken":"not-a-real-refresh-token"}}`), 0o600)
 		return 0
 	case "auth status":
 		if os.Getenv("ACCOUNT_TEST_BAD_STATUS") != "" {
