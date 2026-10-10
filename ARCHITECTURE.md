@@ -1376,6 +1376,13 @@ signal cancels the runs held, a third exits at once — and falls back to
 signals; `restart` checks every credential locally
 before it stops anything
 ([0027](docs/decisions/0027-stop-asks-then-signals-and-restart-checks-first.md)).
+A profile whose runner is its launchd job or systemd user unit is started by
+that service manager, by `start` and by `restart` after its stop, so the new
+daemon is one the manager watches. The unit is told apart from one of the same
+label for other directories by the log file it names, and when the manager
+cannot be asked while the unit file is there, both refuse with the manager's
+own command
+([0074](docs/decisions/0074-a-service-is-started-by-its-service-manager.md)).
 
 **Self-update** is off unless `config.toml` says `[update] auto = true`
 ([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)).
