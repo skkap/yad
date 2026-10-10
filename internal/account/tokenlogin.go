@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 // credentialsFile is where Claude looks for a home's login when its secure
@@ -148,6 +149,11 @@ func syncTokenLogin(home string) error {
 		return dropLogin(home, c)
 	case c.ours && c.accessToken == tok && !c.shared:
 		return nil
+	case loginBesideToken(home):
+		// Written now, by a run starting during the login, it would be what
+		// the login's check finds — or, on macOS, what Claude copies into
+		// the Keychain, where OwnLogin cannot take it out.
+		return nil
 	}
 	login, err := json.Marshal(loginFor(tok))
 	if err != nil {
@@ -186,14 +192,47 @@ func forgetTokenCopy(home, so string) error {
 // token itself stays stored, for the runs still on the account, until that
 // check says yes; a login walked away from gets its copy back at the next
 // run. Nothing is done for a home with no token file.
-func BeforeLoginBesideToken(harness, home string) error {
+//
+// Runs go on taking the account while the login is made, and each prepares
+// the home, so until done is called no preparation writes the copy back:
+// the login is marked in the home (loginMark). A claude one of those runs
+// starts finds no login for the minutes the login lasts. done is safe to
+// call on every way out, and a mark a dead process left stops counting
+// after loginMarkLife.
+func BeforeLoginBesideToken(harness, home string) (done func(), err error) {
+	done = func() {}
 	if !CanUseToken(harness) || !TokenFileExists(home) {
-		return nil
+		return done, nil
 	}
+	mark := filepath.Join(home, loginMark)
+	if err := os.WriteFile(mark, nil, 0o600); err != nil {
+		return done, err
+	}
+	done = func() { os.Remove(mark) }
 	if err := forgetTokenCopy(home, "the login does not start: its check would find the token's copy there and call the login made"); err != nil {
-		return err
+		done()
+		return func() {}, err
 	}
-	return dropTokenLogin(home)
+	if err := dropTokenLogin(home); err != nil {
+		done()
+		return func() {}, err
+	}
+	return done, nil
+}
+
+// loginMark is the mark of a login being made beside a token. It holds
+// nothing; its time is what counts.
+const loginMark = ".yad-login-beside-token"
+
+// loginMarkLife bounds how long a mark holds the token's copy back. A login
+// a hub drives ends within its own deadlines, far inside it; one at the
+// terminal is the owner's minutes. A mark older than this was left by a
+// process that died, and the copy comes back.
+const loginMarkLife = time.Hour
+
+func loginBesideToken(home string) bool {
+	info, err := os.Lstat(filepath.Join(home, loginMark))
+	return err == nil && time.Since(info.ModTime()) < loginMarkLife
 }
 
 // dropTokenLogin takes a token's login out of the home's credentials file,

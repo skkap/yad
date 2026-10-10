@@ -893,8 +893,10 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   its store, such as a plugin's MCP state on the first run, and the item
   then outranks the file. So `SetToken` deletes the home's Keychain items
   before it writes, and `account.BeforeLoginBesideToken` deletes them, with
-  the file login, before a login of Claude's own starts beside a token. If
-  the Keychain will not let go, the token is not stored or the login does
+  the file login, before a login of Claude's own starts beside a token. It
+  also leaves a `.yad-login-beside-token` mark until the login ends, an hour
+  at most, so a run starting during the login does not write the copy back.
+  If the Keychain will not let go, the token is not stored or the login does
   not start, and the error gives the delete to run by hand.
 - **On macOS a Claude home's login is in the Keychain, not the home**
   ([0070](docs/decisions/0070-a-claude-accounts-keychain-login-goes-with-its-home.md)):

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // A token account's home carries its token as the login a claude started by
@@ -166,6 +167,67 @@ func TestATokenAccountsHomeCarriesItsLoginForANestedClaude(t *testing.T) {
 			want := `{"accessToken":"` + tc.login + `","refreshToken":null,"expiresAt":null,"scopes":["user:inference"],"subscriptionType":null,"rateLimitTier":null}`
 			if string(got) != want {
 				t.Errorf("the login is %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+// Runs go on during a login made beside a token, and each prepares the home;
+// none of them may put the token's copy back while the login could still be
+// checked against it, or on macOS have Claude copy it into the Keychain. Once
+// the login is over, or its mark is so old that whatever made it is gone, the
+// copy comes back.
+func TestNoRunPutsTheTokensCopyBackDuringALoginBesideIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// after acts once the login has begun and a run has prepared the
+		// home; back is whether the next preparation writes the copy again.
+		after func(t *testing.T, home string, done func())
+		back  bool
+	}{
+		{name: "while the login is made", after: func(*testing.T, string, func()) {}},
+		{name: "once the login is over", after: func(_ *testing.T, _ string, done func()) { done() }, back: true},
+		{name: "a mark a dead process left", after: func(t *testing.T, home string, _ func()) {
+			old := time.Now().Add(-loginMarkLife - time.Minute)
+			if err := os.Chtimes(filepath.Join(home, loginMark), old, old); err != nil {
+				t.Fatal(err)
+			}
+		}, back: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			data := t.TempDir()
+			home, err := Ensure(data, "claude", "tl")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := SetToken(home, "sk-ant-oat01-x"); err != nil {
+				t.Fatal(err)
+			}
+			done, err := BeforeLoginBesideToken("claude", home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			has := func() bool {
+				c, err := readCredentials(home)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return c.ours
+			}
+			if _, err := Ensure(data, "claude", "tl"); err != nil {
+				t.Fatal(err)
+			}
+			if has() {
+				t.Fatal("a run starting during the login put the token's copy back")
+			}
+			tc.after(t, home, done)
+			if _, err := Ensure(data, "claude", "tl"); err != nil {
+				t.Fatal(err)
+			}
+			if got := has(); got != tc.back {
+				t.Errorf("the token's copy is back: %v, want %v", got, tc.back)
 			}
 		})
 	}

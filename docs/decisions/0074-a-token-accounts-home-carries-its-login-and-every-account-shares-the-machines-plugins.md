@@ -104,6 +104,16 @@ prints, logs or sends it.
   only `SetToken` changes the token, and `SetToken` deletes the copy first.
   The `mcpOAuth` state Claude kept for the home goes with the item, and
   Claude makes it again.
+- **No run puts the copy back while a login beside the token is made.** Runs
+  go on taking the account during those minutes, and each one prepares the
+  home. A copy written then would be what the login's check finds, and on
+  macOS Claude would move it into the Keychain, where `OwnLogin` cannot take
+  it out. So `BeforeLoginBesideToken` leaves a `.yad-login-beside-token` mark
+  in the home, and while the mark is there no preparation writes the copy.
+  The login's caller removes the mark on every way out. A mark older than an
+  hour was left by a process that died, and stops counting. A claude that
+  one of those runs starts finds no login until the login ends. The run
+  itself has the token in its environment.
 
 **Every Claude account shares the machine's `plugins/`**, linked like
 `skills/`. 0054 shares "never a file the harness keeps state in" because two
@@ -116,7 +126,11 @@ already has many sessions in it at once, and none of it belongs to a login.
   files are removed, `rmdir` takes the directory, and fails if something
   was written in meanwhile, and the link is renamed in. A run starting at
   the same moment never finds the path missing. These are the race rules
-  of the transcript link (`account.link`).
+  of the transcript link (`account.link`). The look inside and the removals
+  go through an `os.Root` opened on the directory itself, never by path.
+  Another run preparing the same home may already have put the link there,
+  and a removal by path would then go through it and delete the machine's
+  own `installed_plugins.json`.
 - **Anything else stays**: a plugin installed for that account, a
   marketplace of its own, a file, or a link the owner made. Each is the
   owner's choice for the account, as a real `skills/` is.
@@ -163,6 +177,15 @@ what the owner's workaround was, and it is what works.
   Keychain copy stays until the token is stored again or a login replaces
   it. The owner is already told to revoke that token, and revoking it ends
   the copy too.
+- **A claude already running when a token is rotated can bring the old
+  token back to the Keychain on macOS.** `SetToken` deletes the item. A run
+  in progress whose claude then saves to its store may write back what it
+  read before the rotation, if it held that in memory: Claude's Keychain
+  reads are cached for 30 seconds. The item would then hold the old token
+  and outrank the file until the next `SetToken` or a login beside the
+  token. Not measured. Runs are unaffected, and a nested claude's next
+  failure points at it. Rotate the token while the account has no run, and
+  the window does not arise.
 - **Storing a token on macOS deletes a working login of the account's own**
   that Claude kept in the Keychain, when the account was logged in its own
   way before. The token outranks that login in every run already. Leaving

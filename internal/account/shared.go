@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"syscall"
 )
 
 // sharedConfig is what an account's home takes from the harness's own default
@@ -110,47 +109,74 @@ func shareConfig(harness, home string) error {
 // directory something was written into meanwhile, and a link renamed into
 // place, so a run starting then never finds the path missing. A directory
 // holding anything more is left as it is.
+//
+// Every look inside dst and every removal goes through a handle on the
+// directory itself, opened without following a link. Another run preparing
+// the same home can replace dst with the link at any moment, and a removal
+// by path after that would go through the link and delete the machine's own
+// files. Through the handle it finds the directory that run already emptied,
+// and removes nothing.
 func replaceEmpty(dst, src string, files []string) error {
-	entries, err := os.ReadDir(dst)
+	home, err := os.OpenRoot(filepath.Dir(dst))
 	if err != nil {
-		return nil // gone, or not readable as a directory: not one to replace
+		return nil
+	}
+	defer home.Close()
+	// A link here leads out of the home, which OpenRoot refuses, so only the
+	// real directory is ever opened.
+	dir, err := home.OpenRoot(filepath.Base(dst))
+	if err != nil {
+		return nil // gone, a link, or not a directory: not one to replace
+	}
+	defer dir.Close()
+	entries, err := fs.ReadDir(dir.FS(), ".")
+	if err != nil {
+		return nil
 	}
 	var remove, rmdir []string
 	for _, e := range entries {
-		p := filepath.Join(dst, e.Name())
 		switch {
 		case e.IsDir():
-			if sub, err := os.ReadDir(p); err != nil || len(sub) > 0 {
+			if sub, err := fs.ReadDir(dir.FS(), e.Name()); err != nil || len(sub) > 0 {
 				return nil
 			}
-			rmdir = append(rmdir, p)
-		case e.Type().IsRegular() && slices.Contains(files, e.Name()) && recordsNothing(p):
-			remove = append(remove, p)
+			rmdir = append(rmdir, e.Name())
+		case e.Type().IsRegular() && slices.Contains(files, e.Name()) && recordsNothing(dir, e.Name()):
+			remove = append(remove, e.Name())
 		default:
 			return nil
 		}
 	}
-	for _, p := range remove {
-		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if beforeEmptyRemove != nil {
+		beforeEmptyRemove(dst)
+	}
+	for _, name := range remove {
+		if err := dir.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
-	for _, p := range rmdir {
-		// A directory written into since it was read is the harness's now;
-		// the link is left for a later run.
-		if err := syscall.Rmdir(p); err != nil && !errors.Is(err, syscall.ENOENT) {
+	for _, name := range rmdir {
+		// Root.Remove takes a directory only when it is empty: one written
+		// into since it was read is the harness's now, and the link waits
+		// for a later run.
+		if err := dir.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 	}
 	return link(dst, src, func(string, string) error { return nil })
 }
 
+// beforeEmptyRemove is nil outside tests. A test sets it to be the other run
+// that wins: to replace dst with the link between the look inside and the
+// removals, the gap a removal by path would delete the machine's files in.
+var beforeEmptyRemove func(dst string)
+
 // recordsNothing says whether a file the harness writes when there is nothing
 // to record holds just that: a JSON object whose every entry but its format
 // version is empty. Anything else — a plugin installed, a marketplace added,
 // a file that is not JSON — is something recorded, and is kept.
-func recordsNothing(path string) bool {
-	f, err := os.Open(path)
+func recordsNothing(dir *os.Root, name string) bool {
+	f, err := dir.Open(name)
 	if err != nil {
 		return false
 	}

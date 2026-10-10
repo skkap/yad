@@ -424,12 +424,12 @@ func TestATokensKeychainCopyGoesBeforeItCouldOutrankIt(t *testing.T) {
 			calls: true, tokenAfter: tok, loginAfter: true},
 		{name: "storing a token the Keychain will not let go of", mode: "locked", call: func(h string) error { return SetToken(h, tok) },
 			wantErr: true, calls: true},
-		{name: "a login beside a token", mode: "login", token: true, call: func(h string) error { return BeforeLoginBesideToken("claude", h) },
+		{name: "a login beside a token", mode: "login", token: true, call: func(h string) error { _, err := BeforeLoginBesideToken("claude", h); return err },
 			calls: true, tokenAfter: tok},
 		{name: "a login beside a token the Keychain will not let go of", mode: "locked", token: true,
-			call: func(h string) error { return BeforeLoginBesideToken("claude", h) }, wantErr: true, calls: true, tokenAfter: tok, loginAfter: true},
-		{name: "a login with no token beside it", mode: "login", call: func(h string) error { return BeforeLoginBesideToken("claude", h) }},
-		{name: "a codex login", mode: "login", token: true, call: func(h string) error { return BeforeLoginBesideToken("codex", h) },
+			call: func(h string) error { _, err := BeforeLoginBesideToken("claude", h); return err }, wantErr: true, calls: true, tokenAfter: tok, loginAfter: true},
+		{name: "a login with no token beside it", mode: "login", call: func(h string) error { _, err := BeforeLoginBesideToken("claude", h); return err }},
+		{name: "a codex login", mode: "login", token: true, call: func(h string) error { _, err := BeforeLoginBesideToken("codex", h); return err },
 			tokenAfter: tok, loginAfter: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -166,6 +166,58 @@ func TestAnAccountHomeSharesTheMachinesPlugins(t *testing.T) {
 	}
 }
 
+// Two runs replacing one home's empty plugins/ at once: the other run wins in
+// the gap between this one's look inside and its removals, and leaves the
+// link to the machine's plugins at the path. What this run then removes must
+// be in the directory it looked at, never through that link.
+func TestReplacingAnEmptyPluginsDirNeverDeletesThroughTheWinnersLink(t *testing.T) {
+	user := t.TempDir()
+	t.Setenv("HOME", user)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	def := filepath.Join(user, ".claude", "plugins")
+	installed := `{"version":2,"plugins":{"revmux@revmux":[{"scope":"user"}]}}`
+	writeTree(t, def, map[string]string{"installed_plugins.json": installed, "known_marketplaces.json": "{}"})
+	data := t.TempDir()
+	home := HomeDir(data, "claude", "tl")
+	own := filepath.Join(home, "plugins")
+	if err := os.MkdirAll(own, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, own, map[string]string{"installed_plugins.json": "{}", "known_marketplaces.json": "{}"})
+	won := false
+	beforeEmptyRemove = func(dst string) {
+		// The winner, by path, as a run doing exactly this would.
+		for _, f := range []string{"installed_plugins.json", "known_marketplaces.json"} {
+			if err := os.Remove(filepath.Join(dst, f)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Remove(dst); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(def, dst); err != nil {
+			t.Fatal(err)
+		}
+		won = true
+	}
+	t.Cleanup(func() { beforeEmptyRemove = nil })
+	if _, err := Ensure(data, "claude", "tl"); err != nil {
+		t.Fatal(err)
+	}
+	if !won {
+		t.Fatal("the race was never staged; this test would pass vacuously")
+	}
+	if b, err := os.ReadFile(filepath.Join(def, "installed_plugins.json")); err != nil || string(b) != installed {
+		t.Errorf("the machine's installed_plugins.json is %q (%v): deleted through the link", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(def, "known_marketplaces.json")); err != nil {
+		t.Errorf("the machine's known_marketplaces.json is gone: %v", err)
+	}
+	if at, err := os.Readlink(own); err != nil || at != def {
+		t.Errorf("plugins/ is %q (%v), want the link", at, err)
+	}
+}
+
 // A machine with no plugins of its own links none, and the empty plugins/
 // Claude makes in the account's home is left for it.
 func TestNoMachinePluginsLeavesTheHomesOwn(t *testing.T) {
