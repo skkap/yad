@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -36,13 +37,14 @@ const Redacted = "[redacted]"
 // line is dropped, since a credential cut at its start would no longer match
 // and would go out in part.
 func StderrTail(stderr string, env []string, truncated bool) string {
+	var secrets []string
 	for _, kv := range env {
 		_, v, ok := strings.Cut(kv, "=")
 		if !ok {
 			continue
 		}
 		if len(v) >= minSecret {
-			stderr = strings.ReplaceAll(stderr, v, Redacted)
+			secrets = append(secrets, v)
 		}
 		// Each line of a value that has several — a PEM key a grant
 		// delivers — on its own too: a tail cut part-way through the value
@@ -50,10 +52,17 @@ func StderrTail(stderr string, env []string, truncated bool) string {
 		if strings.Contains(v, "\n") {
 			for _, line := range strings.Split(v, "\n") {
 				if line = strings.TrimSpace(line); len(line) >= minSecret {
-					stderr = strings.ReplaceAll(stderr, line, Redacted)
+					secrets = append(secrets, line)
 				}
 			}
 		}
+	}
+	// Longest first: a value that is part of another — a URL, and the same
+	// URL with a token in its query — replaced first would leave the longer
+	// one unmatched, and its token whole.
+	slices.SortStableFunc(secrets, func(a, b string) int { return len(b) - len(a) })
+	for _, s := range secrets {
+		stderr = strings.ReplaceAll(stderr, s, Redacted)
 	}
 	lines := strings.Split(stderr, "\n")
 	if truncated && len(lines) > 0 {
