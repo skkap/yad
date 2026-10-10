@@ -13,7 +13,7 @@ import (
 // checks are in internal/conformance, which speaks to the hub over HTTP and
 // knows nothing about `yad hub`: this parses, prints, and exits non-zero when
 // a hub broke a rule.
-func cmdConformance(ctx context.Context, args []string, w io.Writer) error {
+func cmdConformance(ctx context.Context, args []string, w, stderr io.Writer) error {
 	fs := flag.NewFlagSet("conformance", flag.ContinueOnError)
 	token := fs.String("token", "", "a registration token the hub has issued for a new runner and nobody has used; one made to re-register an existing runner is refused, and the refusal is the hub's, not a fault of its own; - reads it from stdin (see decision 0020)")
 	second := fs.String("second-token", "", "another unused registration token, for a second runner that sends events and a result for a run the first holds; without it those two rules are skipped. - reads it from stdin, when --token does not")
@@ -28,11 +28,11 @@ func cmdConformance(ctx context.Context, args []string, w io.Writer) error {
 		// and a wrong guess spends each token on the other's job.
 		return errors.New("only one of --token and --second-token can read stdin; pass the other as its value")
 	}
-	tok, err := tokenArg(*token)
+	tok, err := tokenArg(ctx, stderr, *token)
 	if err != nil {
 		return err
 	}
-	tok2, err := tokenArg(*second)
+	tok2, err := tokenArg(ctx, stderr, *second)
 	if err != nil {
 		return err
 	}

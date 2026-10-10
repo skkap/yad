@@ -147,8 +147,8 @@ needs and nothing it does not:
 
 **Logging in.** Each harness account is logged in once, on the machine:
 `yad account add claude main --token -` with a token from `claude setup-token`,
-made on any computer with a browser, or `yad account add codex main --device`
-with a code entered anywhere. Add more accounts under other labels and the
+made on any computer with a browser and pasted at the prompt (or piped in),
+or `yad account add codex main --device` with a code entered anywhere. Add more accounts under other labels and the
 runner uses them in turn.
 
 When the machine has no convenient shell — a VM, a container, a box somewhere

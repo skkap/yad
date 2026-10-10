@@ -861,7 +861,11 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   `--device-auth`, for a machine with no browser.
 - **A token account** ([0054](docs/decisions/0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md)):
   `yad account add claude tl --token -` reads a `claude setup-token` token
-  from stdin — never argv — and needs no terminal. It is kept in the home as
+  from stdin — never argv — and needs no terminal. At one it asks for the
+  token, reads a single line with echo off and goes on at Enter; piped, it
+  reads the whole input. Every `--token -` (`yad connect`,
+  `yad conformance`, `yad hub login token`) reads through the same
+  `readToken`, and Ctrl-C ends any of them. It is kept in the home as
   `yad-oauth-token` (`0600`; one others can read is not used) and reaches the
   account's runs and its login check as `CLAUDE_CODE_OAUTH_TOKEN`, after the
   home variable, so a printed command never carries it. Claude's login check
@@ -1264,7 +1268,8 @@ yad doctor                         what is installed, what YAD can drive, and wh
                                    this machine or profile is reachable by other users
 yad harnesses [--json]             the capability document, as a hub receives it but for
                                    the accounts feature, added per connection (0057)
-yad connect <url> --token T|-      register with a hub (- reads the token from stdin — 0020)
+yad connect <url> --token T|-      register with a hub (- reads the token from stdin,
+                                   asking for it at a terminal — 0020)
 yad disconnect <name> [--now] [--force]
                                    the hub retires the runner, config.toml and the
                                    credential lose the connection, then a running
