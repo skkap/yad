@@ -764,6 +764,7 @@ these are the ones worth acting on:
 | `grants_lost` | lost | a run parked on a usage limit was picked up by a later runner process, and its grants, or the credential in a source's URL, did not survive. Submit a new run, with them |
 | `max_wait_exceeded` | timed_out | it waited longer than `max_wait_ms` for a free account |
 | `wall_clock_timeout`, `inactivity_timeout` | timed_out | stopped by the run's own caps |
+| `harness_silent` | timed_out | the harness produced no event within the runner owner's first-output timeout of starting — of the run's start, or of its move to another account when it moved (2 minutes unless they changed it, or the run's `inactivity_ms` if lower ends it as `inactivity_timeout` instead). It is the machine's problem, not the run's: the message carries the end of the harness's stderr and what the owner should check. Sending the same run again to the same runner is likely to end the same way |
 | `source_refused` | failed | a source breaks the owner's rules — a path outside the allowed directories, any source on the machine at a runner whose document says `path_sources: false`, a transport the runner does not use |
 | `source_failed`, `setup_failed`, `prepare_failed` | failed | the workdir could not be built, or the repository's setup hook failed |
 | `prompt_too_long` | failed | the conversation no longer fits the model's context |

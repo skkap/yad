@@ -160,6 +160,7 @@ func Start(ctx context.Context, agent Agent, spec adapter.Spec) (adapter.Turn, e
 		agent:     agent,
 		p:         p,
 		spec:      spec,
+		env:       env,
 		answer:    answer,
 		asked:     spec.NativeSessionID,
 		forkFrom:  fork,
@@ -184,10 +185,14 @@ func Start(ctx context.Context, agent Agent, spec adapter.Spec) (adapter.Turn, e
 }
 
 type turn struct {
-	ctx    context.Context
-	agent  Agent
-	p      *supervise.Process
-	spec   adapter.Spec
+	ctx   context.Context
+	agent Agent
+	p     *supervise.Process
+	spec  adapter.Spec
+	// env is what the agent was started with — Spec.Env as the agent's
+	// Prepare left it, OpenCode's server password included — whose values
+	// its stderr is quoted without (adapter.StderrTail).
+	env    []string
 	answer string // the owner's answer to a permission request
 	// asked is the session the run resumes; "" for a new one. forkFrom is
 	// the one it forks into a new one, set only when asked is "".
@@ -319,11 +324,12 @@ loop:
 	t.cleanup()
 
 	t.mu.Lock()
+	stderr := t.p.Stderr()
 	e := ended{
 		interrupted: t.interrupted,
 		cancelled:   t.ctx.Err() != nil,
 		exitErr:     exitErr,
-		stderr:      t.p.Stderr(),
+		stderr:      adapter.StderrTail(stderr, t.env, len(stderr) >= supervise.StderrTail),
 		asked:       t.asked,
 		check:       t.spec.HarnessCheck(t.agent.ID, t.agent.LoginCheck...),
 	}

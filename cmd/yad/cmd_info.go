@@ -50,11 +50,16 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		return err
 	}
 	found := capability.Detect(ctx)
+	var locked map[string]bool
 	// The login check needs to know which harnesses have accounts. A profile
 	// with no config yet has none, which is what Load's default says; one
 	// that cannot be read is no reason to refuse the rest of the answer.
 	if cfg, err := config.Load(g.paths); err == nil {
 		capability.DefaultLogins(ctx, found, cfg)
+		// Before accountLogins: an account's state is the daemon's own
+		// check, made where the daemon runs, and this session's keychain
+		// says nothing about it.
+		locked = keychainLocked(found, os.Getenv)
 		// Read-only, as `yad account list` reads it (decision 0043). States
 		// that cannot be read change nothing here: `yad account list` says why.
 		if accounts, err := account.Read(ctx, g.paths, account.ListsOf(cfg), time.Now()); err == nil {
@@ -68,10 +73,13 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "HARNESS\tSTATUS\tVERSION\tPATH")
-	ready, broken, needsLogin, noAdapter := 0, 0, 0, 0
+	ready, broken, needsLogin, noAdapter, unknown := 0, 0, 0, 0, 0
 	for _, d := range found {
 		status := "—"
 		switch {
+		case locked[d.ID]:
+			status = "unknown over ssh"
+			unknown++
 		case d.NeedsLogin:
 			status = "needs login"
 			needsLogin++
@@ -86,7 +94,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 			noAdapter++
 		}
 		detail := d.Version
-		if d.Error != "" {
+		if d.Error != "" && !locked[d.ID] {
 			detail = d.Error
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", d.Label, status, truncate(detail, 40), d.Path)
@@ -98,7 +106,13 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		// In full, because the column above is truncated and what a harness
 		// error carries now is the next action (DEV-60) — the footer below
 		// tells the owner to fix the errors above, so they have to be readable.
-		if d.Error != "" {
+		switch {
+		case locked[d.ID]:
+			fmt.Fprintf(w, "\nnote: %s — this doctor runs over SSH, where macOS keeps the login keychain locked, so %s's own login reads as missing here whether or not it is there. "+
+				"A runner service in the desktop session reads the keychain unlocked; a daemon started from this SSH session cannot read it either. "+
+				"For a true answer, run `%s` in a terminal on the Mac itself, or unlock the keychain in this session with `security unlock-keychain` and run it again\n",
+				d.Label, d.ID, g.paths.Command("doctor"))
+		case d.Error != "":
 			fmt.Fprintf(w, "\nerror: %s — %s\n", d.Label, d.Error)
 		}
 		for _, warn := range d.Warnings {
@@ -143,6 +157,11 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		// Checked before noAdapter: a broken Claude beside a working Codex needs
 		// fixing, not installing.
 		fmt.Fprintln(w, "No drivable harness: an installed one failed its version probe — fix the errors above and run this again.")
+		return nil
+	case unknown > 0:
+		// Before needsLogin: "log it in" is the wrong fix for a login this
+		// session cannot see, and logging in again over SSH would not help.
+		fmt.Fprintln(w, "No harness confirmed drivable: over SSH this doctor cannot read the login keychain — check it from the Mac itself, as the note above says.")
 		return nil
 	case needsLogin > 0:
 		// Its version probe passed; the error above names the login to run.
@@ -196,6 +215,32 @@ func accountVariableWarnings(env []string) []string {
 		out = append(out, fmt.Sprintf("%s is set in this environment, and yad removes it from every harness it starts: %s %s — "+
 			"a run uses its account's login instead, or the harness's own login when it has no accounts (decision 0060). "+
 			"To bill runs that way, add an account logged in with it; for a project's own use, a hub sends the value as a grant under another name", name, name, why))
+	}
+	return out
+}
+
+// keychainLogin is account.KeychainLogin, swapped by a test so the macOS
+// answer is tested on every platform.
+var keychainLogin = account.KeychainLogin
+
+// keychainLocked is each harness whose default login check said "not logged
+// in" from an SSH session on a Mac (DEV-170). macOS keeps the login keychain
+// locked to a session that did not log in at the console, so Claude cannot
+// read its login there and answers as if it had none: a verdict about this
+// session, not about the machine or the runner service. Only the default
+// login's: each account's state is the daemon's own check.
+func keychainLocked(found []harness.Detected, getenv func(string) string) map[string]bool {
+	if getenv("SSH_CONNECTION") == "" && getenv("SSH_TTY") == "" {
+		return nil
+	}
+	var out map[string]bool
+	for _, d := range found {
+		if d.NeedsLogin && keychainLogin(d.ID) {
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[d.ID] = true
+		}
 	}
 	return out
 }

@@ -417,6 +417,10 @@ func TestFailures(t *testing.T) {
 			if tc.asked != "" && len(h.seen(t).sent(tc.asked)) != 1 {
 				t.Errorf("the adapter did not ask %s", tc.asked)
 			}
+			// What a watchdog's error quotes (decision 0075).
+			if tc.env["CODEX_TEST_MODE"] == "died" && (out.Stderr != "Error: something went badly wrong" || !strings.Contains(out.Check, "codex login status")) {
+				t.Errorf("outcome stderr %q, check %q", out.Stderr, out.Check)
+			}
 		})
 	}
 }

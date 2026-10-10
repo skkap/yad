@@ -545,7 +545,7 @@ type ended struct {
 	interrupted bool   // we asked codex to interrupt the turn
 	cancelled   bool   // the run's context ended
 	exitErr     error  // the app-server's exit status
-	stderr      string // its last words
+	stderr      string // its last words, as adapter.StderrTail quotes them
 	asked       string // the thread id the run resumed, if it resumed one
 	check       string // the login check for the owner, in the run's account home
 }
@@ -555,7 +555,7 @@ type ended struct {
 // turn/completed has not succeeded.
 func (t *translator) outcome(e ended) adapter.Outcome {
 	t.text.Flush()
-	o := adapter.Outcome{NativeSessionID: t.thread, APIRetries: t.retries, Windows: t.windows()}
+	o := adapter.Outcome{NativeSessionID: t.thread, APIRetries: t.retries, Windows: t.windows(), Stderr: e.stderr, Check: e.loginCheck()}
 	if t.counted {
 		model := t.model
 		if model == "" {
@@ -708,15 +708,8 @@ func exitDetail(e ended) string {
 	if e.exitErr != nil {
 		msg += " (" + e.exitErr.Error() + ")"
 	}
-	if s := strings.TrimSpace(e.stderr); s != "" {
-		msg += ": " + lastLine(s)
+	if e.stderr != "" {
+		msg += ": " + e.stderr
 	}
 	return msg
-}
-
-func lastLine(s string) string {
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		return s[i+1:]
-	}
-	return s
 }

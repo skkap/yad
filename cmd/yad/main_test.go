@@ -15,6 +15,7 @@ import (
 
 	"github.com/skkap/yad/internal/harness"
 	"github.com/skkap/yad/internal/hostool"
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -198,6 +199,70 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 	run(context.Background(), []string{"doctor"}, &o, &e)
 	if !strings.Contains(o.String(), "failed its version probe") {
 		t.Errorf("claude broken:\n%s", o.String())
+	}
+}
+
+// Over SSH on a Mac the login keychain is locked, so Claude's own login check
+// says "not logged in" whatever is there: doctor says it cannot tell, and
+// why, rather than "needs login" and a login that would not help (DEV-170).
+// Off SSH the same answer is still "needs login".
+func TestDoctorOverSSHDoesNotCallAKeychainLoginMissing(t *testing.T) {
+	was := keychainLogin
+	keychainLogin = func(h string) bool { return h == "claude" }
+	t.Cleanup(func() { keychainLogin = was })
+	// Its own path, because the login answer is kept per binary for a minute.
+	bin := t.TempDir() + "/claude-over-ssh"
+	script := "#!/bin/sh\ncase \"$*\" in\n'auth status') echo '{\"loggedIn\": false}'; exit 1 ;;\n--help) echo '  --system-prompt-snapshot <on|off>  --fork-session' ;;\n*) echo '2.1.276 (Claude Code)' ;;\nesac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		env      map[string]string
+		says     []string
+		saysNot  []string
+		statusRE string
+	}{
+		{"over ssh", map[string]string{"SSH_CONNECTION": "10.0.0.2 52000 10.0.0.1 22"},
+			[]string{"note: Claude Code — this doctor runs over SSH, where macOS keeps the login keychain locked", "`security unlock-keychain`", "cannot read the login keychain"},
+			[]string{"needs login", "error: Claude Code", "is not logged in"}, `Claude Code +unknown over ssh`},
+		{"over ssh with a terminal", map[string]string{"SSH_TTY": "/dev/ttys004"},
+			[]string{"keychain locked"}, []string{"needs login"}, `Claude Code +unknown over ssh`},
+		{"at the machine", nil,
+			[]string{"is not logged in — log it in as the error above says"}, []string{"runs over SSH", "keychain"}, `Claude Code +needs login`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SSH_CONNECTION", "")
+			t.Setenv("SSH_TTY", "")
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			t.Setenv("YAD_CONFIG_DIR", privateDir(t))
+			t.Setenv("YAD_DATA_DIR", shortDir(t))
+			noHostTools(t)
+			t.Setenv("YAD_CLAUDE_PATH", bin)
+			var o, e bytes.Buffer
+			if code := run(context.Background(), []string{"doctor"}, &o, &e); code != 0 {
+				t.Fatalf("exit %d: %s", code, e.String())
+			}
+			out := o.String()
+			if !regexp.MustCompile(tc.statusRE).MatchString(out) {
+				t.Errorf("status is not %q:\n%s", tc.statusRE, out)
+			}
+			for _, s := range tc.says {
+				if !strings.Contains(out, s) {
+					t.Errorf("doctor does not say %q:\n%s", s, out)
+				}
+			}
+			for _, s := range tc.saysNot {
+				if strings.Contains(out, s) {
+					t.Errorf("doctor says %q:\n%s", s, out)
+				}
+			}
+			for _, c := range shellwordtest.Commands(out, "yad ") {
+				shellwordtest.Check(t, c, "yad", "--profile", "default", "doctor")
+			}
+		})
 	}
 }
 

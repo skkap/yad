@@ -394,9 +394,11 @@ once 24 hours pass without one; a run is never interrupted for it, and a stop
 asked for meanwhile wins. The pid stays, so a service manager sees no exit.
 _See_: [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md), `internal/selfupdate`
 
-**Watchdog** — the runner's two timers on a run: an inactivity timeout on the
-event stream, which catches a wedged harness, and an optional wall-clock cap set
-per run.
+**Watchdog** — the runner's timers on a run: an inactivity timeout on the
+event stream, which catches a wedged harness; a shorter first-output timeout
+before the harness's first event, which catches one wedged before its first
+word (`harness_silent`, [0075](docs/decisions/0075-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md));
+and an optional wall-clock cap set per run.
 
 ## Relationships
 

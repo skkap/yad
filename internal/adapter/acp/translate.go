@@ -243,7 +243,7 @@ type ended struct {
 	interrupted bool   // we asked the agent to cancel the turn
 	cancelled   bool   // the run's context ended
 	exitErr     error  // the agent's exit status
-	stderr      string // its last words
+	stderr      string // its last words, as adapter.StderrTail quotes them
 	asked       string // the session the run resumed, if it resumed one
 	check       string // the agent's login check, for the owner
 }
@@ -252,7 +252,7 @@ type ended struct {
 // agent that exits 0 before answering has not succeeded.
 func (t *translator) outcome(e ended) adapter.Outcome {
 	t.text.Flush()
-	o := adapter.Outcome{NativeSessionID: t.session}
+	o := adapter.Outcome{NativeSessionID: t.session, Stderr: e.stderr, Check: e.check}
 	// A turn cancelled before the model answered carries a usage of zeros,
 	// which is no usage: nothing was spent, and a usage event would say
 	// something was.
@@ -329,11 +329,8 @@ func exitDetail(e ended) string {
 	if e.exitErr != nil {
 		msg += " (" + e.exitErr.Error() + ")"
 	}
-	if s := strings.TrimSpace(e.stderr); s != "" {
-		if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-			s = s[i+1:]
-		}
-		msg += ": " + s
+	if e.stderr != "" {
+		msg += ": " + e.stderr
 	}
 	return msg
 }

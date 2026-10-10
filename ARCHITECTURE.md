@@ -758,11 +758,20 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   native id and workdir, so the next run resumes them.
 - **Watchdogs**: inactivity on the event stream (owner default 30 min; a run may
   lower it) and an optional wall-clock cap. "Force-stopping a healthy run throws
-  away the work" — the inactivity default errs long. A watchdog that fires
+  away the work" — the inactivity default errs long. Until a turn's first
+  event a shorter first-output timeout runs instead (owner default 2 min,
+  `[supervise] first_output`; a run's lower inactivity still wins): a
+  harness that says nothing at all is wedged before its first word, and has
+  no work to throw away
+  ([0075](docs/decisions/0075-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md)).
+  It sits in the executor, so it covers every adapter. A watchdog that fires
   climbs the same ladder, starting with the interrupt, which keeps the session
   resumable. The run is
-  `timed_out`, with the error class `inactivity_timeout` or
-  `wall_clock_timeout`, whatever the stopped harness said last.
+  `timed_out`, with the error class `inactivity_timeout`, `harness_silent` or
+  `wall_clock_timeout`, whatever the stopped harness said last; the error
+  quotes the end of the harness's stderr (`adapter.StderrTail`: five lines, a
+  KiB, every value yad put in its environment replaced), and a
+  `harness_silent` one the harness check to run by hand.
 - **Exit 0 is not success.** Only the harness's result event decides the state;
   `prompt_too_long` arrives with `subtype: success`.
 
@@ -1232,6 +1241,10 @@ manage_accounts = false   # this hub may not add or remove accounts; absent = it
 [sessions]
 idle_ttl   = "336h"   # close sessions idle this long; "0s" keeps them — 0035
 disk_floor = "5GiB"   # below this free under the workdirs, idle sessions go; "0" is off
+
+[supervise]
+inactivity   = "30m"   # stop a run whose harness emits no event this long; a run may lower it
+first_output = "2m"    # the same, before the harness's first event: harness_silent — 0075
 
 [drain]
 wait = "30m"   # how long a drain lets runs finish before cancelling them — 0029

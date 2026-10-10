@@ -546,7 +546,7 @@ components:
       additionalProperties: true
       properties:
         class:
-          description: "What kind of failure, for a program to act on: refused, session_closed, resume_rejected, usage_limit, prompt_too_long, source_refused, setup_failed, inactivity_timeout and others. Not a closed set: a class you do not know is a failure to show, not to parse."
+          description: "What kind of failure, for a program to act on: refused, session_closed, resume_rejected, usage_limit, prompt_too_long, source_refused, setup_failed, inactivity_timeout, harness_silent and others. Not a closed set: a class you do not know is a failure to show, not to parse."
           type: string
         message:
           description: What happened, for a person. At most 1 MiB.

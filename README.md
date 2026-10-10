@@ -154,6 +154,18 @@ that calls `claude` too — a reviewer, a script — with no shell setup: the
 token is also kept as Claude's own login in the account's home
 ([0076](docs/decisions/0076-a-token-accounts-home-carries-its-login-and-every-account-shares-the-machines-plugins.md)).
 
+**On a machine you share with other Claude users — or with your own
+everyday `claude` — give yad an account rather than the default login.**
+With no account, runs use the harness's own home (`~/.claude`), and whatever
+else runs from it runs beside them: a background `claude` there once left
+every run on a Mac silent from its first second. An account is a
+home of its own, which nothing but yad's runs uses
+([0075](docs/decisions/0075-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md)).
+A run whose harness says nothing at all in its first two minutes is stopped
+and ends `harness_silent`, with the end of what the harness wrote to stderr
+and the command to try it by hand (`[supervise] first_output` in
+`config.toml` changes the two minutes).
+
 When the machine has no convenient shell — a VM, a container, a box somewhere
 else — **the hub can do it instead**, if it supports it. It shows **Log in**
 beside an account the runner reports as needing one: follow the link and

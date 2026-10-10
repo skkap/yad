@@ -24,6 +24,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 	hubdb "github.com/skkap/yad/internal/hub/store/db"
 	"github.com/skkap/yad/internal/hubclient"
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 	"github.com/skkap/yad/internal/store/db"
 	"github.com/skkap/yad/internal/supervise"
 )
@@ -178,23 +179,43 @@ func cancels(res v1.SyncResponse) []string {
 // harness says last; a harness that ignores the interrupt loses its process
 // group after the grace.
 func TestWatchdogs(t *testing.T) {
+	stderr := &adapter.Outcome{State: v1.RunCancelled, Stderr: "loading settings | waiting on the lock"}
 	for _, tc := range []struct {
-		name  string
-		edit  func(*v1.Run)
-		owner time.Duration
-		ad    adapter.Adapter
-		class string
+		name   string
+		edit   func(*v1.Run)
+		owner  time.Duration
+		first  time.Duration
+		ad     adapter.Adapter
+		class  string
+		says   []string
+		saysNo []string
 	}{
-		{"inactivity set by the run", func(r *v1.Run) { r.InactivityMS = 30 }, 0,
-			fakeHarness(fake.Script{Events: []v1.Event{{Kind: v1.EventText, Text: "hi"}}, Hang: true}), ClassInactivity},
-		{"inactivity from the owner's default", func(r *v1.Run) {}, 30 * time.Millisecond,
-			fakeHarness(fake.Script{Hang: true}), ClassInactivity},
-		{"a run cannot raise the owner's inactivity", func(r *v1.Run) { r.InactivityMS = int64(time.Hour / time.Millisecond) }, 30 * time.Millisecond,
-			fakeHarness(fake.Script{Hang: true}), ClassInactivity},
-		{"wall clock", func(r *v1.Run) { r.WallClockMS = 60 }, 0,
+		{"inactivity set by the run", func(r *v1.Run) { r.InactivityMS = 30 }, 0, 0,
+			fakeHarness(fake.Script{Events: []v1.Event{{Kind: v1.EventText, Text: "hi"}}, Hang: true}), ClassInactivity, nil, nil},
+		{"inactivity from the owner's default", func(r *v1.Run) {}, 30 * time.Millisecond, 0,
+			fakeHarness(fake.Script{Hang: true}), ClassInactivity, nil, nil},
+		{"a run cannot raise the owner's inactivity", func(r *v1.Run) { r.InactivityMS = int64(time.Hour / time.Millisecond) }, 30 * time.Millisecond, 0,
+			fakeHarness(fake.Script{Hang: true}), ClassInactivity, nil, nil},
+		{"wall clock", func(r *v1.Run) { r.WallClockMS = 60 }, 0, 0,
 			// Events keep coming, so only the wall clock can stop it.
-			fakeHarness(fake.Script{Events: manyEvents(1000), Delay: 5 * time.Millisecond}), ClassWallClock},
-		{"interrupt ignored", func(r *v1.Run) { r.InactivityMS = 30 }, 0, deafHarness{}, ClassInactivity},
+			fakeHarness(fake.Script{Events: manyEvents(1000), Delay: 5 * time.Millisecond}), ClassWallClock, nil, nil},
+		{"interrupt ignored", func(r *v1.Run) { r.InactivityMS = 30 }, 0, 0, deafHarness{}, ClassInactivity, nil, nil},
+		// DEV-170: a harness wedged before its first word is stopped at the
+		// first-output timeout, not left to the inactivity timeout's half hour.
+		{"silent from its start", func(r *v1.Run) {}, 0, 30 * time.Millisecond,
+			fakeHarness(fake.Script{Hang: true}), ClassHarnessSilent,
+			[]string{"no event in the first 30ms after it started", "check it on the runner with `yad ", "a home of its own: `yad "}, nil},
+		{"silent, with its stderr", func(r *v1.Run) {}, 0, 30 * time.Millisecond,
+			fakeHarness(fake.Script{Hang: true, Stopped: stderr}), ClassHarnessSilent,
+			[]string{"; its stderr ended: loading settings | waiting on the lock — "}, nil},
+		{"the harness's own check is the next action", func(r *v1.Run) {}, 0, 30 * time.Millisecond,
+			fakeHarness(fake.Script{Hang: true, Stopped: &adapter.Outcome{State: v1.RunCancelled, Check: "`claude -p hello`"}}), ClassHarnessSilent,
+			[]string{"see whether it answers: `claude -p hello`"}, []string{"yad doctor"}},
+		{"a harness that has spoken is held to inactivity", func(r *v1.Run) {}, 150 * time.Millisecond, 30 * time.Millisecond,
+			fakeHarness(fake.Script{Events: []v1.Event{{Kind: v1.EventText, Text: "hi"}}, Hang: true, Stopped: stderr}), ClassInactivity,
+			[]string{"no event for 150ms", "; its stderr ended: loading settings"}, []string{"account add"}},
+		{"a run's shorter inactivity wins over the first output", func(r *v1.Run) { r.InactivityMS = 30 }, 0, time.Hour,
+			fakeHarness(fake.Script{Hang: true}), ClassInactivity, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -206,12 +227,34 @@ func TestWatchdogs(t *testing.T) {
 			if tc.owner > 0 {
 				x.Config.Supervise.Inactivity = config.Duration{Duration: tc.owner}
 			}
+			if tc.first > 0 {
+				x.Config.Supervise.FirstOutput = config.Duration{Duration: tc.first}
+			}
 			claimAndRun(t, l, x)
 			res, ok := outboxResult(t, e, "a")
 			if !ok || res.State != v1.RunTimedOut || res.Error == nil || res.Error.Class != tc.class {
 				t.Fatalf("result = %+v (error %+v), %v", res, res.Error, ok)
 			}
-			if tc.class == ClassInactivity && res.Metrics.Stalls != 1 {
+			for _, s := range tc.says {
+				if !strings.Contains(res.Error.Message, s) {
+					t.Errorf("message %q lacks %q", res.Error.Message, s)
+				}
+			}
+			for _, s := range tc.saysNo {
+				if strings.Contains(res.Error.Message, s) {
+					t.Errorf("message %q carries %q", res.Error.Message, s)
+				}
+			}
+			// The next actions are pasted, so they are run, not read.
+			if tc.name == "silent from its start" {
+				cmds := shellwordtest.Commands(res.Error.Message, "yad ")
+				if len(cmds) != 2 {
+					t.Fatalf("want two commands in %q", res.Error.Message)
+				}
+				shellwordtest.Check(t, cmds[0], "yad", "--profile", "default", "doctor")
+				shellwordtest.Check(t, cmds[1], "yad", "--profile", "default", "account", "add", "claude", "<label>")
+			}
+			if (tc.class == ClassInactivity || tc.class == ClassHarnessSilent) && res.Metrics.Stalls != 1 {
 				t.Errorf("stalls = %d", res.Metrics.Stalls)
 			}
 			if got := localRun(t, e, "a"); got.State != "timed_out" || got.Reason.String == "" {

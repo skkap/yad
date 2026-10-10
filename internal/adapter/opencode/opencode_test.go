@@ -584,6 +584,10 @@ func TestDiedBeforeTheAnswer(t *testing.T) {
 	if o.State != v1.RunFailed || o.Error.Class != adapter.ClassHarnessExited || !strings.Contains(o.Error.Message, "something went badly wrong") {
 		t.Fatalf("outcome %s %+v", o.State, o.Error)
 	}
+	// What a watchdog's error quotes (decision 0075).
+	if !strings.Contains(o.Stderr, "something went badly wrong") || !strings.Contains(o.Check, "opencode") {
+		t.Errorf("outcome stderr %q, check %q", o.Stderr, o.Check)
+	}
 }
 
 // A failed prompt reaches the run classified: provider-error was recorded

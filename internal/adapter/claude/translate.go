@@ -428,6 +428,8 @@ type ended struct {
 	cancelled   bool   // the run's context ended
 	exitErr     error  // the process's exit status
 	stderr      string // its last words
+	// tail is stderr as a run's error may quote it (adapter.StderrTail).
+	tail string
 	// final: the result in hand was the run's last — every frame we sent had
 	// been taken, and nothing was queued behind it.
 	final bool
@@ -443,7 +445,7 @@ type ended struct {
 // `is_error` — prompt_too_long arrives exactly that way.
 func (t *translator) outcome(e ended) adapter.Outcome {
 	t.flush()
-	o := adapter.Outcome{NativeSessionID: t.session, APIRetries: t.apiRetries, Windows: t.windowList()}
+	o := adapter.Outcome{NativeSessionID: t.session, APIRetries: t.apiRetries, Windows: t.windowList(), Stderr: e.tail, Check: e.loginCheck()}
 	r := t.result
 	if r != nil {
 		o.FinalText = r.Result
@@ -559,17 +561,10 @@ func exitDetail(e ended) string {
 	if e.exitErr != nil {
 		msg += " (" + e.exitErr.Error() + ")"
 	}
-	if s := strings.TrimSpace(e.stderr); s != "" {
-		msg += ": " + lastLine(s)
+	if e.tail != "" {
+		msg += ": " + e.tail
 	}
 	return msg
-}
-
-func lastLine(s string) string {
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		return s[i+1:]
-	}
-	return s
 }
 
 func resultMessage(r *frame) string {

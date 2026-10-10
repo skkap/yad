@@ -30,6 +30,9 @@ func TestMain(m *testing.M) {
 		codextest.Main()
 		os.Exit(0)
 	}
+	if mode := os.Getenv("RUNNER_TEST_CLAUDE"); mode == "silent" || mode == "stderr" {
+		os.Exit(fakeClaudeRun(mode))
+	}
 	if os.Getenv("RUNNER_TEST_CLAUDE") != "" {
 		os.Exit(fakeClaudeAuth(os.Args[1:]))
 	}
