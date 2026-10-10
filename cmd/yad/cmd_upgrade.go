@@ -84,12 +84,6 @@ func cmdUpgrade(ctx context.Context, g global, args []string, w io.Writer) error
 		return err
 	}
 	fmt.Fprintf(w, "checked its sha256 against the release and replaced %s with %s\n", res.Path, res.Tag)
-	// `yad daemon restart` starts a daemon of its own. Under a service manager
-	// that is the wrong move: a clean stop is meant to stay stopped, so the
-	// unit's crash restart would be replaced by an unsupervised process.
-	// Decision 0028 settles it — re-running install replaces the unit and
-	// starts it again — and nothing here can tell which kind this is, so both
-	// are named rather than one guessed.
 	// control.Holder reads one profile's lock, and every profile on this
 	// machine shares the binary just replaced — so silence is not "nothing is
 	// running", only "nothing is running here".
@@ -142,13 +136,12 @@ func restartNote(p config.Paths, pid int, running bool, err error) string {
 }
 
 // restartAdvice is what to type to put a running runner on the new binary.
-// Both commands have to act on the profile the message names, and on its
-// directories: printed bare beside "profile work", either would act on default
-// — and `service install` would bootstrap a supervised unit for a profile
-// nobody meant to run as a service (0028). Both take the global --profile.
+// One command whether or not the profile runs as a service: a restart of a
+// service is started again by its service manager (DEV-173). It has to act on
+// the profile the message names, and on its directories: printed bare beside
+// "profile work", it would act on default.
 func restartAdvice(p config.Paths) string {
-	return fmt.Sprintf("restart it to pick this one up: `%s` if this profile runs as a service (0028: install replaces the unit and starts it again), otherwise `%s`",
-		p.Command("service", "install"), p.Command("daemon", "restart"))
+	return fmt.Sprintf("restart it to pick this one up: `%s` — a runner that is a service is started again by its service manager", p.Command("daemon", "restart"))
 }
 
 // checkLine is the one sentence that says where this build stands, and what

@@ -13,7 +13,7 @@ import (
 
 // cmdConnect is `yad connect <url> --token T [--name N]`. The logic is in
 // runner.Connect; this parses and prints, and never prints a secret.
-func cmdConnect(ctx context.Context, g global, args []string, w io.Writer) error {
+func cmdConnect(ctx context.Context, g global, args []string, w, stderr io.Writer) error {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	token := fs.String("token", "", "the one-time registration token; - reads it from stdin (see decision 0020)")
 	name := fs.String("name", "", "what to call this connection (default: from the hub's host)")
@@ -24,7 +24,7 @@ func cmdConnect(ctx context.Context, g global, args []string, w io.Writer) error
 		return err
 	}
 	url := pos[0]
-	tok, err := tokenArg(*token)
+	tok, err := tokenArg(ctx, stderr, *token)
 	if err != nil {
 		return err
 	}

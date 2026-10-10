@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -265,17 +266,89 @@ func (s *Systemd) Uninstall(ctx context.Context, profile string) error {
 	return nil
 }
 
+// Start starts the unit; systemctl leaves one already active as it is.
+func (s *Systemd) Start(ctx context.Context, profile string) error {
+	if err := RefuseRoot(s.Host); err != nil {
+		return err
+	}
+	if _, err := s.systemctl(ctx, "start", s.Name(profile)); err != nil {
+		return fmt.Errorf("`%s`: %w", shellword.Command(s.StartCommand(profile)...), err)
+	}
+	return nil
+}
+
+func (s *Systemd) StartCommand(profile string) []string {
+	return []string{"systemctl", "--user", "start", s.Name(profile)}
+}
+
+// RestartCommand stops the unit — SIGTERM, a drain to the runner (decision
+// 0029), for up to TimeoutStopSec — and starts it again.
+func (s *Systemd) RestartCommand(profile string) []string {
+	return []string{"systemctl", "--user", "restart", s.Name(profile)}
+}
+
+// unitLog is the log the unit appends to, with Render's specifier escaping
+// still in it.
+var unitLog = regexp.MustCompile(`(?m)^StandardOutput=append:(.*)$`)
+
+func unescapeSpecifiers(s string) string { return strings.ReplaceAll(s, "%%", "%") }
+
+// unitDirs are the directories under the owner's home a user manager may
+// search, for when it cannot be asked which one it does: the config and the
+// data directory, as XDG names them and as they default.
+func (s *Systemd) unitDirs() []string {
+	var dirs []string
+	for _, base := range []string{s.Host.Getenv("XDG_CONFIG_HOME"), filepath.Join(s.Host.Home, ".config"), s.Host.Getenv("XDG_DATA_HOME"), filepath.Join(s.Host.Home, ".local", "share")} {
+		if filepath.IsAbs(base) {
+			dirs = append(dirs, filepath.Join(base, "systemd", "user"))
+		}
+	}
+	return dirs
+}
+
+// Status asks the user manager about the unit. One that cannot be asked —
+// no user bus — fails, and the Status it returns still says whether a unit
+// file is there and what log it names, found in the directories a manager
+// may search: that is what a start goes on to decide whether the profile may
+// be a service (decision 0074).
 func (s *Systemd) Status(ctx context.Context, profile string) (Status, error) {
 	if err := RefuseRoot(s.Host); err != nil {
 		return Status{}, err
 	}
 	if err := s.resolve(ctx); err != nil {
-		return Status{}, err
+		// Every directory is looked in: which one the manager reads is what
+		// it cannot be asked, so a file earlier in the list may be a stale
+		// one it never loads. Files that disagree on their log say nothing
+		// about which is the runner's, and are reported with no log.
+		st := Status{Name: s.Name(profile), File: s.File(profile)}
+		for _, dir := range s.unitDirs() {
+			file := filepath.Join(dir, s.Name(profile))
+			ok, serr := exists(file)
+			if serr != nil {
+				// Unreadable is not absent: File names it, Installed is
+				// false, and the caller's own look at it fails the same way.
+				return Status{Name: st.Name, File: file}, err
+			}
+			if !ok {
+				continue
+			}
+			log := installedLog(file, unitLog, unescapeSpecifiers)
+			switch {
+			case !st.Installed:
+				st.File, st.Installed, st.LogFile = file, true, log
+			case log != st.LogFile:
+				st.LogFile = ""
+			}
+		}
+		return st, err
 	}
 	st := Status{Name: s.Name(profile), File: s.File(profile)}
 	var err error
 	if st.Installed, err = exists(st.File); err != nil {
 		return st, err
+	}
+	if st.Installed {
+		st.LogFile = installedLog(st.File, unitLog, unescapeSpecifiers)
 	}
 	props, err := s.show(ctx, st.Name)
 	if err != nil {

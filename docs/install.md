@@ -67,13 +67,10 @@ checks its SHA-256 against the release's `checksums.txt`, and only then renames
 it into place — so an upgrade that fails at any step leaves a working `yad`. It
 restarts nothing: a runner already running holds the binary it started from
 until you restart it, and `yad upgrade` says so — naming the profile, and
-carrying it in the commands it offers. If that runner is a service, re-run
-`yad service install [--profile name]` rather than `yad daemon restart`:
-install replaces the unit and starts it again, where a restart would leave an
-unsupervised process the service manager is no longer watching
-([0028](decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)).
-The profile goes after `service install` but *before* `daemon` —
-`yad --profile work daemon restart` — because `daemon` has no flag of its own.
+carrying it in the command it offers: `yad daemon restart`, which restarts a
+runner that is a service through its service manager (below). The profile
+goes *before* `daemon` — `yad --profile work daemon restart` — because
+`daemon` has no flag of its own.
 
 ### Self-update
 
@@ -144,3 +141,15 @@ runner — no new runs, the ones it holds finish for up to `[drain] wait`
 from that wait when you install, so run `install` again after changing it. On Linux a user unit stops when you log
 out unless lingering is on — `install` tells you, and `loginctl enable-linger`
 is yours to run. Why it is shaped this way: [0028](decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md).
+
+`yad daemon stop`, `start` and `restart` work on a service too. A stop is a
+clean exit, which the service manager leaves stopped. A start of a service
+that is loaded but not running asks the service manager to start it
+(`launchctl kickstart`, `systemctl --user start`), and a restart stops the
+runner the usual way, then does the same — so the new daemon is one the
+service manager watches and restarts after a crash, not a process of its
+own beside it. If the service manager cannot be asked (an SSH session with no
+desktop login, no user bus) while the unit is installed, start and restart
+refuse and print the service manager's own command to run instead. They also
+refuse `--interval`, which a unit does not carry. Why:
+[0074](decisions/0074-a-service-is-started-by-its-service-manager.md).

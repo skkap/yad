@@ -31,6 +31,7 @@ import (
 	hubstore "github.com/skkap/yad/internal/hub/store"
 	"github.com/skkap/yad/internal/hubapiclient"
 	"github.com/skkap/yad/internal/runner"
+	"github.com/skkap/yad/internal/service"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
 )
@@ -57,6 +58,13 @@ const testSyncInterval = 50 * time.Millisecond
 const probeBudget = 30 * time.Second
 
 func TestMain(m *testing.M) {
+	// A start and a restart ask the service manager whether the profile is
+	// its service (DEV-173). No test reaches launchctl or systemctl — the
+	// owner's own runner may be a unit on this machine — so unless a test
+	// installs a fake, there is no service manager at all; children too.
+	serviceManager = func() (service.Manager, service.Host, error) {
+		return nil, service.Host{}, errors.New("the tests reach no service manager")
+	}
 	// Before the child branches below: a child re-executed as yad is a runner
 	// holding the same floor, and it syncs against this test's hub.
 	hub.SyncFloorForTests, runner.SyncFloorForTests = testSyncInterval, testSyncInterval
