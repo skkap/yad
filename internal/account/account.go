@@ -4,14 +4,18 @@
 //
 // The one rule the package exists to keep: YAD stores no account credential of
 // its own but one. The harness logs itself in, inside its own home, and nothing
-// here reads, copies, moves or prints what that login writes — on macOS Claude
+// here copies, moves or prints what that login writes — on macOS Claude
 // writes it to the Keychain under the home's name, and yad only ever deletes
 // that item, with the home (keychain.go). The exception is
 // a token account (decision 0054): a `claude setup-token` token the owner
 // piped in, kept 0600 in the account's home and handed to that account's runs
-// in their environment — never printed, logged or sent anywhere. A label is
-// not a secret and a credential is — the label travels in events, in health
-// and in `yad account list`; nothing else from a home travels anywhere.
+// in their environment, and written 0600 into the home's .credentials.json in
+// Claude's own format, for the claudes those runs start (decision 0074) —
+// never printed, logged or sent anywhere. To leave a login Claude made in
+// that file alone, yad reads whether it has a refresh token, and nothing
+// more of it. A label is not a secret and a credential is — the label
+// travels in events, in health and in `yad account list`; nothing else from
+// a home travels anywhere.
 package account
 
 import (
@@ -343,6 +347,11 @@ func ensure(data, harness, home string) (string, error) {
 	if err := shareConfig(harness, home); err != nil {
 		return "", err
 	}
+	if CanUseToken(harness) {
+		if err := syncTokenLogin(home); err != nil {
+			return "", err
+		}
+	}
 	name, ok := transcriptDir[harness]
 	if !ok {
 		return home, nil
@@ -354,14 +363,23 @@ func ensure(data, harness, home string) (string, error) {
 	if err := os.Chmod(shared, 0o700); err != nil {
 		return "", err
 	}
-	return home, link(filepath.Join(home, name), shared)
+	return home, link(filepath.Join(home, name), shared, transcriptsInTheWay)
 }
 
-// link points one home's transcript directory at the shared one.
+// transcriptsInTheWay refuses a directory of real transcripts where the
+// shared link belongs: removing it would throw away conversations YAD cannot
+// rebuild, so the owner is told to move it.
+func transcriptsInTheWay(from, to string) error {
+	return fmt.Errorf("%s is a directory of transcripts, not a link to %s — move it aside (its sessions can be copied into %s) and run this again", from, to, to)
+}
+
+// link points from at to: one home's transcript directory at the shared one,
+// or a piece of the machine's config the harness made an empty copy of
+// (shareConfig).
 //
-// A real directory already sitting there is never deleted: it is a harness's
-// own transcripts, written before this home was linked, and removing it would
-// throw away conversations YAD cannot rebuild. The owner is told to move it.
+// A real directory with anything in it is never deleted: inTheWay says what
+// that means — transcripts written before this home was linked, which the
+// owner is told to move, or config of the account's own, left alone.
 //
 // Several runs of one harness prepare the same home at once — capacity is a
 // shared pool and nothing reserves an account — so every step below can lose a
@@ -370,14 +388,14 @@ func ensure(data, harness, home string) (string, error) {
 // EPERM, not ENOENT, for unlink on a directory another run has already
 // replaced), the work is retried and the goal state is what decides: if the
 // link is already what it should be, whoever made it did this function's job.
-func link(from, to string) error {
+func link(from, to string, inTheWay func(from, to string) error) error {
 	var err error
 	for range linkAttempts {
 		if at, rerr := os.Readlink(from); rerr == nil && at == to {
 			return nil
 		}
 		var keep bool
-		if keep, err = linkOnce(from, to); err == nil || keep {
+		if keep, err = linkOnce(from, to, inTheWay); err == nil || keep {
 			return err
 		}
 	}
@@ -396,10 +414,10 @@ const linkAttempts = 5
 // which is why it reads as a sentence rather than as a marker.
 var errRacedWhileLinking = errors.New("another run is preparing this home")
 
-// linkOnce makes one attempt. keep is true for a failure retrying cannot
-// change — a directory of real transcripts in the way — so the caller stops
-// and reports it rather than trying again.
-func linkOnce(from, to string) (keep bool, err error) {
+// linkOnce makes one attempt. keep is true for an answer retrying cannot
+// change — a directory with something in it, in the way — so the caller
+// stops and returns what inTheWay says rather than trying again.
+func linkOnce(from, to string, inTheWay func(from, to string) error) (keep bool, err error) {
 	switch fi, err := os.Lstat(from); {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
@@ -423,13 +441,13 @@ func linkOnce(from, to string) (keep bool, err error) {
 			// ReadDir follows a symlink, and another run of the same harness
 			// may have replaced the directory with the link in the moment
 			// since the Lstat above — in which case what was just read is the
-			// shared transcript directory, not transcripts in the way. Only a
-			// path that is still a real directory earns the refusal, which is
-			// the one error here that does not get retried.
+			// shared directory, not something in the way. Only a path that is
+			// still a real directory earns inTheWay, the one answer here that
+			// does not get retried.
 			if fi, err := os.Lstat(from); err != nil || fi.Mode()&os.ModeSymlink != 0 {
 				return false, errRacedWhileLinking
 			}
-			return true, fmt.Errorf("%s is a directory of transcripts, not a link to %s — move it aside (its sessions can be copied into %s) and run this again", from, to, to)
+			return true, inTheWay(from, to)
 		}
 		// rmdir rather than os.Remove, and no Lstat first: the kernel refuses
 		// rmdir on anything that is not a directory, so "remove it only if

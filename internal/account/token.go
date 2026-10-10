@@ -14,7 +14,9 @@ import (
 
 // tokenFile is where a token account keeps its token, inside its own home
 // (decision 0054). Claude reads no such file: yad hands the token to each of
-// the account's runs as tokenVar, and to its login check, and to nothing else.
+// the account's runs as tokenVar and to its login check, and writes it into
+// the home's credentials file for the claudes a run starts, which are never
+// handed tokenVar (tokenlogin.go, decision 0074).
 const tokenFile = "yad-oauth-token"
 
 // tokenVar is the variable Claude Code takes a `claude setup-token` token
@@ -74,7 +76,10 @@ func SetToken(home, token string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), filepath.Join(home, tokenFile))
+	if err := os.Rename(tmp.Name(), filepath.Join(home, tokenFile)); err != nil {
+		return err
+	}
+	return syncTokenLogin(home)
 }
 
 // ClearToken removes an account's stored token, so it logs in the harness's
@@ -86,10 +91,10 @@ func ClearToken(home string) error {
 		return nil
 	}
 	err := os.Remove(filepath.Join(home, tokenFile))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
-	return err
+	return syncTokenLogin(home)
 }
 
 // readToken is the account's token file read the one way every caller reads
