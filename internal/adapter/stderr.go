@@ -57,13 +57,7 @@ func StderrTail(stderr string, env []string, truncated bool) string {
 			}
 		}
 	}
-	// Longest first: a value that is part of another — a URL, and the same
-	// URL with a token in its query — replaced first would leave the longer
-	// one unmatched, and its token whole.
-	slices.SortStableFunc(secrets, func(a, b string) int { return len(b) - len(a) })
-	for _, s := range secrets {
-		stderr = strings.ReplaceAll(stderr, s, Redacted)
-	}
+	stderr = mask(stderr, secrets)
 	lines := strings.Split(stderr, "\n")
 	if truncated && len(lines) > 0 {
 		lines = lines[1:]
@@ -89,4 +83,42 @@ func StderrTail(stderr string, env []string, truncated bool) string {
 		cut++
 	}
 	return "…" + out[cut:]
+}
+
+// mask replaces every occurrence of every secret in s with Redacted. Each
+// one is found in s as it was, and overlapping or touching occurrences are
+// merged into one: replacing them one after another would let the first
+// replacement break a second that shares characters with it — a URL inside
+// the same URL with a token in its query, or one value ending where another
+// begins — and leave that one's token whole.
+func mask(s string, secrets []string) string {
+	type span struct{ from, to int }
+	var spans []span
+	for _, sec := range secrets {
+		for at := 0; ; {
+			i := strings.Index(s[at:], sec)
+			if i < 0 {
+				break
+			}
+			spans = append(spans, span{at + i, at + i + len(sec)})
+			at += i + 1
+		}
+	}
+	if len(spans) == 0 {
+		return s
+	}
+	slices.SortFunc(spans, func(a, b span) int { return a.from - b.from })
+	var b strings.Builder
+	last := 0
+	for i := 0; i < len(spans); {
+		from, to := spans[i].from, spans[i].to
+		for i++; i < len(spans) && spans[i].from <= to; i++ {
+			to = max(to, spans[i].to)
+		}
+		b.WriteString(s[last:from])
+		b.WriteString(Redacted)
+		last = to
+	}
+	b.WriteString(s[last:])
+	return b.String()
 }
