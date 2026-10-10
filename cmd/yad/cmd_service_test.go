@@ -32,6 +32,13 @@ func (f *fakeManager) Uninstall(_ context.Context, p string) error {
 	f.uninstalled = append(f.uninstalled, p)
 	return nil
 }
+func (f *fakeManager) Start(context.Context, string) error { return nil }
+func (f *fakeManager) StartCommand(p string) []string {
+	return []string{"launchctl", "kickstart", "gui/501/" + f.Name(p)}
+}
+func (f *fakeManager) RestartCommand(p string) []string {
+	return []string{"launchctl", "kickstart", "-k", "gui/501/" + f.Name(p)}
+}
 func (f *fakeManager) Status(_ context.Context, p string) (service.Status, error) {
 	return service.Status{Name: f.Name(p), File: f.File(p), Installed: true, Loaded: true, Running: true, PID: 9}, nil
 }

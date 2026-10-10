@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -265,6 +266,43 @@ func (s *Systemd) Uninstall(ctx context.Context, profile string) error {
 	return nil
 }
 
+// Start starts the unit; systemctl leaves one already active as it is.
+func (s *Systemd) Start(ctx context.Context, profile string) error {
+	if err := RefuseRoot(s.Host); err != nil {
+		return err
+	}
+	if _, err := s.systemctl(ctx, "start", s.Name(profile)); err != nil {
+		return fmt.Errorf("`%s`: %w", shellword.Command(s.StartCommand(profile)...), err)
+	}
+	return nil
+}
+
+func (s *Systemd) StartCommand(profile string) []string {
+	return []string{"systemctl", "--user", "start", s.Name(profile)}
+}
+
+// RestartCommand stops the unit — SIGTERM, a drain to the runner (decision
+// 0029), for up to TimeoutStopSec — and starts it again.
+func (s *Systemd) RestartCommand(profile string) []string {
+	return []string{"systemctl", "--user", "restart", s.Name(profile)}
+}
+
+var unitLog = regexp.MustCompile(`(?m)^StandardOutput=append:(.*)$`)
+
+// installedLog is the log the installed unit appends to, with Render's
+// specifier escaping undone.
+func (s *Systemd) installedLog(profile string) string {
+	b, err := os.ReadFile(s.File(profile))
+	if err != nil {
+		return ""
+	}
+	m := unitLog.FindSubmatch(b)
+	if m == nil {
+		return ""
+	}
+	return strings.ReplaceAll(string(m[1]), "%%", "%")
+}
+
 func (s *Systemd) Status(ctx context.Context, profile string) (Status, error) {
 	if err := RefuseRoot(s.Host); err != nil {
 		return Status{}, err
@@ -276,6 +314,9 @@ func (s *Systemd) Status(ctx context.Context, profile string) (Status, error) {
 	var err error
 	if st.Installed, err = exists(st.File); err != nil {
 		return st, err
+	}
+	if st.Installed {
+		st.LogFile = s.installedLog(profile)
 	}
 	props, err := s.show(ctx, st.Name)
 	if err != nil {

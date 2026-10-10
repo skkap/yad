@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -246,6 +247,45 @@ func (l *Launchd) Uninstall(ctx context.Context, profile string) error {
 	return nil
 }
 
+// Start kickstarts the job. Without -k launchd leaves a running instance
+// alone, which is what a start asks for.
+func (l *Launchd) Start(ctx context.Context, profile string) error {
+	if err := RefuseRoot(l.Host); err != nil {
+		return err
+	}
+	if _, err := l.Host.Run.Run(ctx, "launchctl", "kickstart", l.target(profile)); err != nil {
+		return fmt.Errorf("`%s`: %w", shellword.Command(l.StartCommand(profile)...), err)
+	}
+	return nil
+}
+
+func (l *Launchd) StartCommand(profile string) []string {
+	return []string{"launchctl", "kickstart", l.target(profile)}
+}
+
+// RestartCommand is kickstart -k: launchd sends the running instance SIGTERM
+// — a drain, to the runner (decision 0029) — and starts it again once it has
+// exited, killing it at the plist's ExitTimeOut.
+func (l *Launchd) RestartCommand(profile string) []string {
+	return []string{"launchctl", "kickstart", "-k", l.target(profile)}
+}
+
+var plistLog = regexp.MustCompile(`<key>StandardOutPath</key>\s*<string>([^<]*)</string>`)
+
+// installedLog is the StandardOutPath of the plist installed for a profile,
+// unescaped: html's unescaping reads every entity encoding/xml writes.
+func (l *Launchd) installedLog(profile string) string {
+	b, err := os.ReadFile(l.File(profile))
+	if err != nil {
+		return ""
+	}
+	m := plistLog.FindSubmatch(b)
+	if m == nil {
+		return ""
+	}
+	return html.UnescapeString(string(m[1]))
+}
+
 var (
 	launchdState = regexp.MustCompile(`(?m)^\s*state = (.+)$`)
 	launchdPID   = regexp.MustCompile(`(?m)^\s*pid = (\d+)$`)
@@ -263,6 +303,9 @@ func (l *Launchd) Status(ctx context.Context, profile string) (Status, error) {
 	var err error
 	if st.Installed, err = exists(st.File); err != nil {
 		return st, err
+	}
+	if st.Installed {
+		st.LogFile = l.installedLog(profile)
 	}
 	ok, out, err := l.loaded(ctx, profile)
 	if err != nil || !ok {

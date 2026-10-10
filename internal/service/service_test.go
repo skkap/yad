@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -891,5 +892,94 @@ func TestSystemdReinstallStopsUnderTheOldUnit(t *testing.T) {
 	}
 	if len(r.calls) < 2 || r.calls[1] != "systemctl --user stop yad-runner-work.service" {
 		t.Errorf("a loaded unit whose file is gone was not stopped first: %q", r.calls)
+	}
+}
+
+// A start goes to the manager's own start, which leaves a running job alone;
+// its failure names the command, and the commands an error offers in its
+// place are the manager's.
+func TestStart(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		manager        func(Host) Manager
+		start, restart []string
+	}{
+		{"launchd", func(h Host) Manager { return &Launchd{Host: h} },
+			[]string{"launchctl", "kickstart", "gui/501/yad.runner.work"},
+			[]string{"launchctl", "kickstart", "-k", "gui/501/yad.runner.work"}},
+		{"systemd", func(h Host) Manager { return &Systemd{Host: h} },
+			[]string{"systemctl", "--user", "start", "yad-runner-work.service"},
+			[]string{"systemctl", "--user", "restart", "yad-runner-work.service"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fail := false
+			r := &fakeRunner{answer: func(string, int) ([]byte, error) {
+				if fail {
+					return nil, errors.New("exit status 5")
+				}
+				return nil, nil
+			}}
+			m := tc.manager(host(t, r))
+			if err := m.Start(context.Background(), "work"); err != nil {
+				t.Fatal(err)
+			}
+			checkCalls(t, r.calls, []string{strings.Join(tc.start, " ")}, "")
+			if got := m.StartCommand("work"); !slices.Equal(got, tc.start) {
+				t.Errorf("start command %q", got)
+			}
+			if got := m.RestartCommand("work"); !slices.Equal(got, tc.restart) {
+				t.Errorf("restart command %q", got)
+			}
+			fail = true
+			err := m.Start(context.Background(), "work")
+			if err == nil || !strings.Contains(err.Error(), "`"+strings.Join(tc.start, " ")+"`") || !strings.Contains(err.Error(), "exit status 5") {
+				t.Errorf("failed start: %v", err)
+			}
+			root := host(t, &fakeRunner{})
+			root.EUID = 0
+			if err := tc.manager(root).Start(context.Background(), "work"); err == nil {
+				t.Error("a start as root was not refused")
+			}
+		})
+	}
+}
+
+// Status reads back the log the installed unit names, unescaped as each
+// format escapes it: it is what tells this profile's unit from one of the
+// same name for other directories.
+func TestStatusReadsTheUnitsLog(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		manager func(Host) Manager
+	}{
+		{"launchd", func(h Host) Manager { return &Launchd{Host: h} }},
+		{"systemd", func(h Host) Manager { return &Systemd{Host: h} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) {
+				if strings.HasPrefix(call, "launchctl print") {
+					return nil, errors.New("exit status 113: Could not find service")
+				}
+				if strings.Contains(call, "show yad-runner") {
+					return []byte("LoadState=loaded\nActiveState=inactive\nSubState=dead\nMainPID=0\n"), nil
+				}
+				return nil, nil
+			}}
+			h := host(t, r)
+			m := tc.manager(h)
+			st, err := m.Status(context.Background(), "work")
+			if err != nil || st.LogFile != "" {
+				t.Fatalf("no unit: %+v, %v", st, err)
+			}
+			sp := specIn(t, h)
+			sp.LogFile = filepath.Join(h.Home, `R&D 100% <"x">`, "logs", "service.log")
+			if _, err := m.Install(context.Background(), sp); err != nil {
+				t.Fatal(err)
+			}
+			st, err = m.Status(context.Background(), "work")
+			if err != nil || !st.Installed || st.LogFile != sp.LogFile {
+				t.Errorf("log %q, want %q (%+v, %v)", st.LogFile, sp.LogFile, st, err)
+			}
+		})
 	}
 }

@@ -17,13 +17,191 @@ import (
 
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/control"
+	"github.com/skkap/yad/internal/service"
+	"github.com/skkap/yad/internal/shellword"
 )
 
-// startBackground re-executes this binary as a foreground daemon in a session
+// startBackground starts the profile's daemon and returns once it answers on
+// its control socket. A profile that runs as a service is started by its
+// service manager, which then watches it; any other is a detached process of
+// its own (startDetached).
+func startBackground(ctx context.Context, g global, s startFlags, w io.Writer) error {
+	if pid, running, err := control.Holder(g.paths); err != nil {
+		return err
+	} else if running {
+		return &control.RunningError{PID: pid, Socket: g.paths.Socket(), Paths: g.paths}
+	}
+	u, note, err := serviceOf(ctx, g.paths, 0)
+	var unknown *unknownServiceError
+	if errors.As(err, &unknown) {
+		return fmt.Errorf("start refused: %w — start it through the service manager: `%s`, or run this again once `%s` answers", err, shellword.Command(unknown.m.StartCommand(g.paths.Profile)...), g.paths.Command("service", "status"))
+	}
+	if err != nil {
+		return err
+	}
+	if u == nil {
+		if note != "" {
+			fmt.Fprintln(w, note)
+		}
+		return startDetached(ctx, g, s, w)
+	}
+	if err := u.refuses(s); err != nil {
+		return fmt.Errorf("start refused: %w", err)
+	}
+	// What the daemon would refuse on its first line is refused here: under
+	// a service manager it would only show as a runner restarting every few
+	// seconds.
+	if err := control.CheckPath(g.paths.Socket()); err != nil {
+		return err
+	}
+	if _, err := config.Load(g.paths); err != nil {
+		return err
+	}
+	return startService(ctx, g, u, s, 0, w)
+}
+
+// unit is the service-manager job a profile's runner is.
+type unit struct {
+	m    service.Manager
+	name string
+}
+
+// refuses is a start flag the unit cannot carry: it runs the command it was
+// installed with, and nothing typed here reaches it.
+func (u *unit) refuses(s startFlags) error {
+	if s.intervalSet {
+		return fmt.Errorf("--interval cannot reach %s, which runs the command it was installed with — drop --interval", u.name)
+	}
+	return nil
+}
+
+// unknownServiceError is a profile whose unit file is there and whose service
+// manager could not say whether it holds the job — no user bus, no GUI
+// domain. Starting a detached daemon could be DEV-173 again, and refusing
+// every start where there is no service would be its mirror; so the owner,
+// who can tell, is given the manager's own command.
+type unknownServiceError struct {
+	m    service.Manager
+	name string
+	file string
+	err  error
+}
+
+func (e *unknownServiceError) Error() string {
+	return fmt.Sprintf("could not ask the service manager whether this profile runs as %s, whose unit is %s (%v)", e.name, e.file, e.err)
+}
+
+func (e *unknownServiceError) Unwrap() error { return e.err }
+
+// serviceOf is the unit that runs this profile's runner, if one does. holder
+// is the pid holding the profile's lock, or 0.
+//
+// A unit is the profile's when the manager's running job is the lock holder,
+// or when its file names this profile's service log, which is under the
+// profile's data directory. The label alone cannot say: it is only the
+// profile's name, and yad.runner.default with the owner's directories is
+// not the runner under another YAD_DATA_DIR. A unit the manager has not
+// loaded is not started through it, and note says so.
+//
+// No service manager on this system, or one that cannot be asked and no
+// unit file, is no service: absence is data, and the detached daemon is
+// the only kind there is.
+func serviceOf(ctx context.Context, p config.Paths, holder int) (u *unit, note string, err error) {
+	m, _, err := serviceManager()
+	if err != nil {
+		return nil, "", nil
+	}
+	name := m.Name(p.Profile)
+	st, err := m.Status(ctx, p.Profile)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, "", ctx.Err()
+		}
+		file := m.File(p.Profile)
+		if _, serr := os.Stat(file); serr != nil {
+			return nil, "", nil
+		}
+		return nil, "", &unknownServiceError{m: m, name: name, file: file, err: err}
+	}
+	ours := st.Installed && st.LogFile != "" && filepath.Clean(st.LogFile) == filepath.Clean(service.LogFile(p))
+	switch {
+	case st.Loaded && st.Running && holder > 0 && st.PID == holder, st.Loaded && ours:
+		return &unit{m: m, name: name}, "", nil
+	case ours:
+		return nil, fmt.Sprintf("note: profile %s has a service, %s, that the service manager has not loaded, so this daemon runs outside it and nothing restarts it after a crash — to put it back under the service, `%s`, then `%s`", p.Profile, name, p.Command("daemon", "stop"), p.Command("service", "install")), nil
+	}
+	return nil, "", nil
+}
+
+// startService has the service manager start the unit, and returns once a
+// daemon other than old — the one a restart stopped — answers ready on the
+// control socket. A daemon that does not is the manager's to retry or give
+// up on, and is left to it.
+//
+// The start is asked for only once the manager has no instance running. A
+// daemon releases its lock a moment before it exits, and the manager takes a
+// start in that moment for one already running — kickstart without -k leaves
+// a running job alone — so a stop straight before would start nothing. An
+// instance that is not old and not yet answering is one the manager has just
+// started itself (a crash restart): it is waited for, not started again.
+func startService(ctx context.Context, g global, u *unit, s startFlags, old int, w io.Writer) error {
+	startCmd := shellword.Command(u.m.StartCommand(g.paths.Profile)...)
+	deadline := time.After(s.wait)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	asked, running := false, 0
+	for {
+		select {
+		case <-deadline:
+			if !asked {
+				return fmt.Errorf("the service manager still has %s running as pid %d after %s, and it does not answer on the control socket — `%s` says what it knows, and `%s` starts the runner once that process has gone", u.name, running, s.wait, g.paths.Command("service", "status"), startCmd)
+			}
+			return fmt.Errorf("the service manager started %s, and no daemon answered on its control socket within %s%s — `%s` and `%s` say why, or wait longer with --wait", u.name, s.wait, tailOf(service.LogFile(g.paths)), g.paths.Command("service", "status"), g.paths.Command("daemon", "logs"))
+		case <-ctx.Done():
+			if !asked {
+				return fmt.Errorf("interrupted before %s was started — `%s` starts it", u.name, startCmd)
+			}
+			return fmt.Errorf("interrupted while %s was starting — `%s` says whether it came up", u.name, g.paths.Command("daemon", "status"))
+		case <-tick.C:
+		}
+		actx, cancel := context.WithTimeout(ctx, time.Second)
+		res, err := control.Ask(actx, g.paths, "status")
+		cancel()
+		if err == nil && res.PID != old && res.Status != nil && res.Status.Ready {
+			fmt.Fprintf(w, "started by the service manager as %s — pid %d, profile %s\n", u.name, res.PID, g.paths.Profile)
+			printStarted(w, g.paths)
+			return nil
+		}
+		if asked {
+			continue
+		}
+		st, err := u.m.Status(ctx, g.paths.Profile)
+		if err != nil {
+			if ctx.Err() != nil {
+				continue
+			}
+			return fmt.Errorf("the service manager could not say whether %s is running (%w) — `%s` starts it", u.name, err, startCmd)
+		}
+		if st.Running {
+			running = st.PID
+			continue
+		}
+		if err := u.m.Start(ctx, g.paths.Profile); err != nil {
+			return fmt.Errorf("the service manager did not start %s: %w — `%s` says what it knows of it", u.name, err, g.paths.Command("service", "status"))
+		}
+		asked = true
+	}
+}
+
+func printStarted(w io.Writer, p config.Paths) {
+	fmt.Fprintf(w, "`%s` shows what it is doing, `%s` follows its log, `%s` stops it\n", p.Command("status"), p.Command("daemon", "logs", "-f"), p.Command("daemon", "stop"))
+}
+
+// startDetached re-executes this binary as a foreground daemon in a session
 // of its own, and returns once that daemon answers on its control socket — so
 // a start that reports success has a daemon that is really up, and one that
 // fails says why here rather than only in a log.
-func startBackground(ctx context.Context, g global, s startFlags, w io.Writer) error {
+func startDetached(ctx context.Context, g global, s startFlags, w io.Writer) error {
 	if pid, running, err := control.Holder(g.paths); err != nil {
 		return err
 	} else if running {
@@ -96,7 +274,7 @@ func startBackground(ctx context.Context, g global, s startFlags, w io.Writer) e
 			// setup that can still make it exit.
 			if err == nil && res.PID == pid && res.Status != nil && res.Status.Ready {
 				fmt.Fprintf(w, "started — pid %d, profile %s\n", pid, g.paths.Profile)
-				fmt.Fprintf(w, "`%s` shows what it is doing, `%s` follows its log, `%s` stops it\n", g.paths.Command("status"), g.paths.Command("daemon", "logs", "-f"), g.paths.Command("daemon", "stop"))
+				printStarted(w, g.paths)
 				return nil
 			}
 		}
@@ -268,6 +446,14 @@ func gone(ctx context.Context, p config.Paths, pid int, within time.Duration) bo
 
 // daemonRestart checks what it can before it stops anything: a daemon that
 // is working is not traded for one that cannot sync (Multica #5165).
+//
+// A profile that runs as a service is stopped the same way — over the socket,
+// with --timeout and --force — and started again by its service manager. A
+// clean stop is an exit neither unit restarts (KeepAlive.SuccessfulExit is
+// false, Restart=on-failure), and a detached daemon in its place would be one
+// the manager no longer watches (DEV-173). kickstart -k or systemctl restart
+// would do both halves in one, but with the manager's SIGTERM in place of the
+// stop decision 0027 settles, and a wait bounded by the unit, not the owner.
 func daemonRestart(ctx context.Context, g global, args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("daemon restart", flag.ContinueOnError)
 	var start startFlags
@@ -277,7 +463,7 @@ func daemonRestart(ctx context.Context, g global, args []string, w io.Writer) er
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if err := start.check(); err != nil {
+	if err := start.check(fs); err != nil {
 		return err
 	}
 	if stop.timeout <= 0 {
@@ -286,14 +472,38 @@ func daemonRestart(ctx context.Context, g global, args []string, w io.Writer) er
 	if err := preflight(g.paths); err != nil {
 		return fmt.Errorf("restart refused, and the running daemon left alone: %w", err)
 	}
-	if _, running, err := control.Holder(g.paths); err != nil {
+	holder, running, err := control.Holder(g.paths)
+	if err != nil {
 		return err
-	} else if running {
+	}
+	if !running {
+		holder = 0
+	}
+	u, note, err := serviceOf(ctx, g.paths, holder)
+	var unknown *unknownServiceError
+	if errors.As(err, &unknown) {
+		return fmt.Errorf("restart refused, and the running daemon left alone: %w — restart it through the service manager: `%s`, or run this again once `%s` answers", err, shellword.Command(unknown.m.RestartCommand(g.paths.Profile)...), g.paths.Command("service", "status"))
+	}
+	if err != nil {
+		return err
+	}
+	if u != nil {
+		if err := u.refuses(start); err != nil {
+			return fmt.Errorf("restart refused, and the running daemon left alone: %w", err)
+		}
+	}
+	if running {
 		if err := stopDaemon(ctx, g, stop, w); err != nil {
 			return err
 		}
 	}
-	return startBackground(ctx, g, start, w)
+	if u != nil {
+		return startService(ctx, g, u, start, holder, w)
+	}
+	if note != "" {
+		fmt.Fprintln(w, note)
+	}
+	return startDetached(ctx, g, start, w)
 }
 
 // preflight is what a new daemon needs and can be checked without it: a
