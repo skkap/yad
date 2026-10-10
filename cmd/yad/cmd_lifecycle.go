@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,17 +114,29 @@ func serviceOf(ctx context.Context, p config.Paths, holder int) (u *unit, note s
 	}
 	name := m.Name(p.Profile)
 	st, err := m.Status(ctx, p.Profile)
+	ours := st.Installed && st.LogFile != "" && filepath.Clean(st.LogFile) == filepath.Clean(service.LogFile(p))
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, "", ctx.Err()
 		}
-		file := m.File(p.Profile)
-		if _, serr := os.Stat(file); serr != nil {
+		// A unit file that names other directories is another runner's,
+		// whatever the manager would have said; one that is absent is no
+		// service. Anything else — this profile's file, one whose log cannot
+		// be read, one that cannot be looked at — may be this runner's.
+		if st.Installed && st.LogFile != "" && !ours {
 			return nil, "", nil
+		}
+		file := st.File
+		if file == "" {
+			file = m.File(p.Profile)
+		}
+		if !st.Installed {
+			if _, serr := os.Stat(file); errors.Is(serr, fs.ErrNotExist) {
+				return nil, "", nil
+			}
 		}
 		return nil, "", &unknownServiceError{m: m, name: name, file: file, err: err}
 	}
-	ours := st.Installed && st.LogFile != "" && filepath.Clean(st.LogFile) == filepath.Clean(service.LogFile(p))
 	switch {
 	case st.Loaded && st.Running && holder > 0 && st.PID == holder, st.Loaded && ours:
 		return &unit{m: m, name: name}, "", nil

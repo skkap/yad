@@ -95,10 +95,16 @@ func (f *fakeService) started() int {
 }
 
 func (f *fakeService) Status(_ context.Context, p string) (service.Status, error) {
-	if f.statusErr != nil {
-		return service.Status{}, f.statusErr
+	st := service.Status{Name: f.Name(p), File: f.file}
+	if _, err := os.Stat(f.file); err == nil {
+		st.Installed, st.LogFile = true, f.logFile
 	}
-	st := service.Status{Name: f.Name(p), File: f.file, Installed: true, LogFile: f.logFile, Loaded: f.loaded}
+	// As the real managers do: a status that failed still says what the
+	// unit file says.
+	if f.statusErr != nil {
+		return st, f.statusErr
+	}
+	st.Loaded = f.loaded
 	if pid := f.pid(); f.loaded && pid != 0 {
 		st.Running, st.PID, st.Detail = true, pid, "running"
 	}
@@ -268,4 +274,59 @@ func TestRestartRefusedWhenTheServiceManagerCannotBeAsked(t *testing.T) {
 		t.Fatalf("start names %d launchctl commands: %q", len(cmds), errs)
 	}
 	shellwordtest.Check(t, cmds[0], "launchctl", "kickstart", "gui/501/yad.runner.default")
+}
+
+// With the manager unable to answer, only the unit file can say whether the
+// profile may be a service. No file, or one naming other directories, is no
+// service of this runner's, and the start goes ahead; a file that cannot be
+// looked at is not taken for absent.
+func TestStartWhenTheServiceManagerCannotBeAsked(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		unit    func(t *testing.T, svc *fakeService)
+		refused bool
+	}{
+		{"no unit file", func(t *testing.T, svc *fakeService) {
+			svc.file = filepath.Join(t.TempDir(), "absent.plist")
+		}, false},
+		{"a unit for other directories", func(t *testing.T, svc *fakeService) {
+			svc.logFile = filepath.Join(t.TempDir(), "logs", "service.log")
+		}, false},
+		{"a unit file that cannot be looked at", func(t *testing.T, svc *fakeService) {
+			dir := filepath.Join(t.TempDir(), "locked")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			svc.file = filepath.Join(dir, "yad.runner.default.plist")
+			if err := os.WriteFile(svc.file, []byte("a unit\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(dir, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(dir, 0o700) })
+			if _, err := os.Stat(svc.file); err == nil {
+				t.Skip("a directory with no permissions is still searchable here (root?)")
+			}
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := newLifecycle(t)
+			svc := withService(l)
+			svc.statusErr = errors.New("launchctl print: exit status 5")
+			tc.unit(t, svc)
+			t.Cleanup(func() { l.yad("daemon", "stop", "--force") })
+			code, out, errs := l.yad("daemon", "start")
+			if tc.refused {
+				if code != 1 || !strings.Contains(errs, "start refused") || len(shellwordtest.Commands(errs, "launchctl")) != 1 {
+					t.Errorf("start: exit %d, %q", code, errs)
+				}
+				return
+			}
+			if code != 0 || svc.started() != 0 || !strings.Contains(out, "started — pid") {
+				t.Errorf("start: exit %d, service started %d times: %s%s", code, svc.started(), out, errs)
+			}
+			l.ok("daemon", "stop")
+		})
+	}
 }

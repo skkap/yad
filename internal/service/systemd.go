@@ -287,28 +287,52 @@ func (s *Systemd) RestartCommand(profile string) []string {
 	return []string{"systemctl", "--user", "restart", s.Name(profile)}
 }
 
+// unitLog is the log the unit appends to, with Render's specifier escaping
+// still in it.
 var unitLog = regexp.MustCompile(`(?m)^StandardOutput=append:(.*)$`)
 
-// installedLog is the log the installed unit appends to, with Render's
-// specifier escaping undone.
-func (s *Systemd) installedLog(profile string) string {
-	b, err := os.ReadFile(s.File(profile))
-	if err != nil {
-		return ""
+func unescapeSpecifiers(s string) string { return strings.ReplaceAll(s, "%%", "%") }
+
+// unitDirs are the directories under the owner's home a user manager may
+// search, for when it cannot be asked which one it does: the config and the
+// data directory, as XDG names them and as they default.
+func (s *Systemd) unitDirs() []string {
+	var dirs []string
+	for _, base := range []string{s.Host.Getenv("XDG_CONFIG_HOME"), filepath.Join(s.Host.Home, ".config"), s.Host.Getenv("XDG_DATA_HOME"), filepath.Join(s.Host.Home, ".local", "share")} {
+		if filepath.IsAbs(base) {
+			dirs = append(dirs, filepath.Join(base, "systemd", "user"))
+		}
 	}
-	m := unitLog.FindSubmatch(b)
-	if m == nil {
-		return ""
-	}
-	return strings.ReplaceAll(string(m[1]), "%%", "%")
+	return dirs
 }
 
+// Status asks the user manager about the unit. One that cannot be asked —
+// no user bus — fails, and the Status it returns still says whether a unit
+// file is there and what log it names, found in the directories a manager
+// may search: that is what a start goes on to decide whether the profile may
+// be a service (decision 0074).
 func (s *Systemd) Status(ctx context.Context, profile string) (Status, error) {
 	if err := RefuseRoot(s.Host); err != nil {
 		return Status{}, err
 	}
 	if err := s.resolve(ctx); err != nil {
-		return Status{}, err
+		st := Status{Name: s.Name(profile), File: s.File(profile)}
+		for _, dir := range s.unitDirs() {
+			file := filepath.Join(dir, s.Name(profile))
+			ok, serr := exists(file)
+			if serr != nil {
+				// Unreadable is not absent: File names it, Installed stays
+				// false, and the caller's own look at it fails the same way.
+				st.File = file
+				break
+			}
+			if ok {
+				st.File, st.Installed = file, true
+				st.LogFile = installedLog(file, unitLog, unescapeSpecifiers)
+				break
+			}
+		}
+		return st, err
 	}
 	st := Status{Name: s.Name(profile), File: s.File(profile)}
 	var err error
@@ -316,7 +340,7 @@ func (s *Systemd) Status(ctx context.Context, profile string) (Status, error) {
 		return st, err
 	}
 	if st.Installed {
-		st.LogFile = s.installedLog(profile)
+		st.LogFile = installedLog(st.File, unitLog, unescapeSpecifiers)
 	}
 	props, err := s.show(ctx, st.Name)
 	if err != nil {

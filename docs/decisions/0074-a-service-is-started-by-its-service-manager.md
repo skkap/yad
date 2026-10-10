@@ -32,9 +32,15 @@ outside it and says how to put the runner back.
 
 **When the manager cannot be asked.** An SSH session with no GUI domain, or a
 missing user bus, means `launchctl print` or `systemctl --user show` fails.
-With no unit file there, that is no service: the detached start, as on a
-machine with no service manager at all. With the unit file there, the profile
-may be a service, and either guess repeats DEV-173 or refuses a start that was
+`launchctl print` answers a job it does not hold with exit status 113; only
+that is read as "not loaded", and any other failure is the manager not
+answering. With no unit file there, that is no service: the detached start,
+as on a machine with no service manager at all. Nor is a unit file that
+names other directories' log. A systemd manager that cannot be asked cannot
+say which directory it searches, so the file is looked for in each one it
+may: the XDG config and data directories and their defaults. With this
+profile's unit file there, or one that cannot be read or looked at, the
+profile may be a service, and either guess repeats DEV-173 or refuses a start that was
 fine. So start and restart refuse, leave the running daemon alone, and print
 the manager's own command (`launchctl kickstart [-k] …`,
 `systemctl --user start|restart …`) for the owner, who can tell.

@@ -270,20 +270,22 @@ func (l *Launchd) RestartCommand(profile string) []string {
 	return []string{"launchctl", "kickstart", "-k", l.target(profile)}
 }
 
+// plistLog is the plist's StandardOutPath, XML-escaped as Render wrote it;
+// html's unescaping reads every entity encoding/xml writes.
 var plistLog = regexp.MustCompile(`<key>StandardOutPath</key>\s*<string>([^<]*)</string>`)
 
-// installedLog is the StandardOutPath of the plist installed for a profile,
-// unescaped: html's unescaping reads every entity encoding/xml writes.
-func (l *Launchd) installedLog(profile string) string {
-	b, err := os.ReadFile(l.File(profile))
+// installedLog is the log a unit file names, read with re and unescaped;
+// empty when the file cannot be read or names none.
+func installedLog(file string, re *regexp.Regexp, unescape func(string) string) string {
+	b, err := os.ReadFile(file)
 	if err != nil {
 		return ""
 	}
-	m := plistLog.FindSubmatch(b)
+	m := re.FindSubmatch(b)
 	if m == nil {
 		return ""
 	}
-	return html.UnescapeString(string(m[1]))
+	return unescape(string(m[1]))
 }
 
 var (
@@ -292,9 +294,22 @@ var (
 	launchdExit  = regexp.MustCompile(`(?m)^\s*last exit code = (.+)$`)
 )
 
+// notFound is launchctl print's answer for a job launchd does not hold: exit
+// status 113, "Could not find service". Any other failure — no GUI domain to
+// ask, a launchctl that will not run — says nothing about the job.
+func notFound(err error) bool {
+	return strings.Contains(err.Error(), "exit status 113") || strings.Contains(err.Error(), "Could not find service")
+}
+
 // Status reads `launchctl print`, whose output Apple documents as not for
 // parsing; only the three lines it has carried for years are read, and a
 // change there shows as an unknown state, not a failure.
+//
+// Unlike install and uninstall, which may read any failed print as "not
+// loaded", Status tells the two apart: a start decides from it whether the
+// profile's runner is launchd's (decision 0074), and a job taken for absent
+// would be started a second time beside itself. A Status that failed still
+// carries what the plist says.
 func (l *Launchd) Status(ctx context.Context, profile string) (Status, error) {
 	if err := RefuseRoot(l.Host); err != nil {
 		return Status{}, err
@@ -305,11 +320,17 @@ func (l *Launchd) Status(ctx context.Context, profile string) (Status, error) {
 		return st, err
 	}
 	if st.Installed {
-		st.LogFile = l.installedLog(profile)
+		st.LogFile = installedLog(st.File, plistLog, html.UnescapeString)
 	}
-	ok, out, err := l.loaded(ctx, profile)
-	if err != nil || !ok {
-		return st, err
+	out, err := l.Host.Run.Run(ctx, "launchctl", "print", l.target(profile))
+	if err != nil {
+		if ctx.Err() != nil {
+			return st, ctx.Err()
+		}
+		if notFound(err) {
+			return st, nil
+		}
+		return st, fmt.Errorf("launchd could not say whether it holds %s: %w", st.Name, err)
 	}
 	st.Loaded = true
 	st.Detail = "unknown"

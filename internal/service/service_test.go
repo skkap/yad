@@ -944,6 +944,65 @@ func TestStart(t *testing.T) {
 	}
 }
 
+// A manager that cannot be asked is an error from Status, never a job taken
+// for absent — a start would put a second runner beside it — and the Status
+// still carries what the unit file says, found where a user manager may
+// search even when it cannot say which directory it does.
+func TestStatusThatCannotAskStillReadsTheUnit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		manager func(Host) Manager
+		dir     func(home string) string // where the unit file is
+		fail    func(call string) error
+	}{
+		{"launchd with no GUI domain", func(h Host) Manager { return &Launchd{Host: h} },
+			func(home string) string { return filepath.Join(home, "Library", "LaunchAgents") },
+			func(call string) error {
+				if strings.HasPrefix(call, "launchctl print") {
+					return errors.New("exit status 112: Could not find domain for port identifier")
+				}
+				return nil
+			}},
+		{"systemd with no user bus, unit in the data directory", func(h Host) Manager { return &Systemd{Host: h} },
+			func(home string) string { return filepath.Join(home, ".local", "share", "systemd", "user") },
+			func(call string) error {
+				if strings.HasPrefix(call, "systemctl") {
+					return errors.New("Failed to connect to bus: No medium found")
+				}
+				return nil
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) { return nil, tc.fail(call) }}
+			h := host(t, r)
+			m := tc.manager(h)
+			st, err := m.Status(context.Background(), "work")
+			if err == nil || st.Installed {
+				t.Fatalf("no unit: %+v, %v", st, err)
+			}
+			sp := specIn(t, h)
+			var unit []byte
+			if unit, err = m.Render(sp); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(tc.dir(h.Home), m.Name("work"))
+			if strings.HasPrefix(tc.name, "launchd") {
+				file += ".plist"
+			}
+			if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, unit, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			st, err = m.Status(context.Background(), "work")
+			if err == nil || st.Loaded || !st.Installed || st.File != file || st.LogFile != sp.LogFile {
+				t.Errorf("status %+v, %v; want an error, the file %s and its log %s", st, err, file, sp.LogFile)
+			}
+		})
+	}
+}
+
 // Status reads back the log the installed unit names, unescaped as each
 // format escapes it: it is what tells this profile's unit from one of the
 // same name for other directories.
