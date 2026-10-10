@@ -74,7 +74,7 @@ func TestASilentClaudeIsStoppedAtItsFirstOutputTimeout(t *testing.T) {
 		t.Fatalf("result = %+v (error %+v), %v", res, res.Error, ok)
 	}
 	for _, s := range []string{
-		"no event in the first 2s",
+		"no event in the first 2s after it started",
 		"its stderr ended: starting | loaded settings",
 		"see whether it answers: `claude -p hello`",
 		"account add claude",
@@ -85,6 +85,27 @@ func TestASilentClaudeIsStoppedAtItsFirstOutputTimeout(t *testing.T) {
 	}
 	if took := time.Since(start); took > time.Minute {
 		t.Errorf("the run took %s to stop", took)
+	}
+}
+
+// The account a silent run is pointed to only for a harness that can have
+// one: for OpenCode, which has none, the command would be refused as printed.
+func TestASilentRunIsSentToAnAccountOnlyWhereOneCanBeAdded(t *testing.T) {
+	x := &Exec{}
+	for _, tc := range []struct {
+		harness    string
+		hasAccount bool
+		want       bool
+	}{
+		{"claude", false, true},
+		{"codex", false, true},
+		{"claude", true, false},
+		{"opencode", false, false},
+	} {
+		got := x.stoppedDetail(ClassHarnessSilent, v1.Run{Harness: tc.harness}, adapter.Outcome{}, tc.hasAccount)
+		if strings.Contains(got, "account add") != tc.want {
+			t.Errorf("%s, account %v: %q", tc.harness, tc.hasAccount, got)
+		}
 	}
 }
 

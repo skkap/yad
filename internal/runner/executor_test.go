@@ -204,7 +204,7 @@ func TestWatchdogs(t *testing.T) {
 		// first-output timeout, not left to the inactivity timeout's half hour.
 		{"silent from its start", func(r *v1.Run) {}, 0, 30 * time.Millisecond,
 			fakeHarness(fake.Script{Hang: true}), ClassHarnessSilent,
-			[]string{"no event in the first 30ms", "check it on the runner with `yad ", "a home of its own: `yad "}, nil},
+			[]string{"no event in the first 30ms after it started", "check it on the runner with `yad ", "a home of its own: `yad "}, nil},
 		{"silent, with its stderr", func(r *v1.Run) {}, 0, 30 * time.Millisecond,
 			fakeHarness(fake.Script{Hang: true, Stopped: stderr}), ClassHarnessSilent,
 			[]string{"; its stderr ended: loading settings | waiting on the lock — "}, nil},

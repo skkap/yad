@@ -59,8 +59,9 @@ as a stall in `metrics.stalls`.
   run by hand in the run's home. That is the same `Spec.HarnessCheck` the
   adapter's own errors give, `claude -p hello` for Claude, carried to the
   executor in `Outcome.Check`. An adapter with no check of its own gets
-  `yad doctor` instead. A run on the harness's default login also gets
-  `yad account add <harness> <label>`, because the one cause known is a home
+  `yad doctor` instead. A run on the default login of a harness that can have
+  accounts (Claude, Codex; not OpenCode, whose `account add` is refused) also
+  gets `yad account add <harness> <label>`, because the one cause known is a home
   shared with something else running there, and an account is a home nobody
   else uses. README and `docs/install.md` now recommend an account over the
   default login on a shared machine for the same reason.
@@ -77,9 +78,13 @@ run's error carry a harness's last stderr line and said that child text was
   watchdog that stopped the turn. Before this, a watchdog's error never said
   anything about what the harness had been doing.
 - Before any of that, **every value yad put in the harness's environment is
-  replaced with `[redacted]`**. That means every `Spec.Env` value of 8 bytes or
-  more: the account's token (`CLAUDE_CODE_OAUTH_TOKEN`), its home, the run's
-  grants and their file paths. These are the credentials yad itself handed the
+  replaced with `[redacted]`**. That means every value of 8 bytes or more in
+  the environment the adapter started the harness with: the account's token
+  (`CLAUDE_CODE_OAUTH_TOKEN`), its home, the run's grants and their file
+  paths, and what an ACP agent's `Prepare` added, OpenCode's server password
+  among them. A value of several lines, such as a PEM key delivered as a
+  grant, also has each of its lines of 8 bytes or more replaced on its own, so
+  a tail cut part-way through it carries none of its later lines. These are the credentials yad itself handed the
   child, and the likeliest to come back, since a harness whose login is refused
   may quote the token it was refused. Values shorter than 8 bytes are left,
   because blanking every "1" would wreck the text and hide no credential.

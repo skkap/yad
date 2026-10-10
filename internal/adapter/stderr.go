@@ -37,8 +37,22 @@ const Redacted = "[redacted]"
 // and would go out in part.
 func StderrTail(stderr string, env []string, truncated bool) string {
 	for _, kv := range env {
-		if _, v, ok := strings.Cut(kv, "="); ok && len(v) >= minSecret {
+		_, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if len(v) >= minSecret {
 			stderr = strings.ReplaceAll(stderr, v, Redacted)
+		}
+		// Each line of a value that has several — a PEM key a grant
+		// delivers — on its own too: a tail cut part-way through the value
+		// holds its later lines whole and the value as a whole nowhere.
+		if strings.Contains(v, "\n") {
+			for _, line := range strings.Split(v, "\n") {
+				if line = strings.TrimSpace(line); len(line) >= minSecret {
+					stderr = strings.ReplaceAll(stderr, line, Redacted)
+				}
+			}
 		}
 	}
 	lines := strings.Split(stderr, "\n")

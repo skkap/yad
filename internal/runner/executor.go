@@ -996,7 +996,7 @@ func (e *Exec) stream(ctx context.Context, c Claim, a *activeRun, turn adapter.T
 		case <-idle.C:
 			w.stalls++
 			if w.firstEventMS < 0 && silentFor < idleFor {
-				stop(ClassHarnessSilent, fmt.Sprintf("the harness produced no event in the first %s of the run and was stopped", silentFor))
+				stop(ClassHarnessSilent, fmt.Sprintf("the harness produced no event in the first %s after it started and was stopped", silentFor))
 				break
 			}
 			stop(ClassInactivity, fmt.Sprintf("the harness produced no event for %s and was stopped", idleFor))
@@ -1287,7 +1287,9 @@ func (e *Exec) stoppedDetail(class string, run v1.Run, out adapter.Outcome, hasA
 	} else {
 		s += " — check it on the runner with `" + e.Paths.RemoteCommand("doctor") + "`"
 	}
-	if !hasAccount {
+	// Only for a harness that can have accounts: OpenCode has none, and the
+	// command would be refused as printed.
+	if !hasAccount && account.HomeVar(run.Harness) != "" {
 		s += "; if it hangs on a machine where other people's " + run.Harness + " runs from the same login, give yad an account with a home of its own: `" +
 			e.Paths.RemoteCommand("account", "add", run.Harness, "<label>") + "`"
 	}
