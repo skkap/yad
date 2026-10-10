@@ -192,7 +192,7 @@ func LoggedIn(ctx context.Context, harness, binary, home string) (bool, error) {
 // Claude's check says yes to any token it is handed, so asking with the token
 // in place would call every login beside one a success — in its environment,
 // or as the login yad writes into the home for a nested claude (decision
-// 0075), which is taken out first. The token stays stored, and the next
+// 0076), which is taken out first. The token stays stored, and the next
 // preparation of the home writes that login again while it is.
 func OwnLogin(ctx context.Context, harness, binary, home string) (bool, error) {
 	if CanUseToken(harness) {

@@ -403,7 +403,7 @@ func assertNoSetAside(t *testing.T, data, harness, label string) {
 
 // Claude copies a token home's credentials file into the Keychain the first
 // time it saves anything else in its store, and that copy outranks the file
-// from then on (decision 0075). So storing a token deletes it first, and a
+// from then on (decision 0076). So storing a token deletes it first, and a
 // login made beside a token starts with neither copy there; a Keychain that
 // will not let go changes nothing.
 func TestATokensKeychainCopyGoesBeforeItCouldOutrankIt(t *testing.T) {

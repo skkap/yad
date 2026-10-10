@@ -883,7 +883,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   warning and `yad account list` says so.
   Claude Code hands `CLAUDE_CODE_OAUTH_TOKEN` to no child it starts, so the
   home also carries the token as Claude's own login
-  ([0075](docs/decisions/0075-a-token-accounts-home-carries-its-login-and-every-account-shares-the-machines-plugins.md)):
+  ([0076](docs/decisions/0076-a-token-accounts-home-carries-its-login-and-every-account-shares-the-machines-plugins.md)):
   `.credentials.json` (`0600`), the token under `claudeAiOauth` in the shape
   Claude gives the variable, marked `yadTokenLogin`. A claude the run starts
   (revmux's reviewers, a script) finds it through the home variables. It is
@@ -924,7 +924,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   from the harness's default home when the account has none of its own.
   Never a credential, never a file the harness keeps a login's state in.
   `plugins/` is the machine's state rather than a login's, and the shared
-  `settings.json` enables plugins by name (0075). Claude makes an empty
+  `settings.json` enables plugins by name (0076). Claude makes an empty
   `plugins/` in a home that has none, so one holding only that default
   (`installed_plugins.json` and `known_marketplaces.json` recording
   nothing, and empty directories) is replaced by the link at the next run.

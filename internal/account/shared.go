@@ -23,7 +23,7 @@ import (
 // through a link would be two logins' state in one place. Claude's plugins/
 // is state, but the machine's and not a login's — what is installed, and
 // where — which every session on the default home already shares, and which
-// settings.json, shared here, enables by name (decision 0075).
+// settings.json, shared here, enables by name (decision 0076).
 var sharedConfig = map[string][]string{
 	"claude": {"CLAUDE.md", "settings.json", "skills", "commands", "agents", "plugins"},
 	"codex":  {"AGENTS.md", "prompts"},

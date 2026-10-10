@@ -152,7 +152,7 @@ or `yad account add codex main --device` with a code entered anywhere. Add more 
 runner uses them in turn. A token account works for anything its runs start
 that calls `claude` too — a reviewer, a script — with no shell setup: the
 token is also kept as Claude's own login in the account's home
-([0075](docs/decisions/0075-a-token-accounts-home-carries-its-login-and-every-account-shares-the-machines-plugins.md)).
+([0076](docs/decisions/0076-a-token-accounts-home-carries-its-login-and-every-account-shares-the-machines-plugins.md)).
 
 When the machine has no convenient shell — a VM, a container, a box somewhere
 else — **the hub can do it instead**, if it supports it. It shows **Log in**

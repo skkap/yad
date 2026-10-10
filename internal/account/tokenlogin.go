@@ -14,7 +14,7 @@ import (
 
 // credentialsFile is where Claude looks for a home's login when its secure
 // storage has none: on Linux it is the store, and on macOS Claude reads it
-// when the Keychain holds no item for the home (decision 0075, read from
+// when the Keychain holds no item for the home (decision 0076, read from
 // claude 2.1.296).
 const credentialsFile = ".credentials.json"
 
@@ -175,7 +175,7 @@ func syncTokenLogin(home string) error {
 // account's home, on macOS, saying what was not done when one will not go.
 // Claude copies the credentials file there, token and all, the first time it
 // saves anything else in its store, and the copy outranks the file from then
-// on (decision 0075).
+// on (decision 0076).
 func forgetTokenCopy(home, so string) error {
 	_, err := forgetKeychain("claude", home, false)
 	if ke, ok := errors.AsType[*KeychainError](err); ok {

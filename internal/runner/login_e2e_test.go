@@ -108,7 +108,7 @@ func (x *loginE2E) secretsStayPut(t *testing.T, secrets ...string) {
 		}
 		// The two places a token account's token is kept on purpose, both
 		// 0600 in its home: its file, and Claude's login for the claudes a
-		// run starts (decision 0075).
+		// run starts (decision 0076).
 		if name := filepath.Base(path); name == "yad-oauth-token" || name == ".credentials.json" && filepath.Base(filepath.Dir(filepath.Dir(path))) == "claude" {
 			if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
 				t.Errorf("%s is not 0600 (%v)", path, err)

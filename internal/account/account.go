@@ -11,7 +11,7 @@
 // a token account (decision 0054): a `claude setup-token` token the owner
 // piped in, kept 0600 in the account's home and handed to that account's runs
 // in their environment, and written 0600 into the home's .credentials.json in
-// Claude's own format, for the claudes those runs start (decision 0075) —
+// Claude's own format, for the claudes those runs start (decision 0076) —
 // never printed, logged or sent anywhere. To leave a login Claude made in
 // that file alone, yad reads whether it has a refresh token, and nothing
 // more of it. A label is not a secret and a credential is — the label

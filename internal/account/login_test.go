@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 
 // credentialFile is where the fake harness keeps its pretend credential, in
 // the shape claude writes a login of its own: one with a refresh token, which
-// yad reads only to know it is not a token's (decision 0075) and so never
+// yad reads only to know it is not a token's (decision 0076) and so never
 // touches.
 const credentialFile = ".credentials.json"
 
