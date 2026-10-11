@@ -209,6 +209,10 @@ type Loop struct {
 	// does cannot disagree. accountsRead tells "none configured" from "the
 	// read failed"; the second reports no harness health at all.
 	accounts []account.Account
+	// silences are every home's silent runs, read with the accounts: an
+	// account's own are already on it, and a default login's are here alone
+	// (decision 0077).
+	silences account.Silences
 	// accountsTried is whether this sync has attempted the read, which is
 	// what stops a second caller retrying it; accountsErr is why it failed,
 	// which is what tells "no accounts configured" from "could not ask".
@@ -524,8 +528,8 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	//
 	// Dropped again at the end, so the field is never a stale answer to
 	// somebody outside a sync — health asked on its own loads afresh.
-	l.accounts, l.accountsTried, l.accountsErr = nil, false, nil
-	defer func() { l.accounts, l.accountsTried, l.accountsErr = nil, false, nil }()
+	l.accounts, l.silences, l.accountsTried, l.accountsErr = nil, nil, false, nil
+	defer func() { l.accounts, l.silences, l.accountsTried, l.accountsErr = nil, nil, false, nil }()
 	l.loadAccounts(ctx)
 	// Capacity for the parked runs that are due, taken before the hub is
 	// asked so it is out of the free capacity the request advertises — an
@@ -815,7 +819,7 @@ func (l *Loop) claim(ctx context.Context, run v1.Run, doc v1.Capabilities, res *
 		return
 	}
 	if l.notClaimable(run.Harness) {
-		l.Log.Warn("every account of this harness is at a usage limit or needs a login; leaving the run for the hub to offer again",
+		l.Log.Warn("this harness is not ready — every account is at a usage limit, needs a login or has gone silent, or its own login has; leaving the run for the hub to offer again",
 			"connection", l.Connection, "run", run.RunID, "harness", run.Harness)
 		return
 	}
@@ -1287,6 +1291,7 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		return nil
 	}
 	accounts := l.accounts
+	now := l.Clock.Now()
 	var out []v1.HarnessHealth
 	for _, hr := range doc.Harnesses {
 		// The predicate a claim uses, not a copy of part of it: a harness
@@ -1303,14 +1308,15 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		// leaving the hub a list nothing in which can run.
 		//
 		// No accounts means the harness runs on its own default home, which
-		// is ready; accounts that all need login or are limited mean it is
-		// not, and the claim below leaves such a harness's offers alone.
+		// is ready unless its runs went silent; accounts that all need login,
+		// are limited or went silent mean it is not, and the claim below
+		// leaves such a harness's offers alone.
 		//
 		// Soonest, not First: the account a run takes is the free one whose
 		// window resets soonest (DEV-28, decision 0039). Either way it is the
 		// claim's own predicate, asked once — what a hub is told and what this
 		// runner then does come from one answer.
-		chosen, usable := account.Soonest(accounts, hr.ID, l.Clock.Now())
+		chosen, usable := account.Soonest(accounts, hr.ID, now)
 		// Empty unless a run could actually start: Soonest returns free
 		// accounts only, so a harness with none configured and one whose
 		// every account is limited both arrive here with nothing to name.
@@ -1318,7 +1324,17 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		if usable {
 			running = chosen.Label
 		}
-		hh := v1.HarnessHealth{ID: hr.ID, Ready: len(reports) == 0 || usable, Accounts: capAccounts(reports, running)}
+		// A harness with no accounts runs on its own login, and that login's
+		// silent runs are the one thing that can make it not ready here
+		// (decision 0077); a harness with accounts never uses it, so a record
+		// left from before it had any says nothing about it.
+		var silentUntil *time.Time
+		if len(reports) == 0 {
+			if sl, ok := l.silences.Default(hr.ID, now); ok {
+				silentUntil = &sl.Until
+			}
+		}
+		hh := v1.HarnessHealth{ID: hr.ID, Ready: (len(reports) == 0 && silentUntil == nil) || usable, Accounts: capAccounts(reports, running), SilentUntil: silentUntil}
 		if !hh.Ready {
 			ready[hr.ID] = false
 		}
@@ -1327,8 +1343,9 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 	return out
 }
 
-// notClaimable says whether every account of this harness is limited or needs
-// a login, as the health this sync sent said. Reading the answer the hub was
+// notClaimable says whether this harness is not ready, as the health this sync
+// sent said: every account limited, needing a login or silent, or the
+// harness's own login silent (decision 0077). Reading the answer the hub was
 // given, rather than asking again, is what keeps the two from disagreeing:
 // a runner that reports a harness not ready and then claims for it anyway is
 // telling the hub one thing and doing another.

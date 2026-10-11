@@ -115,7 +115,7 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 	// daemon that owns it — must not stop a registration. cmd_daemon takes the
 	// same failure the same way, and capability.Build falls back to reporting
 	// the owner's configured labels as free.
-	accounts, err := account.Read(ctx, p, account.ListsOf(cfg), time.Now())
+	accounts, silences, err := account.ReadAll(ctx, p, account.ListsOf(cfg), time.Now())
 	if err != nil {
 		// Not fatal: a state database this binary cannot read — one migration
 		// behind, because the daemon has not restarted — must not stop a
@@ -123,11 +123,11 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 		// configured labels. But the error carries the way out, so it is
 		// handed back rather than dropped.
 		notes = append(notes, "account states could not be read, so every configured account is registered as free: "+err.Error())
-		accounts = nil
+		accounts, silences = nil, nil
 	}
 	// As this connection's syncs will send it, so the hub knows from the
 	// start what it may ask (decision 0057).
-	doc := capability.ForConnection(capability.Build(ctx, id, cfg, accounts), conn.MayManageAccounts())
+	doc := capability.ForConnection(capability.Build(ctx, id, cfg, capability.State{Accounts: accounts, Silences: silences, Paths: p}), conn.MayManageAccounts())
 	res, err := client.Register(ctx, token, v1.RegisterRequest{Capabilities: doc})
 	if err != nil {
 		return conn, none, notes, fmt.Errorf("register with %s: %w", shown, err)

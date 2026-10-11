@@ -168,11 +168,14 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	noted := modelsNoted{}
 	build := func() v1.Capabilities {
 		now := lists.Lists()
-		accounts, err := account.Read(runCtx, g.paths, now, time.Now())
+		accounts, silences, err := account.ReadAll(runCtx, g.paths, now, time.Now())
 		if err != nil {
 			log.Warn("could not read account states; reporting the owner's accounts as free", "err", err)
 		}
-		doc := capability.Build(runCtx, id, now.Apply(cfg), accounts)
+		// This start ends every cool-down (decision 0077), and the first
+		// document is built before Serve has written that down.
+		accounts, silences = account.EndedAtStart(accounts, silences, started)
+		doc := capability.Build(runCtx, id, now.Apply(cfg), capability.State{Accounts: accounts, Silences: silences, Paths: g.paths})
 		noted.note(log, capability.ModelsFailures())
 		return doc
 	}

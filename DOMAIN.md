@@ -215,6 +215,33 @@ time.
 _Avoid_: rate limit for this. A **rate limit** is transient API throttling the
 harness retries by itself (`system/api_retry`); it never makes a run wait.
 
+**Ready** — a harness can take a run now: it is drivable (first-class,
+present, no error) and one of its homes can take one — a free account that is
+not silent or, with no accounts, its own login, not silent. Each sync's health
+says it per harness, and a runner leaves an offer for a harness that is not
+ready for the hub to place elsewhere rather than refusing it.
+_Rules_: Not ready ends by itself or by an answer — a limit at its reset, a
+login when someone logs it in, a silent home when its cool-down ends. A check
+that cannot answer never makes a harness not ready, and neither does a
+warning.
+_Avoid_: healthy, available, up
+_See_: [0053](docs/decisions/0053-a-harness-on-its-own-login-is-checked-like-an-account.md), [0077](docs/decisions/0077-a-home-whose-runs-go-silent-is-not-ready-for-a-while.md)
+
+**Silent home** — a home, an account's or a harness's own login, whose last
+three runs in a row ended `harness_silent` with no run on it producing an event
+in between. It is not ready for a cool-down — 15 minutes, doubling with each
+further silent run to at most 4 hours — and then tried again; it carries
+`silent_until` meanwhile.
+_Rules_: Kept per home, because the one cause known is a home shared with
+another harness running there (DEV-170) and an account is a home of its own.
+A run on it that produces any event clears it, a daemon start ends its
+cool-down and keeps its count, and removing the account forgets it. Never a
+fourth account state. Another Claude found running from a home is a warning
+and never makes the home silent or not ready.
+_Avoid_: hung, dead, broken — a silent home is a fault nobody has named yet,
+seen from outside
+_See_: [0077](docs/decisions/0077-a-home-whose-runs-go-silent-is-not-ready-for-a-while.md), `internal/account/silence.go`
+
 **Model** — what the harness is pointed at for one run (`opus`, `gpt-5.1-codex`).
 Chosen per run, never per runner: the same machine serves cheap and expensive
 work.
@@ -397,7 +424,8 @@ _See_: [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-i
 **Watchdog** — the runner's timers on a run: an inactivity timeout on the
 event stream, which catches a wedged harness; a shorter first-output timeout
 before the harness's first event, which catches one wedged before its first
-word (`harness_silent`, [0075](docs/decisions/0075-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md));
+word (`harness_silent`, [0075](docs/decisions/0075-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md)),
+three of which in a row make their home a **silent home**;
 and an optional wall-clock cap set per run.
 
 ## Relationships

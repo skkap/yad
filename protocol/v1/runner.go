@@ -77,7 +77,7 @@ const (
 type AccountState string
 
 const (
-	// AccountFree takes runs.
+	// AccountFree takes runs, unless its SilentUntil is set (decision 0077).
 	AccountFree AccountState = "free"
 	// AccountLimited is at a usage limit until LimitedUntil.
 	AccountLimited AccountState = "limited"
@@ -107,8 +107,14 @@ type AccountReport struct {
 	// it. Hubs update centrally and runners sit on other people's machines,
 	// so that is the direction that matters, and §2's rule is that a field
 	// added within v1 never breaks an older runner.
-	State        AccountState `json:"state,omitempty" enum:"free,limited,needs_login" doc:"free takes runs. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again, at the machine or with a hub login (start_login or login_token). Absent from runners older than this field: the runner cannot say, which is not a fault."`
+	State        AccountState `json:"state,omitempty" enum:"free,limited,needs_login" doc:"free takes runs, unless silent_until is set. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again, at the machine or with a hub login (start_login or login_token). Absent from runners older than this field: the runner cannot say, which is not a fault."`
 	LimitedUntil *time.Time   `json:"limited_until,omitempty" doc:"When a limited account's usage limit resets. Absent for an account that is not limited."`
+	// SilentUntil is a field beside the state rather than a fourth state:
+	// the state set is closed for v1 (decision 0047), and a run gone silent
+	// says nothing about the login or its quota, only about its home
+	// (decision 0077). It is what lets a hub say why a harness whose
+	// accounts all read free is not ready.
+	SilentUntil *time.Time `json:"silent_until,omitempty" doc:"Set while the account's last runs said nothing at all before the runner's first-output timeout stopped them, three or more in a row each ending harness_silent: the runner starts no run on it until this time, whatever its state says, and then offers it again. A run on it that produces any output clears it. Absent otherwise, and from runners older than this field."`
 	// Windows is every usage window the harness last told the runner about,
 	// whether or not the account is at a limit: a hub seeing one at 96% knows
 	// why a runner will stop claiming soon, and one at 100% with a reset says

@@ -103,14 +103,18 @@ type Health struct {
 // HarnessHealth is per-harness readiness with each account's state: limited
 // until a reset, needing a login the owner has to finish, or free.
 //
-// Ready is whether the harness can take a run now — at least one free account,
-// or none configured at all, since a harness with no accounts runs on the
-// harness's own login. It is not a claim about the binary being installed;
-// only harnesses the runner can drive appear here.
+// Ready is whether the harness can take a run now — at least one free account
+// that is not silent, or none configured at all, since a harness with no
+// accounts runs on the harness's own login, unless that login is silent. It
+// is not a claim about the binary being installed; only harnesses the runner
+// can drive appear here.
 type HarnessHealth struct {
 	ID       string          `json:"id" doc:"The harness id."`
-	Ready    bool            `json:"ready" doc:"Whether the harness can take a run now: at least one account is free, or it has no accounts and runs on its own login."`
+	Ready    bool            `json:"ready" doc:"Whether the harness can take a run now: at least one account is free and not silent, or it has no accounts and runs on its own login, which is not silent."`
 	Accounts []AccountReport `json:"accounts,omitempty" doc:"Each account's state, limit and usage windows as of this sync."`
+	// SilentUntil is the default login's own silent_until, which no account
+	// report can carry: a harness with no accounts has none (decision 0077).
+	SilentUntil *time.Time `json:"silent_until,omitempty" doc:"For a harness with no accounts, running on its own login: set while that login's last runs said nothing at all before the runner's first-output timeout stopped them, three or more in a row each ending harness_silent. ready is false until this time, and then the harness is offered again. A run that produces any output clears it. Absent otherwise, for a harness with accounts (each account says it for itself), and from runners older than this field."`
 }
 
 // HeldRun is one run's non-terminal state. Terminal states travel in a Result.

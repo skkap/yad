@@ -124,13 +124,26 @@ func ForConnection(doc v1.Capabilities, manageAccounts bool) v1.Capabilities {
 	return doc
 }
 
-// Build probes the machine and assembles the document from it and the owner's
-// config.
-//
-// accounts is the runner's accounts with their states, or nil when there are
-// none to report — a harness with no accounts runs on its own default home and
-// says so by reporting none, which is a state and not a failure.
-func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []account.Account) v1.Capabilities {
+// State is what the document is built from besides the machine and the
+// owner's config: what the runner's state database holds, and the profile
+// the next actions it gives must name.
+type State struct {
+	// Accounts is the runner's accounts with their states, or nil when there
+	// are none to report — a harness with no accounts runs on its own default
+	// home and says so by reporting none, which is a state and not a failure.
+	Accounts []account.Account
+	// Silences is every home's silent runs (decision 0077); a default
+	// login's are read from here, an account's from its own Account.
+	Silences account.Silences
+	// Paths is the profile. The document reaches every hub, so its commands
+	// are built with RemoteCommand and name no path (DEV-67).
+	Paths config.Paths
+}
+
+// Build probes the machine and assembles the document from it, the owner's
+// config and the runner's state.
+func Build(ctx context.Context, runnerID string, cfg config.Config, st State) v1.Capabilities {
+	accounts := st.Accounts
 	// The two probes run side by side because the daemon re-probes on a fixed
 	// interval: one machine where every harness and every host tool hangs must
 	// still finish within it, and in series it would not.
@@ -142,6 +155,10 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, accounts []a
 	}()
 	found := Detect(ctx)
 	DefaultLogins(ctx, found, cfg)
+	SilentHomes(found, cfg, accounts, st.Silences, time.Now(), st.Paths.RemoteCommand)
+	// A process table that cannot be read is nothing to tell a hub: absence
+	// is data, and doctor is where the owner hears why.
+	_ = SharedHomes(ctx, found, cfg, accounts, st.Paths.RemoteCommand, false)
 	<-done
 	addModels(ctx, found, cfg, accounts)
 

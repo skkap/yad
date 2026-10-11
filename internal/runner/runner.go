@@ -108,6 +108,13 @@ func Serve(ctx context.Context, o Options) error {
 	o.Accounts.usePaths(o.Paths)
 	o.Accounts.attach(ctx, st)
 	defer o.Accounts.attach(ctx, nil)
+	// A start is the owner's word that whatever silenced a harness is fixed
+	// (decision 0077): every cool-down ends here, before the first sync can
+	// report one, and the counts stay, so a home still wedged trips again on
+	// its next run.
+	if err := account.EndCoolDowns(ctx, st.Queries, time.Now()); err != nil {
+		o.Log.Warn("could not end the cool-downs of harnesses whose runs went silent; each ends on its own", "err", err)
+	}
 	pool := NewPool(o.Capabilities().Capacity)
 	// One manager for preparing and reclaiming: its per-repository locks are
 	// what keep a worktree being added and one being removed from meeting in

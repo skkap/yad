@@ -16,6 +16,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/codex/codextest"
 	"github.com/skkap/yad/internal/adapter/fake"
+	"github.com/skkap/yad/internal/capability"
 
 	"context"
 )
@@ -30,6 +31,9 @@ func TestMain(m *testing.M) {
 		codextest.Main()
 		os.Exit(0)
 	}
+	// The machine's own process table is the owner's: a document built
+	// here finds no other Claude in any home.
+	capability.ProcessesForTests = func(context.Context) ([]capability.Process, error) { return nil, nil }
 	if mode := os.Getenv("RUNNER_TEST_CLAUDE"); mode == "silent" || mode == "stderr" {
 		os.Exit(fakeClaudeRun(mode))
 	}

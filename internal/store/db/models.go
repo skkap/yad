@@ -33,6 +33,14 @@ type Event struct {
 	Acked      int64
 }
 
+type HarnessSilence struct {
+	Harness   string
+	Label     string
+	Runs      int64
+	Until     int64
+	UpdatedAt int64
+}
+
 type Outbox struct {
 	Connection    string
 	RunID         string
