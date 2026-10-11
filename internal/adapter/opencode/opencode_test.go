@@ -590,6 +590,23 @@ func TestDiedBeforeTheAnswer(t *testing.T) {
 	}
 }
 
+// What a file grant holds is in no variable, and the stderr a run's error
+// quotes is masked of it all the same (decision 0075): the ACP adapter
+// passes Spec.Secrets through as Claude's and Codex's do.
+func TestStderrIsMaskedOfSecrets(t *testing.T) {
+	const secret = "something went badly wrong"
+	p := &play{fixture: fixture(t, "plain"), env: map[string]string{acptest.EnvMode: "died"}}
+	spec := p.spec(t)
+	spec.Secrets = []string{secret}
+	_, o := run(t, spec, nil)
+	if o.Error == nil || o.Error.Class != adapter.ClassHarnessExited {
+		t.Fatalf("outcome %s %+v", o.State, o.Error)
+	}
+	if want := "Error: " + adapter.Redacted; o.Stderr != want || strings.Contains(o.Error.Message, secret) {
+		t.Errorf("stderr %q (want %q), message %q", o.Stderr, want, o.Error.Message)
+	}
+}
+
 // A failed prompt reaches the run classified: provider-error was recorded
 // (Zen's upstream down); the rest are plain with its answer replaced by the
 // error OpenCode 1.18.33 sends for each.

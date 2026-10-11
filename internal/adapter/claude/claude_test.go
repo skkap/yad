@@ -846,6 +846,23 @@ func TestBrokenStreams(t *testing.T) {
 	}
 }
 
+// What a file grant holds is in no variable, and the stderr a run's error
+// quotes is masked of it all the same (decision 0075).
+func TestStderrIsMaskedOfSecrets(t *testing.T) {
+	const secret = "something went badly wrong"
+	h := &harness{fixture: derive(t, "plain", func(l []string) []string { return l[:indexOf(l, "result")] }),
+		env: map[string]string{"CLAUDE_TEST_MODE": "died"}}
+	spec := h.spec(t)
+	spec.Secrets = []string{secret}
+	_, out, _ := drive(t, context.Background(), spec, nil)
+	if out.Error == nil || out.Error.Class != adapter.ClassHarnessExited {
+		t.Fatalf("outcome %s %+v", out.State, out.Error)
+	}
+	if want := "Error: " + adapter.Redacted; out.Stderr != want || strings.Contains(out.Error.Message, secret) {
+		t.Errorf("stderr %q (want %q), message %q", out.Stderr, want, out.Error.Message)
+	}
+}
+
 // A line over the cap is skipped and reported; the run goes on to its result.
 func TestOversizedLineIsSkipped(t *testing.T) {
 	if testing.Short() {
@@ -1212,6 +1229,29 @@ func TestEffortIsClaudesFlag(t *testing.T) {
 		}
 		if got, _ := h.seen(t).flag("--effort"); got != level {
 			t.Errorf("--effort %q, want %q (argv %q)", got, level, h.seen(t).argv)
+		}
+	}
+}
+
+// Claude's line refusing an effort is quoted in the run's error, and is
+// masked of what yad handed Claude as the tail is: here a file grant's value
+// that, in this fake, stands in the line's own words.
+func TestTheEffortRefusalIsMaskedOfSecrets(t *testing.T) {
+	const secret = "ignoring it and using the default effort"
+	h := &harness{fixture: fixture("plain")}
+	spec := h.spec(t)
+	spec.Effort = "bogus"
+	spec.Secrets = []string{secret}
+	evs, out, _ := drive(t, context.Background(), spec, nil)
+	if out.Error == nil || out.Error.Class != adapter.ClassHarness {
+		t.Fatalf("outcome %+v (%+v), want failed %s", out, out.Error, adapter.ClassHarness)
+	}
+	if want := "Unknown --effort value 'bogus' — " + adapter.Redacted; !strings.Contains(out.Error.Message, want) || strings.Contains(out.Error.Message, secret) {
+		t.Errorf("message %q, want it to carry %q and not the secret", out.Error.Message, want)
+	}
+	for _, ev := range evs {
+		if strings.Contains(ev.Text, secret) || ev.Error != nil && strings.Contains(ev.Error.Message, secret) {
+			t.Errorf("event %+v carries the secret", ev)
 		}
 	}
 }

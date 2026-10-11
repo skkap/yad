@@ -15,49 +15,30 @@ const (
 	StderrBytes = 1 << 10
 )
 
-// minSecret is the shortest environment value StderrTail replaces. Every
-// credential is far longer; a shorter value — a "1" a grant sets — would
-// blank out every digit in the text and hide nothing.
+// minSecret is the shortest value StderrTail replaces. Every credential is
+// far longer; a shorter value — a "1" a grant sets — would blank out every
+// digit in the text and hide nothing.
 const minSecret = 8
 
-// Redacted stands in for an environment value in a harness's stderr.
+// Redacted stands in for a value yad handed a harness, in its stderr.
 const Redacted = "[redacted]"
 
 // StderrTail is the end of what a harness wrote to stderr as a run's error
 // may quote it (decision 0075): its last StderrLines non-empty lines, at most
 // StderrBytes, joined by " | " into one line, with every value yad put in the
 // harness's environment (env — the account's token, its home, the run's
-// grants) replaced first. Those are the credentials yad itself handed the
-// child, and the likeliest to come back: a harness whose login is refused
-// may quote the token it was refused. Nothing of the environment is ever
-// added to it, and stderr that held only blank lines is "".
+// grants and their file paths) and every one of secrets (Spec.Secrets — what
+// the run's file grants hold) replaced first. Those are the credentials yad
+// itself handed the child, and the likeliest to come back: a harness whose
+// login is refused may quote the token it was refused. Nothing of either is
+// ever added to it, and stderr that held only blank lines is "".
 //
 // truncated says the tail began mid-stream — the supervisor keeps a bounded
 // tail and its first line may start part-way through — and then that first
 // line is dropped, since a credential cut at its start would no longer match
 // and would go out in part.
-func StderrTail(stderr string, env []string, truncated bool) string {
-	var secrets []string
-	for _, kv := range env {
-		_, v, ok := strings.Cut(kv, "=")
-		if !ok {
-			continue
-		}
-		if len(v) >= minSecret {
-			secrets = append(secrets, v)
-		}
-		// Each line of a value that has several — a PEM key a grant
-		// delivers — on its own too: a tail cut part-way through the value
-		// holds its later lines whole and the value as a whole nowhere.
-		if strings.Contains(v, "\n") {
-			for _, line := range strings.Split(v, "\n") {
-				if line = strings.TrimSpace(line); len(line) >= minSecret {
-					secrets = append(secrets, line)
-				}
-			}
-		}
-	}
-	stderr = mask(stderr, secrets)
+func StderrTail(stderr string, env, secrets []string, truncated bool) string {
+	stderr = Mask(stderr, env, secrets)
 	lines := strings.Split(stderr, "\n")
 	if truncated && len(lines) > 0 {
 		lines = lines[1:]
@@ -83,6 +64,42 @@ func StderrTail(stderr string, env []string, truncated bool) string {
 		cut++
 	}
 	return "…" + out[cut:]
+}
+
+// Mask is s with every value of env and every one of secrets replaced as
+// StderrTail replaces them, for anything else of a harness's stderr a run's
+// error quotes — Claude's line refusing an effort.
+func Mask(s string, env, secrets []string) string {
+	var masked []string
+	for _, kv := range env {
+		if _, v, ok := strings.Cut(kv, "="); ok {
+			masked = appendSecret(masked, v)
+		}
+	}
+	for _, v := range secrets {
+		masked = appendSecret(masked, v)
+	}
+	return mask(s, masked)
+}
+
+// appendSecret adds to secrets what Mask replaces of one value: the
+// value, when it is at least minSecret long.
+func appendSecret(secrets []string, v string) []string {
+	if len(v) >= minSecret {
+		secrets = append(secrets, v)
+	}
+	// Each line of a value that has several — a PEM key a grant delivers —
+	// on its own too: a tail cut part-way through the value holds its later
+	// lines whole and the value as a whole nowhere. A file's content that
+	// ends in a newline its harness does not print is one of these.
+	if strings.Contains(v, "\n") {
+		for _, line := range strings.Split(v, "\n") {
+			if line = strings.TrimSpace(line); len(line) >= minSecret {
+				secrets = append(secrets, line)
+			}
+		}
+	}
+	return secrets
 }
 
 // mask replaces every occurrence of every secret in s with Redacted. Each

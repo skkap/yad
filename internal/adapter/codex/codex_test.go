@@ -425,6 +425,23 @@ func TestFailures(t *testing.T) {
 	}
 }
 
+// What a file grant holds is in no variable, and the stderr a run's error
+// quotes is masked of it all the same (decision 0075).
+func TestStderrIsMaskedOfSecrets(t *testing.T) {
+	const secret = "something went badly wrong"
+	h := &harness{fixture: cutBefore(t, "interrupt", `{">":{"jsonrpc":"2.0","id":4,"method":"turn/interrupt"`),
+		env: map[string]string{"CODEX_TEST_MODE": "died"}}
+	spec := h.spec(t)
+	spec.Secrets = []string{secret}
+	_, out, _ := drive(t, context.Background(), spec, nil)
+	if out.Error == nil || out.Error.Class != adapter.ClassHarnessExited {
+		t.Fatalf("outcome %s %+v", out.State, out.Error)
+	}
+	if want := "Error: " + adapter.Redacted; out.Stderr != want || strings.Contains(out.Error.Message, secret) {
+		t.Errorf("stderr %q (want %q), message %q", out.Stderr, want, out.Error.Message)
+	}
+}
+
 // cutBefore writes a copy of a fixture that ends just before the line with
 // this prefix — a Codex that stopped there.
 func cutBefore(t *testing.T, name, prefix string) string {

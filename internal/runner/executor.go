@@ -642,7 +642,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	// park exists to survive, and holding a directory for five hours while
 	// nothing runs in it is the opposite of what it is for.
 	defer prep.Release()
-	env, cleanup, err := e.grants(c)
+	env, secrets, cleanup, err := e.grants(c)
 	defer cleanup()
 	if err != nil {
 		log.Warn("the run's grants could not be delivered", "err", err)
@@ -721,7 +721,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		spec := adapter.Spec{
 			RunID: run.RunID, Model: run.Model, Effort: run.Effort, Workdir: prep.Dir,
 			SessionID: run.Session.ID, NativeSessionID: native, Brief: run.Brief,
-			Home: home, Env: turnEnv, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
+			Home: home, Env: turnEnv, Secrets: secrets, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
 			Yad: e.Paths.RemoteCommand,
 		}
 		// Only until the fork has a conversation of its own: a turn after
@@ -1547,8 +1547,10 @@ func pathName(id string) string {
 
 // grants delivers the run's grants, which v1.Grant.Validate has passed: an env
 // grant as NAME=value, a file grant as a 0600 file whose path is NAME. Never
-// argv. cleanup deletes the files and is always safe to call.
-func (e *Exec) grants(c Claim) (env []string, cleanup func(), err error) {
+// argv. secrets are the file grants' values, which are in no variable and
+// which the harness's quoted stderr is masked of all the same (Spec.Secrets).
+// cleanup deletes the files and is always safe to call.
+func (e *Exec) grants(c Claim) (env, secrets []string, cleanup func(), err error) {
 	cleanup = func() {}
 	var dir string
 	for _, g := range c.Run.Grants {
@@ -1559,18 +1561,19 @@ func (e *Exec) grants(c Claim) (env []string, cleanup func(), err error) {
 			if dir == "" {
 				dir = filepath.Join(e.Data, "grants", c.Connection, pathName(c.Run.RunID))
 				if err := os.MkdirAll(dir, 0o700); err != nil {
-					return nil, cleanup, fmt.Errorf("grant directory: %w", err)
+					return nil, nil, cleanup, fmt.Errorf("grant directory: %w", err)
 				}
 				cleanup = func() { destroyGrants(dir, e.Log) }
 			}
 			path := filepath.Join(dir, g.Name)
 			if err := os.WriteFile(path, []byte(g.Value), 0o600); err != nil {
-				return nil, cleanup, fmt.Errorf("grant %s: %w", g.Name, err)
+				return nil, nil, cleanup, fmt.Errorf("grant %s: %w", g.Name, err)
 			}
 			env = append(env, g.Name+"="+path)
+			secrets = append(secrets, g.Value)
 		}
 	}
-	return env, cleanup, nil
+	return env, secrets, cleanup, nil
 }
 
 // settings is the owner's harness configuration as the adapter reads it.
