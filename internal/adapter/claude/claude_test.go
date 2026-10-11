@@ -846,6 +846,23 @@ func TestBrokenStreams(t *testing.T) {
 	}
 }
 
+// What a file grant holds is in no variable, and the stderr a run's error
+// quotes is masked of it all the same (decision 0075).
+func TestStderrIsMaskedOfSecrets(t *testing.T) {
+	const secret = "something went badly wrong"
+	h := &harness{fixture: derive(t, "plain", func(l []string) []string { return l[:indexOf(l, "result")] }),
+		env: map[string]string{"CLAUDE_TEST_MODE": "died"}}
+	spec := h.spec(t)
+	spec.Secrets = []string{secret}
+	_, out, _ := drive(t, context.Background(), spec, nil)
+	if out.Error == nil || out.Error.Class != adapter.ClassHarnessExited {
+		t.Fatalf("outcome %s %+v", out.State, out.Error)
+	}
+	if want := "Error: " + adapter.Redacted; out.Stderr != want || strings.Contains(out.Error.Message, secret) {
+		t.Errorf("stderr %q (want %q), message %q", out.Stderr, want, out.Error.Message)
+	}
+}
+
 // A line over the cap is skipped and reported; the run goes on to its result.
 func TestOversizedLineIsSkipped(t *testing.T) {
 	if testing.Short() {

@@ -37,6 +37,9 @@ func TestMain(m *testing.M) {
 	if mode := os.Getenv("RUNNER_TEST_CLAUDE"); mode == "silent" || mode == "stderr" {
 		os.Exit(fakeClaudeRun(mode))
 	}
+	if mode := os.Getenv("RUNNER_TEST_CLAUDE"); strings.HasSuffix(mode, "-file-grant") {
+		os.Exit(fakeClaudeQuotesItsGrantFile(mode))
+	}
 	if os.Getenv("RUNNER_TEST_CLAUDE") != "" {
 		os.Exit(fakeClaudeAuth(os.Args[1:]))
 	}

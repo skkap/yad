@@ -329,7 +329,7 @@ loop:
 		interrupted: t.interrupted,
 		cancelled:   t.ctx.Err() != nil,
 		exitErr:     exitErr,
-		stderr:      adapter.StderrTail(stderr, t.env, len(stderr) >= supervise.StderrTail),
+		stderr:      adapter.StderrTail(stderr, t.env, t.spec.Secrets, len(stderr) >= supervise.StderrTail),
 		asked:       t.asked,
 		check:       t.spec.HarnessCheck(t.agent.ID, t.agent.LoginCheck...),
 	}

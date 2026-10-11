@@ -49,7 +49,46 @@ func TestStderrTail(t *testing.T) {
 			"Error: boom"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := StderrTail(tc.stderr, tc.env, tc.truncated); got != tc.want {
+			if got := StderrTail(tc.stderr, tc.env, nil, tc.truncated); got != tc.want {
+				t.Errorf("StderrTail = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// What a file grant holds is in no variable — the environment has only its
+// path — and is masked under the same rules as an environment value.
+func TestStderrTailMasksSecretsOutsideTheEnvironment(t *testing.T) {
+	const pem = "-----BEGIN PRIVATE KEY-----\nzyxwvutsrqponmlk\nABCDEFGHIJKLMNOP\nQRSTUVWXYZ012345\n-----END PRIVATE KEY-----\n"
+	for _, tc := range []struct {
+		name      string
+		stderr    string
+		secrets   []string
+		truncated bool
+		want      string
+	}{
+		{"a file's value is replaced",
+			"the credential sk-test-file-value-0123456789 was refused\n",
+			[]string{"sk-test-file-value-0123456789"}, false,
+			"the credential " + Redacted + " was refused"},
+		{"without the newline the file ends in",
+			"the credential sk-test-file-value-0123456789 was refused\n",
+			[]string{"sk-test-file-value-0123456789\n"}, false,
+			"the credential " + Redacted + " was refused"},
+		{"a multi-line file is masked line by line",
+			"ABCDEFGHIJKLMNOP\nQRSTUVWXYZ012345\n-----END PRIVATE KEY-----\nError: bad key\n",
+			[]string{pem}, false,
+			Redacted + " | " + Redacted + " | " + Redacted + " | Error: bad key"},
+		{"a line too short to be a credential is left alone",
+			"short1\nError: bad key\n",
+			[]string{"short1\nlong-enough-line\n"}, false,
+			"short1 | Error: bad key"},
+		{"a value too short to be a credential is left alone",
+			"exit 1 after 1 try\n", []string{"1"}, false,
+			"exit 1 after 1 try"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StderrTail(tc.stderr, nil, tc.secrets, tc.truncated); got != tc.want {
 				t.Errorf("StderrTail = %q, want %q", got, tc.want)
 			}
 		})
@@ -60,7 +99,7 @@ func TestStderrTail(t *testing.T) {
 // end, without splitting a rune.
 func TestStderrTailIsBounded(t *testing.T) {
 	long := strings.Repeat("é", StderrBytes) + " the reason"
-	got := StderrTail(long, nil, false)
+	got := StderrTail(long, nil, nil, false)
 	if len(got) > StderrBytes+len("…") || !strings.HasSuffix(got, " the reason") || !strings.HasPrefix(got, "…") {
 		t.Errorf("tail of %d bytes: %q…", len(got), got[:20])
 	}

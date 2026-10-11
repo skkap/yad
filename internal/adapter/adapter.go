@@ -73,6 +73,11 @@ type Spec struct {
 	// Env is added to the child's environment: grants delivered as env, and the
 	// home variable.
 	Env []string
+	// Secrets are the values of the run's grants delivered as files, whose
+	// paths are in Env. They are for masking alone: StderrTail replaces them
+	// as it does Env's values, and nothing puts them in the child's
+	// environment, argv or anything else it is handed.
+	Secrets []string
 	// Binary is the resolved harness path from detection.
 	Binary string
 	// Settings is the owner's harness configuration: permission mode, sandbox,
