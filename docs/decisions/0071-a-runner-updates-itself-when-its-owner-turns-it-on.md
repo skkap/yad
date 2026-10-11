@@ -1,4 +1,5 @@
 ---
+status: amended by 0078 — a release is vetted against every profile that runs the same binary, each recording its needs beside it, and a refusal for a missing major is judged again at each check
 date: 2026-09-30
 ---
 
@@ -39,7 +40,9 @@ The owner's (2026-09-30), five decisions, and what building them settled.
   `protocols` field. A release missing one a connection uses is refused: the
   binary stays as it is, the log and `yad status` say which major, which
   connections and what to type once the hubs speak it, and the same release is
-  not downloaded again for the life of the process. Every connection a v1
+  not downloaded again for the life of the process. *(Amended by
+  [0078](0078-a-self-update-vets-a-release-against-every-profile-on-its-binary.md):
+  not while what refused it is still needed.)* Every connection a v1
   build holds syncs over v1. **A release older than `--json` ignores the flag
   and prints its one line; it is read as v1-only**, which every release before
   the field was — a fact, not a guess. A binary that does not call itself
@@ -87,7 +90,10 @@ What building it settled:
   been, no release can differ between them. Profiles whose hubs speak
   different majors should not share a self-updating binary; seeing every
   profile's connections from one would need profiles to be enumerable, which
-  they are not — each may keep its directories anywhere.
+  they are not — each may keep its directories anywhere. *(Amended by
+  [0078](0078-a-self-update-vets-a-release-against-every-profile-on-its-binary.md):
+  each profile records its needs beside the binary, and a release is vetted
+  against all of them.)*
 - **An exec that fails exits the process with the reason.** The service
   manager's restart-on-failure then starts the binary already in place, which
   is the new one.

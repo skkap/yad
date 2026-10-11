@@ -89,7 +89,8 @@ internal/hub             `yad hub`: huma server, store, submit/watch API
 internal/control         the Unix control socket, server and client
 internal/upgrade         `yad upgrade`: releases fetched over HTTPS, checksum, atomic replace
 internal/selfupdate      the owner's opt-in to self-update: the six-hourly check, the
-                         protocol check of a downloaded release, the wait for idle (0071)
+                         protocol check of a downloaded release, the wait for idle (0071),
+                         and the needs records profiles keep beside the binary (0078)
 internal/conformance     the protocol conformance suite, run against any hub
 internal/shellword       every command yad prints for pasting, built from argv
                          and POSIX-quoted; shellwordtest runs one through sh
@@ -1260,6 +1261,14 @@ its log was open), the control socket `yad.sock` and the daemon lock `yad.lock`
 the machine also runs `yad hub`. A machine that submits to a hub keeps its
 admin token in the config directory's `hub-admin-token` (`0600`).
 
+One file lives outside both: every daemon writes its **needs record** beside
+the binary it runs — `.yad-needs/<hash of the config directory>.json`, next
+to the real file once symlinks are resolved, `0644` — naming its config
+directory and the protocol majors its connections sync over, and keeps it
+current with `config.toml`. It is how a profile's self-update sees what every
+other profile on the same binary needs
+([0078](docs/decisions/0078-a-self-update-vets-a-release-against-every-profile-on-its-binary.md)).
+
 ### `config.toml`
 
 ```toml
@@ -1375,7 +1384,8 @@ yad daemon start|stop|restart|status|logs [-f] [-n N]
                                    the runner process
 yad status [--json]                connections, capacity, runs, sessions and recent
                                    errors — via the socket; with self-update on, the
-                                   last check and any release pending or refused
+                                   last check and any release pending or refused;
+                                   and a needs record it could not write (0078)
 yad sessions [--json]              the sessions held: workdir, runs, last use — read
                                    from state.db read-only, so the daemon may be down
 yad sessions close [--connection c] <id>
@@ -1484,8 +1494,11 @@ tenth, with the one anonymous request `yad upgrade` makes, and a newer one
 goes through `internal/upgrade.Apply` — downloaded beside the binary,
 checked against `checksums.txt`, then run as `version --json` with `HOME`
 alone before the rename: a release that no longer speaks the protocol major a
-connection syncs over is refused and left uninstalled, and one older than the
-flag is read as v1-only. Once installed, the running process becomes it at the
+connection syncs over — this runner's, or any other live profile's that
+records its needs beside the same binary (0078) — is refused and left
+uninstalled, and one older than the flag is read as v1-only. The records are
+read before the download; one that cannot be read fails the check, and a
+refused release is judged again at each check without being fetched again. Once installed, the running process becomes it at the
 first idle moment — every unit of capacity free and no hub login in flight —
 through the one drain with no drain wait, or, after 24 hours without one,
 through the same drain regardless, which lets every run finish however long it

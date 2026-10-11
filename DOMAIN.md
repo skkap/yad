@@ -28,7 +28,9 @@ _See_: [0003](docs/decisions/0003-hub-is-a-role-runner-is-multi-homed.md), `inte
 
 **Profile** — one runner's config directory: its identity, connections,
 accounts and state. One machine can carry several profiles, and each is a
-separate runner that knows nothing of the others.
+separate runner that knows nothing of the others but what each needs of a
+binary they share, which every daemon records beside it for a self-update to
+read ([0078](docs/decisions/0078-a-self-update-vets-a-release-against-every-profile-on-its-binary.md)).
 _Avoid_: using it for per-run harness settings — a run's model and effort travel with the run, and nothing else does
 _See_: `internal/config`
 
@@ -416,10 +418,11 @@ re-executing in place, when its owner has turned it on (`[update] auto` in
 once and restarting nothing; both install a release the same way.
 _Rules_: Never on a hub's say-so; the `update` control is reserved and
 ignored. A release that no longer speaks a protocol major a connection syncs
-over is refused. It takes over at the first idle moment, or after a drain
+over is refused — this runner's connection, or one of any other profile that
+runs the same binary, which every daemon records beside it (0078). It takes over at the first idle moment, or after a drain
 once 24 hours pass without one; a run is never interrupted for it, and a stop
 asked for meanwhile wins. The pid stays, so a service manager sees no exit.
-_See_: [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md), `internal/selfupdate`
+_See_: [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md), [0078](docs/decisions/0078-a-self-update-vets-a-release-against-every-profile-on-its-binary.md), `internal/selfupdate`
 
 **Watchdog** — the runner's timers on a run: an inactivity timeout on the
 event stream, which catches a wedged harness; a shorter first-output timeout
