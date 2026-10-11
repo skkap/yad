@@ -249,7 +249,8 @@ func (t *turn) Steer(text string) error {
 // The turn is marked interrupted only once turn/interrupt is queued, or
 // deferred to the turn's id: one Codex's full input refused returns the
 // error and is sent again when the hub repeats it, as the runner expects
-// (internal/runner, control).
+// (internal/runner, control). A deferred one that begin cannot queue has
+// nobody left to tell (DEV-185).
 func (t *turn) Interrupt() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -222,7 +222,9 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   in every response to a sync listing the run, until the run ends; the runner
   acts on the first. An interrupt counts once it reaches the harness: one a
   harness not reading its input refused is an error from the adapter, which
-  marks nothing, and the next repeat sends it again (DEV-179). A `steer` is sent once — twice, the harness would read it
+  marks nothing, and the next repeat sends it again (DEV-179). The exception
+  is one that reaches Codex before its turn has an id: it counts at once and
+  is sent when the id arrives, and a refusal then is not retried (DEV-185). A `steer` is sent once — twice, the harness would read it
   twice. An interrupt that reaches a run before its harness is up ends it as a
   cancel does, with nothing spawned —
   [0025](docs/decisions/0025-a-cancel-is-repeated-and-an-answer-that-landed-stands.md).
