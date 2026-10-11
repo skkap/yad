@@ -118,6 +118,56 @@ func TestTheRunnerWideStringsAreWhatEveryDrivableHarnessMayUse(t *testing.T) {
 	}
 }
 
+// A harness with a run held counts in the runner-wide strings whether or not
+// it is drivable now: OpenCode's binary gone mid-upgrade leaves its run going,
+// and a hub reading only the strings must not be told that run takes a steer.
+// Once no run is held on it, the strings follow the drivable harnesses alone
+// again (DEV-169).
+func TestAHarnessWithARunHeldCountsInTheRunnerWideStrings(t *testing.T) {
+	all := RunFeatures()
+	goneOpenCode := machine("claude", "codex")
+	brokenOpenCode := machine("claude", "codex", "opencode")
+	for i := range brokenOpenCode {
+		if brokenOpenCode[i].ID == "opencode" {
+			brokenOpenCode[i].Error = "the opencode binary could not be run"
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		reports []v1.HarnessReport
+		held    []string
+		want    []string
+	}{
+		{"drivable only, nothing held", goneOpenCode, nil, all},
+		{"opencode gone with a run held on it", goneOpenCode, []string{"opencode"}, HarnessFeatures("opencode")},
+		{"opencode failing its probe with a run held on it", brokenOpenCode, []string{"opencode"}, HarnessFeatures("opencode")},
+		{"opencode's run ended", brokenOpenCode, nil, all},
+		{"held and drivable changes nothing", machine("claude", "codex", "opencode"), []string{"claude", "opencode"}, HarnessFeatures("opencode")},
+		{"a held drivable harness changes nothing", goneOpenCode, []string{"claude", "codex"}, all},
+		{"held twice counts once", goneOpenCode, []string{"opencode", "opencode"}, HarnessFeatures("opencode")},
+		{"nothing drivable, a claude run held", machine(), []string{"claude"}, all},
+		{"nothing drivable, an opencode run held", machine(), []string{"opencode"}, HarnessFeatures("opencode")},
+		{"nothing drivable and nothing held", machine(), nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Features(tc.reports, tc.held...)
+			if !slices.Equal(perRun(got), tc.want) {
+				t.Errorf("runner-wide per-run features %v, want %v", perRun(got), tc.want)
+			}
+			// Each harness's own list is what its adapter does, run or no
+			// run: the strings move, the reports do not.
+			for _, h := range tc.reports {
+				if h.Kind == string(harness.FirstClass) && !slices.Equal(h.Features, HarnessFeatures(h.ID)) {
+					t.Errorf("%s lists %v, want its adapter's %v", h.ID, h.Features, HarnessFeatures(h.ID))
+				}
+			}
+		})
+	}
+	if slices.Contains(Features(goneOpenCode, "opencode"), FeatureSteer) {
+		t.Error("steer is runner-wide while a run is held on opencode, which takes none")
+	}
+}
+
 // Installing or removing a first-class harness changes the document's
 // runner-wide strings with its harness reports, so the fingerprint moves and a
 // hub re-reads both together; each harness's own list is the same either way.

@@ -29,26 +29,31 @@ import (
 )
 
 // Features is what this runner supports beyond the v1 baseline, given the
-// harness reports of the document it goes in. A hub must not use a feature the
-// runner did not advertise, so "live_sessions" is absent until it is built.
+// harness reports of the document it goes in and the harnesses with a run
+// held on this machine. A hub must not use a feature the runner did not
+// advertise, so "live_sessions" is absent until it is built.
 //
 // A per-run feature — one a run's harness decides, RunFeatures — is listed
 // here only while every harness this machine can drive (Drivable: first-class,
-// present, no error) lists it: a hub that reads only these strings must never
-// be told a run may use one its harness cannot. It is over the harnesses
-// detected here, not the build's catalog, so that a harness this machine does
-// not have — OpenCode, which takes no steer — takes nothing from those it
-// does. The strings come from the reports they are sent beside, so a change
-// to either moves the one fingerprint and a hub re-reads both. With no harness to drive
-// none is listed: there is no run for one to apply to, and a hub reading only
-// these strings then sees a feature appear when the first harness is installed
-// rather than vanish when it is one that lacks it. Each harness's own list,
-// beside FeatureHarnessFeatures, is the whole answer for a hub that reads it
-// (decision 0069).
-func Features(reports []v1.HarnessReport) []string {
+// present, no error) lists it, and every harness in held supports it: a hub
+// that reads only these strings must never be told a run may use one its
+// harness cannot. It is over the harnesses detected here, not the build's
+// catalog, so that a harness this machine does not have — OpenCode, which
+// takes no steer — takes nothing from those it does. A harness with a run
+// held counts even once it stops being drivable — OpenCode's binary gone
+// mid-upgrade — since that run can still be sent a control; once its last
+// run ends it counts by Drivable's rule alone again (DEV-169). The strings
+// come from the reports they are sent beside, so a change to either moves the
+// one fingerprint and a hub re-reads both. With no harness to drive and none
+// held, none is listed: there is no run for one to apply to, and a hub reading
+// only these strings then sees a feature appear when the first harness is
+// installed rather than vanish when it is one that lacks it. Each harness's
+// own list, beside FeatureHarnessFeatures, is the whole answer for a hub that
+// reads it (decision 0069).
+func Features(reports []v1.HarnessReport, held ...string) []string {
 	out := []string{FeatureStartAt}
 	for _, f := range RunFeatures() {
-		if everyDrivable(reports, f) {
+		if everyCounted(reports, held, f) {
 			out = append(out, f)
 		}
 	}

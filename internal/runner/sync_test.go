@@ -70,6 +70,38 @@ func TestClaimByListing(t *testing.T) {
 	}
 }
 
+// A claim recorded tells HeldChanged once it is in the store, so the
+// capability document counts its harness even when a rebuild read the runs
+// held before it (DEV-169); a run refused is never held and tells nothing.
+func TestARecordedClaimTellsHeldChanged(t *testing.T) {
+	e := newEnv(t)
+	// Refused by the store, after the claim took its unit: the last point a
+	// run can fail before it is held.
+	notMine := testRun("b", "elsewhere")
+	notMine.Session.New = false
+	h := &scriptedHub{offer: []v1.Run{testRun("a", "s1"), notMine}}
+	doc := drivableDoc("r", 2)
+	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
+		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
+	var told []string
+	l.HeldChanged = func() {
+		rows, err := e.store.ListAllHeldRuns(context.Background())
+		if err != nil {
+			t.Error(err)
+		}
+		for _, r := range rows {
+			told = append(told, r.ID)
+		}
+	}
+	mustSync(t, l)
+	if r, ok := h.results["b"]; !ok || r.Error == nil || r.Error.Class != "refused" {
+		t.Fatalf("b: result %+v, want it refused", r)
+	}
+	if !slices.Equal(told, []string{"a"}) {
+		t.Errorf("HeldChanged saw %v held, want [a] once: a claim in the store, and nothing for the run refused", told)
+	}
+}
+
 // The runner declares only what it has reserved, and the hub offers no more.
 func TestNeverClaimsPastFreeCapacity(t *testing.T) {
 	e := newEnv(t)

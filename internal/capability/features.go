@@ -66,18 +66,33 @@ func HarnessFeatures(id string) []string {
 	return out
 }
 
-// everyDrivable is whether there is a harness in reports that can take a run
-// on this machine, and every one lists feature. Drivable's rule decides which
-// count, so a first-class harness that is not present, or whose probe
-// failed, takes nothing from the rest. It reads each report's own list, so
-// the runner-wide string and the lists in one document cannot disagree.
-func everyDrivable(reports []v1.HarnessReport, feature string) bool {
+// everyCounted is whether there is a harness that counts, and every one lists
+// feature. A harness counts while it can take a run on this machine —
+// Drivable's rule, read from reports, so a first-class harness that is not
+// present, or whose probe failed, takes nothing from the rest — and while a
+// run on it is held, drivable or not: a hub reading only the runner-wide
+// strings may send that run a control, and the adapter driving it is what
+// answers (DEV-169). A drivable harness's list is read from its report, so the
+// runner-wide string and the lists in one document cannot disagree; a held
+// one that is not drivable is its adapter's, which is what the run reaches.
+func everyCounted(reports []v1.HarnessReport, held []string, feature string) bool {
 	found := false
+	counted := map[string]bool{}
 	for _, h := range reports {
 		if !drivable(h) {
 			continue
 		}
+		counted[h.ID] = true
 		if !slices.Contains(h.Features, feature) {
+			return false
+		}
+		found = true
+	}
+	for _, id := range held {
+		if counted[id] {
+			continue
+		}
+		if !slices.Contains(HarnessFeatures(id), feature) {
 			return false
 		}
 		found = true

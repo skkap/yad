@@ -1089,18 +1089,19 @@ and a harness the document does not list takes nothing. Gate a run's `effort`
 and `fork_from`, and a `steer` or `interrupt` for a run, on the list of the
 run's `harness`. The runner-wide strings stay, for a hub that does not read
 the lists: a yad runner lists one there only while every harness it can
-drive — first-class, present, no `error` — supports it, and none while it can
-drive nothing, so a hub going by them alone is never wrong, only more cautious
+drive — first-class, present, no `error` — and every harness with a run held
+supports it, and none while it can drive nothing and holds no run, so a hub going by them alone is never wrong, only more cautious
 than it needs to be — it holds back a Claude run's steer because another
 harness on the runner takes none. Adding, removing or breaking a harness
 moves the harness reports and the fingerprint, and the runner-wide strings
 with them whenever it changes what every drivable harness shares, so a hub
 that re-reads the document when the fingerprint moves always has the two in
-agreement. The strings describe the harnesses drivable now: one that stops
-being drivable while a run on it is live — its binary gone mid-upgrade — no
-longer counts, so a hub going by the strings alone may send that run a
-`steer` its harness cannot take. The runner answers it with an `error` event
-of class `steer_failed`; the run goes on. Without `harness_features`, the runner-wide
+agreement. A harness with a run held counts as well, drivable or not: one
+that stops being drivable while a run on it goes on — its binary gone
+mid-upgrade — keeps its features in the runner-wide strings until that run
+ends, so a hub going by the strings alone never sends that run a `steer` its
+harness cannot take. Once its last run has ended, the next document counts
+the drivable harnesses alone again. Without `harness_features`, the runner-wide
 strings are the answer for every harness
 ([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).
 

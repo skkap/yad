@@ -55,6 +55,12 @@ type Options struct {
 	// added or removed an account (0057), so the process can rebuild the
 	// capability document at once. Nil tells nobody.
 	AccountsChanged func()
+	// HeldChanged is told when a claim is recorded, and when a run's
+	// terminal state is in the store or it parked, so the process can count
+	// the harnesses with runs held again for the capability document's
+	// runner-wide features (DEV-169) rather than at its next probe. It must
+	// not block. Nil tells nobody.
+	HeldChanged func()
 }
 
 // Serve syncs every configured connection, all of them drawing on one
@@ -171,7 +177,12 @@ func Serve(ctx context.Context, o Options) error {
 				r.Wake()
 			}
 		},
-		Ended: sessions.Wake,
+		Ended: func() {
+			sessions.Wake()
+			if o.HeldChanged != nil {
+				o.HeldChanged()
+			}
+		},
 	}
 	sessions.Runs = sv.exec
 	sessions.Holds = sv.exec.Holds
@@ -202,6 +213,7 @@ func Serve(ctx context.Context, o Options) error {
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
 			RecentErrors: o.RecentErrors, Logins: logins,
 			ManageAccounts: manage[conn.Name], Paths: o.Paths, AccountsChanged: o.AccountsChanged,
+			HeldChanged: o.HeldChanged,
 		}
 		// A result the hub now has is a session's live run ended there,
 		// and the next turn in it can be offered at the next sync. One put
