@@ -1206,7 +1206,7 @@ func (l *Loop) Recover(ctx context.Context) error {
 }
 
 // settle lets go of the branch of a session whose run was reported lost
-// (decision 0081). Before the result is recorded, as finishWith does it: a
+// (decision 0082). Before the result is recorded, as finishWith does it: a
 // runner that stops in between finds the run still held at its next start
 // and tries again, where after it the run would be listed no more. A
 // failure is logged and the run reported lost all the same.

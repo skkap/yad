@@ -1,5 +1,5 @@
 ---
-status: amended by 0038 — with no roots configured, the owner's home directory is the root — and by 0068, where an https URL's userinfo is accepted as the run's own credential, taken out of everything stored and handed to git only through the environment of the run's fetch — and by 0081, where a session lets go of a branch the hub named when a run of it ends with the branch pushed and clean, takes it back at its next run, and a branch the cache has is fast-forwarded to the remote's before it is checked out
+status: amended by 0038 — with no roots configured, the owner's home directory is the root — and by 0068, where an https URL's userinfo is accepted as the run's own credential, taken out of everything stored and handed to git only through the environment of the run's fetch — and by 0082, where a session lets go of a branch the hub named when a run of it ends with the branch pushed and clean, takes it back at its next run, and a branch the cache has is fast-forwarded to the remote's before it is checked out
 date: 2026-09-19
 ---
 
@@ -74,7 +74,7 @@ already has it, tracked from the remote when the remote has it, and otherwise
 cut from `base` — a remote branch, a tag or a commit; the remote's default
 branch when none is named. A run that names no branch works on
 `yad/<connection>/<session>`. A session that continues finds its worktree as it left it —
-the uncommitted work in it is the session's — and nothing is fetched. *(Amended by [0081](0081-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md): a branch the hub named is let go of when a run ends with it pushed and clean, and taken back — fetched, and fast-forwarded to the remote's — at the session's next run; a branch the cache has is fast-forwarded the same way before a new session checks it out.)*
+the uncommitted work in it is the session's — and nothing is fetched. *(Amended by [0082](0082-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md): a branch the hub named is let go of when a run ends with it pushed and clean, and taken back — fetched, and fast-forwarded to the remote's — at the session's next run; a branch the cache has is fast-forwarded the same way before a new session checks it out.)*
 **A session keeps its sources.** The sources its first run named — none
 included — are recorded with the session (`sessions.sources`) once they pass
 these rules and before anything is made on disk, so a runner that dies

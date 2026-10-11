@@ -351,7 +351,7 @@ that ends with the branch pushed and clean lets go of it, so another session
 may name it, and the session's next run takes it back. Letting go never hands
 over unpushed work; a session closed with commits it never pushed leaves them
 on the runner's copy of the branch, where a later session naming it finds them.
-_See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md), [0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md), [0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md), [0081](docs/decisions/0081-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md), `internal/workdir`
+_See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md), [0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md), [0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md), [0082](docs/decisions/0082-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md), `internal/workdir`
 
 **Workdir** — the directory a session's runs execute in. Owned by the session,
 kept between its runs, reclaimed after it closes. Built from the sources, or
