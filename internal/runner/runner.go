@@ -55,6 +55,11 @@ type Options struct {
 	// added or removed an account (0057), so the process can rebuild the
 	// capability document at once. Nil tells nobody.
 	AccountsChanged func()
+	// RunEnded is told when a run's terminal state is in the store, or it
+	// parked, so the process can count the harnesses with runs held again
+	// for the capability document's runner-wide features (DEV-169) rather
+	// than at its next probe. It must not block. Nil tells nobody.
+	RunEnded func()
 }
 
 // Serve syncs every configured connection, all of them drawing on one
@@ -171,7 +176,12 @@ func Serve(ctx context.Context, o Options) error {
 				r.Wake()
 			}
 		},
-		Ended: sessions.Wake,
+		Ended: func() {
+			sessions.Wake()
+			if o.RunEnded != nil {
+				o.RunEnded()
+			}
+		},
 	}
 	sessions.Runs = sv.exec
 	sessions.Holds = sv.exec.Holds

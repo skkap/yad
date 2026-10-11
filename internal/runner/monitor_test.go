@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,62 @@ func TestMonitorIdle(t *testing.T) {
 	m.attachLogins(nil)
 	if m.Idle() {
 		t.Error("idle after Serve let its pool go")
+	}
+}
+
+// HeldHarnesses is what the capability document counts beside the drivable
+// harnesses (DEV-169): the harness of every run held, waiting ones included,
+// each once — and nothing of a run that has ended, or before a store is open.
+func TestMonitorHeldHarnesses(t *testing.T) {
+	ctx := context.Background()
+	var none *Monitor
+	if h, err := none.HeldHarnesses(ctx); h != nil || err != nil {
+		t.Errorf("a nil monitor holds %v (%v)", h, err)
+	}
+	e := newEnv(t)
+	m := NewMonitor()
+	if h, err := m.HeldHarnesses(ctx); h != nil || err != nil {
+		t.Errorf("a monitor with no store holds %v (%v)", h, err)
+	}
+	for _, s := range []db.CreateSessionParams{
+		{Connection: "hub", ID: "s1", Harness: "opencode"},
+		{Connection: "other", ID: "s2", Harness: "opencode"},
+		{Connection: "hub", ID: "s3", Harness: "codex"},
+		{Connection: "hub", ID: "s4", Harness: "claude"},
+	} {
+		if err := e.store.CreateSession(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, r := range []db.CreateRunParams{
+		{Connection: "hub", ID: "o1", SessionID: "s1", Harness: "opencode", Spec: "{}", CreatedAt: 1, UpdatedAt: 1},
+		{Connection: "other", ID: "o2", SessionID: "s2", Harness: "opencode", Spec: "{}", CreatedAt: 2, UpdatedAt: 2},
+		{Connection: "hub", ID: "c1", SessionID: "s3", Harness: "codex", Spec: "{}", CreatedAt: 3, UpdatedAt: 3},
+		{Connection: "hub", ID: "done", SessionID: "s4", Harness: "claude", Spec: "{}", CreatedAt: 4, UpdatedAt: 4},
+	} {
+		if err := e.store.CreateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, s := range []db.SetRunStateParams{
+		{State: string(v1.RunWaiting), Connection: "hub", ID: "c1", UpdatedAt: 5},
+		{State: string(v1.RunSucceeded), Connection: "hub", ID: "done", UpdatedAt: 5},
+	} {
+		if err := e.store.SetRunState(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.attach(nil, e.store, nil)
+	h, err := m.HeldHarnesses(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"codex", "opencode"}; !slices.Equal(h, want) {
+		t.Errorf("held harnesses %v, want %v", h, want)
+	}
+	m.attach(nil, nil, nil)
+	if h, _ := m.HeldHarnesses(ctx); h != nil {
+		t.Errorf("held harnesses %v once Serve let its store go", h)
 	}
 }
 

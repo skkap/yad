@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -216,6 +217,33 @@ func (m *Monitor) Snapshot(ctx context.Context) (Snapshot, error) {
 	s.Outbox = int(n)
 	errs = append(errs, err)
 	return s, errors.Join(errs...)
+}
+
+// HeldHarnesses is the harness of every run the runner holds — claimed,
+// preparing, running or waiting — each once, sorted: the harnesses the
+// capability document counts in its runner-wide per-run features whether or
+// not they are drivable now (capability.Features, DEV-169). None while no
+// store is open: before Serve has set up, or after it has returned.
+func (m *Monitor) HeldHarnesses(ctx context.Context) ([]string, error) {
+	if m == nil {
+		return nil, nil
+	}
+	m.mu.Lock()
+	st := m.store
+	m.mu.Unlock()
+	if st == nil {
+		return nil, nil
+	}
+	runs, err := st.ListAllHeldRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range runs {
+		out = append(out, r.Harness)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 // ErrNotRunningConnections is a removal asked of a runner that has not set up
