@@ -53,6 +53,30 @@ func TestCanReplaceAsksWhatTheRenameNeeds(t *testing.T) {
 	}
 }
 
+// OnlyRoot is a directory root owns and nobody else may write: a directory
+// this user owns is not, whatever its mode.
+func TestOnlyRoot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "yad")
+	if err := os.WriteFile(path, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if os.Geteuid() != 0 && OnlyRoot(path) {
+		t.Error("a directory this user owns counts as root's alone")
+	}
+	fi, err := os.Stat("/bin")
+	if err != nil {
+		t.Skip(err)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && st.Uid == 0 && fi.Mode().Perm()&0o022 == 0 && !OnlyRoot("/bin/sh") {
+		t.Error("/bin/sh, in a directory root owns and nobody else may write, does not count as root's alone")
+	}
+}
+
 // A FIFO under a record's name — planted by another user in a needs directory
 // they may write — is refused at once, by the daemon reading its own record
 // and by the updater reading everyone's, rather than waited on for a writer:

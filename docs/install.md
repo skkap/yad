@@ -128,11 +128,11 @@ refused, and `yad status` names that profile and where its config is. The
 record of a profile whose config directory is gone is removed. One that
 cannot be read stops every check until it is removed — the warning gives the
 `rm` — or its daemon writes it again. A daemon that cannot write its record
-runs as before. Beside a binary its user could replace, it warns in its log
-and in `yad status`, since a profile of yours updating that binary would not
-see it; beside one its user cannot replace (a binary in a directory only root
-may write), it only notes it in the log, since no runner of yours can update
-that binary anyway. A profile still on a release older than this records
+runs as before, and warns in its log and in `yad status`, since a runner
+updating that binary would not see what its hubs need — unless only root may
+write the binary's directory, as with a root-owned `/usr/local/bin`; then no
+runner of yours can update that binary anyway, and it only notes it in the
+log. A profile still on a release older than this records
 nothing, so upgrade every profile on the binary before relying on it.
 
 Releases are built by CI on a `v*` tag: linux and darwin × amd64 and arm64,

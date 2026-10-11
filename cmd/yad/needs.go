@@ -48,7 +48,7 @@ type needsRecorder struct {
 // recordNeeds writes the record for cfg, the configuration the daemon
 // started with, and keeps it current until ctx ends. Nothing it meets stops
 // the runner: a record it cannot write is a warning in the log and a line in
-// `yad status` — or, beside a binary this user cannot replace, a note in the
+// `yad status` — or, beside a binary only root may replace, a note in the
 // log alone.
 func recordNeeds(ctx context.Context, p config.Paths, cfg config.Config, exe string, log *slog.Logger) *needsRecorder {
 	// No stamp yet, so the first refresh reads config.toml again and keeps
@@ -132,20 +132,23 @@ func (r *needsRecorder) refresh() {
 	}
 	want.Written = time.Now().UTC()
 	if err := selfupdate.WriteRecord(r.dir, want); err != nil {
-		// A binary this user cannot replace is one no profile of this user
-		// can update, so none of them would read the record: a root-owned
-		// yad in /usr/local/bin, as the work-machine kit installs it with
-		// self-update off, would otherwise warn at every start for nothing.
-		// Only a user who may write that directory could update it, and
-		// 0071 keeps self-update to binaries the runner's own user owns.
-		r.note(fmt.Sprintf("cannot write it in %s: %v", r.dir, err), !selfupdate.CanReplace(r.exe))
+		// Quiet only beside a binary no profile but root's could update: this
+		// user cannot replace it, and nobody but root may write where it
+		// is. A root-owned yad in /usr/local/bin, as the work-machine kit
+		// installs it with self-update off, would otherwise warn at every
+		// start for nothing — a runner as root is not how yad is run, and
+		// the kit holds one runner. A directory another user owns is
+		// another matter: that user's runner may update the binary, and
+		// would need this record, so not writing it is a warning.
+		quiet := !selfupdate.CanReplace(r.exe) && selfupdate.OnlyRoot(r.exe)
+		r.note(fmt.Sprintf("cannot write it in %s: %v", r.dir, err), quiet)
 		return
 	}
 	r.note("", false)
 }
 
-// note keeps why the record is missing — for `yad status`, unless quiet: no
-// profile of this user could read it — and logs only a change, so a
+// note keeps why the record is missing — for `yad status`, unless quiet: only
+// root may update the binary — and logs only a change, so a
 // directory that stays unwritable is one line and not one a minute.
 func (r *needsRecorder) note(why string, quiet bool) {
 	key := why
@@ -165,7 +168,7 @@ func (r *needsRecorder) note(why string, quiet bool) {
 	case why == "":
 		r.log.Info("this profile's protocol needs are recorded beside the binary it runs", "dir", r.dir)
 	case quiet:
-		r.log.Info("this profile's protocol needs are not recorded beside the binary it runs; no profile of this user can replace that binary, so none would read them (decision 0078)", "reason", why, "binary", r.exe)
+		r.log.Info("this profile's protocol needs are not recorded beside the binary it runs; only root may replace that binary, so no runner that would read them can update it (decision 0078)", "reason", why, "binary", r.exe)
 	default:
 		r.log.Warn("this profile's protocol needs are not recorded beside the binary it runs, so another profile that updates the binary itself would not see them (decision 0078); the runner carries on", "reason", why)
 	}

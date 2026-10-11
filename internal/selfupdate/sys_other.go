@@ -11,5 +11,8 @@ func chownGroup(string, fs.FileInfo) {}
 // written is always a warning there.
 func CanReplace(string) bool { return true }
 
+// OnlyRoot answers no where it cannot ask.
+func OnlyRoot(string) bool { return false }
+
 // openNonblock is nothing where there are no FIFOs to block on.
 const openNonblock = 0

@@ -278,9 +278,9 @@ Taking `auto = true` out of the spec and running `up` turns it off again.
   warning.** Every runner writes which protocol versions its hubs use beside
   the binary, for a profile that updates that binary to read
   ([0078](../docs/decisions/0078-a-self-update-vets-a-release-against-every-profile-on-its-binary.md)).
-  The agent cannot write in the root-owned `/usr/local/bin`, and so cannot
-  replace the binary either: no profile of its own could update it, and the
-  runner notes this in its log once at each start, leaving `yad status` quiet.
+  The agent cannot write in the root-owned `/usr/local/bin`, where only root
+  could replace the binary and no runner does, so the runner notes this in
+  its log once at each start and leaves `yad status` quiet.
 - **`YAD_REPO` goes with it.** An `up` with `YAD_REPO` set writes the fork
   into the runner's unit, so the runner fetches its releases from there.
 - **`--yad PATH` is replaced too**, if the build carries a release version older

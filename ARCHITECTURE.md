@@ -1386,7 +1386,7 @@ yad status [--json]                connections, capacity, runs, sessions and rec
                                    errors — via the socket; with self-update on, the
                                    last check and any release pending or refused;
                                    and a needs record it could not write beside a
-                                   binary its user could replace (0078)
+                                   binary not only root may replace (0078)
 yad sessions [--json]              the sessions held: workdir, runs, last use — read
                                    from state.db read-only, so the daemon may be down
 yad sessions close [--connection c] <id>

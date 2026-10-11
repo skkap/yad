@@ -71,15 +71,16 @@ What building it settled:
   daemon has written it again. A refusal would last until the next release,
   for a file a person can delete in a second.
 - **A daemon that cannot write its record carries on.** It tries again every
-  minute. Absence is data, never a reason not to run. Whether it warns
-  depends on whether its own user could replace the binary — write access to
-  the directory beside the real file, which is what the updater's temporary
-  directory and rename(2) need, and in a sticky one a binary of its own.
-  When it could, a profile of that user updating the binary would not see
-  these needs: it warns once in the log, and `yad status` says so while it
-  lasts. When it could not, no profile of that user can update the binary
-  and none would read the record, so it notes this once in the log and
-  `yad status` stays quiet.
+  minute. Absence is data, never a reason not to run. It warns once in the
+  log, and `yad status` says so while it lasts, unless only root could
+  update the binary: its own user cannot replace it — no write access to the
+  directory beside the real file, which the updater's temporary directory
+  and rename(2) need, or another user's binary in a sticky one — and that
+  directory is root's, with no group or other write. Then no runner that
+  would read the record can update the binary, so it notes this once in the
+  log and `yad status` stays quiet. A directory another user owns stays a
+  warning: that user's runner may update the binary, and would need the
+  record.
 
 ## Consequences
 

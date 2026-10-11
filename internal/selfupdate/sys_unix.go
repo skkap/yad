@@ -52,6 +52,22 @@ func CanReplace(binary string) bool {
 	return ok && int(st.Uid) == os.Getuid()
 }
 
+// OnlyRoot is whether no user but root may write the directory beside the
+// real binary: it is root's, and neither its group nor others may write it —
+// /usr/local/bin as the work-machine kit leaves it with self-update off.
+func OnlyRoot(binary string) bool {
+	real, err := filepath.EvalSymlinks(binary)
+	if err != nil {
+		return false
+	}
+	d, err := os.Stat(filepath.Dir(real))
+	if err != nil {
+		return false
+	}
+	st, ok := d.Sys().(*syscall.Stat_t)
+	return ok && st.Uid == 0 && d.Mode().Perm()&0o022 == 0
+}
+
 // openNonblock keeps an open of a FIFO planted where a record should be from
 // waiting for a writer that never comes; readRecord refuses anything but a
 // regular file once it is open.
