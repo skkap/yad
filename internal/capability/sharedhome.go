@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -53,12 +52,6 @@ const sharedRecheck = time.Minute
 
 // registryFileCap bounds each file read. A session record is half a KiB.
 const registryFileCap = 64 << 10
-
-// psTimeout bounds one ps; psOutputCap what it may print.
-const (
-	psTimeout   = 5 * time.Second
-	psOutputCap = 8 << 20
-)
 
 // Process is one row of the process table: its pid, its parent's, the name
 // of its command and, where asked for, when it started as ps prints it.
@@ -343,43 +336,10 @@ func readJSON(path string, v any) bool {
 	return err == nil && json.Unmarshal(b, v) == nil
 }
 
-// psPath is the ps the process table is read with: the system's, where it is,
-// so a ps earlier on PATH is not what decides.
-func psPath() (string, error) {
-	for _, p := range []string{"/bin/ps", "/usr/bin/ps"} {
-		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
-			return p, nil
-		}
-	}
-	return exec.LookPath("ps")
-}
-
-func runPS(ctx context.Context, env []string, args ...string) ([]byte, error) {
-	path, err := psPath()
-	if err != nil {
-		return nil, errors.New("there is no ps on this machine to list its processes with")
-	}
-	ctx, cancel := context.WithTimeout(ctx, psTimeout)
-	defer cancel()
-	c, err := supervise.Run(ctx, supervise.Spec{Path: path, Args: args, Env: env, NoTTY: true}, psOutputCap)
-	if err != nil {
-		return nil, fmt.Errorf("ps would not start: %w", err)
-	}
-	if c.TimedOut {
-		return nil, fmt.Errorf("ps did not answer within %s", psTimeout)
-	}
-	// ps -p exits 1 when one of the pids has gone, and still prints the
-	// rest; an empty answer is the failure.
-	if len(bytes.TrimSpace(c.Stdout)) == 0 && c.Err != nil {
-		return nil, fmt.Errorf("ps failed: %w", c.Err)
-	}
-	return c.Stdout, nil
-}
-
 // psList is every process's pid, parent and command name. The name is the
 // last column, since on macOS it is a path and may hold spaces.
 func psList(ctx context.Context) ([]Process, error) {
-	out, err := runPS(ctx, nil, "-A", "-o", "pid=,ppid=,comm=")
+	out, err := supervise.PS(ctx, nil, "-A", "-o", "pid=,ppid=,comm=")
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +380,7 @@ func psStarts(ctx context.Context, pids []int) (map[int]string, error) {
 	for i, p := range pids {
 		ids[i] = strconv.Itoa(p)
 	}
-	out, err := runPS(ctx, claudeClock, "-o", "pid=,lstart=", "-p", strings.Join(ids, ","))
+	out, err := supervise.PS(ctx, claudeClock, "-o", "pid=,lstart=", "-p", strings.Join(ids, ","))
 	if err != nil {
 		return nil, err
 	}
