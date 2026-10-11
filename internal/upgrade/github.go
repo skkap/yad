@@ -10,12 +10,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // DefaultBaseURL is where GitHub serves release pages and assets. Both are
 // plain HTTPS downloads for a public repository, so an upgrade needs no login,
 // no `gh` and no token of yad's own to hold, log or leak.
 const DefaultBaseURL = "https://github.com"
+
+// DefaultStall is how long a request to the release server may go without a
+// byte arriving — before the answer's headers, or between two pieces of a
+// download — before it is given up. github.com answers a release page in well
+// under a second; a minute leaves room for a slow proxy in front of it, and
+// still ends a `yad upgrade` at a terminal, or a runner's self-update, that
+// would otherwise wait for good on a server that took the request and never
+// answered (DEV-181). A download that keeps arriving, however slowly, is
+// never cut short by it.
+const DefaultStall = time.Minute
 
 // GitHub fetches releases the way a browser does. It reads the newest tag from
 // the redirect on /releases/latest rather than from api.github.com, whose
@@ -30,6 +41,15 @@ type GitHub struct {
 	// Yad builds the yad commands its errors offer, carrying the caller's
 	// profile; nil builds bare ones.
 	Yad func(args ...string) string
+	// Stall is DefaultStall unless set; tests shorten it.
+	Stall time.Duration
+}
+
+func (g GitHub) stall() time.Duration {
+	if g.Stall <= 0 {
+		return DefaultStall
+	}
+	return g.Stall
 }
 
 func (g GitHub) repo() string {
@@ -133,17 +153,71 @@ func (g GitHub) fetch(ctx context.Context, u, dst string) error {
 	return f.Close()
 }
 
+// errStalled is the cause a request is cancelled with once the server has
+// sent nothing for the stall: told apart from the caller's own cancellation,
+// it is the one that gets a sentence of its own.
+var errStalled = errors.New("the release server stalled")
+
+// do sends one request and gives it up once the server has sent nothing for
+// the stall. The clock starts with the request and starts again with the
+// headers and with every piece of the body read after them, so a slow
+// download carries on and only one that has stopped is ended. http.Client's
+// Timeout would bound the whole download instead, and a transport's
+// ResponseHeaderTimeout ends a request with an error that cannot be told
+// apart from a connection that timed out.
 func (g GitHub) do(ctx context.Context, client *http.Client, method, u string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, u, nil)
+	stall := g.stall()
+	reqCtx, cancel := context.WithCancelCause(ctx)
+	timer := time.AfterFunc(stall, func() { cancel(errStalled) })
+	req, err := http.NewRequestWithContext(reqCtx, method, u, nil)
 	if err != nil {
+		timer.Stop()
+		cancel(nil)
 		return nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		timer.Stop()
+		stalled := context.Cause(reqCtx) == errStalled
+		cancel(nil)
+		switch {
+		case stalled:
+			return nil, fmt.Errorf("%s took the request and sent nothing back in %s — check this machine's network, or its HTTPS_PROXY, and try again", u, stall)
+		case ctx.Err() != nil:
+			// The caller's own end — a Ctrl-C, or a self-update check
+			// that ran out of time — which the caller says in its own words.
 			return nil, err
 		}
 		return nil, fmt.Errorf("could not reach %s: %w — check this machine's network, or its HTTPS_PROXY", u, err)
 	}
+	timer.Reset(stall)
+	resp.Body = &stallingBody{ReadCloser: resp.Body, ctx: reqCtx, cancel: cancel, timer: timer, stall: stall}
 	return resp, nil
+}
+
+// stallingBody is a response body whose server has the stall to send each
+// next piece of it, and which releases the request's timer when closed.
+type stallingBody struct {
+	io.ReadCloser
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	timer  *time.Timer
+	stall  time.Duration
+}
+
+func (b *stallingBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.timer.Reset(b.stall)
+	}
+	if err != nil && err != io.EOF && context.Cause(b.ctx) == errStalled {
+		err = fmt.Errorf("nothing arrived for %s — check this machine's network, or its HTTPS_PROXY, and try again", b.stall)
+	}
+	return n, err
+}
+
+func (b *stallingBody) Close() error {
+	b.timer.Stop()
+	b.cancel(nil)
+	return b.ReadCloser.Close()
 }
