@@ -165,7 +165,13 @@ func accountAdd(ctx context.Context, g global, args []string, w, stderr io.Write
 	var loginErr error
 	check := account.LoggedIn
 	if useToken {
-		if err := account.SetToken(home, tok); err != nil {
+		err := account.SetToken(home, tok)
+		// The Keychain is the owner's to unlock, and once it is, nothing is
+		// left half-done: the same command stores the token (DEV-183).
+		if _, ok := errors.AsType[*account.KeychainError](err); ok {
+			return fmt.Errorf("%s account %q was not added: %w, and then run `%s` again", id, label, err, again)
+		}
+		if err != nil {
 			return fmt.Errorf("%s account %q was not added: %w", id, label, err)
 		}
 		fmt.Fprintf(w, "%s account %q: the token is stored in %s (0600); yad hands it to this account's runs and to nothing else\n", id, label, home)
