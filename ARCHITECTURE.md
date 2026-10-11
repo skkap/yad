@@ -441,9 +441,14 @@ treats each answer.
 { state, final_text?, error?: { class, message },
   usage: { by_model: {...} },
   metrics: { duration_ms, first_event_ms, tool_calls, api_retries, stalls,
-             cancel_latency_ms?, waited_ms?, account_switches },
+             cancel_latency_ms?, waited_ms?, account_switches, left_running? },
   last_seq }
 ```
+
+`left_running` is absent when no turn was measured and `0` when one was and
+found nothing; a `left_running` status event, names and ages only, comes just
+before the result when it is above `0` (§3, Supervisor;
+[0080](docs/decisions/0080-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
 
 Written to the outbox, in the same transaction as the run's terminal state,
 before the first attempt; sent once the run's events are all acknowledged;
@@ -823,6 +828,22 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   an error and never not ready; no environment or argv of another process is
   read, and no record or `ps` is no warning
   (`capability.SharedHomes`, 0077).
+- **What a turn left running is counted, not stopped.** Every harness
+  measured — Claude Code 2.1.296, Codex 0.160.1, OpenCode 1.18.33 — runs a
+  tool's command in a process group of its own, so the group signals above
+  never reach it; the harness stops it as it exits. So each adapter, after
+  the harness's own end of the turn and before its input closes, takes a
+  census (`supervise.Process.Census`, one `ps`): every live process in a
+  group led by a direct child of the harness and their descendants, less a
+  shell only waiting on its command and the harness's named helpers (Codex's
+  `codex-code-mode-host`). The harness's own group holds its MCP servers and
+  is left out. Names are the kernel's (`ucomm` on macOS, `comm` on Linux),
+  never argv. A turn cancelled, interrupted or stopped by a watchdog is not
+  measured. The executor sums the counts into `metrics.left_running` and
+  spools a `left_running` status event before the result. A process whose
+  shell backgrounded it and exited is already init's and is neither counted
+  nor stopped
+  ([0080](docs/decisions/0080-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
 - **Exit 0 is not success.** Only the harness's result event decides the state;
   `prompt_too_long` arrives with `subtype: success`.
 

@@ -1047,6 +1047,49 @@ cancelled while it was offered is `409`, and the run stays `cancelled`. A
 A result from any other runner is refused, `403 not_holder` or `404
 not_found`, and never applied.
 
+### Metrics
+
+A result's `metrics` say how the run went. Every figure covers the whole
+run, every turn and every account it took, but `first_event_ms`, which is the
+turn that answered's. For a `lost` run they are what the runner had recorded
+before it stopped — floors, not ends anybody saw.
+
+| field | what it is |
+|---|---|
+| `duration_ms` | from the run first reaching `preparing` to its end |
+| `first_event_ms` | from the start of the turn that answered to its first event |
+| `tool_calls` | tool calls, every turn |
+| `api_retries` | transient throttling the harness retried itself; never a usage limit |
+| `stalls` | times a watchdog found the event stream idle |
+| `cancel_latency_ms` | from a cancel or interrupt arriving to the turn ending; absent when nothing asked the run to stop |
+| `waited_ms` | time parked waiting for a free account, summed over every wait |
+| `account_switches` | turns that started on a different account than the turn before |
+| `left_running` | processes the run's tool work still had running when a turn ended on the harness's own answer; **absent when not measured**, `0` when measured with none |
+
+**`left_running` is the one that can make a success hollow.** A harness's
+turn ends, and whatever its agent started in the background — a test suite,
+a dev server — is stopped as the harness exits. The final text may still say
+"tests are running, will report". A `succeeded` run with `left_running` above
+`0` deserves a warning, not trust: the work it describes may never have
+finished. The runner names what it found just before the result, in a
+`status` event labelled `left_running` whose text lists each process by its
+command's name and how long it had run (`sleep (running 4s)`) — never its
+arguments, environment or pid.
+
+Absent and `0` are different answers. Absent is a run none of whose turns was
+measured: every one was cancelled, interrupted or stopped by a watchdog, or
+the runner could not read its process table. Show absent as unknown, never
+as none. What the runner cannot see is not counted: a process whose shell
+backgrounded it (`nohup … &`) and then exited has already left the harness's
+process tree, and it outlives the turn
+([0080](docs/decisions/0080-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
+
+`left_running` arrived within v1 as an optional field, like
+`cancel_latency_ms` before it. A hub that decodes `metrics` with its own
+strict type would refuse every result from a newer runner; the wire rule
+that unknown fields are ignored ([§2](#2-wire-basics)) holds inside nested
+objects too, and conformance checks it inside `metrics`.
+
 ### How a runner treats your answers to events and results
 
 This is what makes the statuses matter:
@@ -1743,6 +1786,7 @@ checks; the rest is yours to get right.
 - [ ] Results from the runner the run was offered to or claimed by, applied once; the same state again acknowledged; a different one `409`, a run you ended before any claim included — [§6](#results) (C)
 - [ ] A result from the runner a run was offered to taken only while the offer is open; after a sync takes it back or its lease lapses, `403 not_holder` — [§6](#results) (C)
 - [ ] A `refused` result before any claim ends the run, and the run is not offered again — [§6](#results) (C)
+- [ ] An unknown field inside `metrics` ignored; `left_running` shown as a warning on a success above `0`, and absent shown as unknown, not none — [§6](#metrics) (C, as far as the unknown field)
 
 **Controls, sessions, grants, versions**
 
