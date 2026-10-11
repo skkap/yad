@@ -1479,7 +1479,12 @@ daemon closes its socket, lock, `state.db` and log and `exec`s the same path
 with the same argv and environment, so the pid a service manager watches never
 exits. A stop or a hub's drain during it makes it an ordinary drain that exits. A failed check is a warning in the log and in
 `yad status`, which also shows the last check, the next, and any release
-pending or refused.
+pending or refused. A check is bounded twice, because the daemon's context
+never ends while it runs: every request to the release server is given up
+after a minute in which nothing arrives (`upgrade.DefaultStall`, which bounds
+`yad upgrade` at a terminal the same way), and the whole check — download and
+`version --json` included — after twenty minutes (`selfupdate.CheckTimeout`).
+Either is a failed check, and the next comes on schedule.
 
 ## §6 Dependencies
 

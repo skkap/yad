@@ -64,7 +64,11 @@ fork's build with upstream's.
 
 `yad upgrade` downloads to a temporary directory beside the installed binary,
 checks its SHA-256 against the release's `checksums.txt`, and only then renames
-it into place — so an upgrade that fails at any step leaves a working `yad`. It
+it into place — so an upgrade that fails at any step leaves a working `yad`.
+A release server, or a proxy in front of it, that sends nothing for a minute
+— no answer to the request, or no next piece of a download — ends the upgrade
+with an error rather than leaving it waiting; a download that keeps arriving,
+however slowly, is never cut short. It
 restarts nothing: a runner already running holds the binary it started from
 until you restart it, and `yad upgrade` says so — naming the profile, and
 carrying it in the command it offers: `yad daemon restart`, which restarts a
@@ -99,7 +103,10 @@ run is never interrupted for an update.
 `yad status` shows it: when it last checked and what it found, when it checks
 next, and a release waiting to take over or refused, and why. A check that
 fails — no network, a release with a bad checksum, a directory yad cannot
-write to — is a warning there and in the log, and the runner carries on.
+write to, a release server that stops answering — is a warning there and in
+the log, and the runner carries on. A check that has not ended in twenty
+minutes is given up as failed, so a stalled server costs one check, never
+the ones after it.
 
 The binary has to be one the runner's user can replace, as for `yad
 upgrade`. A `make install` from a checkout counts as the tag it was built
