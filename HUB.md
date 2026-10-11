@@ -1085,7 +1085,7 @@ as none, and `0` as nothing seen, not as proof that nothing survived. What
 the runner cannot see is not counted: a process whose shell backgrounded it
 (`nohup … &`) and then exited has already left the harness's process tree,
 and it outlives the turn
-([0082](docs/decisions/0082-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
+([0083](docs/decisions/0083-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
 
 `left_running` arrived within v1 as an optional field, like
 `cancel_latency_ms` before it. A hub that decodes `metrics` with its own

@@ -436,7 +436,7 @@ func (t *turn) deny(requestID string) {
 // A result that answered everything is Claude's own end of the turn, and the
 // census of its tool work is taken here, with input still open: Claude runs
 // each Bash command in a session of its own, beyond yad's group signals,
-// and stops its background tasks itself as it exits (decision 0082).
+// and stops its background tasks itself as it exits (decision 0083).
 // closing is set first, so no steer, interrupt or answer is queued while the
 // census runs, and the lock is released, so none of them waits on it.
 func (t *turn) settle(queued int) {

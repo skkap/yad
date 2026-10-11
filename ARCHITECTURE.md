@@ -448,7 +448,7 @@ treats each answer.
 `left_running` is absent when no turn was measured and `0` when one was and
 found nothing; a `left_running` status event, names and ages only, comes just
 before the result when it is above `0` (§3, Supervisor;
-[0082](docs/decisions/0082-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
+[0083](docs/decisions/0083-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
 
 Written to the outbox, in the same transaction as the run's terminal state,
 before the first attempt; sent once the run's events are all acknowledged;
@@ -845,7 +845,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   spools a `left_running` status event before the result. A process whose
   shell backgrounded it and exited is already init's and is neither counted
   nor stopped
-  ([0082](docs/decisions/0082-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
+  ([0083](docs/decisions/0083-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
 - **Exit 0 is not success.** Only the harness's result event decides the state;
   `prompt_too_long` arrives with `subtype: success`.
 

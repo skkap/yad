@@ -12,7 +12,7 @@ import (
 // turn and before closing its input, since the harness stops its tool
 // processes on the way out, and only for a turn nobody stopped: a cancel, an
 // interrupt or a watchdog has already decided what became of the work
-// (decision 0082). A turn with no process — a test's — has nothing to measure.
+// (decision 0083). A turn with no process — a test's — has nothing to measure.
 func Census(ctx context.Context, p *supervise.Process, helpers ...string) *[]supervise.Leftover {
 	if p == nil || ctx.Err() != nil {
 		return nil

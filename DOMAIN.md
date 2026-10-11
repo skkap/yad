@@ -501,7 +501,7 @@ and an optional wall-clock cap set per run.
 - Exit 0 is not success. A run's terminal state comes from the harness's own
   result event. Nor is a success proof that the work finished: the result
   counts what the run's tool work left running when its turn ended
-  (`metrics.left_running`, [0082](docs/decisions/0082-a-run-reports-how-many-processes-its-tool-work-left-running.md)),
+  (`metrics.left_running`, [0083](docs/decisions/0083-a-run-reports-how-many-processes-its-tool-work-left-running.md)),
   which the harness, not yad, stops as it exits.
 - A lost run is reported, never silently retried. A run a previous process held
   is reported lost by the next start
