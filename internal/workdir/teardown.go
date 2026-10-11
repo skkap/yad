@@ -53,9 +53,10 @@ func keepHookEnv(h hookEnv) error {
 
 // teardown runs the repository's .worktree/teardown in a worktree Reclaim is
 // about to remove, with the WT_* values its setup was given, so the stacks a
-// run started go before the slot their ports came from is freed. It runs only
-// in a worktree whose add finished and whose session still holds a slot for
-// the repository — setup ran there, or could have — and at most once.
+// run started go before the slot their ports came from is freed (decision
+// 0080). It runs only in a worktree whose add finished and whose session
+// still holds a slot for the repository — setup ran there, or could have —
+// and at most once.
 //
 // Nothing it does fails the reclaim: a teardown that exits non-zero, hangs
 // or will not start is logged, and the worktree is removed anyway. The error

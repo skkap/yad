@@ -139,7 +139,7 @@ type WorkdirsConfig struct {
 	// SetupTimeout bounds a repository's .worktree/setup.
 	SetupTimeout Duration `toml:"setup_timeout"`
 	// TeardownTimeout bounds a repository's .worktree/teardown, run when a
-	// workdir is reclaimed.
+	// workdir is reclaimed (decision 0080).
 	TeardownTimeout Duration `toml:"teardown_timeout"`
 }
 
