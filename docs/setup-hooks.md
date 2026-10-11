@@ -85,17 +85,22 @@ runs it when the session's workdir is reclaimed — on the hub's
 pressure — before it removes the worktree and frees the slot
 ([0080](decisions/0080-reclaiming-a-workdir-runs-its-teardown-hook-first.md)).
 
-- It is found and run as setup is: the committed file only, the worktree as
-  its working directory, the runner's own user, the same environment.
+- It is found and run as setup is: the file in the worktree, never one it
+  links to outside the checkout, with the worktree as its working directory,
+  as the runner's own user, in the same environment. The file that runs is
+  the one the session left there, which the harness may have changed.
 - It gets the same variables, with the values setup was given. `WT_BRANCH`
   is the branch the run started on, even if the harness has switched branch
   since, so a compose project named from `WT_SLUG` is the one setup made.
 - It runs only in a worktree a run got as far as, whose session still holds
   its slot, whether or not setup succeeded. A path source never runs one.
-- Nothing waits on it and no hub sees it. A teardown that exits non-zero,
-  runs past `[workdirs] teardown_timeout` (2 minutes by default) or will not
-  start is a warning in the runner's log and in `yad status`, and the worktree
-  is removed and the slot freed anyway.
+- It never fails anything. A teardown that exits non-zero, runs past
+  `[workdirs] teardown_timeout` (2 minutes by default) or will not start is a
+  warning in the runner's log and `yad status`, and in the recent errors every
+  hub reads in the runner's health, and the worktree is removed and the slot
+  freed anyway. What the hook printed is not kept: the warning gives its exit
+  status. The runner's collector waits for it before going on to the next
+  workdir, so keep it to stopping what is running.
 - **It must be safe to run twice.** A runner stopped while a teardown runs
   kills it, keeps the worktree, and runs the teardown again after it starts.
   Stop what is there and ignore what is not:

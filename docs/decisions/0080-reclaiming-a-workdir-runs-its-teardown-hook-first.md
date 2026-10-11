@@ -22,7 +22,7 @@ only once every worktree of the session is out are its slots freed. The slot
 is therefore not given to another worktree until the teardown has finished.
 
 **The same contract as setup.** The hook is found by the same rules — the
-committed file only, executable, not a link out of the checkout — and started
+file in the worktree, executable, not a link out of the checkout — and started
 the same way: the worktree as its working directory, no terminal, stdout and
 stderr merged, the scrubbed environment with git's prompts off and the
 runner's `git`, `gh` and `docker` first on `PATH`, as the runner's user, with
@@ -45,7 +45,10 @@ in.
 non-zero, runs past `[workdirs] teardown_timeout` (default two minutes) or
 will not start is a warning in the runner's log, and the worktree is removed
 and the slot freed anyway. The warning's message is generic; the connection,
-session, repository and path go in its attributes. It reaches `yad status`
+session, repository, path, slot and exit status go in its attributes. What
+the hook printed goes nowhere: unlike setup's, which is the run's own event
+stream, a teardown's output has no reader, and the log is not the place for
+whatever a hook prints, a credential included. It reaches `yad status`
 and each hub's `health.recent_errors` with no protocol change. Nobody is
 waiting on a reclaim to read a richer error: the close was reported to the hub
 before the sweep reclaims (0035), and `closed_sessions` has no field for it.

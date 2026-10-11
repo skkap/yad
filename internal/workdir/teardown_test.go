@@ -504,3 +504,81 @@ func TestRepoOfCache(t *testing.T) {
 		}
 	}
 }
+
+// lockedBuffer is a log destination a hook's goroutines and the test share.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// Nothing a teardown prints reaches the runner's log, in a message or an
+// attribute: a hook that echoes a credential before failing must not put it
+// in yad.log or yad status.
+func TestTeardownOutputStaysOutOfTheLog(t *testing.T) {
+	for _, tc := range []struct{ name, hook string }{
+		{"exits non-zero", "#!/bin/sh\necho yad_secret_out\necho yad_secret_err >&2\nexit 3\n"},
+		{"hangs", "#!/bin/sh\necho yad_secret_out\nsleep 30\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.m.TeardownTimeout = 2 * time.Second
+			buf := &lockedBuffer{}
+			f.m.Log = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			o := withTeardown(t, f.root, "acme", tc.hook)
+			p, _, err := f.prepare("s1", gitSource(o.bare, "", ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Release()
+			if err := f.m.Reclaim(context.Background(), "hub", "s1", p.Dir); err != nil {
+				t.Fatal(err)
+			}
+			got := buf.String()
+			if !strings.Contains(got, "teardown hook") {
+				t.Fatalf("nothing was logged about the teardown:\n%s", got)
+			}
+			if strings.Contains(got, "yad_secret") {
+				t.Errorf("the teardown's output reached the log:\n%s", got)
+			}
+		})
+	}
+}
+
+// A record a runner killed mid-write left partial is written again on the
+// session's next run, rather than kept for a teardown that cannot read it.
+func TestAPartialHookEnvIsWrittenAgain(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", map[string]string{"README": "x"})
+	p, _, err := f.prepare("s1", gitSource(o.bare, "", "feat/a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	gitDir := sh(t, p.Dir, "git", "rev-parse", "--absolute-git-dir")
+	if err := os.WriteFile(filepath.Join(gitDir, hookEnvFile), []byte(`{"branch":"fe`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, _, err = f.prepare("s1", gitSource(o.bare, "", "feat/a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	if saved, ok := readHookEnv(gitDir); !ok || saved.Branch != "feat/a" || saved.Repo != "acme" {
+		t.Errorf("after the next run the record is %+v (%v), want feat/a in acme", saved, ok)
+	}
+	if left, _ := filepath.Glob(filepath.Join(gitDir, ".yad-hook-env-*")); len(left) != 0 {
+		t.Errorf("a temporary record was left behind: %v", left)
+	}
+}
