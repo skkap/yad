@@ -1122,8 +1122,9 @@ type NoteHarnessSilentParams struct {
 	UpdatedAt int64
 }
 
-// One more run on a home ended harness_silent. until is computed by the caller
-// from the new count (account.NoteSilent), so it is passed for both branches.
+// One more run on a home ended harness_silent. until is left as it is here and
+// written after by SetHarnessSilenceUntil, from the count this returns
+// (account.NoteSilent), which is why the caller runs both in one transaction.
 func (q *Queries) NoteHarnessSilent(ctx context.Context, arg NoteHarnessSilentParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, noteHarnessSilent, arg.Harness, arg.Label, arg.UpdatedAt)
 	var runs int64

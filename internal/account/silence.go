@@ -40,6 +40,8 @@ type Silence struct {
 	// Until is when the home is offered again; zero while Runs is below
 	// SilentRuns, or after a daemon start ended the cool-down.
 	Until time.Time
+	// At is when the last silent run was recorded.
+	At time.Time
 }
 
 // Holds says whether the home is not ready at now.
@@ -81,7 +83,7 @@ func LoadSilences(ctx context.Context, q *db.Queries) (Silences, error) {
 	}
 	out := make(Silences, len(rows))
 	for _, r := range rows {
-		s := Silence{Harness: r.Harness, Label: r.Label, Runs: int(r.Runs)}
+		s := Silence{Harness: r.Harness, Label: r.Label, Runs: int(r.Runs), At: time.UnixMilli(r.UpdatedAt).UTC()}
 		if r.Until > 0 {
 			s.Until = time.UnixMilli(r.Until).UTC()
 		}
@@ -116,6 +118,34 @@ func NoteSilent(ctx context.Context, q *db.Queries, harness, label string, now t
 // wrong with the home, a harness got a word out in it.
 func NoteSpoke(ctx context.Context, q *db.Queries, harness, label string) error {
 	return q.ClearHarnessSilence(ctx, db.ClearHarnessSilenceParams{Harness: harness, Label: label})
+}
+
+// EndedAtStart is accounts and silences as they read once a daemon that
+// started at started has ended every cool-down begun before it: what
+// EndCoolDowns writes, for a reader that may come first. The daemon's first
+// capability document is built before its store is open, and without this it
+// would tell every hub of a cool-down health has already ended.
+func EndedAtStart(accounts []Account, silences Silences, started time.Time) ([]Account, Silences) {
+	ended := map[Ref]bool{}
+	out := make(Silences, len(silences))
+	for r, s := range silences {
+		if s.At.Before(started) && !s.Until.IsZero() && s.Until.After(started) {
+			s.Until = started
+			ended[r] = true
+		}
+		out[r] = s
+	}
+	if len(ended) == 0 {
+		return accounts, silences
+	}
+	acc := make([]Account, len(accounts))
+	for i, a := range accounts {
+		if ended[Ref{Harness: a.Harness, Label: a.Label}] {
+			a.SilentUntil, a.SilentRuns = nil, 0
+		}
+		acc[i] = a
+	}
+	return acc, out
 }
 
 // EndCoolDowns offers every home in a cool-down again from now, keeping the

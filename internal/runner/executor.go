@@ -1305,19 +1305,22 @@ func (e *Exec) stoppedDetail(class string, run v1.Run, out adapter.Outcome, hasA
 
 // noteSilence keeps the record of the turn's home — the account's, or the
 // harness's own login for label "" — that readiness is decided from (decision
-// 0077): a turn whose harness produced any event clears it, one stopped for
-// saying nothing adds to it, and anything else — a cancel before the first
+// 0077): a turn stopped for saying nothing adds to it, one whose harness
+// produced an event clears it, and anything else — a cancel before the first
 // word, a run's own shorter inactivity — says nothing about the home either
-// way. It returns what the run's error adds when this run is the one that
+// way. The stop is asked first: a harness can get its first word out while
+// the cancel ladder is stopping it, and a start that keeps landing just past
+// the timeout fails every run, so it must not clear the count. It returns what the run's error adds when this run is the one that
 // leaves the home not ready.
 func (e *Exec) noteSilence(ctx context.Context, harness, label string, w watch, log *slog.Logger) string {
 	switch {
+	case w.stopped == ClassHarnessSilent:
 	case w.firstEventMS >= 0:
 		if err := account.NoteSpoke(ctx, e.Store.Queries, harness, label); err != nil {
 			log.Warn("could not clear the record of silent runs on this home; it ends with its cool-down", "err", err)
 		}
 		return ""
-	case w.stopped != ClassHarnessSilent:
+	default:
 		return ""
 	}
 	var s account.Silence

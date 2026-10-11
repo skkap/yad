@@ -144,3 +144,24 @@ func TestASilentAccountIsSkippedAndForgottenWithTheAccount(t *testing.T) {
 		t.Error("the prune took the default login's record")
 	}
 }
+
+// The daemon's first document is built before its store is open, so before
+// the start has ended any cool-down: read through EndedAtStart, a cool-down
+// begun before the start is over, and one begun since stands.
+func TestEndedAtStartEndsTheCoolDownsBeforeTheStartOnly(t *testing.T) {
+	started := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	until := started.Add(10 * time.Minute)
+	before := Silence{Harness: "claude", Label: "work", Runs: 3, Until: until, At: started.Add(-5 * time.Minute)}
+	since := Silence{Harness: "claude", Runs: 3, Until: until, At: started.Add(time.Minute)}
+	accounts := []Account{{Harness: "claude", Label: "work", SilentUntil: &until, SilentRuns: 3}}
+	gotA, gotS := EndedAtStart(accounts, Silences{{"claude", "work"}: before, {Harness: "claude"}: since}, started)
+	if gotA[0].SilentUntil != nil || accounts[0].SilentUntil == nil {
+		t.Errorf("account = %+v (and the caller's %+v); want its cool-down over in a copy", gotA[0], accounts[0])
+	}
+	if s := gotS[Ref{"claude", "work"}]; s.Holds(started) || s.Runs != 3 {
+		t.Errorf("the record from before the start = %+v; want it over, its count kept", s)
+	}
+	if s, ok := gotS.Default("claude", started.Add(2*time.Minute)); !ok || !s.Until.Equal(until) {
+		t.Errorf("the record from after the start = %+v, %v; want it standing", s, ok)
+	}
+}

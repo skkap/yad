@@ -205,3 +205,28 @@ func TestADaemonStartEndsTheCoolDownAndKeepsTheCount(t *testing.T) {
 		t.Errorf("after a start the record is %+v; want the count kept and the cool-down over", s)
 	}
 }
+
+// A harness that gets its first word out while the cancel ladder is already
+// stopping it has still failed its run harness_silent, and the run counts as
+// silent: a start that keeps landing just past the timeout must not reset the
+// count it is failing every run of.
+func TestAWordAfterTheStopDoesNotClearTheCount(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	l := e.loop(t, 1)
+	late := &fake.Adapter{ID: "claude", Next: func(adapter.Spec) fake.Script {
+		return fake.Script{Events: []v1.Event{{Kind: v1.EventStatus, Status: "started"}}, Delay: 150 * time.Millisecond, Hang: true, IgnoreInterrupt: true}
+	}}
+	x := e.executor(late)
+	x.Config.Supervise.FirstOutput = config.Duration{Duration: 30 * time.Millisecond}
+	// Long enough for the late word to arrive before SIGTERM's rung.
+	x.Grace = time.Second
+	runEach(t, e, l, x, "a", "b", "c")
+	res, ok := outboxResult(t, e, "c")
+	if !ok || res.Error == nil || res.Error.Class != ClassHarnessSilent || res.Metrics.FirstEventMS <= 0 {
+		t.Fatalf("result = %+v (error %+v); want harness_silent with a late first event", res, res.Error)
+	}
+	if h := healthNow(ctx, l); h.Harnesses[0].Ready {
+		t.Errorf("health = %+v; three runs stopped silent should leave it not ready", h.Harnesses)
+	}
+}

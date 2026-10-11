@@ -424,8 +424,9 @@ DELETE FROM outbox WHERE connection = ?;
 -- name: DropConnectionEvents :exec
 UPDATE events SET acked = 1 WHERE connection = ? AND acked = 0;
 
--- One more run on a home ended harness_silent. until is computed by the caller
--- from the new count (account.NoteSilent), so it is passed for both branches.
+-- One more run on a home ended harness_silent. until is left as it is here and
+-- written after by SetHarnessSilenceUntil, from the count this returns
+-- (account.NoteSilent), which is why the caller runs both in one transaction.
 -- name: NoteHarnessSilent :one
 INSERT INTO harness_silence (harness, label, runs, until, updated_at) VALUES (?, ?, 1, 0, ?)
 ON CONFLICT (harness, label) DO UPDATE SET runs = harness_silence.runs + 1, updated_at = excluded.updated_at

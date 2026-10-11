@@ -172,6 +172,9 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 		if err != nil {
 			log.Warn("could not read account states; reporting the owner's accounts as free", "err", err)
 		}
+		// This start ends every cool-down (decision 0077), and the first
+		// document is built before Serve has written that down.
+		accounts, silences = account.EndedAtStart(accounts, silences, started)
 		doc := capability.Build(runCtx, id, now.Apply(cfg), capability.State{Accounts: accounts, Silences: silences, Paths: g.paths})
 		noted.note(log, capability.ModelsFailures())
 		return doc
