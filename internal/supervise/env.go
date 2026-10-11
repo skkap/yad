@@ -126,6 +126,24 @@ func Declared(name string) bool {
 	return false
 }
 
+// LookupEnv is name as a child Start runs inherits it, before its spec's own
+// Env: the owner's [env] value when it declares name, else this process's.
+// For code that reads a variable in order to build on what the child will
+// get — OpenCode's inline configuration, the keychain account Claude files
+// its login under — since os.LookupEnv alone misses what [env] declares, and
+// what the code builds would then replace or contradict the owner's value.
+// Not for a name Scrub removes, which no child inherits from this process.
+func LookupEnv(name string) (string, bool) {
+	if p := owner.Load(); p != nil {
+		for _, kv := range *p {
+			if n, v, _ := strings.Cut(kv, "="); n == name {
+				return v, true
+			}
+		}
+	}
+	return os.LookupEnv(name)
+}
+
 // Environ is the environment a child starts from before its spec's own Env:
 // this process's, scrubbed, then the owner's layer. Start uses it, and so
 // does the one child that is not Start's — an interactive login, which needs

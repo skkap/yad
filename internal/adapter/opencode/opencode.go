@@ -22,6 +22,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/acp"
 	"github.com/skkap/yad/internal/adapter/jsonrpc"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // Adapter is the OpenCode adapter.
@@ -107,7 +108,7 @@ const contextFile = "context.md"
 // run's environment carries a hub's grants: a hub must never widen what a
 // harness may do on the owner's machine (AGENTS.md), so none of them passes,
 // as Claude's adapter drops IS_SANDBOX. The owner's own, set in the runner's
-// environment, reach OpenCode as they would reach it at a terminal.
+// environment or its [env], reach OpenCode as they would reach it at a terminal.
 //
 // The context is OpenCode's equivalent of Claude's appended system prompt:
 // config.instructions are read into the system prompt of every request the
@@ -158,11 +159,12 @@ func prepare(spec adapter.Spec) ([]string, func(), error) {
 }
 
 // ownerConfig is the inline configuration the owner gives OpenCode in the
-// runner's own environment. Its keys are kept and the context is added to
-// its instructions, since the variable holds one value and the last one set
-// wins.
+// runner's own environment or config.toml's [env] — what OpenCode would
+// otherwise inherit (supervise.LookupEnv). Its keys are kept and the context
+// is added to its instructions, since the variable holds one value and the
+// last one set wins.
 func ownerConfig() (map[string]any, error) {
-	value, set := os.LookupEnv(envConfig)
+	value, set := supervise.LookupEnv(envConfig)
 	config := map[string]any{}
 	if !set || strings.TrimSpace(value) == "" {
 		return config, nil
@@ -170,7 +172,7 @@ func ownerConfig() (map[string]any, error) {
 	// A JSON null decodes into a nil map, which would be written to below;
 	// only an object is configuration.
 	if err := json.Unmarshal([]byte(value), &config); err != nil || config == nil {
-		return nil, fmt.Errorf("%s in the runner's environment is not a JSON object yad can add the run's context to — make it plain JSON (no comments), or unset it", envConfig)
+		return nil, fmt.Errorf("%s in the runner's environment or [env] is not a JSON object yad can add the run's context to — make it plain JSON (no comments), or unset it", envConfig)
 	}
 	return config, nil
 }

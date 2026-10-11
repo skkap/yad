@@ -15,6 +15,7 @@ import (
 
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/acp/acptest"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 var _ adapter.Adapter = Adapter{}
@@ -254,6 +255,28 @@ func TestTheContextJoinsTheOwnersInlineConfig(t *testing.T) {
 		if _, err := (Adapter{}).Start(context.Background(), spec); err == nil || !strings.Contains(err.Error(), envConfig) {
 			t.Errorf("start with inline config %s: %v", value, err)
 		}
+	}
+}
+
+// The same holds for inline configuration declared in config.toml's [env]
+// rather than the runner's environment: the run's value is built on the
+// owner's, not written over it (DEV-188).
+func TestTheContextJoinsInlineConfigFromTheOwnersEnv(t *testing.T) {
+	t.Setenv(envConfig, "")
+	os.Unsetenv(envConfig)
+	t.Cleanup(func() { supervise.SetOwnerEnv(nil) })
+	supervise.SetOwnerEnv(map[string]string{envConfig: `{"instructions":["/etc/team.md"],"share":"disabled"}`})
+	p := &play{fixture: fixture(t, "plain")}
+	spec := p.spec(t)
+	spec.Brief.Context = "You are terse."
+	run(t, spec, nil)
+	var config map[string]any
+	if err := json.Unmarshal([]byte(p.seen(t).env[envConfig]), &config); err != nil {
+		t.Fatal(err)
+	}
+	in, _ := config["instructions"].([]any)
+	if len(in) != 2 || in[0] != "/etc/team.md" || config["share"] != "disabled" {
+		t.Errorf("config %v", config)
 	}
 }
 

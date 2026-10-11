@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"os/user"
 	"regexp"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/skkap/yad/internal/shellword"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // On macOS, Claude does not keep the login of a home it is pointed at with
@@ -74,11 +74,12 @@ var keychainAccountName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // keychainAccount is the account attribute Claude gives its items: $USER, or
 // the user's name when $USER is empty, and a fixed name when either is
-// something Claude will not use. Read from this process's environment, which
-// is the one every claude yad starts inherits (supervise.Scrub leaves USER
-// alone), so the item named here is the one those claudes read and write.
+// something Claude will not use. Read as every claude yad starts inherits
+// it (supervise.LookupEnv: the owner's [env] if it sets USER, else this
+// process's, which Scrub leaves alone), so the item named here is the one
+// those claudes read and write.
 func keychainAccount() string {
-	name := os.Getenv("USER")
+	name, _ := supervise.LookupEnv("USER")
 	if name == "" {
 		u, err := user.Current()
 		if err != nil {

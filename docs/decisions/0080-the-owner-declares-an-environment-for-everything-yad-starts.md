@@ -30,7 +30,12 @@ reached runs alone. The rest was settled while building it.
   `yad account add`, whose interactive login is the one child not started by
   `Start` and takes `Environ` too. So a check runs in the environment its run
   will have, as [0045](0045-runs-use-the-host-tools-detection-resolved.md)
-  and 0060 require. What yad sets for one child still wins: an account's
+  and 0060 require. Code that reads a variable in order to build on what a
+  child inherits reads it through `supervise.LookupEnv`, `[env]` first:
+  OpenCode's inline configuration, which a run's context is added to rather
+  than written over ([0073](0073-opencode-is-first-class-through-a-generic-acp-core.md)),
+  and the `USER` Claude files its Keychain login under. What yad sets for one
+  child still wins: an account's
   home and token, a hook's `WT_*`, the host-tool `PATH`, a git command's own
   variables.
 - **Refused at load, from one rule in `supervise`** (`OwnerRefusal`, in an
