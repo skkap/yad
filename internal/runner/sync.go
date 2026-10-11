@@ -181,6 +181,12 @@ type Loop struct {
 	// AccountsChanged is told when this hub removed an account, so the
 	// capability document is built again now. Nil tells nobody.
 	AccountsChanged func()
+	// HeldChanged is told when a claim is recorded. The claim was checked
+	// against the document as it stood, and one built while it was being
+	// recorded may have read the runs held before it: told now, the process
+	// counts it, so a harness that stopped being drivable during that build
+	// still counts while its run is held (DEV-169). Nil tells nobody.
+	HeldChanged func()
 
 	sentFingerprint string
 	wantDocument    bool
@@ -845,6 +851,9 @@ func (l *Loop) claim(ctx context.Context, run v1.Run, doc v1.Capabilities, res *
 		return
 	}
 	l.pending[run.RunID] = pendingRun{run: run, release: release, newSession: newSession}
+	if l.HeldChanged != nil {
+		l.HeldChanged()
+	}
 }
 
 // refused is a reason a run cannot be taken that only the store can see.

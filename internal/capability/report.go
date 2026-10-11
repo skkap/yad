@@ -143,11 +143,6 @@ type State struct {
 	// Paths is the profile. The document reaches every hub, so its commands
 	// are built with RemoteCommand and name no path (DEV-67).
 	Paths config.Paths
-	// Held is the harness of every run the runner holds, which counts in the
-	// runner-wide per-run features whether or not it is drivable now
-	// (Features). Nil is a document built with no run in hand — by a CLI
-	// command, or before the runner's store is open.
-	Held []string
 }
 
 // Build probes the machine and assembles the document from it, the owner's
@@ -197,7 +192,7 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, st State) v1
 		Harnesses:        reports,
 		HostTools:        HostTools(tools),
 		Capacity:         caps,
-		ProtocolFeatures: Features(reports, st.Held...),
+		ProtocolFeatures: Features(reports),
 		PathSources:      PathSources(cfg.Workdirs),
 		ObservedAt:       time.Now().UTC(),
 	}

@@ -136,10 +136,12 @@ wire is new — "held" is the runner's own count, never a protocol field.
 
 **The runner counts from its store.** `yad daemon` reads the harnesses of the
 runs held (`runner.Monitor.HeldHarnesses`) at every rebuild of the document,
-beside the probe. A run ending does not wait for the next probe: it recounts
-at once, recomputing the strings over the reports already probed rather than
-probing again, so a queue of short runs spawns no harness's `--version` once
-per run. Once a harness's last run has ended, the next document is computed
+after the probe. A claim recorded and a run ending do not wait for the next
+probe: each recounts at once, recomputing the strings over the reports already
+probed rather than probing again, so a queue of short runs spawns no harness's
+`--version` once per run. The claim's recount is what covers a claim checked
+against the document before a probe found its harness gone, and recorded
+after that probe's rebuild read the runs held. Once a harness's last run has ended, the next document is computed
 over the drivable harnesses alone, as the first amendment made it. A held run
 moves the strings with the reports under the one fingerprint, as a harness
 coming or going does, so a hub re-reads both together.

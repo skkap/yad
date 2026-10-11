@@ -168,18 +168,6 @@ func TestAHarnessWithARunHeldCountsInTheRunnerWideStrings(t *testing.T) {
 	}
 }
 
-// Build counts what State says is held, and a document built with nothing
-// held is the drivable-only one.
-func TestBuildCountsTheHarnessesWithRunsHeld(t *testing.T) {
-	noTools(t)
-	if got := perRun(Build(context.Background(), "r1", config.Default(), State{Held: []string{"opencode"}}).ProtocolFeatures); !slices.Equal(got, HarnessFeatures("opencode")) {
-		t.Errorf("an empty machine with an opencode run held advertises %v runner-wide, want %v", got, HarnessFeatures("opencode"))
-	}
-	if got := perRun(Build(context.Background(), "r1", config.Default(), State{}).ProtocolFeatures); len(got) != 0 {
-		t.Errorf("an empty machine with nothing held advertises %v runner-wide", got)
-	}
-}
-
 // Installing or removing a first-class harness changes the document's
 // runner-wide strings with its harness reports, so the fingerprint moves and a
 // hub re-reads both together; each harness's own list is the same either way.

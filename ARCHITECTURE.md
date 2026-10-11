@@ -499,9 +499,9 @@ first-class, present, no `error` (`capability.Drivable`) — supports it, and
 none while it can drive nothing. A harness with a run held counts too,
 drivable or not, with its adapter's list: one whose binary goes mid-run keeps
 its features out of the strings until that run ends (DEV-169). The daemon
-reads the held runs' harnesses from its store at every rebuild
-(`runner.Monitor.HeldHarnesses`), and a run ending recounts at once over the
-reports already probed, without probing again. One harness without a feature
+reads the held runs' harnesses from its store at every rebuild, after the
+probe (`runner.Monitor.HeldHarnesses`), and a claim recorded or a run ending
+recounts at once over the reports already probed, without probing again. One harness without a feature
 cannot switch it off for the others, a harness a machine does not have cannot
 switch it off there, and a hub reading only the strings is never told a run
 may use what its harness cannot. The strings are computed from the reports in
