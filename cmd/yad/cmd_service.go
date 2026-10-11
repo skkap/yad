@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/runner"
 	"github.com/skkap/yad/internal/service"
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // serviceManager is the machine's service manager; a variable so tests drive
@@ -61,7 +63,7 @@ func cmdService(ctx context.Context, g global, args []string, w io.Writer) error
 		return serviceInstall(ctx, m, h, paths, w)
 	case "uninstall":
 		if err := m.Uninstall(ctx, paths.Profile); err != nil {
-			return err
+			return refusedUnanswered(err, m, paths, "uninstall")
 		}
 		fmt.Fprintf(w, "removed %s — profile %s has no service now; its config and state are untouched\n", m.Name(paths.Profile), paths.Profile)
 		return nil
@@ -104,7 +106,7 @@ func serviceInstall(ctx context.Context, m service.Manager, h service.Host, path
 	}
 	notes, err := m.Install(ctx, spec)
 	if err != nil {
-		return err
+		return refusedUnanswered(err, m, paths, "install")
 	}
 	fmt.Fprintf(w, "installed %s — profile %s runs as %s and restarts after a crash\n", m.Name(paths.Profile), paths.Profile, userName(h))
 	fmt.Fprintf(w, "  unit     %s\n", m.File(paths.Profile))
@@ -123,6 +125,24 @@ func serviceInstall(ctx context.Context, m service.Manager, h service.Host, path
 		fmt.Fprintf(w, "note: no hub is connected, so the runner claims nothing — after `%s`, run `%s` again to restart it\n", paths.Command("connect", "<hub url>", "--token", "<token>"), paths.Command("service", "install"))
 	}
 	return nil
+}
+
+// refusedUnanswered turns a service manager that could not say whether it
+// holds the profile's job into a refusal that names the manager's own
+// commands, as a start does (decision 0074). Install and uninstall both
+// decide from that answer — replace a loaded job or load a first one, unload
+// it or only remove the file — and neither guess is safe (DEV-176). Any other
+// error is returned as it is.
+func refusedUnanswered(err error, m service.Manager, paths config.Paths, sub string) error {
+	var unanswered *service.UnansweredError
+	if !errors.As(err, &unanswered) {
+		return err
+	}
+	again, status := paths.Command("service", sub), shellword.Command(m.StatusCommand(paths.Profile)...)
+	if sub == "uninstall" {
+		return fmt.Errorf("uninstall refused, and %s left in place: %w — run `%s` again where `%s` answers, or unload the job there by hand with `%s`", m.Name(paths.Profile), err, again, status, shellword.Command(m.UnloadCommand(paths.Profile)...))
+	}
+	return fmt.Errorf("install refused, and nothing changed: %w — run `%s` again where `%s` answers", err, again, status)
 }
 
 func printServiceStatus(w io.Writer, paths config.Paths, st service.Status) {

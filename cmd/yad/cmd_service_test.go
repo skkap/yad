@@ -19,6 +19,7 @@ type fakeManager struct {
 	installed   []service.Spec
 	uninstalled []string
 	notes       []string
+	err         error // what Install and Uninstall answer, after recording the call
 }
 
 func (f *fakeManager) Name(p string) string                { return "yad.runner." + p }
@@ -26,11 +27,11 @@ func (f *fakeManager) File(p string) string                { return "/units/yad.
 func (f *fakeManager) Render(service.Spec) ([]byte, error) { return nil, nil }
 func (f *fakeManager) Install(_ context.Context, s service.Spec) ([]string, error) {
 	f.installed = append(f.installed, s)
-	return f.notes, nil
+	return f.notes, f.err
 }
 func (f *fakeManager) Uninstall(_ context.Context, p string) error {
 	f.uninstalled = append(f.uninstalled, p)
-	return nil
+	return f.err
 }
 func (f *fakeManager) Start(context.Context, string) error { return nil }
 func (f *fakeManager) StartCommand(p string) []string {
@@ -38,6 +39,12 @@ func (f *fakeManager) StartCommand(p string) []string {
 }
 func (f *fakeManager) RestartCommand(p string) []string {
 	return []string{"launchctl", "kickstart", "-k", "gui/501/" + f.Name(p)}
+}
+func (f *fakeManager) StatusCommand(p string) []string {
+	return []string{"launchctl", "print", "gui/501/" + f.Name(p)}
+}
+func (f *fakeManager) UnloadCommand(p string) []string {
+	return []string{"launchctl", "bootout", "gui/501/" + f.Name(p)}
 }
 func (f *fakeManager) Status(_ context.Context, p string) (service.Status, error) {
 	return service.Status{Name: f.Name(p), File: f.File(p), Installed: true, Loaded: true, Running: true, PID: 9}, nil

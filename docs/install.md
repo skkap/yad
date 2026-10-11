@@ -151,5 +151,11 @@ service manager watches and restarts after a crash, not a process of its
 own beside it. If the service manager cannot be asked (an SSH session with no
 desktop login, no user bus) while the unit is installed, start and restart
 refuse and print the service manager's own command to run instead. They also
-refuse `--interval`, which a unit does not carry. Why:
+refuse `--interval`, which a unit does not carry. `yad service install` and
+`uninstall` refuse in the same case, and change nothing: whether the job is
+loaded is what decides between replacing it and loading a first one, or
+between unloading it and only removing its file. They print the service
+manager's command to ask it (and, for `uninstall`, the one to unload the job
+by hand). Run them again where that command answers: on a Mac, a terminal in
+your desktop session. Why:
 [0074](decisions/0074-a-service-is-started-by-its-service-manager.md).

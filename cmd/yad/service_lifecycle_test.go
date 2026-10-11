@@ -77,6 +77,12 @@ func (f *fakeService) StartCommand(p string) []string {
 func (f *fakeService) RestartCommand(p string) []string {
 	return []string{"launchctl", "kickstart", "-k", "gui/501/" + f.Name(p)}
 }
+func (f *fakeService) StatusCommand(p string) []string {
+	return []string{"launchctl", "print", "gui/501/" + f.Name(p)}
+}
+func (f *fakeService) UnloadCommand(p string) []string {
+	return []string{"launchctl", "bootout", "gui/501/" + f.Name(p)}
+}
 
 // pid is the runner the manager started and still watches, or 0.
 func (f *fakeService) pid() int {
