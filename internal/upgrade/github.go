@@ -158,9 +158,13 @@ func (g GitHub) fetch(ctx context.Context, u, dst string) error {
 // it is the one that gets a sentence of its own.
 var errStalled = errors.New("the release server stalled")
 
+// maxRedirects is net/http's own limit, kept where do replaces the policy
+// that carries it.
+const maxRedirects = 10
+
 // do sends one request and gives it up once the server has sent nothing for
-// the stall. The clock starts with the request and starts again with the
-// headers and with every piece of the body read after them, so a slow
+// the stall. The clock starts with the request and starts again with each
+// redirect, the headers, and every piece of the body read after them, so a slow
 // download carries on and only one that has stopped is ended. http.Client's
 // Timeout would bound the whole download instead, and a transport's
 // ResponseHeaderTimeout ends a request with an error that cannot be told
@@ -175,7 +179,20 @@ func (g GitHub) do(ctx context.Context, client *http.Client, method, u string) (
 		cancel(nil)
 		return nil, err
 	}
-	resp, err := client.Do(req)
+	// A redirect is an answer: every release asset is one, to another host,
+	// which gets the stall afresh rather than what the first one left of it.
+	follow := *client
+	follow.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+		timer.Reset(stall)
+		if client.CheckRedirect != nil {
+			return client.CheckRedirect(r, via)
+		}
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+		return nil
+	}
+	resp, err := follow.Do(req)
 	if err != nil {
 		timer.Stop()
 		stalled := context.Cause(reqCtx) == errStalled

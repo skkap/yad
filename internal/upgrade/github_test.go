@@ -258,6 +258,36 @@ func TestGitHubGivesUpOnAServerThatStopsSending(t *testing.T) {
 	}
 }
 
+// Every release asset is a redirect to another host, and each hop is an
+// answer: two slow hops, each within the stall, add up to more than it and
+// still complete.
+func TestGitHubGivesEachRedirectTheStallAfresh(t *testing.T) {
+	const tag, hop = "v0.4.0", 300 * time.Millisecond
+	fake := &fakeGitHub{repo: DefaultRepo, tag: tag}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/download/"+tag+"/yad-linux-amd64"):
+			time.Sleep(hop)
+			http.Redirect(w, r, "/objects/yad-linux-amd64", http.StatusFound)
+		case r.URL.Path == "/objects/yad-linux-amd64":
+			time.Sleep(hop)
+			w.Write([]byte("a binary"))
+		default:
+			fake.ServeHTTP(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+
+	g := GitHub{BaseURL: srv.URL, Stall: 500 * time.Millisecond}
+	if err := g.Download(context.Background(), tag, []string{"yad-linux-amd64"}, dir); err != nil {
+		t.Fatalf("Download through a redirect whose every hop answered within the stall: %v", err)
+	}
+	if got := read(t, filepath.Join(dir, "yad-linux-amd64")); got != "a binary" {
+		t.Errorf("the asset holds %q", got)
+	}
+}
+
 // The stall bounds silence, not a download: one that keeps arriving, for far
 // longer than the stall in all, completes.
 func TestGitHubLetsASlowDownloadFinish(t *testing.T) {
