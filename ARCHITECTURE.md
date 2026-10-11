@@ -848,8 +848,8 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   id is the hub's, so it is kept only when it is a plain lower-case name and
   hashed otherwise; no hub-chosen id becomes a path. A session whose path a
   session of a retired registration of the same connection name recorded
-  takes it with `~1` (`~2`, …), and its default branch below is
-  `yad/<connection>.1/<session>` to match ([0078](docs/decisions/0078-a-reused-connection-name-retires-the-earlier-registrations-rows.md)). Git sources come from
+  takes it with `~<n>` (`~1`, then `~2`, …), and its default branch below is
+  `yad/<connection>.<n>/<session>` with the same n ([0078](docs/decisions/0078-a-reused-connection-name-retires-the-earlier-registrations-rows.md)). Git sources come from
   a bare cache per repository (`<data>/repos/<name>-<hash>.git`, fetched before
   every checkout) as a worktree on the run's branch — as it stands when it
   exists, else cut from `base`, else `yad/<connection>/<session>` from the default branch;

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -230,5 +231,63 @@ func TestANewSessionDoesNotTakeARetiredSessionsWorkdir(t *testing.T) {
 	}
 	if want := filepath.Join(e.paths.Data, "workdirs", "hub", "s2"); dir2 != want {
 		t.Errorf("a session nobody else's workdir is in got %s, want %s", dir2, want)
+	}
+}
+
+// The whole path through the executor: a second hub under a reused name
+// opens the session id the first one used, with a git source on the default
+// branch. It runs on a branch of its own, in a workdir of its own, and does
+// not start from the first hub's commit, which stays where it was.
+func TestARetakenSessionGetsItsOwnBranchThroughTheExecutor(t *testing.T) {
+	first := newEnv(t)
+	root := t.TempDir()
+	bare := gitRepo(t, root, "#!/bin/sh\n")
+	src := []v1.Source{{Git: &v1.GitSource{URL: bare}}}
+	ctx := context.Background()
+
+	type seen struct{ dir, branch string }
+	var starts []seen
+	h := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+		out, _ := exec.Command("git", "-C", s.Workdir, "branch", "--show-current").Output()
+		starts = append(starts, seen{s.Workdir, strings.TrimSpace(string(out))})
+		if len(starts) == 1 {
+			os.WriteFile(filepath.Join(s.Workdir, "first-hub.txt"), []byte("the first hub's work"), 0o600)
+			for _, args := range [][]string{{"add", "first-hub.txt"}, {"commit", "--quiet", "-m", "first hub"}} {
+				if out, err := exec.Command("git", append([]string{"-C", s.Workdir}, args...)...).CombinedOutput(); err != nil {
+					t.Errorf("git %v: %v %s", args, err, out)
+				}
+			}
+		}
+		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded}}
+	}}
+	x := first.sourcedExec(root, h)
+	run := testRun("a", "s1")
+	run.Sources = src
+	runOne(t, first, first.loop(t, 1), x, run)
+
+	// What the daemon's start does once config.toml names a new registration.
+	if r, err := first.store.AdoptRegistration(ctx, "hub", 2, time.Now()); err != nil || r.As == "" {
+		t.Fatalf("retirement %+v, %v", r, err)
+	}
+
+	second := newEnv(t)
+	l := second.loop(t, 1)
+	l.Store = first.store
+	again := testRun("a", "s1")
+	again.Sources = src
+	second.enqueue(t, again)
+	claimAndRun(t, l, x)
+
+	if len(starts) != 2 {
+		t.Fatalf("%d starts, want one per hub", len(starts))
+	}
+	if starts[1].dir == starts[0].dir || starts[1].branch != "yad/hub.1/s1" {
+		t.Errorf("the second hub's s1 ran in %s on %q; the first hub's ran in %s on %q", starts[1].dir, starts[1].branch, starts[0].dir, starts[0].branch)
+	}
+	if _, err := os.Stat(filepath.Join(starts[1].dir, "first-hub.txt")); err == nil {
+		t.Error("the second hub's session starts from the first hub's commit")
+	}
+	if r, err := first.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "a"}); err != nil || r.State != string(v1.RunSucceeded) {
+		t.Errorf("the second hub's run here: %+v, %v", r, err)
 	}
 }

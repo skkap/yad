@@ -76,7 +76,7 @@ retired session's branches stay in the bare caches after its workdir is
 gone, and a new session on the same branch would start from the old hub's
 commits. So a session whose derived path another session has recorded,
 reclaimed or not, takes that path with `~1` appended (or `~2`, and so on),
-and its default branch is `yad/<name>.1/<session>` to match. A later run of
+and its default branch is `yad/<name>.<n>/<session>` with the same n. A later run of
 the session reads the mark back from the path it recorded. No session id's
 path name contains `~`, and no connection name contains `.`, so neither mark
 can be another session's own name. Every other session keeps the names it
@@ -99,9 +99,9 @@ adopt it.
 **A per-connection generation in every key.** Make the key
 (connection, generation, id) and record the generation at connect. This
 avoids the problem by construction. But it is a re-keying migration of every
-table and every query, and the protocol work is keyed by name throughout the
-loop, the reporter and the collector. Renaming retires the same rows in one
-transaction and changes no other key.
+table and every query. The loop, the reporter and the collector would also
+have to carry the generation wherever they now pass the name. Renaming
+retires the same rows in one transaction and changes no key.
 
 **Delete the old rows once their workdirs are reclaimed.** Simpler, and it
 leaves nothing behind. But a run's spec, its events and its result are the
