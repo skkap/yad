@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 func TestStderrTail(t *testing.T) {
@@ -105,5 +107,20 @@ func TestStderrTailIsBounded(t *testing.T) {
 	}
 	if !utf8.ValidString(got) {
 		t.Error("the tail split a rune")
+	}
+}
+
+// The owner's [env] values are in no Spec and still reach the harness, so a
+// run's error masks them as it masks what the Spec carries.
+func TestMaskCoversTheOwnersEnv(t *testing.T) {
+	const socket = "unix:///Users/owner/.colima/default/docker.sock"
+	t.Cleanup(func() { supervise.SetOwnerEnv(nil) })
+	supervise.SetOwnerEnv(map[string]string{"DOCKER_HOST": socket, "BASH_MAX_TIMEOUT_MS": "1800000"})
+	got := StderrTail("Cannot connect to the Docker daemon at "+socket+"\n", nil, nil, false)
+	if want := "Cannot connect to the Docker daemon at " + Redacted; got != want {
+		t.Errorf("StderrTail = %q, want %q", got, want)
+	}
+	if got := Mask("dial "+socket, nil, nil); got != "dial "+Redacted {
+		t.Errorf("Mask = %q", got)
 	}
 }
