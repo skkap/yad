@@ -279,7 +279,7 @@ func (e *Exec) init() {
 			w := e.Config.Workdirs
 			e.Workdirs = &workdir.Manager{
 				Data: e.Data, Roots: w.EffectiveRoots(), PathSourcesOff: !w.AllowsPathSources(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
-				Slots: e.Store,
+				TeardownTimeout: w.TeardownTimeout.Duration, Slots: e.Store, Log: e.Log,
 			}
 		}
 	})
