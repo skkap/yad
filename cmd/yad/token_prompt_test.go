@@ -61,12 +61,13 @@ func asTerminal(tb testing.TB, t *fakeTerm, fail error) {
 	}
 }
 
-// What readToken does with each kind of stdin. The token never reaches
+// What readSecret does with each kind of stdin. The token never reaches
 // stderr in any of them.
-func TestReadToken(t *testing.T) {
+func TestReadSecret(t *testing.T) {
 	const tok = "sk-ant-oat01-not-a-real-token"
 	for _, c := range []struct {
 		name     string
+		what     string // "token" when empty
 		term     bool
 		in       string
 		piped    func(io.Reader) (string, error)
@@ -85,6 +86,11 @@ func TestReadToken(t *testing.T) {
 		// Piped in, each command reads what it always did, and says nothing.
 		{name: "pipe, whole-input command", in: tok + "\nsecond line\n", piped: wholeInput, want: tok + "\nsecond line\n"},
 		{name: "pipe, first-line command", in: tok + "\nsecond line\n", piped: firstLine, want: tok},
+		// `hub login start`'s code (DEV-177): the same at a terminal, one
+		// line from a pipe, and refused rather than echoed.
+		{name: "terminal, login code", what: "login code", term: true, in: tok + "\nmore\n", piped: oneLine, want: tok, prompt: true},
+		{name: "terminal whose echo stays on, login code", what: "login code", term: true, in: tok + "\n", piped: oneLine, failEcho: errors.New("ioctl refused"), wantErr: "so the login code would be shown"},
+		{name: "pipe, login code", what: "login code", in: "  " + tok + "  \nmore\n", piped: oneLine, want: tok},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ft := &fakeTerm{echo: true, r: strings.NewReader(c.in)}
@@ -95,8 +101,12 @@ func TestReadToken(t *testing.T) {
 				t.Cleanup(func() { stdin = old })
 				stdin = strings.NewReader(c.in)
 			}
+			what := c.what
+			if what == "" {
+				what = "token"
+			}
 			var errb bytes.Buffer
-			got, err := readToken(context.Background(), &errb, "token", c.piped)
+			got, err := readSecret(context.Background(), &errb, what, c.piped)
 			switch {
 			case c.wantErr != "":
 				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
@@ -110,7 +120,7 @@ func TestReadToken(t *testing.T) {
 			case got != c.want:
 				t.Errorf("read %q, want %q", got, c.want)
 			}
-			if prompted := strings.Contains(errb.String(), "Paste the token and press Enter"); prompted != c.prompt {
+			if prompted := strings.Contains(errb.String(), "Paste the "+what+" and press Enter"); prompted != c.prompt {
 				t.Errorf("prompted = %v, want %v: stderr %q", prompted, c.prompt, errb.String())
 			}
 			if strings.Contains(errb.String(), tok) {
@@ -134,7 +144,7 @@ func TestReadToken(t *testing.T) {
 // Ctrl-C reaches a command as ctx's end (main's signal.NotifyContext); a read
 // blocked on stdin must give way to it, at a terminal or on a pipe nobody
 // closes, and leave echo on.
-func TestReadTokenEndsAtCtrlC(t *testing.T) {
+func TestReadSecretEndsAtCtrlC(t *testing.T) {
 	for _, term := range []bool{true, false} {
 		ft := &fakeTerm{echo: true, blockRead: make(chan struct{})}
 		if term {
@@ -149,7 +159,7 @@ func TestReadTokenEndsAtCtrlC(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() {
-			_, err := readToken(ctx, io.Discard, "token", wholeInput)
+			_, err := readSecret(ctx, io.Discard, "token", wholeInput)
 			done <- err
 		}()
 		cancel()

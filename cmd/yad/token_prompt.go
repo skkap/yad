@@ -21,23 +21,26 @@ var echoOff = func(r io.Reader) (restore func(), isTerm bool, err error) {
 	return terminalEchoOff(f)
 }
 
-// readToken is a `--token -` value: every command that takes a token on
-// stdin reads it here (`hub login start --code -` reads a login code, not a
-// token, through readLine alone). Piped in, it is read as piped says, as it always was.
+// readSecret is a secret read from stdin: every `--token -`, and the login
+// code `hub login start` reads. Piped in, it is read as piped says, as it always was.
 // Typed at a terminal it is one line, asked for, kept off the screen, and
 // ended by Enter — a person never sends the end of input a pipe does, so a
-// read to the end looked hung (DEV-171). Ctrl-C ends it either way: main
-// turns SIGINT into ctx's end, which a blocked read would never see.
+// read to the end looked hung (DEV-171), and a code read with echo on was on
+// the screen (DEV-177). Ctrl-C ends it either way: main turns SIGINT into
+// ctx's end, which a blocked read would never see.
 //
 // what names the secret in the prompt; it is never the secret itself.
-func readToken(ctx context.Context, stderr io.Writer, what string, piped func(io.Reader) (string, error)) (string, error) {
+func readSecret(ctx context.Context, stderr io.Writer, what string, piped func(io.Reader) (string, error)) (string, error) {
 	// Read once: the read can outlive this call, which returns at Ctrl-C.
 	in := stdin
 	restore, isTerm, err := echoOff(in)
 	if err != nil {
-		// Read with echo on, the token would be on the screen and in any
-		// recording of it; refuse rather than show it.
-		return "", fmt.Errorf("stdin is a terminal whose echo could not be turned off (%v), so the %s would be shown as it is pasted — pipe it in instead", err, what)
+		// Read with echo on, the secret would be on the screen and in any
+		// recording of it; refuse rather than show it. A login code too: it
+		// is short-lived and bound to the login the runner holds open, so
+		// worth less seen than a token, but no real terminal fails this,
+		// and one rule for every secret is easier to trust than exceptions.
+		return "", &echoStaysOn{what: what, err: err}
 	}
 	var s string
 	if isTerm {
@@ -54,6 +57,40 @@ func readToken(ctx context.Context, stderr io.Writer, what string, piped func(io
 		return "", fmt.Errorf("stopped before the %s was read", what)
 	}
 	return s, err
+}
+
+// echoStaysOn is readSecret's refusal at a terminal whose echo would not go
+// off. Its next action, piping the secret in, fits a token, which exists
+// before the command runs; a caller whose secret does not says what to do
+// instead.
+type echoStaysOn struct {
+	what string
+	err  error
+}
+
+func (e *echoStaysOn) Error() string { return e.shown() + " — pipe it in instead" }
+
+func (e *echoStaysOn) Unwrap() error { return e.err }
+
+// shown is the refusal without its next action.
+func (e *echoStaysOn) shown() string {
+	return fmt.Sprintf("stdin is a terminal whose echo could not be turned off (%v), so the %s would be shown as it is pasted", e.err, e.what)
+}
+
+// readLine is one line of r, trimmed, or ctx's end: a person may walk away
+// from the prompt, and Ctrl-C must still end the command.
+func readLine(ctx context.Context, r io.Reader) (string, error) {
+	return awaitRead(ctx, func() (string, error) { return oneLine(r) })
+}
+
+// oneLine is the first line of r, trimmed; what `hub login start` reads of a
+// piped code.
+func oneLine(r io.Reader) (string, error) {
+	s, err := bufio.NewReader(io.LimitReader(r, 64<<10)).ReadString('\n')
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	return strings.TrimSpace(s), err
 }
 
 // awaitRead is read, or ctx's end if that comes first: a pipe whose writer

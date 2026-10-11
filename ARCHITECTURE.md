@@ -874,7 +874,8 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   token, reads a single line with echo off and goes on at Enter; piped, it
   reads the whole input. Every `--token -` (`yad connect`,
   `yad conformance`, `yad hub login token`) reads through the same
-  `readToken`, and Ctrl-C ends any of them. It is kept in the home as
+  `readSecret`, as does the code `yad hub login start` reads, and Ctrl-C
+  ends any of them. It is kept in the home as
   `yad-oauth-token` (`0600`; one others can read is not used) and reaches the
   account's runs and its login check as `CLAUDE_CODE_OAUTH_TOKEN`, after the
   home variable, so a printed command never carries it. Claude's login check
@@ -1369,6 +1370,7 @@ yad hub close-session <session>    the session takes no new run; its runner dele
 yad hub login start <runner> <harness> [account] [--add] [--code -]
                                    log an account in on a runner by link: prints the
                                    link once the runner has it, reads the code on stdin
+                                   (at a terminal, asked for with echo off)
                                    (Codex: prints the link and its device code, reads
                                    nothing, and waits for the owner to type it);
                                    --add creates the account

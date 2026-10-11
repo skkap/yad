@@ -19,7 +19,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 )
 
-// stdin is where `--token -` reads from (readToken); a variable so tests can
+// stdin is where `--token -` and a login code read from (readSecret); a variable so tests can
 // supply one.
 var stdin io.Reader = os.Stdin
 

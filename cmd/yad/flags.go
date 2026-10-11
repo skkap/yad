@@ -50,12 +50,12 @@ func positional(fs *flag.FlagSet, args []string, n int, usage string) ([]string,
 }
 
 // tokenArg is a --token flag's value, or the line on stdin when it is "-"
-// (decision 0020), asked for when stdin is a terminal (readToken). Two commands take a registration token this way, and the
+// (decision 0020), asked for when stdin is a terminal (readSecret). Two commands take a registration token this way, and the
 // comment above is about what happens when a third copies the code rather
 // than the function.
 func tokenArg(ctx context.Context, stderr io.Writer, value string) (string, error) {
 	if value != "-" {
 		return value, nil
 	}
-	return readToken(ctx, stderr, "registration token", firstLine)
+	return readSecret(ctx, stderr, "registration token", firstLine)
 }
