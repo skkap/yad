@@ -105,8 +105,9 @@ forgets its record too, and leaves a default login's alone.
 **What is read.** Claude keeps records of its own live processes inside its
 home. Measured on 2.1.296:
 
-- `sessions/<pid>.json`, one for every live session in the home: interactive,
-  background (`kind: "background"`) and SDK alike;
+- `sessions/<pid>.json`, one for every live session in the home, interactive
+  and SDK alike (both seen); Claude's code also names a `background` kind,
+  which the warning reports as `claude --bg`, though no such record was seen;
 - `daemon/roster.json`, the `claude --bg` supervisor's, which names its pid
   as `supervisorPid`.
 

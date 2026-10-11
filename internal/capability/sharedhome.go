@@ -34,8 +34,8 @@ import (
 // process's environment or arguments, either of which may hold a token:
 //
 //   - sessions/<pid>.json, one for every live Claude session in the home —
-//     interactive, background and SDK alike — of which only pid, procStart and
-//     kind are read;
+//     interactive and SDK alike, and background ones by Claude's code — of
+//     which only pid, procStart and kind are read;
 //   - daemon/roster.json, the `claude --bg` supervisor's, of which only
 //     supervisorPid is read.
 //
