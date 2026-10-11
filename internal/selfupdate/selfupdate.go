@@ -44,6 +44,15 @@ const (
 	// reads is an in-memory count, and a moment missed by a second is one a
 	// sync can fill with the next run.
 	Poll = time.Second
+	// CheckTimeout bounds one check from the request for the newest release
+	// to the release in place, the downloaded binary's `version --json`
+	// included. A check runs on the daemon's own context, which never ends
+	// while the runner runs, so without it a release server — or a proxy in
+	// front of it — that stops answering partway through stops every later
+	// check with it (DEV-181). Twenty minutes is a 20 MB binary arriving at
+	// under 20 KB/s, slower than any link a runner keeps a hub session over,
+	// and still a small part of the six hours between checks.
+	CheckTimeout = 20 * time.Minute
 	// jitterFraction spreads a fleet's checks, so machines started together
 	// do not ask together for ever.
 	jitterFraction = 0.1
@@ -87,9 +96,10 @@ type Options struct {
 	// do.
 	Repo string
 	Yad  func(args ...string) string
-	// Every, First, IdleWait and Poll are the constants above, unless set.
-	Every, First, IdleWait, Poll time.Duration
-	Clock                        Clock
+	// Every, First, IdleWait, Poll and CheckTimeout are the constants above,
+	// unless set.
+	Every, First, IdleWait, Poll, CheckTimeout time.Duration
+	Clock                                      Clock
 	// Rand returns a number in [0, 1) for jitter; nil is math/rand.
 	Rand func() float64
 	Log  *slog.Logger
@@ -154,6 +164,9 @@ func New(o Options) *Updater {
 	}
 	if o.Poll <= 0 {
 		o.Poll = Poll
+	}
+	if o.CheckTimeout <= 0 {
+		o.CheckTimeout = CheckTimeout
 	}
 	if o.Clock == nil {
 		o.Clock = realClock{}
@@ -227,20 +240,33 @@ type refusal struct{ reason string }
 
 func (r refusal) Error() string { return r.reason }
 
+// errCheckTimedOut is the cause a check's context ends with at CheckTimeout,
+// told apart from the daemon's own stop, which ends it too.
+var errCheckTimedOut = errors.New("the self-update check ran out of time")
+
 // Check asks for the newest release once and, when it is newer and can be
 // taken, installs it, and reports whether it did: the process then has a
 // release on disk to become. A failure is logged and kept for `yad status`,
-// and changes nothing else — the next check is the retry.
+// and changes nothing else — the next check is the retry. A check that has
+// not ended by CheckTimeout is given up and is such a failure.
 func (u *Updater) Check(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeoutCause(ctx, u.o.CheckTimeout, errCheckTimedOut)
+	defer cancel()
+	failed := func(err error) {
+		if context.Cause(ctx) == errCheckTimedOut {
+			err = fmt.Errorf("the check did not end within %s and was given up, so nothing was installed; the next check tries again — check this machine's network, or its HTTPS_PROXY, if this repeats: %w", u.o.CheckTimeout, err)
+		}
+		u.failed(err)
+	}
 	tag, err := u.o.Source.Latest(ctx)
 	if err != nil {
-		u.failed(err)
+		failed(err)
 		return false
 	}
 	switch upgrade.Compare(u.o.Installed, tag) {
 	case upgrade.Behind:
 	case upgrade.UnreadableTag:
-		u.failed(fmt.Errorf("the newest release's tag %q is not a version number, so there is nothing to compare this build with — nothing was installed", tag))
+		failed(fmt.Errorf("the newest release's tag %q is not a version number, so there is nothing to compare this build with — nothing was installed", tag))
 		return false
 	default:
 		u.checked(tag, nil)
@@ -266,7 +292,7 @@ func (u *Updater) Check(ctx context.Context) bool {
 		u.o.Log.Warn("self-update refused a newer release; this runner keeps its binary", "release", tag, "installed", u.o.Installed, "reason", no.reason)
 		return false
 	case err != nil:
-		u.failed(err)
+		failed(err)
 		return false
 	}
 	now := u.o.Clock.Now()

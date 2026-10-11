@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeGitHub answers the three URLs a release is read from, the way github.com
@@ -185,5 +186,133 @@ func TestGitHubDownloadReportsAFailingServer(t *testing.T) {
 	err := GitHub{BaseURL: base}.Download(context.Background(), "v0.4.0", []string{"yad-linux-amd64"}, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "502") {
 		t.Errorf("error %v, want the server's answer", err)
+	}
+}
+
+// A server that takes the request and stops sending — before its headers, or
+// partway through a download — ends the request after the stall with an
+// error that says what to do, rather than holding `yad upgrade` until Ctrl-C
+// and a self-update for good (DEV-181).
+func TestGitHubGivesUpOnAServerThatStopsSending(t *testing.T) {
+	const tag = "v0.4.0"
+	prefix := "/" + DefaultRepo + "/releases/"
+	latest := func(g GitHub, _ string) error { _, err := g.Latest(context.Background()); return err }
+	download := func(g GitHub, dir string) error {
+		return g.Download(context.Background(), tag, []string{"yad-linux-amd64"}, dir)
+	}
+	silent := []string{"sent nothing back in 100ms", "HTTPS_PROXY", "try again"}
+	for _, tc := range []struct {
+		name string
+		// stop is the request the server stops answering.
+		stop string
+		// partway sends the headers and part of the body first.
+		partway bool
+		call    func(GitHub, string) error
+		want    []string
+	}{
+		{"the newest release", "GET " + prefix + "latest", false, latest, silent},
+		{"the release page", "HEAD " + prefix + "tag/" + tag, false, download, silent},
+		{"an asset", "GET " + prefix + "download/" + tag + "/yad-linux-amd64", false, download, silent},
+		{"an asset partway", "GET " + prefix + "download/" + tag + "/yad-linux-amd64", true, download,
+			[]string{"cut short", "nothing arrived for 100ms", "HTTPS_PROXY", "try again"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			release := make(chan struct{})
+			fake := &fakeGitHub{repo: DefaultRepo, tag: tag, assets: map[string]string{"yad-linux-amd64": "a binary"}}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method+" "+r.URL.Path != tc.stop {
+					fake.ServeHTTP(w, r)
+					return
+				}
+				if tc.partway {
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte("the first piece"))
+					w.(http.Flusher).Flush()
+				}
+				select {
+				case <-release:
+				case <-r.Context().Done():
+				}
+			}))
+			t.Cleanup(srv.Close)
+			t.Cleanup(func() { close(release) })
+
+			done := make(chan error, 1)
+			dir := t.TempDir()
+			go func() { done <- tc.call(GitHub{BaseURL: srv.URL, Stall: 100 * time.Millisecond}, dir) }()
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("still waiting 10s on a server that stopped sending, with a stall of 100ms")
+			}
+			if err == nil {
+				t.Fatal("a request the server never finished answering reported success")
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q, want it to carry %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// Every release asset is a redirect to another host, and each hop is an
+// answer: two slow hops, each within the stall, add up to more than it and
+// still complete.
+func TestGitHubGivesEachRedirectTheStallAfresh(t *testing.T) {
+	const tag, hop = "v0.4.0", 300 * time.Millisecond
+	fake := &fakeGitHub{repo: DefaultRepo, tag: tag}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/download/"+tag+"/yad-linux-amd64"):
+			time.Sleep(hop)
+			http.Redirect(w, r, "/objects/yad-linux-amd64", http.StatusFound)
+		case r.URL.Path == "/objects/yad-linux-amd64":
+			time.Sleep(hop)
+			w.Write([]byte("a binary"))
+		default:
+			fake.ServeHTTP(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+
+	g := GitHub{BaseURL: srv.URL, Stall: 500 * time.Millisecond}
+	if err := g.Download(context.Background(), tag, []string{"yad-linux-amd64"}, dir); err != nil {
+		t.Fatalf("Download through a redirect whose every hop answered within the stall: %v", err)
+	}
+	if got := read(t, filepath.Join(dir, "yad-linux-amd64")); got != "a binary" {
+		t.Errorf("the asset holds %q", got)
+	}
+}
+
+// The stall bounds silence, not a download: one that keeps arriving, for far
+// longer than the stall in all, completes.
+func TestGitHubLetsASlowDownloadFinish(t *testing.T) {
+	const tag, pieces = "v0.4.0", 8
+	fake := &fakeGitHub{repo: DefaultRepo, tag: tag}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/yad-linux-amd64") {
+			fake.ServeHTTP(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		for range pieces {
+			w.Write([]byte("x"))
+			w.(http.Flusher).Flush()
+			time.Sleep(50 * time.Millisecond)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+
+	g := GitHub{BaseURL: srv.URL, Stall: 200 * time.Millisecond}
+	if err := g.Download(context.Background(), tag, []string{"yad-linux-amd64"}, dir); err != nil {
+		t.Fatalf("Download of an asset whose every piece came within the stall: %v", err)
+	}
+	if got := read(t, filepath.Join(dir, "yad-linux-amd64")); got != strings.Repeat("x", pieces) {
+		t.Errorf("the asset holds %q, want all %d pieces", got, pieces)
 	}
 }
