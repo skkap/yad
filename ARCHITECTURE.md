@@ -740,13 +740,13 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   laid on the scrubbed environment (`supervise.Environ`), set once per process
   before its first child, so the docker probe and a login check see what a
   run will
-  ([0080](docs/decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md));
+  ([0081](docs/decisions/0081-the-owner-declares-an-environment-for-everything-yad-starts.md));
   `supervise.OwnerRefusal` refuses at load every name the scrub removes or a
   grant may not carry for choosing a credential, and `IS_SANDBOX`, `PATH`,
   `HOME`, `USER` and `WT_*`. A run's grants and its account's home and
   token are added after that, which is why a grant may not name
   `ANTHROPIC_API_KEY` or any other variable that chooses the harness's
-  credential (0040), nor one `[env]` declares (0080). The check that decides whether an account can take a run
+  credential (0040), nor one `[env]` declares (0081). The check that decides whether an account can take a run
   (`account.LoggedIn`) gets the environment the run gets, or it answers about a
   different credential (DEV-26; the rule, and `OwnLogin`'s one deliberate
   difference, are on `Spec.KeepEnv`). git and setup hooks start
@@ -1340,7 +1340,7 @@ teardown_timeout = "2m"              # a .worktree/teardown past this is stopped
 [update]
 auto = true   # check for a newer release every 6 h, install it, re-exec at an idle moment — 0071; absent = never
 
-[env]   # given to every child yad starts, after the scrub; strings, taken as written, read at start — 0080
+[env]   # given to every child yad starts, after the scrub; strings, taken as written, read at start — 0081
 DOCKER_HOST         = "unix:///Users/me/.colima/default/docker.sock"
 BASH_MAX_TIMEOUT_MS = "1800000"   # Claude's Bash cap; not for secrets — those are grants
 ```
@@ -1691,7 +1691,7 @@ line here is a reviewed change.
   as yad goes — doctor, the daemon's log and `yad config apply` give names
   alone, and a run's quoted stderr masks them — but a harness can print its
   environment into a run's events, so it is not for secrets
-  ([0080](docs/decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md)).
+  ([0081](docs/decisions/0081-the-owner-declares-an-environment-for-everything-yad-starts.md)).
 - Three secret kinds, never interchangeable: registration token, runner
   credential, admin token. The protocol accepts only the first two, the service
   API only the third.

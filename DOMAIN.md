@@ -140,7 +140,7 @@ _Rules_: It may not set what the scrub removes or what chooses a harness's
 credential, nor `IS_SANDBOX`, `PATH`, `HOME`, `USER` or `WT_*`; a grant may not name
 what it declares. No hub sets it, and yad never sends or prints a value — but a
 harness can print its environment into a run's events, so it holds no secret.
-_See_: [0080](docs/decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md)
+_See_: [0081](docs/decisions/0081-the-owner-declares-an-environment-for-everything-yad-starts.md)
 
 **Present** — the runner found a binary for a harness or a host tool: the file
 its `YAD_<ID>_PATH` override names, or the one on `PATH`. For a harness it is

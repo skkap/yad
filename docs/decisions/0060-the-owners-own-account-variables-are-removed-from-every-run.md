@@ -1,5 +1,5 @@
 ---
-status: amended by 0070 — CLAUDE_SECURESTORAGE_CONFIG_DIR passes as the home variables do, and every account sets it to its own home; amended by 0080 — the owner's [env] is layered on the scrubbed environment and may set nothing the scrub removes and no account variable
+status: amended by 0070 — CLAUDE_SECURESTORAGE_CONFIG_DIR passes as the home variables do, and every account sets it to its own home; amended by 0081 — the owner's [env] is layered on the scrubbed environment and may set nothing the scrub removes and no account variable
 date: 2026-09-29
 ---
 

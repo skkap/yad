@@ -997,7 +997,7 @@ func refusal(run v1.Run, doc v1.Capabilities) string {
 func ownerVariableGrant(run v1.Run) string {
 	for _, g := range run.Grants {
 		if supervise.Declared(g.Name) {
-			return fmt.Sprintf("grant %s names a variable this runner's owner sets for everything it starts ([env] in its config.toml, decision 0080), "+
+			return fmt.Sprintf("grant %s names a variable this runner's owner sets for everything it starts ([env] in its config.toml, decision 0081), "+
 				"and a grant may not replace it — send the value under another name and have the brief say which", g.Name)
 		}
 	}

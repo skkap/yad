@@ -138,7 +138,7 @@ wanted any of this could simply ask the harness for it.
 - **`[env]` is yours, and it is not for secrets.** config.toml's `[env]`
   table gives every harness, hook and probe the runner starts the variables
   you list — a `DOCKER_HOST`, a `BASH_MAX_TIMEOUT_MS`
-  ([0080](decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md)).
+  ([0081](decisions/0081-the-owner-declares-an-environment-for-everything-yad-starts.md)).
   It refuses at load every name the scrub above removes or that chooses a
   credential, and `IS_SANDBOX`, `PATH`, `HOME`, `USER` and `WT_*`, each with the way
   round it; a hub's grant under a name you declared fails its run rather than
