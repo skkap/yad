@@ -1,5 +1,5 @@
 ---
-status: amended on 2026-09-30 (DEV-168) — the runner-wide strings are computed over the harnesses the machine can drive, not the build's catalog, and a machine that can drive none lists no per-run feature
+status: amended on 2026-09-30 (DEV-168) — the runner-wide strings are computed over the harnesses the machine can drive, not the build's catalog, and a machine that can drive none lists no per-run feature — and on 2026-10-12 (DEV-169), where a harness with a run held counts too, drivable or not
 date: 2026-09-30
 ---
 
@@ -108,11 +108,51 @@ strings may steer that run. The runner answers with an `error` event, class
 `steer_failed`, and the run goes on. Counting the harnesses with live runs
 as well would close it, at the price of the document depending on the
 runner's run state; one failed steer in that window was judged not worth it.
+*(Closed by the second amendment below, DEV-169.)*
 
 The conformance suite's document is unchanged, and still a probe: a yad
 runner's runner-wide strings still only name what every harness it can drive
 lists, with OpenCode or without it, which a test in `internal/conformance`
 checks against both machines.
+
+## Amendment: and the harnesses with runs held (DEV-169)
+
+The gap the first amendment accepted is closed. **A harness counts in the
+runner-wide strings while a run on it is held** — claimed, preparing,
+running or waiting — whether or not it is drivable now:
+`capability.Features(reports, held...)` lists a per-run feature when at least
+one harness counts and every one that does has it. A drivable harness's list
+is read from its report, as before; a held one that is not drivable is its
+adapter's (`capability.HarnessFeatures`), since that adapter is what a control
+sent to its run reaches. So with OpenCode's binary gone mid-upgrade and its
+run going on, a runner with Claude beside it still leaves `steer` out of the
+runner-wide strings until that run is over, and a hub reading only the
+strings never steers it.
+
+**Only the strings move.** Each harness report's `features` stays what its
+adapter does, run or no run: a report says what the machine probed, and a hub
+reading the lists already gates on the run's own harness. Nothing on the
+wire is new — "held" is the runner's own count, never a protocol field.
+
+**The runner counts from its store.** `yad daemon` reads the harnesses of the
+runs held (`runner.Monitor.HeldHarnesses`) at every rebuild of the document,
+beside the probe. A run ending does not wait for the next probe: it recounts
+at once, recomputing the strings over the reports already probed rather than
+probing again, so a queue of short runs spawns no harness's `--version` once
+per run. Once a harness's last run has ended, the next document is computed
+over the drivable harnesses alone, as the first amendment made it. A held run
+moves the strings with the reports under the one fingerprint, as a harness
+coming or going does, so a hub re-reads both together.
+
+The price the first amendment named is paid: the document now depends on
+run state as well as on the machine. It is small: a drivable harness counts
+already, so a run starting or ending moves the strings only when its harness
+has stopped being drivable while the run was held. The cost of the other
+rule was a hub offering a control that fails with nothing to say why.
+`yad harnesses` and the document `yad connect` registers with count none
+held: neither process holds a run, so they show the drivable-only strings,
+which is also what the daemon sends whenever no harness has gone from under a
+run.
 
 ## The conformance suite
 
