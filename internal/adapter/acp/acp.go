@@ -526,7 +526,7 @@ func (t *turn) respond(method string, m *jsonrpc.Message) {
 			// The agent's own end of the turn, and the census of its tool
 			// work is taken here, before input closes: OpenCode, the agent
 			// measured, runs each command in a process group of its own
-			// (decision 0080).
+			// (decision 0081).
 			t.mu.Lock()
 			measure := !t.interrupted
 			t.mu.Unlock()

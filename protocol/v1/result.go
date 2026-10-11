@@ -103,6 +103,6 @@ type Metrics struct {
 	// name alone, in a status event labelled left_running before the
 	// result. What it cannot see is not counted: a process whose shell
 	// backgrounded it and then exited has left the harness's tree for good
-	// (decision 0080).
+	// (decision 0081).
 	LeftRunning *int `json:"left_running,omitempty" doc:"How many processes the run's tool work still had running when a turn ended on the harness's own answer -- a test suite, a dev server, anything backgrounded -- whoever stopped them after. A succeeded run with this above zero may be hollow: its final text can promise work that died with the turn. Absent means not measured (every turn was cancelled, interrupted or stopped by a watchdog, or the process table could not be read), which is not the same as 0, measured with nothing found. Summed over the turns measured. The runner names them, by process name only, in a status event labelled left_running before the result. A process whose shell backgrounded it and then exited is out of the runner's sight and not counted."`
 }

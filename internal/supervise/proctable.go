@@ -183,7 +183,7 @@ var ErrNotMeasured = errors.New("the census could not be taken")
 // It is taken while the leader is alive, before its input is closed, because
 // a harness stops its own tool processes on the way out and a leader that
 // has exited has handed its children to init, where nothing marks them as
-// its. Measured (decision 0080): Claude Code 2.1.296, Codex 0.160.1 and
+// its. Measured (decision 0081): Claude Code 2.1.296, Codex 0.160.1 and
 // OpenCode 1.18.33 each start a tool's command in a process group of its
 // own, so yad's group signals never reach one; the leader's own group holds
 // its helpers — Claude's stdio MCP servers — and is left out. What a
