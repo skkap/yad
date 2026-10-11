@@ -1,5 +1,6 @@
 ---
 date: 2026-10-11
+status: amended on 2026-10-12 (DEV-180) — what a file grant holds is masked from the quoted stderr too, not only its path
 ---
 
 # A harness silent from its start is stopped after two minutes, and a watchdog's error quotes its stderr
@@ -88,6 +89,7 @@ run's error carry a harness's last stderr line and said that child text was
   child, and the likeliest to come back, since a harness whose login is refused
   may quote the token it was refused. Values shorter than 8 bytes are left,
   because blanking every "1" would wreck the text and hide no credential.
+  *(Amended below, DEV-180: a file grant's content is masked too.)*
 - When the supervisor's 2 KiB tail is full, its first line may begin part-way
   through, and a credential cut at its start would no longer match. That line
   is dropped, as `internal/workdir` already does for git's stderr.
@@ -117,6 +119,26 @@ hang means running the model, which spends a token and needs the network, and
 the suite may do neither. A cheap proxy, such as another `claude` process
 running from the same home, is not reliable enough to decide readiness. That
 work is DEV-175.
+
+## Amendment: a file grant's content is masked too (DEV-180)
+
+The masking above covered what was in the harness's environment, and a grant
+delivered as a file puts only its path there. Its content, the credential
+itself, was masked nowhere. A harness that read the file and printed the
+credential it was refused sent it to the hub in the run's error, on its exit
+and in every watchdog's error alike. It went out before this decision too,
+as the one stderr line 0064 allowed; this decision widened the quote to five
+lines. Nothing here excluded file contents on purpose.
+
+**The content of every grant delivered as a file is masked under the same
+rules as an environment value.** The executor hands the values to the
+adapter in `Spec.Secrets`, beside `Spec.Env`, and every adapter passes them
+to `adapter.StderrTail` with the environment: a value of 8 bytes or more is
+replaced, and each line of 8 bytes or more of a value of several lines, such
+as a PEM key, on its own. A file that ends in a newline is a value of several
+lines, so its content without the newline is replaced too. `Spec.Secrets` is
+for masking alone. No adapter puts it in the child's environment, its argv or
+anything else it is handed: the harness reads the file, as before.
 
 ## Considered options
 

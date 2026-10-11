@@ -778,7 +778,8 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   `timed_out`, with the error class `inactivity_timeout`, `harness_silent` or
   `wall_clock_timeout`, whatever the stopped harness said last; the error
   quotes the end of the harness's stderr (`adapter.StderrTail`: five lines, a
-  KiB, every value yad put in its environment replaced), and a
+  KiB, every value yad put in its environment and every file grant's content
+  replaced), and a
   `harness_silent` one the harness check to run by hand.
 - **A home whose runs go silent is not ready for a while.** After each turn
   the executor keeps a count per home in `harness_silence`: a turn that
