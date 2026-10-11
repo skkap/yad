@@ -44,7 +44,10 @@ import (
 // the closed input and SIGTERM; "mute" closes its output and then lingers the
 // same way; "silent" reads its input and never writes a line; "deaf" never
 // takes an interrupt, and dies only by signal or, at a gate, once the gate
-// opens.
+// opens; "stalled" stops reading its input at the gate and asks
+// StalledRequests approvals, then reads again once the gate opens and ends
+// the turn interrupted if a turn/interrupt follows within CODEX_TEST_WAIT,
+// as recorded if none does.
 //
 // The rest serve the end-to-end tests in cmd/yad, which drive the whole runner
 // and need the fake to behave as codex does across runs, not only within one:
@@ -311,7 +314,11 @@ play:
 		}
 		if strings.HasPrefix(line, `{"method":"turn/completed"`) {
 			out.Flush()
-			if id, ok := awaitGate(in, &early, mode == "deaf"); ok {
+			await := func() (json.RawMessage, bool) { return awaitGate(in, &early, mode == "deaf") }
+			if mode == "stalled" {
+				await = func() (json.RawMessage, bool) { return stall(out, in, line) }
+			}
+			if id, ok := await(); ok {
 				out.WriteString(`{"id":` + string(id) + `,"result":{}}` + "\n")
 				out.WriteString(strings.Replace(line, `"status":"completed"`, `"status":"interrupted"`, 1) + "\n")
 				break play
@@ -379,6 +386,56 @@ func awaitGate(in <-chan clientMsg, early *[]clientMsg, deaf bool) (json.RawMess
 	}
 	os.Exit(1)
 	return nil, false
+}
+
+// StalledRequests is how many approvals the fake asks in mode "stalled":
+// their answers, about 45 bytes each, are several times what the pipe (64 KiB
+// at most on Linux and macOS) and the adapter's input queue behind it hold.
+const StalledRequests = 4000
+
+// stall is mode "stalled" at the gate: a Codex too busy to read its input
+// while it asks for approvals in the turn completed names, so that their
+// answers fill the pipe. Nothing is taken from in until the gate opens, and
+// the reader stops once in is full. Then it reads again and returns a
+// turn/interrupt that arrives within CODEX_TEST_WAIT.
+func stall(out *bufio.Writer, in <-chan clientMsg, completed string) (json.RawMessage, bool) {
+	var c struct {
+		Params struct {
+			ThreadID string `json:"threadId"`
+			Turn     struct {
+				ID string `json:"id"`
+			} `json:"turn"`
+		} `json:"params"`
+	}
+	json.Unmarshal([]byte(completed), &c)
+	params, _ := json.Marshal(map[string]any{"threadId": c.Params.ThreadID, "turnId": c.Params.Turn.ID, "itemId": "stalled", "command": "true"})
+	for i := range StalledRequests {
+		out.WriteString(`{"id":` + strconv.Itoa(1000+i) + `,"method":"item/commandExecution/requestApproval","params":` + string(params) + "}\n")
+	}
+	out.Flush()
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(os.Getenv("CODEX_TEST_GATE")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Exit(1)
+		}
+	}
+	wait := 10 * time.Second
+	if d, err := time.ParseDuration(os.Getenv("CODEX_TEST_WAIT")); err == nil {
+		wait = d
+	}
+	timeout := time.After(wait)
+	for {
+		select {
+		case m := <-in:
+			if m.Method == "turn/interrupt" {
+				return m.ID, true
+			}
+		case <-timeout:
+			return nil, false
+		}
+	}
 }
 
 // loginGate holds a login's completion until the test opens the gate. What
