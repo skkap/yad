@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // Config is config.toml: everything the owner decides about this runner. The
@@ -31,6 +34,15 @@ type Config struct {
 	Drain       DrainConfig              `toml:"drain"`
 	Workdirs    WorkdirsConfig           `toml:"workdirs"`
 	Update      UpdateConfig             `toml:"update"`
+	// Env is what the owner gives every child yad starts — a harness turn,
+	// a setup or teardown hook, the docker probe, a login check — on top of
+	// the runner's own scrubbed environment: a DOCKER_HOST the machine's
+	// Docker needs, a harness setting like BASH_MAX_TIMEOUT_MS. Strings only,
+	// taken as written with no $VAR or ~ expanded, and read when the runner
+	// starts. Not for secrets: a hub sends those as grants, and a harness can
+	// print its environment into a run's events. Validate refuses what
+	// supervise.OwnerRefusal does.
+	Env map[string]string `toml:"env,omitempty"`
 }
 
 // HarnessConfig is the owner's settings for one harness.
@@ -318,11 +330,14 @@ func ReadFile(path string) (Config, error) {
 	if err != nil {
 		return c, err
 	}
+	if err := envStrings(b); err != nil {
+		return c, fmt.Errorf("%s: %w", path, err)
+	}
 	dec := toml.NewDecoder(bytes.NewReader(b)).DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
 		var strict *toml.StrictMissingError
 		if errors.As(err, &strict) {
-			return c, fmt.Errorf("%s: unknown setting:\n%s", path, strict.String())
+			return c, fmt.Errorf("%s: %s", path, unknownSettings(strict))
 		}
 		return c, fmt.Errorf("%s: %w", path, err)
 	}
@@ -333,6 +348,43 @@ func ReadFile(path string) (Config, error) {
 	}
 	return c, nil
 }
+
+// unknownSettings names each setting the strict decoder found no field for,
+// by key and line. Not the decoder's own String, which quotes the three
+// lines either side of each — an [env] value among them, and this error is
+// what doctor and `yad config apply` print.
+func unknownSettings(strict *toml.StrictMissingError) string {
+	parts := make([]string, 0, len(strict.Errors))
+	for i := range strict.Errors {
+		row, _ := strict.Errors[i].Position()
+		parts = append(parts, fmt.Sprintf("%s (line %d)", strings.Join(strict.Errors[i].Key(), "."), row))
+	}
+	return "unknown setting " + strings.Join(parts, ", ") + " — check its spelling and the section it is in"
+}
+
+// envStrings refuses an [env] value that is not a string before the decoder
+// does, because the decoder's own complaint names a Go type and not the fix.
+// A file that does not parse is left to the decoder, which says where.
+// Names only: a value never appears in a message.
+func envStrings(b []byte) error {
+	var raw struct {
+		Env map[string]any `toml:"env"`
+	}
+	if toml.Unmarshal(b, &raw) != nil {
+		return nil
+	}
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(raw.Env)) {
+		if _, ok := raw.Env[name].(string); !ok {
+			errs = append(errs, fmt.Errorf("env.%s is not a string — quote it, like %s = \"…\": [env] holds strings, as an environment does", name, name))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// envName is a variable name as a POSIX shell takes one — the rule a grant's
+// name follows too (v1.Grant.Validate).
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Save writes config.toml at 0600 — it names hubs and accounts, which is enough
 // to be worth keeping private.
@@ -440,6 +492,20 @@ func (c Config) Validate() error {
 	}
 	if dup := firstDuplicate(names); dup != "" {
 		errs = append(errs, fmt.Errorf("connection %q is listed twice", dup))
+	}
+	// Refused at load rather than dropped at start: a runner that quietly
+	// ran without a declared variable would fail the way it did before the
+	// owner declared it, and nothing would say why. The value is never
+	// quoted — [env] is no place for a secret, but one may be there anyway.
+	for _, name := range slices.Sorted(maps.Keys(c.Env)) {
+		switch {
+		case !envName.MatchString(name):
+			errs = append(errs, fmt.Errorf("env.%q is not a variable name — use letters, digits and underscore, not starting with a digit", name))
+		case supervise.OwnerRefusal(name) != "":
+			errs = append(errs, fmt.Errorf("env.%s is refused: %s", name, supervise.OwnerRefusal(name)))
+		case strings.ContainsRune(c.Env[name], 0):
+			errs = append(errs, fmt.Errorf("env.%s holds a NUL byte, which no environment can carry", name))
+		}
 	}
 	return errors.Join(errs...)
 }

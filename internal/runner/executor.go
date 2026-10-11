@@ -544,6 +544,13 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassRefused, "the run is invalid: "+err.Error())
 		return
 	}
+	// And the [env] collision again, for a run claimed by a process whose
+	// config.toml declared less: one parked across a restart is picked up
+	// by the next.
+	if reason := ownerVariableGrant(run); reason != "" {
+		fail(ClassRefused, reason)
+		return
+	}
 	ad, ok := e.Adapters.Lookup(run.Harness)
 	if !ok {
 		fail(ClassRefused, fmt.Sprintf("this runner has no adapter for harness %q — it should not have advertised it; report this as a yad bug", run.Harness))

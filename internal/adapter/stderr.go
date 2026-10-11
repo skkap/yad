@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // The end of a harness's stderr a run's error carries. Five lines is the
@@ -69,9 +71,14 @@ func StderrTail(stderr string, env, secrets []string, truncated bool) string {
 // Mask is s with every value of env and every one of secrets replaced as
 // StderrTail replaces them, for anything else of a harness's stderr a run's
 // error quotes — Claude's line refusing an effort.
+//
+// The owner's [env] values are replaced too, though they are in no Spec: the
+// harness has them all the same (supervise.OwnerEnv), and a run's error goes
+// to a hub, which is no place for a socket path under the owner's home or a
+// value the owner put there against the docs' advice.
 func Mask(s string, env, secrets []string) string {
 	var masked []string
-	for _, kv := range env {
+	for _, kv := range append(supervise.OwnerEnv(), env...) {
 		if _, v, ok := strings.Cut(kv, "="); ok {
 			masked = appendSecret(masked, v)
 		}

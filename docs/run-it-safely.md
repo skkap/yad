@@ -135,6 +135,18 @@ wanted any of this could simply ask the harness for it.
   `IS_SANDBOX` switches off Claude's own refusal to bypass permissions as root,
   so only the owner may declare it, in the runner's own environment. A hub may
   name a grant that; it cannot make it take effect.
+- **`[env]` is yours, and it is not for secrets.** config.toml's `[env]`
+  table gives every harness, hook and probe the runner starts the variables
+  you list — a `DOCKER_HOST`, a `BASH_MAX_TIMEOUT_MS`
+  ([0081](decisions/0081-the-owner-declares-an-environment-for-everything-yad-starts.md)).
+  It refuses at load every name the scrub above removes or that chooses a
+  credential, and `IS_SANDBOX`, `PATH`, `HOME`, `USER` and `WT_*`, each with the way
+  round it; a hub's grant under a name you declared fails its run rather than
+  replace yours. yad never prints or sends a value — doctor, its log and
+  `yad config apply` name the variables, and a run's quoted stderr masks them
+  — but a harness can print its whole environment into a run's events, which
+  go to the hub. Every hub you connect can read what `[env]` holds. A secret
+  for a project is a grant, which a hub sends for the one run that needs it.
 - **Sources are argv, never a shell.** For a repository off the machine, https
   and ssh only — no plain http, no `git://`, no remote helpers, no leading `-`,
   no password in the URL. A repository *on* the machine, given as a path or a

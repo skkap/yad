@@ -21,6 +21,7 @@ import (
 	"github.com/skkap/yad/internal/logfile"
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
+	"github.com/skkap/yad/internal/supervise"
 	"github.com/skkap/yad/internal/workdir"
 )
 
@@ -973,11 +974,32 @@ func refusal(run v1.Run, doc v1.Capabilities) string {
 	if err := run.Validate(); err != nil {
 		return "the run is invalid: " + err.Error()
 	}
+	if reason := ownerVariableGrant(run); reason != "" {
+		return reason
+	}
 	if run.Session.Mode == v1.SessionLive {
 		return "this runner does not support live sessions; offer the run with session.mode per_run"
 	}
 	if !capability.Drivable(doc, run.Harness) {
 		return fmt.Sprintf("harness %q is not one this runner can drive — see its capability document", run.Harness)
+	}
+	return ""
+}
+
+// ownerVariableGrant is why a run carrying a grant named for a variable the
+// owner's [env] declares is refused; "" when it carries none. A grant comes
+// after the [env] layer and would win, so the run would get a value the owner
+// set for everything yad starts replaced by the hub's, with nothing on the
+// machine saying so — and dropping the grant instead would run it without a
+// secret it was sent (decisions 0024, 0038, 0040). Only the grant's own name
+// is quoted, which the hub chose: what else [env] declares is not a hub's to
+// learn.
+func ownerVariableGrant(run v1.Run) string {
+	for _, g := range run.Grants {
+		if supervise.Declared(g.Name) {
+			return fmt.Sprintf("grant %s names a variable this runner's owner sets for everything it starts ([env] in its config.toml, decision 0081), "+
+				"and a grant may not replace it — send the value under another name and have the brief say which", g.Name)
+		}
 	}
 	return ""
 }

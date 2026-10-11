@@ -4,10 +4,10 @@
 //
 // Every harness, git invocation, setup hook and version probe goes through
 // Start, so every one gets the same treatment: its own process group, a
-// scrubbed environment, pipes YAD owns, a bounded stderr tail, and a stop that
-// escalates and then kills whatever the child left behind. Multica found only 8
-// of 27 spawn sites using a process group before it centralised this; here there
-// is one site from the start.
+// scrubbed environment with the owner's [env] layer on it, pipes YAD owns, a
+// bounded stderr tail, and a stop that escalates and then kills whatever the
+// child left behind. Multica found only 8 of 27 spawn sites using a process
+// group before it centralised this; here there is one site from the start.
 package supervise
 
 import (
@@ -17,12 +17,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
-
-	v1 "github.com/skkap/yad/protocol/v1"
 )
 
 // Spec is what to run.
@@ -30,7 +27,8 @@ type Spec struct {
 	Path string
 	Args []string
 	Dir  string
-	// Env is added to the scrubbed parent environment; later entries win.
+	// Env is added after the scrubbed parent environment and the owner's
+	// [env] layer (Environ); later entries win.
 	Env []string
 	// KeepEnv names variables Scrub would otherwise remove. Nothing outside
 	// this package's tests sets it, and TestKeepEnvIsNotWired fails the day
@@ -102,7 +100,7 @@ type Process struct {
 func Start(ctx context.Context, spec Spec) (*Process, error) {
 	cmd := exec.Command(spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
-	cmd.Env = append(Scrub(os.Environ(), spec.KeepEnv), spec.Env...)
+	cmd.Env = append(Environ(spec.KeepEnv), spec.Env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if spec.NoTTY {
 		// setsid makes the child its group's leader too; asking for setpgid as
@@ -307,82 +305,6 @@ func (p *Process) signalGroup(sig syscall.Signal) {
 	if err := syscall.Kill(-p.cmd.Process.Pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
 		_ = p.cmd.Process.Signal(sig)
 	}
-}
-
-// Scrub returns env without the variables a child must not inherit:
-//   - CLAUDECODE and CLAUDE_CODE_* make a nested claude believe it is running
-//     inside another Claude Code session and change its behaviour;
-//   - every variable that chooses whose credential a harness uses —
-//     v1.AccountVariable, the list a grant is refused by — since one set on
-//     the machine ranks above the account's login and moves the run off it
-//     while every report still names the account (DEV-62, decision 0060);
-//   - YAD_* is the runner's own configuration, which a harness has no business
-//     reading.
-//
-// From every child, not only a harness: a setup hook or a git hook that
-// starts a harness would hand the variable on to it. A project that needs
-// such a key for its own use is sent it as a grant under another name, which
-// is what the grant refusal tells a hub.
-//
-// Only env is scrubbed. What a caller appends after it — a run's grants, an
-// account's home and a token account's CLAUDE_CODE_OAUTH_TOKEN
-// (account.TurnEnv, decision 0054) — reaches the child as given, and wins over
-// anything left in env, os/exec keeping the last of a repeated name.
-func Scrub(env []string, keep []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
-		if contains(keep, name) || !scrubbed(name) {
-			out = append(out, kv)
-		}
-	}
-	return out
-}
-
-func scrubbed(name string) bool {
-	return name == "CLAUDECODE" || strings.HasPrefix(name, "CLAUDE_CODE_") ||
-		strings.HasPrefix(name, "YAD_") || accountVariable(name)
-}
-
-// harnessHomes are the account variables Scrub lets through. The owner's
-// CLAUDE_CONFIG_DIR or CODEX_HOME is not a credential ranked above an
-// account. With no accounts it is the harness's own login, which the default
-// login check (decision 0053) and codex.DefaultHome read from this same
-// environment; with an account, the account's home is appended after it and
-// wins. CLAUDE_SECURESTORAGE_CONFIG_DIR is the same kind of variable — where
-// Claude keeps that login, when it is not the home — and every account sets
-// it to its own home the same way (decision 0070). internal/account's tests
-// hold this set to the variables an account sets, so a harness that gains
-// one cannot be missed here.
-var harnessHomes = []string{"CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "CODEX_HOME"}
-
-func accountVariable(name string) bool {
-	_, ok := v1.AccountVariable(name)
-	return ok && !contains(harnessHomes, name)
-}
-
-// AccountVariables names the variables in env that Scrub removes because they
-// choose a harness's credential, in env's order, for `yad doctor` and the
-// daemon to warn about. Names only: the values are credentials. An empty one
-// is left out — Scrub still removes it, but it chooses nothing, and a warning
-// about it would teach the owner to skip the warnings.
-func AccountVariables(env []string) []string {
-	var out []string
-	for _, kv := range env {
-		if name, v, _ := strings.Cut(kv, "="); v != "" && accountVariable(name) && !contains(out, name) {
-			out = append(out, name)
-		}
-	}
-	return out
-}
-
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 func closeAll(fs ...*os.File) {

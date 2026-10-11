@@ -18,6 +18,7 @@ import (
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/shellword"
 	"github.com/skkap/yad/internal/store"
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // Connect registers this runner with the hub at hubURL, exchanging the
@@ -58,6 +59,9 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 	if err != nil {
 		return config.Connection{}, none, notes, err
 	}
+	// The document registered below is probed in the environment the
+	// daemon's runs will have, as the daemon's own is.
+	supervise.SetOwnerEnv(cfg.Env)
 	conn := config.Connection{Name: name, URL: hubURL}
 	// Every message below names the hub. CheckHubURL has refused userinfo,
 	// but a query or fragment is where a signed URL keeps its signature.

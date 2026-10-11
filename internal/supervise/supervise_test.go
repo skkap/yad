@@ -227,6 +227,31 @@ func TestEnvironmentIsScrubbed(t *testing.T) {
 	}
 }
 
+// The owner's [env] layer sits between the scrubbed environment and the
+// spec's own: it beats what the runner's environment says, and loses to what
+// yad sets for one child — an account's home, a hook's WT_*, the host-tool
+// PATH.
+func TestOwnerLayerPrecedence(t *testing.T) {
+	t.Cleanup(func() { SetOwnerEnv(nil) })
+	t.Setenv("DOCKER_HOST", "unix:///from/the/service")
+	t.Setenv("KEEP_ME", "yes")
+	SetOwnerEnv(map[string]string{"DOCKER_HOST": "unix:///from/the/owner", "BASH_MAX_TIMEOUT_MS": "1800000", "SPEC_WINS": "owner"})
+	p := spawn(t, "env", "SPEC_WINS=spec")
+	out, _ := io.ReadAll(p.Stdout())
+	p.Wait()
+	env := "\n" + string(out)
+	for _, want := range []string{"DOCKER_HOST=unix:///from/the/owner", "BASH_MAX_TIMEOUT_MS=1800000", "SPEC_WINS=spec", "KEEP_ME=yes"} {
+		if !strings.Contains(env, "\n"+want+"\n") {
+			t.Errorf("child is missing %s", want)
+		}
+	}
+	for _, gone := range []string{"DOCKER_HOST=unix:///from/the/service", "SPEC_WINS=owner"} {
+		if strings.Contains(env, "\n"+gone+"\n") {
+			t.Errorf("child has %s", gone)
+		}
+	}
+}
+
 // Every variable a grant may not carry because it moves a run off its account
 // is removed from the owner's environment too, from the same list
 // (v1.AccountVariable), since the owner's copy ranks above the account's login

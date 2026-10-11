@@ -25,11 +25,24 @@ import (
 
 // Change is one setting Apply changed, keyed as TOML names it —
 // "harness.claude.accounts". From or To is empty when the setting was or is
-// now absent.
-type Change struct{ Key, From, To string }
+// now absent. An [env] value is never carried: Hidden is set, and From and To
+// say only whether there was one.
+type Change struct {
+	Key, From, To string
+	Hidden        bool
+}
+
+// hiddenValue stands in for an [env] value in a Change.
+const hiddenValue = "(a value)"
 
 func (c Change) String() string {
 	switch {
+	case c.Hidden && c.From == "":
+		return c.Key + " set (was unset)"
+	case c.Hidden && c.To == "":
+		return c.Key + " removed"
+	case c.Hidden:
+		return c.Key + " changed"
 	case c.From == "":
 		return fmt.Sprintf("%s = %s (was unset)", c.Key, c.To)
 	case c.To == "":
@@ -88,6 +101,7 @@ func merge(spec, have Config) Config {
 	next := spec
 	next.Labels = slices.Clone(spec.Labels)
 	next.Workdirs.Roots = slices.Clone(spec.Workdirs.Roots)
+	next.Env = maps.Clone(spec.Env)
 	if p := spec.Workdirs.PathSources; p != nil {
 		next.Workdirs.PathSources = new(*p)
 	}
@@ -186,9 +200,22 @@ func diff(before, after map[string]string) []Change {
 	slices.Sort(keys)
 	var out []Change
 	for _, k := range keys {
-		if before[k] != after[k] {
-			out = append(out, Change{Key: k, From: before[k], To: after[k]})
+		if before[k] == after[k] {
+			continue
 		}
+		c := Change{Key: k, From: before[k], To: after[k]}
+		// Compared by value, reported by name: a spec's [env] reaches the
+		// terminal and a provisioning log, and a value is no business of
+		// either.
+		if strings.HasPrefix(k, "env.") {
+			c.Hidden = true
+			for _, v := range []*string{&c.From, &c.To} {
+				if *v != "" {
+					*v = hiddenValue
+				}
+			}
+		}
+		out = append(out, c)
 	}
 	return out
 }
