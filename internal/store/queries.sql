@@ -574,6 +574,8 @@ WHERE connection = sqlc.arg(connection) AND id = sqlc.arg(id) AND state = 'open'
 SELECT EXISTS (SELECT 1 FROM sessions WHERE native_id = sqlc.arg(native_id) AND state = 'open'
   AND NOT (connection = sqlc.arg(connection) AND id = sqlc.arg(id)));
 
--- The conversation of a session opened from an archive is in place.
+-- The conversation of a session opened from an archive is in place, and the
+-- session is bound to the sources it was checked against in the same write:
+-- recorded apart, a continuing run in between would be prepared from others.
 -- name: SetSessionImported :exec
-UPDATE sessions SET native_id = ?, archive = NULL, carried = ?, last_used_at = ? WHERE connection = ? AND id = ?;
+UPDATE sessions SET native_id = ?, archive = NULL, carried = ?, sources = ?, last_used_at = ? WHERE connection = ? AND id = ?;

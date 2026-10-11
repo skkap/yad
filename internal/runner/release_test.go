@@ -260,8 +260,8 @@ func TestAReleasedSessionResumesOnAnotherRunner(t *testing.T) {
 	if got := conv.recalls[len(conv.recalls)-1]; got != "remember the word quokka\n" {
 		t.Errorf("b's turn found the conversation %q", got)
 	}
-	if s := b.session(t, "s1"); s.NativeID.String != native || s.Archive.Valid {
-		t.Errorf("b's session: native %q, archive still pending %v", s.NativeID.String, s.Archive.Valid)
+	if s := b.session(t, "s1"); s.NativeID.String != native || s.Archive.Valid || s.Sources.String != "[]" {
+		t.Errorf("b's session: native %q, archive still pending %v, sources %q", s.NativeID.String, s.Archive.Valid, s.Sources.String)
 	}
 	// The run reached running on b, which opened it: the archive goes.
 	b.sync(t)
@@ -570,6 +570,61 @@ func TestARunOpeningAReleasedSessionGoesOnlyWhereReleaseIsAdvertised(t *testing.
 	rs, err := off.rel.Reports(context.Background(), "hub")
 	if err != nil || len(rs) != 1 || rs[0].Error == nil || rs[0].Error.Code != v1.ReleaseNotReleasable {
 		t.Errorf("a release asked of a connection with release off: %+v, %v", rs, err)
+	}
+}
+
+// A session opened from its archive is bound to its sources as the import is
+// recorded, and they pass the owner's rules before it: a run opening it that
+// names the archive's repository on a branch the rules refuse is refused
+// before the conversation is put anywhere. Imported first and refused after,
+// the session would hold the conversation and no sources, and the next run
+// naming another repository would be built from that one beside it.
+func TestAnOpenedSessionIsBoundToItsSourcesAtTheImport(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	ctx := context.Background()
+	e := newEnv(t)
+	root := t.TempDir()
+	bare := gitRepo(t, root, "#!/bin/sh\ntrue\n")
+	otherRoot := t.TempDir()
+	elsewhere := gitRepo(t, otherRoot, "#!/bin/sh\ntrue\n")
+	conv := &conversation{}
+	a := newSide(t, e, conv.harness(t, nil))
+	b := newSide(t, e, conv.harness(t, nil), "other")
+	for _, s := range []*side{a, b} {
+		s.exec.Config.Workdirs.Roots = []string{root, otherRoot}
+		s.exec.Workdirs.Roots = s.exec.Config.Workdirs.Roots
+	}
+	first := testRun("r1", "s1")
+	first.Sources = []v1.Source{{Git: &v1.GitSource{URL: bare}}}
+	e.enqueue(t, first)
+	a.sync(t)
+	a.sync(t)
+	askRelease(t, e, "s1", false)
+	a.release(t)
+
+	opening := continued("r2", "s1")
+	opening.Sources = []v1.Source{{Git: &v1.GitSource{URL: bare, Branch: "HEAD"}}}
+	e.enqueue(t, opening)
+	b.sync(t)
+	b.sync(t)
+	got, err := b.store.GetRun(ctx, db.GetRunParams{Connection: "other", ID: "r2"})
+	if err != nil || got.State != "failed" {
+		t.Fatalf("the run naming a branch the rules refuse: %+v, %v", got, err)
+	}
+	if s := b.session(t, "s1"); s.NativeID.Valid || !s.Archive.Valid {
+		t.Fatalf("the refused run imported the conversation: native %q, archive pending %v", s.NativeID.String, s.Archive.Valid)
+	}
+
+	next := continued("r3", "s1")
+	next.Sources = []v1.Source{{Git: &v1.GitSource{URL: elsewhere}}}
+	e.enqueue(t, next)
+	b.sync(t)
+	b.sync(t)
+	if got, err := b.store.GetRun(ctx, db.GetRunParams{Connection: "other", ID: "r3"}); err != nil || got.State != "failed" || !strings.Contains(got.Reason.String, "other than the ones it was built from") {
+		t.Fatalf("a run naming another repository: %+v, %v", got, err)
+	}
+	if s := b.session(t, "s1"); s.NativeID.Valid {
+		t.Fatalf("the session opened from its archive on another repository: native %q, sources %q", s.NativeID.String, s.Sources.String)
 	}
 }
 

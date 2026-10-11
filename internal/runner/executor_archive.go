@@ -140,6 +140,19 @@ func (e *Exec) importArchive(ctx context.Context, c Claim, ad adapter.Adapter, d
 	if err != nil {
 		return "", err
 	}
+	// The owner's rules too, before the conversation is put anywhere: the
+	// session is bound to these sources as the import is recorded.
+	if err := e.Workdirs.Check(sources, c.Run.Session.ID); err != nil {
+		we, _ := errors.AsType[*workdir.Error](err)
+		return "", archiveRefusal{we.Class, we.Msg}
+	}
+	if sources == nil {
+		sources = []v1.Source{}
+	}
+	recorded, err := json.Marshal(workdir.StoredSources(sources))
+	if err != nil {
+		return "", err
+	}
 	if why := sourcesDiffer(sources, m.Sources); why != "" {
 		return "", rejected("%s", why)
 	}
@@ -182,7 +195,8 @@ func (e *Exec) importArchive(ctx context.Context, c Claim, ad adapter.Adapter, d
 		carried = sql.NullString{String: string(b), Valid: true}
 	}
 	if err := e.Store.SetSessionImported(bg, db.SetSessionImportedParams{
-		NativeID: sql.NullString{String: m.NativeID, Valid: true}, Carried: carried, LastUsedAt: time.Now().UnixMilli(),
+		NativeID: sql.NullString{String: m.NativeID, Valid: true}, Carried: carried,
+		Sources: sql.NullString{String: string(recorded), Valid: true}, LastUsedAt: time.Now().UnixMilli(),
 		Connection: c.Connection, ID: c.Run.Session.ID,
 	}); err != nil {
 		// The conversation is in place and the session does not say so: the

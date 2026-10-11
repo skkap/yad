@@ -2228,22 +2228,26 @@ func (q *Queries) SetRunWaiting(ctx context.Context, arg SetRunWaitingParams) er
 }
 
 const setSessionImported = `-- name: SetSessionImported :exec
-UPDATE sessions SET native_id = ?, archive = NULL, carried = ?, last_used_at = ? WHERE connection = ? AND id = ?
+UPDATE sessions SET native_id = ?, archive = NULL, carried = ?, sources = ?, last_used_at = ? WHERE connection = ? AND id = ?
 `
 
 type SetSessionImportedParams struct {
 	NativeID   sql.NullString
 	Carried    sql.NullString
+	Sources    sql.NullString
 	LastUsedAt int64
 	Connection string
 	ID         string
 }
 
-// The conversation of a session opened from an archive is in place.
+// The conversation of a session opened from an archive is in place, and the
+// session is bound to the sources it was checked against in the same write:
+// recorded apart, a continuing run in between would be prepared from others.
 func (q *Queries) SetSessionImported(ctx context.Context, arg SetSessionImportedParams) error {
 	_, err := q.db.ExecContext(ctx, setSessionImported,
 		arg.NativeID,
 		arg.Carried,
+		arg.Sources,
 		arg.LastUsedAt,
 		arg.Connection,
 		arg.ID,
