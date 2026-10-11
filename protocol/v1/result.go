@@ -88,4 +88,21 @@ type Metrics struct {
 	// is how many times the run changed accounts — but a hub pricing it
 	// should know the price is not yet observed.
 	AccountSwitches int `json:"account_switches" doc:"How many turns of this run started on a different account than the turn before them. Counted by what a move costs rather than by what caused it, so a run resumed onto a different account after waiting counts the same as one a failover moved. A run parked five times and resumed on the same account each time reports 0; a run that goes A to B and back to A reports 2. The cost is expected to be one cache-cold turn, because prompt caches are documented as isolated per account -- but no cross-account resume has been measured, so that price is inferred rather than observed."`
+	// LeftRunning is how many processes the run's tool work still had
+	// running when a turn ended on the harness's own answer — a test suite,
+	// a dev server, anything backgrounded — whoever stopped them after: the
+	// harness on its way out, as all three measured do. A run that reports
+	// success with this above zero may be a hollow one, whose final text
+	// promises work that died with the turn.
+	//
+	// Optional, because absent and zero are different answers: absent is
+	// not measured — no turn ended on its own answer (a cancel, an
+	// interrupt or a watchdog stopped each), or the process table could not
+	// be read — and zero is measured, with nothing found. Summed over every
+	// turn that was measured. The runner names what it found, by process
+	// name alone, in a status event labelled left_running before the
+	// result. What it cannot see is not counted: a process whose shell
+	// backgrounded it and then exited has left the harness's tree for good
+	// (decision 0080).
+	LeftRunning *int `json:"left_running,omitempty" doc:"How many processes the run's tool work still had running when a turn ended on the harness's own answer -- a test suite, a dev server, anything backgrounded -- whoever stopped them after. A succeeded run with this above zero may be hollow: its final text can promise work that died with the turn. Absent means not measured (every turn was cancelled, interrupted or stopped by a watchdog, or the process table could not be read), which is not the same as 0, measured with nothing found. Summed over the turns measured. The runner names them, by process name only, in a status event labelled left_running before the result. A process whose shell backgrounded it and then exited is out of the runner's sight and not counted."`
 }

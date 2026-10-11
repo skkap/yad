@@ -79,11 +79,17 @@ func checkEventsUnknownFields(ctx context.Context, s *session) error {
 // takes it changes nothing — what is being asked is whether a field it does
 // not know is enough to make it refuse.
 func checkResultUnknownFields(ctx context.Context, s *session) error {
-	// One field beside the result's own and one inside its error, because a
-	// hub decodes a nested object with its own schema and may be strict about
-	// only that one.
+	// One field beside the result's own, one inside its error and one inside
+	// its metrics, because a hub decodes a nested object with its own schema
+	// and may be strict about only that one. metrics is where v1 grows —
+	// left_running arrived there — and a hub strict about it would refuse
+	// every result from a runner newer than its schema.
 	runError, err := withField(v1.RunError{Class: "refused", Message: "the yad conformance suite claimed this run to check the protocol and drives no harness"},
 		"a_field_from_a_later_v1", true)
+	if err != nil {
+		return err
+	}
+	metrics, err := withField(v1.Metrics{}, "a_field_from_a_later_v1", true)
 	if err != nil {
 		return err
 	}
@@ -96,6 +102,7 @@ func checkResultUnknownFields(ctx context.Context, s *session) error {
 		return err
 	}
 	fields["error"] = runError
+	fields["metrics"] = metrics
 	body, err = json.Marshal(fields)
 	if err != nil {
 		return err

@@ -430,7 +430,13 @@ func (p *printer) result(r hubapi.Run) error {
 	if res.FinalText != "" && res.FinalText != p.lastText {
 		fmt.Fprintln(p.w, clean(res.FinalText))
 	}
-	fmt.Fprintf(p.w, "── %s in %s, %d tool calls\n", res.State, (time.Duration(res.Metrics.DurationMS) * time.Millisecond).Round(100*time.Millisecond), res.Metrics.ToolCalls)
+	// Work still running when the turn ended is the one figure that can
+	// make a success hollow, so it is shown beside the state.
+	left := ""
+	if n := res.Metrics.LeftRunning; n != nil && *n > 0 {
+		left = fmt.Sprintf(", %d left running", *n)
+	}
+	fmt.Fprintf(p.w, "── %s in %s, %d tool calls%s\n", res.State, (time.Duration(res.Metrics.DurationMS) * time.Millisecond).Round(100*time.Millisecond), res.Metrics.ToolCalls, left)
 	if res.State == v1.RunSucceeded {
 		return nil
 	}

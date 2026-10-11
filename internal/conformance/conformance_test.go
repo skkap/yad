@@ -97,6 +97,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawQuickSync, check: "sync/timings", want: Passed},
 		{flaw: flawShortLease, check: "sync/lease-outlasts-the-interval", want: Failed},
 		{flaw: flawStrictResultFields, check: "result/unknown-fields-ignored", want: Failed},
+		{flaw: flawStrictMetricsFields, check: "result/unknown-fields-ignored", want: Failed},
 		{flaw: flawOffersLiveMode, check: "run/gated-features", want: Failed},
 		{flaw: flawOffersEffort, check: "run/gated-features", want: Failed},
 		{flaw: flawOffersFork, check: "run/gated-features", want: Failed},
