@@ -24,7 +24,7 @@ const FeatureHarnessFeatures = "harness_features"
 // targets, in the order a harness's list carries them. Everything else in
 // Features is the runner's own and holds for every run.
 func RunFeatures() []string {
-	return []string{FeatureSteer, FeatureInterrupt, FeatureEffort, FeatureFork}
+	return []string{FeatureSteer, FeatureInterrupt, FeatureEffort, FeatureFork, FeatureRelease}
 }
 
 // Adapters are the adapters `yad daemon` registers, one per first-class
@@ -62,6 +62,9 @@ func HarnessFeatures(id string) []string {
 	}
 	if adapter.Forks(a) {
 		out = append(out, FeatureFork)
+	}
+	if adapter.Releases(a) {
+		out = append(out, FeatureRelease)
 	}
 	return out
 }

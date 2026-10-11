@@ -113,7 +113,7 @@ components:
           description: "false: this runner's owner has switched sources on the machine off, so a run with a path source, or a git source whose url is a path or file:// URL, fails with source_refused. Offer a run opening a session (session.new) with one to another runner; a run in a session already bound to this runner can go nowhere else, so offer it, and the refusal names the setting. Absent: the runner takes them inside the directories its owner allows. Never sent as true."
           type: boolean
         protocol_features:
-          description: "The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session, effort, fork, login, accounts and harness_features; live_sessions is reserved. steer, interrupt, effort and fork are per-run features, which the harness a run targets decides: listed here only while every harness this runner can drive — first-class, present, no error — supports them, and not at all while it can drive none, so they change with the harnesses installed, and the fingerprint with them; and, beside harness_features, in each harness's own features, which are then the answer for runs on that harness. accounts is per hub: a runner lists it only to a hub its owner lets add and remove accounts, and only beside login, so two hubs of one runner may be sent different lists and fingerprints. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."
+          description: "The protocol features beyond the v1 baseline this runner acts on: start_at, steer, interrupt, drain, close_session, effort, fork, release, login, accounts and harness_features; live_sessions is reserved. steer, interrupt, effort, fork and release are per-run features, which the harness a run targets decides: listed here only while every harness this runner can drive — first-class, present, no error — supports them, and not at all while it can drive none, so they change with the harnesses installed, and the fingerprint with them; and, beside harness_features, in each harness's own features, which are then the answer for runs on that harness. accounts is per hub: a runner lists it only to a hub its owner lets add and remove accounts, and only beside login, so two hubs of one runner may be sent different lists and fingerprints. release is per hub as well: a runner whose owner has turned release off for a hub lists it to that hub nowhere, runner-wide or in any harness's features. A hub uses none that is not listed here, because nothing acknowledges a control and an ignored one looks exactly like an obeyed one. Ignore strings you do not know."
           items:
             type: string
           type: array
@@ -184,11 +184,14 @@ components:
         code:
           description: "For login_code: what the owner got after signing in at the login's url. A secret: never log it or show it again."
           type: string
+        discard_local:
+          description: "For release_session: release the session even though its workdir holds work its remote does not have — changes not committed, or commits not pushed — which is then lost. Without it the runner refuses such a release with local_changes or unpushed_commits, and nothing changes; have a run in the session commit and push first."
+          type: boolean
         harness:
           description: "The harness, for start_login, login_token and remove_account: claude or codex. Codex logs in by device code, and never by token."
           type: string
         kind:
-          description: "cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins (and for Codex the user_code to type there). login_code: the code the owner got at that URL, never for a login reporting user_code. login_token: store a token as the account's login. cancel_login: end a login. remove_account: take the account named by harness and account off the runner. close_session and drain go only to a runner advertising the feature of the same name; interrupt and steer only to one advertising it for the harness of the run they name — in that harness's features when protocol_features lists harness_features; the four login kinds only to one advertising login; remove_account, and start_login or login_token carrying add, only to one advertising accounts. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."
+          description: "cancel: end the run. interrupt: end the run's current turn and keep its session. steer: add text to the running turn. close_session: close the session and reclaim its workdir. drain: take no new runs and exit once the held ones end. report_capabilities: send the capability document in the next sync. update: reserved, never sent. start_login: log an account in by link, reporting the URL in logins (and for Codex the user_code to type there). login_code: the code the owner got at that URL, never for a login reporting user_code. login_token: store a token as the account's login. cancel_login: end a login. remove_account: take the account named by harness and account off the runner. release_session: hand the session back to the hub, so its next run can go to another runner. close_session and drain go only to a runner advertising the feature of the same name; interrupt and steer only to one advertising it for the harness of the run they name — in that harness's features when protocol_features lists harness_features; the four login kinds only to one advertising login; remove_account, and start_login or login_token carrying add, only to one advertising accounts; release_session only to one advertising release for the session's harness — in that harness's features when protocol_features lists harness_features. A closed set for all of v1: a kind outside it goes only to a runner that advertised, in protocol_features, the feature adding it."
           type: string
           x-extensible-enum:
             - cancel
@@ -203,6 +206,7 @@ components:
             - login_token
             - cancel_login
             - remove_account
+            - release_session
         login_id:
           description: "The login, for start_login, login_code, login_token and cancel_login: chosen by the hub, unique on it, 1-128 letters, digits, dots, dashes or underscores."
           type: string
@@ -210,7 +214,7 @@ components:
           description: The run, for cancel, interrupt and steer.
           type: string
         session_id:
-          description: The session, for close_session.
+          description: The session, for close_session and release_session.
           type: string
         text:
           description: What to tell the harness, for steer.
@@ -386,7 +390,7 @@ components:
           description: "Why this harness cannot take runs, and the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."
           type: string
         features:
-          description: "The per-run features a run on this harness may use: steer, interrupt, effort and fork. Read it only when protocol_features lists harness_features: then it is the whole answer for runs on this harness, in place of those four runner-wide strings, and absent means none. Without harness_features, go by the runner-wide strings. Ignore strings you do not know."
+          description: "The per-run features a run on this harness may use: steer, interrupt, effort, fork and release. Read it only when protocol_features lists harness_features: then it is the whole answer for runs on this harness, in place of those five runner-wide strings, and absent means none. Without harness_features, go by the runner-wide strings. Ignore strings you do not know."
           items:
             type: string
           type: array
@@ -631,6 +635,10 @@ components:
     RegisterResponse:
       additionalProperties: true
       properties:
+        archive_max_bytes:
+          description: "The largest session archive this hub takes, in bytes. A runner refuses to release a session whose archive is larger (archive_too_large) and keeps it open. Sync answers carry it too, and the latest one heard wins. Absent: the hub names none, and refuses one too large with 413."
+          format: int64
+          type: integer
         hub_features:
           description: Features this hub has beyond the v1 baseline. v1 defines none, and a hub that sends none is complete. A value v1 adds to one of its enums later is sent only to a hub advertising the feature that adds it.
           items:
@@ -654,6 +662,43 @@ components:
         - runner_credential
         - sync_interval_ms
         - lease_ms
+      type: object
+    ReleaseError:
+      additionalProperties: true
+      properties:
+        code:
+          description: "Why, for a program: local_changes (the workdir holds work not committed), unpushed_commits (its branch holds commits the remote does not), path_source (a source is a directory on the runner's machine, which no other runner has), no_conversation (no run of the session has started a conversation yet), not_releasable (this runner cannot release a session of its harness, or its owner has turned release off for this hub), archive_too_large (the archive is past the hub's archive_max_bytes), upload_refused (the hub refused the archive), session_unknown (the runner holds no such session for this hub), session_closed (the session was closed on the runner), or export_failed (the conversation could not be read on the runner). Not a closed set: show one you do not know."
+          type: string
+        message:
+          description: What happened, for a person.
+          type: string
+        next_action:
+          description: "What to do about it, for a person: commit and push the work with a run in the session, send the release again with discard_local, or start a new session."
+          type: string
+      required:
+        - code
+        - message
+        - next_action
+      type: object
+    ReleasedSession:
+      additionalProperties: true
+      properties:
+        archive:
+          $ref: "#/components/schemas/SessionArchive"
+          description: "Set when the session was released: the archive this runner uploaded, which the hub must hold with this sha256. The runner has closed the session and keeps nothing of it; offer the session's next run as opening it (session.new true) with this archive in session.archive, to a runner advertising release for its harness. Absent when error is set."
+        error:
+          $ref: "#/components/schemas/ReleaseError"
+          description: "Set when the runner did not release the session: it stays open on this runner exactly as it was, and its runs go on here. Absent when archive is set."
+        released_at:
+          description: "When the runner settled the release: when the hub answered the archive's upload with a 2xx, or when the runner refused it."
+          format: date-time
+          type: string
+        session_id:
+          description: The session, by the id the hub gave it.
+          type: string
+      required:
+        - session_id
+        - released_at
       type: object
     Result:
       additionalProperties: true
@@ -765,9 +810,26 @@ components:
           description: Tokens for the whole run, every turn and every account, by model.
           type: object
       type: object
+    SessionArchive:
+      additionalProperties: true
+      properties:
+        bytes:
+          description: The archive's size in bytes.
+          format: int64
+          type: integer
+        sha256:
+          description: The SHA-256 of the archive's bytes, as 64 lower-case hex digits. A runner fetching it refuses an archive that does not hash to this.
+          type: string
+      required:
+        - sha256
+        - bytes
+      type: object
     SessionRef:
       additionalProperties: true
       properties:
+        archive:
+          $ref: "#/components/schemas/SessionArchive"
+          description: "Only with new true, and never beside fork_from: open this session from the session archive its last runner uploaded when it released it, continuing that conversation under the same session id. The runner fetches it with GET /sessions/{session}/archive, refuses one that does not hash to sha256, and fails the run with class archive_rejected when it cannot take it. Offer the run only to a runner advertising release for the run's harness — in that harness's features when protocol_features lists harness_features. A source naming no branch is checked out on the branch the session's last runner worked on. Absent: the session starts as any new one does."
         fork_from:
           description: "Only with new true: open this session as a fork of the session named here — a new conversation that starts from a copy of that session's, as far as the harness has written it, and diverges from there, while the session forked goes on unchanged. Offer the run only to the runner that holds that session, and only while it advertises fork for the run's harness — in that harness's features when protocol_features lists harness_features; the runner refuses it (class refused) for a session it does not hold for this hub, of another harness, or closed or closing. The fork gets its own workdir from its own sources, as any new session does; nothing of the forked session's workdir comes with it. Absent: the session starts with an empty conversation."
           type: string
@@ -830,6 +892,11 @@ components:
           items:
             $ref: "#/components/schemas/LoginReport"
           type: array
+        released_sessions:
+          description: "Each release_session this runner has settled, either way, repeated in every sync until one carrying it is answered with a 2xx: released, with the archive the hub must hold, or refused, with an error, the session staying open here. Record them by session id, take a repeat as the same news, and stop sending release_session for one reported here. A report for a session you did not ask to release, or one bound to another runner, changes nothing. Sent by runners advertising the release feature."
+          items:
+            $ref: "#/components/schemas/ReleasedSession"
+          type: array
         runner_id:
           description: "The runner's id: the same as the {runner} in the path, or the sync is refused."
           type: string
@@ -846,8 +913,12 @@ components:
     SyncResponse:
       additionalProperties: true
       properties:
+        archive_max_bytes:
+          description: "The largest session archive this hub takes, in bytes, as in the register response; the latest one a runner heard is the one it goes by. Absent: the hub names none, and refuses one too large with 413."
+          format: int64
+          type: integer
         controls:
-          description: "Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions, remove_account until neither the capability document nor health lists the account; a steer is sent once."
+          description: "Instructions for the runner. Nothing acknowledges one: cancel and interrupt are repeated in every response while the run is listed, drain until health says draining, close_session until the session is in closed_sessions, remove_account until neither the capability document nor health lists the account, release_session until the session is in released_sessions; a steer is sent once."
           items:
             $ref: "#/components/schemas/Control"
           type: array
@@ -1346,6 +1417,184 @@ paths:
       security:
         - runner: []
       summary: Report a run's terminal state
+  /sessions/{session}/archive:
+    get:
+      description: Answered only to the runner a run of the session is offered to, or the runner the session is bound to, while the hub holds the archive its last runner released it with — the run carrying session.archive. The runner checks the bytes against that run's session.archive.sha256. 403 not_holder for any other runner; 404 not_found when the hub holds no released archive for the session.
+      operationId: getSessionArchive
+      parameters:
+        - description: The protocol major version.
+          in: header
+          name: Yad-Protocol
+          required: true
+          schema:
+            description: The protocol major version.
+            enum:
+              - "1"
+            type: string
+        - description: The session id.
+          in: path
+          name: session
+          required: true
+          schema:
+            description: The session id.
+            type: string
+      responses:
+        "200":
+          content:
+            application/gzip:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: OK
+          headers:
+            Content-Type:
+              schema:
+                description: application/gzip.
+                type: string
+            Yad-Archive-Sha256:
+              schema:
+                description: The SHA-256 of the body, as 64 lower-case hex digits.
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "426":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Upgrade Required
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Any other error, in the same envelope: 404 not_found for a path that is no operation, 405 invalid for a method an operation does not have."
+      security:
+        - runner: []
+      summary: Fetch the archive a released session opens from
+    put:
+      description: "Sent by the runner a session is bound to, while a release of it is asked for (the release_session control), before it reports the release in released_sessions. The body is the session archive, opaque to the hub: store it as it is. An upload of the same bytes again is answered as the first was; one of other bytes replaces it. 403 not_holder for a runner the session is not bound to, 409 conflict for a session no release of which is asked for, 413 for an archive past the hub's archive_max_bytes, which the runner reports as archive_too_large and keeps the session."
+      operationId: putSessionArchive
+      parameters:
+        - description: The protocol major version.
+          in: header
+          name: Yad-Protocol
+          required: true
+          schema:
+            description: The protocol major version.
+            enum:
+              - "1"
+            type: string
+        - description: The session id.
+          in: path
+          name: session
+          required: true
+          schema:
+            description: The session id.
+            type: string
+        - description: The SHA-256 of the body, as 64 lower-case hex digits. A body that does not hash to it is refused as invalid.
+          in: header
+          name: Yad-Archive-Sha256
+          required: true
+          schema:
+            description: The SHA-256 of the body, as 64 lower-case hex digits. A body that does not hash to it is refused as invalid.
+            pattern: ^[0-9a-f]{64}$
+            type: string
+      requestBody:
+        content:
+          application/gzip:
+            schema:
+              contentMediaType: application/octet-stream
+              format: binary
+              type: string
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionArchive"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Request Entity Too Large
+        "426":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Upgrade Required
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: "Any other error, in the same envelope: 404 not_found for a path that is no operation, 405 invalid for a method an operation does not have."
+      security:
+        - runner: []
+      summary: Upload the archive of a session this runner is releasing
 servers:
   - description: where `yad hub` mounts it; other hubs choose their own base
     url: /v1

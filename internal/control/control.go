@@ -236,11 +236,15 @@ type Connection struct {
 	// ManageAccounts is the owner's manage_accounts: whether this hub may
 	// add and remove the runner's accounts (decision 0057). Nil from a
 	// daemon older than the setting.
-	ManageAccounts *bool      `json:"manage_accounts,omitempty"`
-	State          string     `json:"state"` // starting | syncing | retrying | stopped
-	LastSync       *time.Time `json:"last_sync,omitempty"`
-	LastError      string     `json:"last_error,omitempty"`
-	LastErrorAt    *time.Time `json:"last_error_at,omitempty"`
+	ManageAccounts *bool `json:"manage_accounts,omitempty"`
+	// ReleaseSessions is the owner's release_sessions: whether this hub may
+	// release the runner's sessions (decision 0080). Nil from a daemon older
+	// than the setting.
+	ReleaseSessions *bool      `json:"release_sessions,omitempty"`
+	State           string     `json:"state"` // starting | syncing | retrying | stopped
+	LastSync        *time.Time `json:"last_sync,omitempty"`
+	LastError       string     `json:"last_error,omitempty"`
+	LastErrorAt     *time.Time `json:"last_error_at,omitempty"`
 }
 
 // Run is one run the runner holds.

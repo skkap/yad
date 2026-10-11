@@ -55,6 +55,22 @@ type Outbox struct {
 	LastError     sql.NullString
 }
 
+type Release struct {
+	Connection    string
+	SessionID     string
+	DiscardLocal  int64
+	RequestedAt   int64
+	Archive       sql.NullString
+	Sha256        sql.NullString
+	Bytes         sql.NullInt64
+	Attempts      int64
+	NextAttemptAt int64
+	LastError     sql.NullString
+	SettledAt     sql.NullInt64
+	Error         sql.NullString
+	ReportedAt    sql.NullInt64
+}
+
 type Run struct {
 	Connection      string
 	ID              string
@@ -94,6 +110,8 @@ type Session struct {
 	ReclaimedAt      sql.NullInt64
 	ReportedAt       sql.NullInt64
 	ForkFrom         sql.NullString
+	Archive          sql.NullString
+	Carried          sql.NullString
 }
 
 type Slot struct {

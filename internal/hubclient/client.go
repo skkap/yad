@@ -26,6 +26,10 @@ type Client struct {
 	base       string
 	credential string
 	http       *http.Client
+	// archives carries session archives, whose time is their size's: it
+	// has no timeout of its own, and each transfer is given one by
+	// archiveTimeout.
+	archives *http.Client
 }
 
 // requestTimeout bounds one call. A sync is small; a hub that takes longer than
@@ -42,6 +46,7 @@ func New(baseURL, credential string) (*Client, error) {
 		base:       strings.TrimRight(baseURL, "/"),
 		credential: credential,
 		http:       config.HubHTTPClient(requestTimeout),
+		archives:   config.HubHTTPClient(0),
 	}, nil
 }
 
@@ -78,6 +83,71 @@ func (c *Client) Deregister(ctx context.Context, runnerID, reason string) error 
 	return c.do(ctx, c.credential, "/runners/"+url.PathEscape(runnerID)+"/deregister", v1.DeregisterRequest{Reason: reason}, &v1.Ack{})
 }
 
+// archiveRate is the slowest a session archive is let go at, and
+// archiveTimeout the time one of size bytes is given: a minute, and a second
+// for each archiveRate's worth. 256 KiB/s is a slow uplink's; an archive at
+// yad hub's default cap then has about seventeen minutes.
+const archiveRate = 256 << 10
+
+func archiveTimeout(size int64) time.Duration {
+	return time.Minute + time.Duration(size/archiveRate)*time.Second
+}
+
+// PutArchive uploads a session archive of size bytes (decision 0080). The
+// hub checks the body against sha, and an upload of the same bytes again is
+// answered as the first was.
+func (c *Client) PutArchive(ctx context.Context, sessionID, sha string, size int64, body io.Reader) (v1.SessionArchive, error) {
+	ctx, cancel := context.WithTimeout(ctx, archiveTimeout(size))
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.base+"/sessions/"+url.PathEscape(sessionID)+"/archive", body)
+	if err != nil {
+		return v1.SessionArchive{}, err
+	}
+	req.ContentLength = size
+	req.Header.Set("Content-Type", v1.ArchiveContentType)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set(v1.HeaderArchiveSHA256, sha)
+	c.headers(req, c.credential)
+	resp, err := c.archives.Do(req)
+	if err != nil {
+		return v1.SessionArchive{}, config.RedactURLError(err)
+	}
+	defer resp.Body.Close()
+	var out v1.SessionArchive
+	return out, answer(resp, &out)
+}
+
+// GetArchive downloads a session archive into w, at most limit bytes, and
+// returns the sha256 the hub says it has and how many bytes came. Checking
+// the bytes against the run's session.archive is the caller's.
+func (c *Client) GetArchive(ctx context.Context, sessionID string, limit int64, w io.Writer) (string, int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, archiveTimeout(limit))
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/sessions/"+url.PathEscape(sessionID)+"/archive", nil)
+	if err != nil {
+		return "", 0, err
+	}
+	req.Header.Set("Accept", v1.ArchiveContentType)
+	c.headers(req, c.credential)
+	resp, err := c.archives.Do(req)
+	if err != nil {
+		return "", 0, config.RedactURLError(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return "", 0, answer(resp, nil)
+	}
+	// One byte past the limit says it was past it.
+	n, err := io.Copy(w, io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return "", n, config.RedactURLError(err)
+	}
+	if n > limit {
+		return "", n, fmt.Errorf("the hub's archive is larger than the %d bytes the run said it is", limit)
+	}
+	return resp.Header.Get(v1.HeaderArchiveSHA256), n, nil
+}
+
 // StatusError is a non-2xx answer. Protocol carries the hub's envelope when it
 // sent one; a proxy's HTML error page leaves it nil.
 type StatusError struct {
@@ -112,11 +182,7 @@ func (c *Client) do(ctx context.Context, bearer, path string, in, out any) error
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set(v1.HeaderProtocol, v1.Version)
-	req.Header.Set("User-Agent", "yad/"+buildinfo.Version)
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
-	}
+	c.headers(req, bearer)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// url.Error carries the URL, never the headers, so the bearer stays
@@ -124,6 +190,21 @@ func (c *Client) do(ctx context.Context, bearer, path string, in, out any) error
 		return config.RedactURLError(err)
 	}
 	defer resp.Body.Close()
+	return answer(resp, out)
+}
+
+// headers are the ones every call carries.
+func (c *Client) headers(req *http.Request, bearer string) {
+	req.Header.Set(v1.HeaderProtocol, v1.Version)
+	req.Header.Set("User-Agent", "yad/"+buildinfo.Version)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+}
+
+// answer reads a hub's JSON answer into out, or its error envelope into a
+// StatusError; out nil reads an error alone.
+func answer(resp *http.Response, out any) error {
 	// A hub's answer is small; anything past this is a misbehaving server, and
 	// reading it unbounded would let one grow the runner's memory.
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
@@ -137,6 +218,9 @@ func (c *Client) do(ctx context.Context, bearer, path string, in, out any) error
 			se.Protocol = &env.Error
 		}
 		return se
+	}
+	if out == nil {
+		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("hub answered %d with a body that is not the protocol's: %w", resp.StatusCode, err)

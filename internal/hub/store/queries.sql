@@ -97,13 +97,15 @@ SELECT * FROM runs WHERE id = ?;
 -- session has at most one live run. Nor in a session whose close is asked
 -- for: the runner acts on close_session before the offers beside it and would
 -- refuse the run, which instead ends with the close once reported (DEV-120).
+-- Nor in one whose release is asked for: the run waits to hear whether it
+-- goes to the same runner or, released, to any (decision 0080).
 -- A session opened as a fork and not yet bound goes only to the runner that
 -- holds the session it forks, where the conversation is (decision 0065).
 -- Filtering here rather than in Go is what keeps runs it must skip from
 -- filling the page ahead of runs it could take.
 SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
-  AND s.close_requested_at IS NULL AND s.closed_at IS NULL
+  AND s.close_requested_at IS NULL AND s.closed_at IS NULL AND s.release_requested_at IS NULL
   AND r.harness IN (SELECT value FROM json_each(sqlc.arg(harnesses_json)))
   AND (r.created_at > sqlc.arg(after_created_at) OR (r.created_at = sqlc.arg(after_created_at) AND r.id > sqlc.arg(after_id)))
   AND (s.runner_id IS NULL OR s.runner_id = sqlc.arg(runner_id))
@@ -131,7 +133,7 @@ LIMIT sqlc.arg(max);
 -- session it forks is (decision 0065).
 SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
-  AND s.close_requested_at IS NULL AND s.closed_at IS NULL
+  AND s.close_requested_at IS NULL AND s.closed_at IS NULL AND s.release_requested_at IS NULL
   AND r.harness IN (SELECT value FROM json_each(sqlc.arg(harnesses_json)))
   AND (r.created_at > sqlc.arg(after_created_at) OR (r.created_at = sqlc.arg(after_created_at) AND r.id > sqlc.arg(after_id)))
   AND ((s.runner_id = sqlc.arg(runner_id) AND NOT EXISTS (
@@ -455,3 +457,70 @@ SELECT * FROM account_removals WHERE runner_id = ? ORDER BY requested_at, harnes
 
 -- name: EndAccountRemoval :exec
 DELETE FROM account_removals WHERE runner_id = ? AND harness = ? AND account = ?;
+
+-- Releasing a session (decision 0080, 0013_session_release.sql).
+
+-- A release asked for: of a session bound to a runner, not closed or
+-- closing. A repeat keeps the first request's time and takes the latest
+-- discard_local.
+-- name: RequestSessionRelease :execrows
+UPDATE sessions SET release_requested_at = COALESCE(release_requested_at, sqlc.arg(now)),
+  release_discard_local = sqlc.arg(discard_local), release_error = NULL
+WHERE id = sqlc.arg(id) AND runner_id IS NOT NULL AND closed_at IS NULL AND close_requested_at IS NULL;
+
+-- The sessions release_session goes to this runner for.
+-- name: SessionsToRelease :many
+SELECT * FROM sessions
+WHERE runner_id = sqlc.arg(runner_id) AND release_requested_at IS NOT NULL AND closed_at IS NULL
+ORDER BY id;
+
+-- A release the runner refused, or the hub gave up asking for: the session
+-- stays bound to its runner, as it was, and its runs go out again.
+-- name: EndSessionRelease :execrows
+UPDATE sessions SET release_requested_at = NULL, release_error = sqlc.arg(error)
+WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id) AND release_requested_at IS NOT NULL;
+
+-- A release its runner reported: the session is bound to no runner, and its
+-- next run opens it from the archive wherever it goes. A fork's source is
+-- history by now, and the runner the session was offered to while unbound
+-- earlier has nothing of it.
+-- name: MarkSessionReleased :execrows
+UPDATE sessions SET runner_id = NULL, bound_by_run = NULL, offered_to = NULL, fork_from = NULL,
+  release_requested_at = NULL, release_error = NULL, released_at = sqlc.arg(now), released_from = sqlc.arg(runner_id)
+WHERE id = sqlc.arg(id) AND runner_id = sqlc.arg(runner_id) AND release_requested_at IS NOT NULL AND closed_at IS NULL;
+
+-- An upload replaces what an earlier one of the same release left: the
+-- runner built the archive again after a restart.
+-- name: PutSessionArchive :exec
+INSERT INTO session_archives (session_id, sha256, bytes, data, runner_id, uploaded_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT (session_id) DO UPDATE SET sha256 = excluded.sha256, bytes = excluded.bytes, data = excluded.data,
+  runner_id = excluded.runner_id, uploaded_at = excluded.uploaded_at, released = 0;
+
+-- name: GetSessionArchive :one
+SELECT session_id, sha256, bytes, runner_id, uploaded_at, released FROM session_archives WHERE session_id = ?;
+
+-- name: SessionArchiveData :one
+SELECT data FROM session_archives WHERE session_id = ?;
+
+-- The archive the runner reported releasing the session with: from now the
+-- session's conversation.
+-- name: SetArchiveReleased :execrows
+UPDATE session_archives SET released = 1 WHERE session_id = ? AND sha256 = ? AND runner_id = ?;
+
+-- name: DeleteSessionArchive :exec
+DELETE FROM session_archives WHERE session_id = ?;
+
+-- A run of the session is running on the runner it is bound to, which opened
+-- it from the archive: the conversation is there now, and the archive goes.
+-- name: DropOpenedArchive :execrows
+DELETE FROM session_archives
+WHERE session_id = sqlc.arg(id) AND released = 1
+  AND EXISTS (SELECT 1 FROM sessions s WHERE s.id = session_archives.session_id AND s.runner_id = sqlc.arg(runner_id));
+
+-- Archives uploaded before the cutoff.
+-- name: ExpiredArchives :many
+SELECT session_id, released FROM session_archives WHERE uploaded_at <= ? ORDER BY session_id;
+
+-- name: RunOfferedInSession :one
+SELECT EXISTS (SELECT 1 FROM runs WHERE session_id = sqlc.arg(session_id) AND runner_id = sqlc.arg(runner_id) AND state = 'offered');

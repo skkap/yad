@@ -172,6 +172,9 @@ func Serve(ctx context.Context, o Options) error {
 	defer o.Monitor.attachLogins(nil)
 	o.Accounts.onRemoved(logins.accountRemoved)
 	defer o.Accounts.onRemoved(nil)
+	releases := &Releases{Store: st, Data: o.Paths.Data, Adapters: o.Adapters, Workdirs: workdirs, Accounts: o.Accounts,
+		Capabilities: o.Capabilities, Sessions: sessions, Log: o.Log}
+	sv.releases = releases
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -181,8 +184,10 @@ func Serve(ctx context.Context, o Options) error {
 				r.Wake()
 			}
 		},
+		Archives: func(conn string) ArchiveHub { return releases.Hub(conn) },
 		Ended: func() {
 			sessions.Wake()
+			releases.Wake()
 			if o.HeldChanged != nil {
 				o.HeldChanged()
 			}
@@ -222,7 +227,9 @@ func Serve(ctx context.Context, o Options) error {
 			RecentErrors: o.RecentErrors, Logins: logins,
 			ManageAccounts: manage[conn.Name], Paths: o.Paths, AccountsChanged: o.AccountsChanged,
 			HeldChanged: o.HeldChanged, Settle: workdirs.Settle,
+			ReleaseSessions: conn.MayReleaseSessions(), Releases: releases,
 		}
+		releases.Join(conn.Name, client, l.Wake)
 		// A result the hub now has is a session's live run ended there,
 		// and the next turn in it can be offered at the next sync. One put
 		// off to a retry no longer holds that sync back either.
@@ -280,6 +287,7 @@ type server struct {
 	exec     *Exec
 	sessions *Collector
 	probe    *LoginProbe
+	releases *Releases
 	// logins are the hub logins in flight, which a self-update's drain
 	// waits for as it waits for runs. Nil has none.
 	logins    *Logins
@@ -375,6 +383,9 @@ func (s *server) run(ctx context.Context) error {
 	var bg sync.WaitGroup
 	bg.Go(func() { s.sessions.Run(lctx) })
 	bg.Go(func() { s.probe.Run(lctx) })
+	// Releases go on whether or not a loop does: one built and owed an
+	// upload waits for its connection's hub, and one settled for its sync.
+	bg.Go(func() { s.releases.Run(lctx) })
 	go func() { bg.Wait(); close(background) }()
 	defer func() { stopLoops(); <-background }()
 	s.mu.Lock()

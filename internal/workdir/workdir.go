@@ -113,8 +113,14 @@ type Request struct {
 	// and workdir: their branches are still in the cache, so the default
 	// branch here carries the same mark the workdir does (decision 0079).
 	// Empty for every other session.
-	Retake  string
-	Sources []v1.Source
+	Retake string
+	// Branches are the branches a session opened from a session archive
+	// carries, by each git source's URL as StoredSources keeps it: the branch
+	// its last runner worked on, which a source naming no branch is checked
+	// out on here, as the remote has it (decision 0080). Nil for every other
+	// session.
+	Branches map[string]string
+	Sources  []v1.Source
 	// Emit puts a status or tool event into the run's stream. Never nil.
 	Emit func(v1.Event)
 }
@@ -265,6 +271,14 @@ func (m *Manager) plan(req Request) ([]item, error) {
 				if err := checkRef("sources["+fmt.Sprint(i)+"].git.base", it.base); err != nil {
 					return nil, err
 				}
+			}
+			if carried := req.Branches[withoutCredential(src.Git.URL)]; it.branch == "" && carried != "" {
+				// Checked as a run's own branch is: it came from another
+				// runner, through the hub.
+				if err := checkRef("the archive's branch for sources["+fmt.Sprint(i)+"]", carried); err != nil {
+					return nil, err
+				}
+				it.branch = carried
 			}
 			if it.branch == "" {
 				// Session ids are unique only within a connection, and

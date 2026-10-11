@@ -125,6 +125,7 @@ func (h *Hub) registerRunner(ctx context.Context, in *registerInput) (*registerO
 		SyncIntervalMS:   int(h.interval / time.Millisecond),
 		LeaseMS:          int(h.lease / time.Millisecond),
 		MinVersion:       h.minVersion,
+		ArchiveMaxBytes:  h.archiveMax,
 	}}, nil
 }
 

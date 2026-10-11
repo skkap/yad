@@ -80,6 +80,29 @@ func (q *Queries) ClearHarnessSilence(ctx context.Context, arg ClearHarnessSilen
 	return err
 }
 
+const closeReleasedSession = `-- name: CloseReleasedSession :execrows
+UPDATE sessions SET state = 'closed', close_reason = 'released', closed_at = ?1, close_requested_at = NULL,
+  reported_at = ?1
+WHERE connection = ?2 AND id = ?3 AND state = 'open'
+`
+
+type CloseReleasedSessionParams struct {
+	Now        sql.NullInt64
+	Connection string
+	ID         string
+}
+
+// The session closes as released, in the transaction that settles its
+// release. Its hub hears of it in released_sessions, never in
+// closed_sessions, whose reasons are a closed set: reported_at is set here.
+func (q *Queries) CloseReleasedSession(ctx context.Context, arg CloseReleasedSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, closeReleasedSession, arg.Now, arg.Connection, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const closeRequestedEmptySession = `-- name: CloseRequestedEmptySession :execrows
 UPDATE sessions SET state = CASE WHEN close_reason IN ('expired', 'disk_pressure') THEN 'expired' ELSE 'closed' END,
   closed_at = ?1, close_requested_at = NULL
@@ -250,8 +273,8 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) error {
 const createSession = `-- name: CreateSession :exec
 
 
-INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at, fork_from)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at, fork_from, archive)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateSessionParams struct {
@@ -263,6 +286,7 @@ type CreateSessionParams struct {
 	CreatedAt  int64
 	LastUsedAt int64
 	ForkFrom   sql.NullString
+	Archive    sql.NullString
 }
 
 // Every hub-issued id (session, run) is addressed together with its
@@ -283,6 +307,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 		arg.CreatedAt,
 		arg.LastUsedAt,
 		arg.ForkFrom,
+		arg.Archive,
 	)
 	return err
 }
@@ -519,6 +544,38 @@ func (q *Queries) FreeSlots(ctx context.Context, arg FreeSlotsParams) error {
 	return err
 }
 
+const getRelease = `-- name: GetRelease :one
+
+SELECT connection, session_id, discard_local, requested_at, archive, sha256, bytes, attempts, next_attempt_at, last_error, settled_at, error, reported_at FROM releases WHERE connection = ? AND session_id = ?
+`
+
+type GetReleaseParams struct {
+	Connection string
+	SessionID  string
+}
+
+// Releasing a session (decision 0080, 0012_session_release.sql).
+func (q *Queries) GetRelease(ctx context.Context, arg GetReleaseParams) (Release, error) {
+	row := q.db.QueryRowContext(ctx, getRelease, arg.Connection, arg.SessionID)
+	var i Release
+	err := row.Scan(
+		&i.Connection,
+		&i.SessionID,
+		&i.DiscardLocal,
+		&i.RequestedAt,
+		&i.Archive,
+		&i.Sha256,
+		&i.Bytes,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.SettledAt,
+		&i.Error,
+		&i.ReportedAt,
+	)
+	return i, err
+}
+
 const getRun = `-- name: GetRun :one
 SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent, acknowledged FROM runs WHERE connection = ? AND id = ?
 `
@@ -556,7 +613,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions WHERE connection = ? AND id = ?
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from, archive, carried FROM sessions WHERE connection = ? AND id = ?
 `
 
 type GetSessionParams struct {
@@ -584,6 +641,8 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session
 		&i.ReclaimedAt,
 		&i.ReportedAt,
 		&i.ForkFrom,
+		&i.Archive,
+		&i.Carried,
 	)
 	return i, err
 }
@@ -622,10 +681,12 @@ func (q *Queries) HeldRunInSession(ctx context.Context, arg HeldRunInSessionPara
 }
 
 const idleSessions = `-- name: IdleSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < ?1
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from, archive, carried FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.last_used_at < ?1
   AND (?2 = 0 OR s.workdir != '')
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
     AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
+  AND NOT EXISTS (SELECT 1 FROM releases rl WHERE rl.connection = s.connection AND rl.session_id = s.id
+    AND rl.settled_at IS NULL)
 ORDER BY s.last_used_at, s.connection, s.id
 LIMIT ?3
 `
@@ -666,6 +727,8 @@ func (q *Queries) IdleSessions(ctx context.Context, arg IdleSessionsParams) ([]S
 			&i.ReclaimedAt,
 			&i.ReportedAt,
 			&i.ForkFrom,
+			&i.Archive,
+			&i.Carried,
 		); err != nil {
 			return nil, err
 		}
@@ -1158,7 +1221,7 @@ func (q *Queries) NoteHarnessSilent(ctx context.Context, arg NoteHarnessSilentPa
 }
 
 const openSessionsOf = `-- name: OpenSessionsOf :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions WHERE connection = ? AND state = 'open' ORDER BY id
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from, archive, carried FROM sessions WHERE connection = ? AND state = 'open' ORDER BY id
 `
 
 func (q *Queries) OpenSessionsOf(ctx context.Context, connection string) ([]Session, error) {
@@ -1187,6 +1250,8 @@ func (q *Queries) OpenSessionsOf(ctx context.Context, connection string) ([]Sess
 			&i.ReclaimedAt,
 			&i.ReportedAt,
 			&i.ForkFrom,
+			&i.Archive,
+			&i.Carried,
 		); err != nil {
 			return nil, err
 		}
@@ -1212,6 +1277,47 @@ func (q *Queries) OutboxDepth(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const pendingReleases = `-- name: PendingReleases :many
+SELECT connection, session_id, discard_local, requested_at, archive, sha256, bytes, attempts, next_attempt_at, last_error, settled_at, error, reported_at FROM releases WHERE settled_at IS NULL AND next_attempt_at <= ? ORDER BY requested_at, connection, session_id
+`
+
+func (q *Queries) PendingReleases(ctx context.Context, nextAttemptAt int64) ([]Release, error) {
+	rows, err := q.db.QueryContext(ctx, pendingReleases, nextAttemptAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Release{}
+	for rows.Next() {
+		var i Release
+		if err := rows.Scan(
+			&i.Connection,
+			&i.SessionID,
+			&i.DiscardLocal,
+			&i.RequestedAt,
+			&i.Archive,
+			&i.Sha256,
+			&i.Bytes,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.SettledAt,
+			&i.Error,
+			&i.ReportedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const putOutbox = `-- name: PutOutbox :exec
 INSERT INTO outbox (connection, run_id, body, next_attempt_at) VALUES (?, ?, ?, ?)
 ON CONFLICT (connection, run_id) DO NOTHING
@@ -1234,6 +1340,32 @@ func (q *Queries) PutOutbox(ctx context.Context, arg PutOutboxParams) error {
 	return err
 }
 
+const refuseRelease = `-- name: RefuseRelease :exec
+INSERT INTO releases (connection, session_id, requested_at, settled_at, error)
+VALUES (?1, ?2, ?3, ?3, ?4)
+ON CONFLICT (connection, session_id) DO UPDATE SET
+  settled_at = excluded.settled_at, error = excluded.error, reported_at = NULL
+WHERE releases.settled_at IS NOT NULL AND releases.reported_at IS NOT NULL
+`
+
+type RefuseReleaseParams struct {
+	Connection string
+	SessionID  string
+	Now        int64
+	Error      sql.NullString
+}
+
+// A release refused before it began: the runner has no such session, say.
+func (q *Queries) RefuseRelease(ctx context.Context, arg RefuseReleaseParams) error {
+	_, err := q.db.ExecContext(ctx, refuseRelease,
+		arg.Connection,
+		arg.SessionID,
+		arg.Now,
+		arg.Error,
+	)
+	return err
+}
+
 const renameSlotsRepo = `-- name: RenameSlotsRepo :exec
 UPDATE OR IGNORE slots SET repo = ?1 WHERE repo = ?2
 `
@@ -1248,6 +1380,50 @@ type RenameSlotsRepoParams struct {
 // one under the old name is freed with its session.
 func (q *Queries) RenameSlotsRepo(ctx context.Context, arg RenameSlotsRepoParams) error {
 	_, err := q.db.ExecContext(ctx, renameSlotsRepo, arg.NewRepo, arg.OldRepo)
+	return err
+}
+
+const reportReleaseAgain = `-- name: ReportReleaseAgain :exec
+UPDATE releases SET reported_at = NULL WHERE connection = ? AND session_id = ? AND settled_at IS NOT NULL
+`
+
+type ReportReleaseAgainParams struct {
+	Connection string
+	SessionID  string
+}
+
+// A release the hub heard of and asks about again: told once more.
+func (q *Queries) ReportReleaseAgain(ctx context.Context, arg ReportReleaseAgainParams) error {
+	_, err := q.db.ExecContext(ctx, reportReleaseAgain, arg.Connection, arg.SessionID)
+	return err
+}
+
+const requestRelease = `-- name: RequestRelease :exec
+INSERT INTO releases (connection, session_id, discard_local, requested_at)
+VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT (connection, session_id) DO UPDATE SET
+  discard_local = excluded.discard_local, requested_at = excluded.requested_at,
+  archive = NULL, sha256 = NULL, bytes = NULL, attempts = 0, next_attempt_at = 0, last_error = NULL,
+  settled_at = NULL, error = NULL, reported_at = NULL
+WHERE releases.error IS NOT NULL AND releases.reported_at IS NOT NULL
+`
+
+type RequestReleaseParams struct {
+	Connection   string
+	SessionID    string
+	DiscardLocal int64
+	Now          int64
+}
+
+// A release asked for: a new one, or one refused and heard of before, asked
+// again. One still in progress, or settled and not yet heard of, stays as it is.
+func (q *Queries) RequestRelease(ctx context.Context, arg RequestReleaseParams) error {
+	_, err := q.db.ExecContext(ctx, requestRelease,
+		arg.Connection,
+		arg.SessionID,
+		arg.DiscardLocal,
+		arg.Now,
+	)
 	return err
 }
 
@@ -1398,6 +1574,28 @@ func (q *Queries) RetryOutbox(ctx context.Context, arg RetryOutboxParams) error 
 		arg.LastError,
 		arg.Connection,
 		arg.RunID,
+	)
+	return err
+}
+
+const retryRelease = `-- name: RetryRelease :exec
+UPDATE releases SET attempts = attempts + 1, next_attempt_at = ?, last_error = ?
+WHERE connection = ? AND session_id = ? AND settled_at IS NULL
+`
+
+type RetryReleaseParams struct {
+	NextAttemptAt int64
+	LastError     sql.NullString
+	Connection    string
+	SessionID     string
+}
+
+func (q *Queries) RetryRelease(ctx context.Context, arg RetryReleaseParams) error {
+	_, err := q.db.ExecContext(ctx, retryRelease,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.Connection,
+		arg.SessionID,
 	)
 	return err
 }
@@ -1630,7 +1828,7 @@ func (q *Queries) SessionSourcesWithAt(ctx context.Context) ([]SessionSourcesWit
 }
 
 const sessionsCloseRequested = `-- name: SessionsCloseRequested :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions s WHERE s.state = 'open' AND s.close_requested_at IS NOT NULL
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from, archive, carried FROM sessions s WHERE s.state = 'open' AND s.close_requested_at IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
     AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
 ORDER BY s.close_requested_at
@@ -1662,6 +1860,8 @@ func (q *Queries) SessionsCloseRequested(ctx context.Context) ([]Session, error)
 			&i.ReclaimedAt,
 			&i.ReportedAt,
 			&i.ForkFrom,
+			&i.Archive,
+			&i.Carried,
 		); err != nil {
 			return nil, err
 		}
@@ -1818,6 +2018,44 @@ func (q *Queries) SetHarnessSilenceUntil(ctx context.Context, arg SetHarnessSile
 	return err
 }
 
+const setReleaseArchive = `-- name: SetReleaseArchive :exec
+UPDATE releases SET archive = ?, sha256 = ?, bytes = ? WHERE connection = ? AND session_id = ? AND settled_at IS NULL
+`
+
+type SetReleaseArchiveParams struct {
+	Archive    sql.NullString
+	Sha256     sql.NullString
+	Bytes      sql.NullInt64
+	Connection string
+	SessionID  string
+}
+
+func (q *Queries) SetReleaseArchive(ctx context.Context, arg SetReleaseArchiveParams) error {
+	_, err := q.db.ExecContext(ctx, setReleaseArchive,
+		arg.Archive,
+		arg.Sha256,
+		arg.Bytes,
+		arg.Connection,
+		arg.SessionID,
+	)
+	return err
+}
+
+const setReleaseReported = `-- name: SetReleaseReported :exec
+UPDATE releases SET reported_at = ? WHERE connection = ? AND session_id = ? AND settled_at IS NOT NULL AND reported_at IS NULL
+`
+
+type SetReleaseReportedParams struct {
+	ReportedAt sql.NullInt64
+	Connection string
+	SessionID  string
+}
+
+func (q *Queries) SetReleaseReported(ctx context.Context, arg SetReleaseReportedParams) error {
+	_, err := q.db.ExecContext(ctx, setReleaseReported, arg.ReportedAt, arg.Connection, arg.SessionID)
+	return err
+}
+
 const setRunAccount = `-- name: SetRunAccount :exec
 UPDATE runs SET account = ?, account_switches = ?, updated_at = ? WHERE connection = ? AND id = ?
 `
@@ -1951,6 +2189,30 @@ func (q *Queries) SetRunWaiting(ctx context.Context, arg SetRunWaitingParams) er
 	return err
 }
 
+const setSessionImported = `-- name: SetSessionImported :exec
+UPDATE sessions SET native_id = ?, archive = NULL, carried = ?, last_used_at = ? WHERE connection = ? AND id = ?
+`
+
+type SetSessionImportedParams struct {
+	NativeID   sql.NullString
+	Carried    sql.NullString
+	LastUsedAt int64
+	Connection string
+	ID         string
+}
+
+// The conversation of a session opened from an archive is in place.
+func (q *Queries) SetSessionImported(ctx context.Context, arg SetSessionImportedParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionImported,
+		arg.NativeID,
+		arg.Carried,
+		arg.LastUsedAt,
+		arg.Connection,
+		arg.ID,
+	)
+	return err
+}
+
 const setSessionNativeID = `-- name: SetSessionNativeID :exec
 UPDATE sessions SET native_id = ?, last_used_at = ? WHERE connection = ? AND id = ?
 `
@@ -2057,6 +2319,30 @@ func (q *Queries) SetSessionWorkdir(ctx context.Context, arg SetSessionWorkdirPa
 		arg.ID,
 	)
 	return err
+}
+
+const settleRelease = `-- name: SettleRelease :execrows
+UPDATE releases SET settled_at = ?, error = ? WHERE connection = ? AND session_id = ? AND settled_at IS NULL
+`
+
+type SettleReleaseParams struct {
+	SettledAt  sql.NullInt64
+	Error      sql.NullString
+	Connection string
+	SessionID  string
+}
+
+func (q *Queries) SettleRelease(ctx context.Context, arg SettleReleaseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, settleRelease,
+		arg.SettledAt,
+		arg.Error,
+		arg.Connection,
+		arg.SessionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const slotsInUse = `-- name: SlotsInUse :many
@@ -2210,7 +2496,7 @@ func (q *Queries) UnackedEvents(ctx context.Context, arg UnackedEventsParams) ([
 }
 
 const unreclaimedSessions = `-- name: UnreclaimedSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions WHERE state != 'open' AND reclaimed_at IS NULL ORDER BY closed_at
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from, archive, carried FROM sessions WHERE state != 'open' AND reclaimed_at IS NULL ORDER BY closed_at
 `
 
 func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
@@ -2239,6 +2525,8 @@ func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
 			&i.ReclaimedAt,
 			&i.ReportedAt,
 			&i.ForkFrom,
+			&i.Archive,
+			&i.Carried,
 		); err != nil {
 			return nil, err
 		}
@@ -2254,7 +2542,7 @@ func (q *Queries) UnreclaimedSessions(ctx context.Context) ([]Session, error) {
 }
 
 const unreportedClosedSessions = `-- name: UnreportedClosedSessions :many
-SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from FROM sessions WHERE connection = ?1 AND state != 'open' AND reported_at IS NULL
+SELECT connection, id, harness, native_id, account, workdir, state, created_at, last_used_at, sources, close_reason, close_requested_at, closed_at, reclaimed_at, reported_at, fork_from, archive, carried FROM sessions WHERE connection = ?1 AND state != 'open' AND reported_at IS NULL
 ORDER BY closed_at, id LIMIT ?2
 `
 
@@ -2289,6 +2577,55 @@ func (q *Queries) UnreportedClosedSessions(ctx context.Context, arg UnreportedCl
 			&i.ReclaimedAt,
 			&i.ReportedAt,
 			&i.ForkFrom,
+			&i.Archive,
+			&i.Carried,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unreportedReleases = `-- name: UnreportedReleases :many
+SELECT connection, session_id, discard_local, requested_at, archive, sha256, bytes, attempts, next_attempt_at, last_error, settled_at, error, reported_at FROM releases WHERE connection = ?1 AND settled_at IS NOT NULL AND reported_at IS NULL
+ORDER BY settled_at, session_id LIMIT ?2
+`
+
+type UnreportedReleasesParams struct {
+	Connection string
+	Max        int64
+}
+
+func (q *Queries) UnreportedReleases(ctx context.Context, arg UnreportedReleasesParams) ([]Release, error) {
+	rows, err := q.db.QueryContext(ctx, unreportedReleases, arg.Connection, arg.Max)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Release{}
+	for rows.Next() {
+		var i Release
+		if err := rows.Scan(
+			&i.Connection,
+			&i.SessionID,
+			&i.DiscardLocal,
+			&i.RequestedAt,
+			&i.Archive,
+			&i.Sha256,
+			&i.Bytes,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.SettledAt,
+			&i.Error,
+			&i.ReportedAt,
 		); err != nil {
 			return nil, err
 		}
