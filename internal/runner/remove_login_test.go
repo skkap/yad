@@ -48,18 +48,21 @@ func TestRemovingAConnectionEndsItsHubLogins(t *testing.T) {
 		name string
 		// before is where the hub left its login when the owner removed it.
 		before func(t *testing.T, r *loginRig)
+		// atOnce is a login already gone from the home, forgotten by the
+		// removal itself: nothing is left to wait for.
+		atOnce bool
 	}{
-		{"waiting on its code", func(*testing.T, *loginRig) {}},
+		{"waiting on its code", func(*testing.T, *loginRig) {}, false},
 		{"cancelled, still letting go of the home", func(_ *testing.T, r *loginRig) {
 			r.Control("hub", cancel)
-		}},
+		}, false},
 		{"ended, its end not yet carried", func(t *testing.T, r *loginRig) {
 			r.Control("hub", cancel)
 			r.until(t, "lg1", v1.LoginCancelled)
 			r.waitFor(func() bool { return !r.Busy() })
 			// And one this runner never had, answered all the same.
 			r.Control("hub", v1.Control{Kind: v1.ControlCancelLogin, LoginID: "never"})
-		}},
+		}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -74,6 +77,9 @@ func TestRemovingAConnectionEndsItsHubLogins(t *testing.T) {
 			sv := r.loginRemoval()
 			if _, err := sv.remove(context.Background(), "hub"); err != nil {
 				t.Fatal(err)
+			}
+			if tc.atOnce && r.Owed() {
+				t.Errorf("logins already gone from the home are still owed once the removal has returned: %+v", r.Reports("hub"))
 			}
 			r.waitFor(func() bool { return !r.Busy() && !r.Owed() })
 			if r.Busy() {

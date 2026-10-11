@@ -654,32 +654,30 @@ func (m *Logins) connectionRemoved(conn, why string) {
 	m.init()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var gone []*hubLogin
 	for k, l := range m.byKey {
-		if k.conn == conn {
-			m.endLocked(l, v1.LoginCancelled, why)
-			gone = append(gone, l)
+		if k.conn != conn {
+			continue
 		}
-	}
-	if len(gone) == 0 {
-		return
-	}
-	// Each keeps its place among maxLogins until it has let go: a login
-	// still stopping its process or checking the home is still held here.
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		for _, l := range gone {
+		m.endLocked(l, v1.LoginCancelled, why)
+		// Each keeps its place among maxLogins until it has let go: a login
+		// still stopping its process or checking the home is still held here.
+		select {
+		case <-l.done:
+			delete(m.byKey, k)
+			continue
+		default:
+		}
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
 			<-l.done
-		}
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		for _, l := range gone {
-			if k := (loginKey{l.conn, l.id}); m.byKey[k] == l {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if m.byKey[k] == l {
 				delete(m.byKey, k)
 			}
-		}
-	}()
+		}()
+	}
 }
 
 // byLink drives the harness's own login over pipes: the link out, the code
