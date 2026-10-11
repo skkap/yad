@@ -32,7 +32,10 @@ const (
 	// EnvMode picks another ending: "died" exits 1 at once with something on
 	// stderr, before answering the prompt; "exit" exits 0 the same way;
 	// "deaf" never takes a cancel at the gate; "silent" reads its input and
-	// never writes a line.
+	// never writes a line; "stalled" stops reading its input at the gate and
+	// asks StalledRequests permissions, then reads again once the gate opens
+	// and answers the prompt cancelled if a session/cancel follows within
+	// EnvWait, as recorded if none does.
 	EnvMode = "ACP_TEST_MODE"
 	// EnvGate names a file the fake waits for, up to a minute, before it
 	// answers the prompt, with every update out; EnvAtGate is a file it
@@ -50,6 +53,11 @@ const (
 	// presence and length of every variable it is given a name for here.
 	EnvWatch = "ACP_TEST_WATCH"
 )
+
+// StalledRequests is how many permissions the fake asks in mode "stalled":
+// their answers, about 70 bytes each, are several times what the pipe (64 KiB
+// at most on Linux and macOS) and the adapter's input queue behind it hold.
+const StalledRequests = 4000
 
 // Version is what the fake answers to --version: the OpenCode release the
 // fixtures were recorded from.
@@ -143,6 +151,7 @@ func play() {
 	out := bufio.NewWriter(os.Stdout)
 	ids := map[string]string{} // recorded request id → the adapter's
 	promptID := ""             // the recorded id of the prompt
+	session := ""              // the session the adapter prompted
 	var early []clientMsg      // what the adapter sent before the fixture expected it
 	take := func(want clientMsg) (clientMsg, bool) {
 		match := func(m clientMsg) bool {
@@ -187,6 +196,11 @@ play:
 			}
 			if ours.Msg.Method == "session/prompt" {
 				promptID = string(ours.Msg.ID)
+				var p struct {
+					SessionID string `json:"sessionId"`
+				}
+				json.Unmarshal(got.Params, &p)
+				session = p.SessionID
 			}
 			continue
 		}
@@ -214,7 +228,13 @@ play:
 				case "exit":
 					os.Exit(0)
 				}
-				if awaitGate(in, &early, mode == "deaf") {
+				cancelled := false
+				if mode == "stalled" {
+					cancelled = stall(out, in, session, wait)
+				} else {
+					cancelled = awaitGate(in, &early, mode == "deaf")
+				}
+				if cancelled {
 					out.WriteString(`{"jsonrpc":"2.0","id":` + ids[promptID] + `,"result":{"stopReason":"cancelled"}}` + "\n")
 					break play
 				}
@@ -260,6 +280,37 @@ func awaitGate(in <-chan clientMsg, early *[]clientMsg, deaf bool) bool {
 	}
 	os.Exit(1)
 	return false
+}
+
+// stall is mode "stalled" at the gate: an agent too busy to read its input
+// while it asks for permissions, so that their answers fill the pipe. Nothing
+// is taken from in until the gate opens, and the reader stops once in is
+// full. Then it reads again and reports a session/cancel within wait.
+func stall(out *bufio.Writer, in <-chan clientMsg, session string, wait time.Duration) bool {
+	sid, _ := json.Marshal(session)
+	for i := range StalledRequests {
+		out.WriteString(`{"jsonrpc":"2.0","id":` + strconv.Itoa(1000+i) + `,"method":"session/request_permission","params":{"sessionId":` + string(sid) + `,"toolCall":{"title":"a tool call"},"options":[]}}` + "\n")
+	}
+	out.Flush()
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(os.Getenv(EnvGate)); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Exit(1)
+		}
+	}
+	timeout := time.After(wait)
+	for {
+		select {
+		case m := <-in:
+			if m.Method == "session/cancel" {
+				return true
+			}
+		case <-timeout:
+			return false
+		}
+	}
 }
 
 func openLog() *os.File {

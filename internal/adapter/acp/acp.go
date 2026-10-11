@@ -220,7 +220,7 @@ type turn struct {
 	session     string
 	prompted    bool // session/prompt has been sent: the turn's updates are the run's
 	over        bool // the turn takes no more input
-	interrupted bool
+	interrupted bool // session/cancel is queued, or there was no prompt yet to cancel
 
 	finished chan struct{} // closed once the turn is over and input is closed
 	eof      chan struct{} // closed once the agent's output has ended
@@ -261,17 +261,23 @@ func (t *turn) Steer(string) error {
 // stays resumable; the run ends with the prompt's answer, stop reason
 // cancelled. One that arrives before the prompt is sent ends the run without
 // it. A turn already over is not an error.
+//
+// The turn is marked interrupted only once the cancel is queued: one the
+// agent's full input refused returns the error and is sent again when the
+// hub repeats it, as the runner expects (internal/runner, control).
 func (t *turn) Interrupt() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.over || t.interrupted {
 		return nil
 	}
-	t.interrupted = true
-	if !t.prompted {
-		return nil
+	if t.prompted {
+		if err := t.conn.Notify("session/cancel", map[string]any{"sessionId": t.session}); err != nil {
+			return err
+		}
 	}
-	return t.conn.Notify("session/cancel", map[string]any{"sessionId": t.session})
+	t.interrupted = true
+	return nil
 }
 
 // Terminate is the ladder's SIGTERM, for an agent that did not stop when
@@ -732,7 +738,9 @@ func (t *turn) request(m *jsonrpc.Message) {
 	//
 	// Once the turn is interrupted, every request is answered cancelled,
 	// as ACP v1 asks of a client that has sent session/cancel: nothing more
-	// of an ending turn is approved.
+	// of an ending turn is approved. An interrupt whose cancel could not be
+	// queued has not marked it, so the owner's answer still holds until its
+	// repeat gets through.
 	t.mu.Lock()
 	ours, interrupted := p.SessionID == t.session, t.interrupted
 	t.mu.Unlock()
