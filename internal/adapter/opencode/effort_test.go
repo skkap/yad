@@ -6,7 +6,8 @@ import (
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
-// The longcat model is the one the recorded effort run used: it has levels.
+// effortModel is a free model on OpenCode Zen with effort levels: the one
+// every effort fixture was recorded on (record_test.go).
 const effortModel = "opencode/longcat-2.5-preview-free"
 
 // efforts is every effort the adapter set, in order.

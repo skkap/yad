@@ -35,11 +35,9 @@ import (
 )
 
 // recordModel is a free model on OpenCode Zen that answers quickly and
-// streams its reasoning; effortModel is a free one with effort levels.
-const (
-	recordModel = "opencode/nemotron-3.5-lightning-free"
-	effortModel = "opencode/longcat-2.5-preview-free"
-)
+// streams its reasoning; effortModel (effort_test.go) is a free one with
+// effort levels.
+const recordModel = "opencode/nemotron-3.5-lightning-free"
 
 // askBash makes OpenCode ask before a bash command, so a permission request
 // is recorded: its default configuration asks for none.
@@ -55,8 +53,9 @@ type scenario struct {
 	env      []string
 	resume   bool // resume a session that does not exist
 	// before, when set, is a first turn in a new session; the scenario's own
-	// turn resumes it, and only that turn is recorded.
-	before string
+	// turn resumes it, and only that turn is recorded. beforeEffort is the
+	// first turn's effort, on the scenario's model.
+	before, beforeEffort string
 	// fork makes the scenario's own turn fork the before session; with no
 	// before, it forks one that does not exist.
 	fork bool
@@ -86,6 +85,18 @@ var scenarios = []scenario{
 		context: "You are terse.",
 		prompt:  "Which word did I ask you to remember? Reply with the word only.", fork: true},
 	{name: "fork-missing", prompt: "Reply: hi", fork: true},
+	// A run without an effort in a session an earlier run set one on: OpenCode
+	// restores it on a resume and copies it into a fork, and the adapter sets
+	// it back to OpenCode's default (decision 0049). One already at the
+	// default, and a new session at OpenCode's own pick, are prompted as they
+	// open.
+	{name: "resume-held-effort", model: effortModel, before: "Reply with exactly: ok", beforeEffort: "high",
+		prompt: "Reply with exactly: pong"},
+	{name: "fork-held-effort", model: effortModel, before: "Reply with exactly: ok", beforeEffort: "high",
+		prompt: "Reply with exactly: pong", fork: true},
+	{name: "resume-default-effort", model: effortModel, before: "Reply with exactly: ok", beforeEffort: defaultEffort,
+		prompt: "Reply with exactly: pong"},
+	{name: "new-effort", model: effortModel, prompt: "Reply with exactly: pong"},
 	{name: "interrupt", prompt: "Write the numbers from 1 to 300 as English words, one per line. No tools.",
 		act: func(t *testing.T, tr adapter.Turn, e v1.Event) bool {
 			if e.Kind != v1.EventText {
@@ -133,6 +144,9 @@ func TestRecord(t *testing.T) {
 			if s.before != "" {
 				spec := base
 				spec.RunID, spec.Brief = "rec-"+s.name+"-before", v1.Brief{Instruction: s.before}
+				if s.beforeEffort != "" {
+					spec.Model, spec.Effort = s.model, s.beforeEffort
+				}
 				first, err := Adapter{}.Start(ctx, spec)
 				if err != nil {
 					t.Fatal(err)
