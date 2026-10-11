@@ -13,6 +13,8 @@ import (
 	"time"
 
 	v1 "github.com/skkap/yad/protocol/v1"
+
+	"github.com/skkap/yad/internal/supervise"
 )
 
 // LocalError is a failure whose cause belongs to this machine, not to the run:
@@ -200,6 +202,12 @@ type Outcome struct {
 	// turn's home, as the adapter's own errors give it (Spec.HarnessCheck),
 	// or "" for an adapter that has none.
 	Check string
+	// LeftRunning is what the turn's tool work still had running when the
+	// harness gave its answer (Census), whoever stopped it after. Nil is not
+	// measured — a turn that was cancelled, interrupted or stopped by a
+	// watchdog, or a census that could not be taken — and empty is measured,
+	// with nothing found: the two must not be confused.
+	LeftRunning *[]supervise.Leftover
 }
 
 // Limit is a usage limit hit by the account a turn ran on.

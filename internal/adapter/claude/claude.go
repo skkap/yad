@@ -326,6 +326,10 @@ type turn struct {
 	requests    int
 	settled     bool // the result in hand answered every frame we sent
 
+	// left is the census settle took, read by the reader once the stream
+	// has ended; both run on the reader's goroutine.
+	left *[]supervise.Leftover
+
 	q *adapter.Queue
 
 	final   chan struct{} // closed once the last result is in
@@ -428,18 +432,31 @@ func (t *turn) deny(requestID string) {
 // learns there is no more input and exits. The result is final only in the
 // first case — after an interrupt, a steer still waiting was dropped, not
 // answered.
+//
+// A result that answered everything is Claude's own end of the turn, and the
+// census of its tool work is taken here, with input still open: Claude runs
+// each Bash command in a session of its own and stops its background tasks
+// itself once it is told to go (decision 0080). closing is set first, so no
+// steer, interrupt or answer is queued while the census runs, and released,
+// so none of them waits on it.
 func (t *turn) settle(queued int) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.closing {
+		t.mu.Unlock()
 		return
 	}
 	complete := t.replayed >= t.written && queued == 0
 	if !complete && !t.interrupted {
+		t.mu.Unlock()
 		return
 	}
 	t.closing = true
 	t.settled = complete
+	measure := complete && !t.interrupted
+	t.mu.Unlock()
+	if measure {
+		t.left = adapter.Census(t.ctx, t.p)
+	}
 	close(t.frames)
 	close(t.final)
 }
@@ -551,6 +568,7 @@ loop:
 	e.effortRefused = adapter.Mask(e.effortRefused, t.env, t.secrets)
 	t.mu.Unlock()
 	t.outcome = tr.outcome(e)
+	t.outcome.LeftRunning = t.left
 	t.q.Close()
 	close(t.done)
 }

@@ -195,8 +195,12 @@ func TestAnInterruptNeverOvertakesThePrompt(t *testing.T) {
 	close(ready)
 	for range tr.Events() {
 	}
-	if o := tr.Wait(); o.State != v1.RunCancelled {
+	o := tr.Wait()
+	if o.State != v1.RunCancelled {
 		t.Fatalf("outcome %s %+v", o.State, o.Error)
+	}
+	if o.LeftRunning != nil {
+		t.Errorf("an interrupted turn was measured: %v", *o.LeftRunning)
 	}
 	b, err := os.ReadFile(log)
 	if err != nil {

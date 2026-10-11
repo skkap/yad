@@ -222,6 +222,8 @@ type turn struct {
 	// modelSet and effortSet: each is asked for once, so an agent whose
 	// answer carries no options is not asked again for ever.
 	modelSet, effortSet bool
+	// left is the census taken when the prompt was answered.
+	left *[]supervise.Leftover
 
 	mu          sync.Mutex
 	session     string
@@ -348,6 +350,7 @@ loop:
 	}
 	t.mu.Unlock()
 	t.outcome = t.tr.outcome(e)
+	t.outcome.LeftRunning = t.left
 	t.q.Close()
 	close(t.done)
 }
@@ -520,6 +523,16 @@ func (t *turn) respond(method string, m *jsonrpc.Message) {
 		} else {
 			t.tr.text.Flush()
 			t.tr.done = &r
+			// The agent's own end of the turn, and the census of its tool
+			// work is taken here, before input closes: OpenCode, the agent
+			// measured, runs each command in a process group of its own
+			// (decision 0080).
+			t.mu.Lock()
+			measure := !t.interrupted
+			t.mu.Unlock()
+			if measure {
+				t.left = adapter.Census(t.ctx, t.p)
+			}
 		}
 		t.stop()
 	}
