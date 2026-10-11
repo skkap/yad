@@ -91,7 +91,13 @@ func WriteRecord(dir string, r Record) error {
 	// A leading dot, so a reader passing over a write in progress skips it.
 	tmp, err := os.CreateTemp(dir, "."+recordName(r.ConfigDir)+".*")
 	if err != nil {
-		return err
+		// Without the temporary name, which differs at every attempt: the
+		// daemon logs a reason only when it changes.
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return fmt.Errorf("cannot create a file in %s: %w", dir, err)
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(append(b, '\n')); err != nil {

@@ -96,27 +96,29 @@ func TestADaemonRecordsItsNeedsBesideItsBinary(t *testing.T) {
 	}
 }
 
-// Absence is data: a daemon that cannot write its record beside the binary —
-// a directory another user owns — warns once in the log and in `yad status`,
-// and runs as before. It writes the record once it can.
+// Absence is data: a daemon that can replace its binary but cannot write its
+// record beside it — a needs directory left read-only — warns once in the log
+// and in `yad status`, and runs as before, since a profile of this user that
+// updates the binary would not see its needs. It writes the record once it
+// can.
 func TestADaemonThatCannotRecordItsNeedsWarnsAndCarriesOn(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes to a read-only directory")
 	}
 	p, cfg, bin := needsProfile(t, "home")
-	binDir := filepath.Dir(bin)
-	if err := os.Chmod(binDir, 0o555); err != nil {
+	needsDir := filepath.Join(filepath.Dir(bin), selfupdate.NeedsDirName)
+	if err := os.Mkdir(needsDir, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(binDir, 0o755) })
+	t.Cleanup(func() { os.Chmod(needsDir, 0o755) })
 	var log bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	r := recordNeeds(ctx, p, cfg, bin, slog.New(slog.NewTextHandler(&log, nil)))
 
 	why := r.Unrecorded()
-	if why == "" || !strings.Contains(why, binDir) {
-		t.Fatalf("unrecorded %q, want why, naming %s", why, binDir)
+	if why == "" || !strings.Contains(why, filepath.Base(needsDir)) {
+		t.Fatalf("unrecorded %q, want why, naming %s", why, needsDir)
 	}
 	r.refresh()
 	if n := strings.Count(log.String(), "level=WARN"); n != 1 {
@@ -130,7 +132,7 @@ func TestADaemonThatCannotRecordItsNeedsWarnsAndCarriesOn(t *testing.T) {
 		t.Errorf("status does not say the needs are unrecorded:\n%s", out.String())
 	}
 
-	if err := os.Chmod(binDir, 0o755); err != nil {
+	if err := os.Chmod(needsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	r.refresh()
@@ -139,5 +141,36 @@ func TestADaemonThatCannotRecordItsNeedsWarnsAndCarriesOn(t *testing.T) {
 	}
 	if _, ok := readNeeds(t, bin, p); !ok {
 		t.Error("no record once the directory is writable")
+	}
+}
+
+// A binary this user cannot replace — a root-owned yad in /usr/local/bin, as
+// the work-machine kit installs it with self-update off — is one no profile of
+// this user can update, so a record nobody here would read is no warning: a
+// note in the log, and nothing in `yad status`.
+func TestADaemonBesideABinaryItCannotReplaceIsQuietAboutItsNeeds(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to a read-only directory")
+	}
+	p, cfg, bin := needsProfile(t, "home")
+	binDir := filepath.Dir(bin)
+	if err := os.Chmod(binDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(binDir, 0o755) })
+	var log bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := recordNeeds(ctx, p, cfg, bin, slog.New(slog.NewTextHandler(&log, nil)))
+	r.refresh()
+
+	if why := r.Unrecorded(); why != "" {
+		t.Errorf("unrecorded %q for `yad status`, want nothing beside a binary this user cannot replace", why)
+	}
+	if strings.Contains(log.String(), "level=WARN") {
+		t.Errorf("warned beside a binary this user cannot replace:\n%s", log.String())
+	}
+	if n := strings.Count(log.String(), "no profile of this user can replace that binary"); n != 1 {
+		t.Errorf("%d notes over two attempts, want one; log:\n%s", n, log.String())
 	}
 }

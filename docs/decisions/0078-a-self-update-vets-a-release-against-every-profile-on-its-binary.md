@@ -70,19 +70,26 @@ What building it settled:
   `rm` that removes it, and the next check goes ahead once it is gone or its
   daemon has written it again. A refusal would last until the next release,
   for a file a person can delete in a second.
-- **A daemon that cannot write its record carries on.** It warns once in the
-  log, and `yad status` says so while it lasts; it tries again every minute.
-  Absence is data, never a reason not to run.
+- **A daemon that cannot write its record carries on.** It tries again every
+  minute. Absence is data, never a reason not to run. Whether it warns
+  depends on whether its own user could replace the binary — write access to
+  the directory beside the real file, which is what the updater's temporary
+  directory and rename(2) need, and in a sticky one a binary of its own.
+  When it could, a profile of that user updating the binary would not see
+  these needs: it warns once in the log, and `yad status` says so while it
+  lasts. When it could not, no profile of that user can update the binary
+  and none would read the record, so it notes this once in the log and
+  `yad status` stays quiet.
 
 ## Consequences
 
 A binary in a directory its runner's user cannot write — root-owned
 `/usr/local/bin`, as the kit installs it with self-update off — leaves that
-profile unrecorded, with the warning. Only a user who can write there could
-update the binary, and 0071 keeps self-update to binaries the runner's user
-owns. Releases older than this one write no record, so a profile still on
-one is invisible until it upgrades; with only v1 released, that costs
-nothing.
+profile unrecorded, and says so only in its log. Only a user who can write
+there could update the binary, and 0071 keeps self-update to binaries the
+runner's user owns. Releases older than this one write no record, so a
+profile still on one is invisible until it upgrades; with only v1 released,
+that costs nothing.
 
 ## Considered options
 

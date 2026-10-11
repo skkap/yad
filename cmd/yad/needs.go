@@ -32,6 +32,7 @@ type needsRecorder struct {
 	// could not be found, and then lost says why.
 	dir   string
 	lost  string
+	exe   string
 	every time.Duration
 	log   *slog.Logger
 
@@ -40,18 +41,21 @@ type needsRecorder struct {
 	stamp      os.FileInfo
 	protocols  map[string][]string
 	unrecorded string
+	// noted is what was last logged: why, and whether it was a warning.
+	noted string
 }
 
 // recordNeeds writes the record for cfg, the configuration the daemon
 // started with, and keeps it current until ctx ends. Nothing it meets stops
 // the runner: a record it cannot write is a warning in the log and a line in
-// `yad status`.
+// `yad status` — or, beside a binary this user cannot replace, a note in the
+// log alone.
 func recordNeeds(ctx context.Context, p config.Paths, cfg config.Config, exe string, log *slog.Logger) *needsRecorder {
 	// No stamp yet, so the first refresh reads config.toml again and keeps
 	// the stat beside what it read: a `yad connect` that landed while the
 	// daemon was starting is in the first record. cfg is what the record
 	// says only if that read fails.
-	r := &needsRecorder{paths: p, every: needsEvery, log: log, protocols: connectionProtocols(cfg)}
+	r := &needsRecorder{paths: p, exe: exe, every: needsEvery, log: log, protocols: connectionProtocols(cfg)}
 	var err error
 	if r.configDir, err = filepath.Abs(p.Config); err != nil {
 		r.lost = fmt.Sprintf("the config directory %s has no absolute path: %v", p.Config, err)
@@ -93,7 +97,7 @@ func (r *needsRecorder) Unrecorded() string {
 // in another shape.
 func (r *needsRecorder) refresh() {
 	if r.dir == "" {
-		r.note(r.lost)
+		r.note(r.lost, false)
 		return
 	}
 	fi, err := os.Stat(r.paths.ConfigFile())
@@ -123,30 +127,47 @@ func (r *needsRecorder) refresh() {
 		want.Protocols = map[string][]string{}
 	}
 	if have, ok, err := selfupdate.ReadRecord(r.dir, r.configDir); err == nil && ok && sameNeeds(have, want) {
-		r.note("")
+		r.note("", false)
 		return
 	}
 	want.Written = time.Now().UTC()
 	if err := selfupdate.WriteRecord(r.dir, want); err != nil {
-		r.note(fmt.Sprintf("cannot write it in %s: %v", r.dir, err))
+		// A binary this user cannot replace is one no profile of this user
+		// can update, so none of them would read the record: a root-owned
+		// yad in /usr/local/bin, as the work-machine kit installs it with
+		// self-update off, would otherwise warn at every start for nothing.
+		// Only a user who may write that directory could update it, and
+		// 0071 keeps self-update to binaries the runner's own user owns.
+		r.note(fmt.Sprintf("cannot write it in %s: %v", r.dir, err), !selfupdate.CanReplace(r.exe))
 		return
 	}
-	r.note("")
+	r.note("", false)
 }
 
-// note keeps why the record is missing, and logs only a change of it, so a
-// directory that stays unwritable is one warning and not one a minute.
-func (r *needsRecorder) note(why string) {
+// note keeps why the record is missing — for `yad status`, unless quiet: no
+// profile of this user could read it — and logs only a change, so a
+// directory that stays unwritable is one line and not one a minute.
+func (r *needsRecorder) note(why string, quiet bool) {
+	key := why
+	if quiet {
+		key = "quiet: " + why
+	}
 	r.mu.Lock()
-	was := r.unrecorded
+	was := r.noted
+	r.noted = key
 	r.unrecorded = why
+	if quiet {
+		r.unrecorded = ""
+	}
 	r.mu.Unlock()
 	switch {
-	case why == was:
-	case why != "":
-		r.log.Warn("this profile's protocol needs are not recorded beside the binary it runs, so another profile that updates the binary itself would not see them (decision 0078); the runner carries on", "reason", why)
-	default:
+	case key == was:
+	case why == "":
 		r.log.Info("this profile's protocol needs are recorded beside the binary it runs", "dir", r.dir)
+	case quiet:
+		r.log.Info("this profile's protocol needs are not recorded beside the binary it runs; no profile of this user can replace that binary, so none would read them (decision 0078)", "reason", why, "binary", r.exe)
+	default:
+		r.log.Warn("this profile's protocol needs are not recorded beside the binary it runs, so another profile that updates the binary itself would not see them (decision 0078); the runner carries on", "reason", why)
 	}
 }
 
