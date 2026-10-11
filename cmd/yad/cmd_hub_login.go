@@ -150,6 +150,11 @@ func (lc loginCLI) start(ctx context.Context, runnerID, harness, label string, q
 	code, err := readSecret(ctx, lc.stderr, "login code", oneLine)
 	if err != nil {
 		lc.giveUp(l)
+		// Piping is no way out here: the code exists only once this run's
+		// link is opened, and the next run has another link.
+		if echo := (*echoStaysOn)(nil); errors.As(err, &echo) {
+			return fmt.Errorf("%s; the login is cancelled — run `%s` again at a terminal that can turn echo off", echo.shown(), lc.hf.command(lc.verb("start"), runnerID, harness, label))
+		}
 		return err
 	}
 	if code == "" {

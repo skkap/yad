@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 	"github.com/skkap/yad/protocol/hubapi"
 	v1 "github.com/skkap/yad/protocol/v1"
 )
@@ -252,6 +254,52 @@ func (h *fakeLoginHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(l)
 }
 
+// newFakeLoginHub serves a fakeLoginHub on loopback for the test's length,
+// with a profile of the test's own, an admin token file for it, and polling
+// at test speed.
+func newFakeLoginHub(t *testing.T) (h *fakeLoginHub, hubURL, tokFile string) {
+	t.Helper()
+	accountEnv(t)
+	h = &fakeLoginHub{}
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	tokFile = filepath.Join(t.TempDir(), "admin-token")
+	if err := os.WriteFile(tokFile, []byte("yad-admin-not-a-real-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := loginPoll
+	loginPoll = 10 * time.Millisecond
+	t.Cleanup(func() { loginPoll = old })
+	return h, srv.URL, tokFile
+}
+
+// A terminal whose echo will not go off: the login is cancelled, nothing is
+// read, and the next action is one a person can follow. Piping the code in
+// is not — it exists only once this run's link is opened.
+func TestHubLoginRefusesATerminalThatEchoes(t *testing.T) {
+	h, hubURL, tokFile := newFakeLoginHub(t)
+	ft := &fakeTerm{echo: true, r: strings.NewReader("not-a-real-login-code\n")}
+	asTerminal(t, ft, errors.New("ioctl refused"))
+	code, _, errs := yadIn(t, "hub", "login", "start", "--hub", hubURL, "--token-file", tokFile, "r1", "claude", "work", "--code", "-")
+	if code == 0 {
+		t.Fatalf("exit 0 at a terminal that echoes: %s", errs)
+	}
+	if len(ft.echoedAt) != 0 {
+		t.Error("stdin was read with echo on")
+	}
+	h.mu.Lock()
+	cancelled, sent := h.cancelled, h.code
+	h.mu.Unlock()
+	if !cancelled || sent != "" {
+		t.Errorf("the login was cancelled = %v, sent %q", cancelled, sent)
+	}
+	if strings.Contains(errs, "pipe it in") {
+		t.Errorf("told to pipe in a code that does not exist yet: %s", errs)
+	}
+	shellwordtest.CheckEnv(t, onlyCommand(t, errs, "yad --profile default hub login start"), dirsEnv(t),
+		"yad", "--profile", "default", "hub", "login", "start", "--hub", hubURL, "--token-file", tokFile, "r1", "claude", "work")
+}
+
 // DEV-177, through a real terminal: the code `yad hub login start` reads —
 // with --code - or without — is pasted with echo off, after a prompt on
 // stderr, and sent; it is on no screen and in no output. Ctrl-C at the
@@ -268,18 +316,7 @@ func TestHubLoginTakesACodePastedAtATerminal(t *testing.T) {
 		{name: "Ctrl-C at the prompt", flag: []string{"--code", "-"}, ctrlC: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			accountEnv(t)
-			h := &fakeLoginHub{}
-			srv := httptest.NewServer(h)
-			defer srv.Close()
-			tokFile := filepath.Join(t.TempDir(), "admin-token")
-			if err := os.WriteFile(tokFile, []byte("yad-admin-not-a-real-token\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			old := loginPoll
-			loginPoll = 10 * time.Millisecond
-			defer func() { loginPoll = old }()
-
+			h, hubURL, tokFile := newFakeLoginHub(t)
 			master, slave := openPTY(t)
 			defer master.Close()
 			defer slave.Close()
@@ -295,7 +332,7 @@ func TestHubLoginTakesACodePastedAtATerminal(t *testing.T) {
 			var out bytes.Buffer
 			errs := watch("press Enter")
 			done := make(chan int, 1)
-			args := append([]string{"hub", "login", "start", "--hub", srv.URL, "--token-file", tokFile, "r1", "claude", "work"}, c.flag...)
+			args := append([]string{"hub", "login", "start", "--hub", hubURL, "--token-file", tokFile, "r1", "claude", "work"}, c.flag...)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			go func() { done <- run(ctx, args, &out, errs) }()

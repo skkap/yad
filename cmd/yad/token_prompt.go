@@ -40,7 +40,7 @@ func readSecret(ctx context.Context, stderr io.Writer, what string, piped func(i
 		// is short-lived and bound to the login the runner holds open, so
 		// worth less seen than a token, but no real terminal fails this,
 		// and one rule for every secret is easier to trust than exceptions.
-		return "", fmt.Errorf("stdin is a terminal whose echo could not be turned off (%v), so the %s would be shown as it is pasted — pipe it in instead", err, what)
+		return "", &echoStaysOn{what: what, err: err}
 	}
 	var s string
 	if isTerm {
@@ -57,6 +57,24 @@ func readSecret(ctx context.Context, stderr io.Writer, what string, piped func(i
 		return "", fmt.Errorf("stopped before the %s was read", what)
 	}
 	return s, err
+}
+
+// echoStaysOn is readSecret's refusal at a terminal whose echo would not go
+// off. Its next action, piping the secret in, fits a token, which exists
+// before the command runs; a caller whose secret does not says what to do
+// instead.
+type echoStaysOn struct {
+	what string
+	err  error
+}
+
+func (e *echoStaysOn) Error() string { return e.shown() + " — pipe it in instead" }
+
+func (e *echoStaysOn) Unwrap() error { return e.err }
+
+// shown is the refusal without its next action.
+func (e *echoStaysOn) shown() string {
+	return fmt.Sprintf("stdin is a terminal whose echo could not be turned off (%v), so the %s would be shown as it is pasted", e.err, e.what)
 }
 
 // readLine is one line of r, trimmed, or ctx's end: a person may walk away
