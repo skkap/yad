@@ -60,6 +60,12 @@ type Agent struct {
 	// LoginCheck is the agent's own command that says whether its login
 	// works, after its binary: every failure that could be a login names it.
 	LoginCheck []string
+	// DefaultEffort is the value of the agent's effort option that means
+	// "no effort chosen", taken by every model that has the option. A
+	// resumed or forked session is set back to it before a run that carries
+	// no effort is prompted. "" for an agent that declares none: its sessions
+	// are prompted at whatever effort they open with.
+	DefaultEffort string
 	// Raw, when set, receives the whole conversation, one JSON object per
 	// line, ours wrapped as {">": …}: the local diagnostic copy never sent to
 	// a hub (decision 0012), and what the fixture recorder keeps.
@@ -566,6 +572,19 @@ func (t *turn) configure() {
 		t.effortSet = true
 		t.send("session/set_config_option", map[string]any{"sessionId": t.session, "configId": o.ID, "value": effort})
 		return
+	}
+	// No effort is the agent's default on this run, not the effort an
+	// earlier run left on the session (decision 0049). OpenCode restores a
+	// session's last effort on a resume and copies it into a fork, and would
+	// prompt at it. Read after the model is set, since setting a model can
+	// change it. A session this run opened is left alone: what it shows is
+	// the agent's own choice for a run without an effort, not another run's.
+	if t.spec.Effort == "" && !t.effortSet && t.agent.DefaultEffort != "" && (t.asked != "" || t.forkFrom != "") {
+		if o := t.option("thought_level"); o != nil && o.CurrentValue != t.agent.DefaultEffort {
+			t.effortSet = true
+			t.send("session/set_config_option", map[string]any{"sessionId": t.session, "configId": o.ID, "value": t.agent.DefaultEffort})
+			return
+		}
 	}
 	t.prompt()
 }

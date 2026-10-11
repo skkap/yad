@@ -62,6 +62,10 @@ environment is, how its failures read, what its login check is. OpenCode's is
   `thought_level` option refuses a run carrying an effort, before anything is
   asked. An effort is set on every run that has one, even when the option
   already shows it: the value shown can be the default the agent would pick.
+  A run without one that resumes or forks a session is set back to the
+  agent's declared default effort (`acp.Agent.DefaultEffort`, `default` for
+  OpenCode) when the option shows another: OpenCode restores a session's
+  last effort on both. A new session is left as it opens.
 - *Interrupt* is `session/cancel`; the prompt then answers `cancelled`. The
   prompt is queued before an interrupt can see it was sent, so a cancel never
   reaches the agent ahead of the turn it is for.

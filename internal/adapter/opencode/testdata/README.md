@@ -27,6 +27,10 @@ names the machine. Only the latest recorded release is kept (decision 0067).
 | `interrupt` | `session/cancel` sent at the first text; the prompt answers `cancelled` |
 | `permission` | `bash` set to ask (`OPENCODE_CONFIG_CONTENT`), answered `allow_once` |
 | `permission-rejected` | the same, with `permission_mode = "reject"`, answered `reject_once` |
+| `resume-held-effort` | `session/resume`, with no effort, of a session whose first run set `high` on `opencode/longcat-2.5-preview-free`: OpenCode answers `high`, and the effort is set back to `default` before the prompt (decision 0049) |
+| `fork-held-effort` | `session/fork` of the same, from `/fork-work`: the new session answers `high` and is set back to `default` |
+| `resume-default-effort` | `session/resume` of a session whose first run set `default`: straight to the prompt |
+| `new-effort` | `session/new`, then the model set to `opencode/longcat-2.5-preview-free`: OpenCode's own pick, `low`, and straight to the prompt |
 | `provider-error` | recorded while Zen's upstream for `ling-3.0-flash-fin-free` was down: `-32603`, `errorName: APIError`, OpenCode's words |
 
 `list-models.txt` is what `opencode models` printed in the same throwaway
