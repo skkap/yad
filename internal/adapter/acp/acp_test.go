@@ -299,8 +299,11 @@ func TestANullIDErrorFailsTheOneRequestOutstanding(t *testing.T) {
 
 // With several requests outstanding the answer names none of them, and none
 // is guessed: the turn fails with the agent's error. With none outstanding it
-// is the agent's to explain, logged, and the run goes on.
+// is the agent's to explain, logged, and the run goes on. Either way its
+// words are masked of the run's environment and file grants, as its stderr
+// is: an agent that could not read a request may quote it back.
 func TestANullIDErrorWithSeveralOrNoneOutstanding(t *testing.T) {
+	const password, grant = "pw-0123456789abcdef", "grant-file-value-42"
 	for _, tc := range []struct {
 		name   string
 		wait   map[int64]string
@@ -313,16 +316,30 @@ func TestANullIDErrorWithSeveralOrNoneOutstanding(t *testing.T) {
 			var events []v1.Event
 			tu := &turn{
 				agent: testAgent, wait: tc.wait, finished: make(chan struct{}),
-				in: newInput(nopWriter{}, testAgent.Name),
+				in:   newInput(nopWriter{}, testAgent.Name),
+				env:  []string{"OPENCODE_SERVER_PASSWORD=" + password},
+				spec: adapter.Spec{Secrets: []string{grant}},
 			}
 			defer tu.in.Close()
 			tu.tr = newTranslator(func(e v1.Event) { events = append(events, e) }, testAgent, tu.spec)
 			tu.handle(jsonrpc.Line{Msg: &jsonrpc.Message{
 				ID:    json.RawMessage("null"),
-				Error: &jsonrpc.RPCError{Code: jsonrpc.CodeInternal, Message: "something broke"},
+				Error: &jsonrpc.RPCError{Code: jsonrpc.CodeInternal, Message: "something broke reading " + password + " and " + grant},
 			}})
-			if !logged(events, "something broke") {
-				t.Errorf("not logged as a stream event: %+v", events)
+			if !logged(events, "something broke reading "+adapter.Redacted+" and "+adapter.Redacted) {
+				t.Errorf("not logged, masked, as a stream event: %+v", events)
+			}
+			var said string
+			for _, e := range events {
+				if e.Error != nil {
+					said += e.Error.Message + "\n"
+				}
+			}
+			if tu.tr.fault != nil {
+				said += tu.tr.fault.Message
+			}
+			if strings.Contains(said, password) || strings.Contains(said, grant) {
+				t.Errorf("a secret went out unmasked: %s", said)
 			}
 			if tu.over != tc.failed {
 				t.Errorf("turn over %v, want %v", tu.over, tc.failed)

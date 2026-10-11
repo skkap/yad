@@ -402,10 +402,13 @@ func (t *turn) handle(l jsonrpc.Line) {
 // would leave a prompt — which has no deadline of its own — waiting for the
 // runner's inactivity watchdog. With one request outstanding it is that
 // one's; with several, the turn fails without guessing which; with none,
-// there is nothing it can end. The agent's words are logged either way.
+// there is nothing it can end. The agent's words are logged either way,
+// masked as its stderr is: an agent that could not read a request may quote
+// it back, and a run's error goes to a hub.
 func (t *turn) unmatched(e *jsonrpc.RPCError) {
+	said := adapter.Mask(e.Message, t.env, t.spec.Secrets)
 	t.tr.text.Flush()
-	t.tr.emitErr(adapter.ClassStream, fmt.Sprintf("%s answered with an error tied to no request (id null): %s", t.agent.Name, e.Error()))
+	t.tr.emitErr(adapter.ClassStream, fmt.Sprintf("%s answered with an error tied to no request (id null, code %d): %s", t.agent.Name, e.Code, said))
 	next := fmt.Sprintf("check `%s` against the release this yad was built for (`%s`)", shellword.Command(t.agent.ID, "--version"), t.spec.YadCommand("doctor"))
 	switch len(t.wait) {
 	case 0:
@@ -413,10 +416,10 @@ func (t *turn) unmatched(e *jsonrpc.RPCError) {
 	case 1:
 		for id, method := range t.wait {
 			delete(t.wait, id)
-			t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s refused %s, the one request it had not answered, with an error that names no request: %s — %s", t.agent.Name, method, e.Message, next))
+			t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s refused %s, the one request it had not answered, with an error that names no request: %s — %s", t.agent.Name, method, said, next))
 		}
 	default:
-		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s refused one of the %d requests it had not answered, with an error that names none of them: %s — %s", t.agent.Name, len(t.wait), e.Message, next))
+		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s refused one of the %d requests it had not answered, with an error that names none of them: %s — %s", t.agent.Name, len(t.wait), said, next))
 	}
 	t.deadline = time.Time{}
 	t.stop()
