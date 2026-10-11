@@ -491,8 +491,9 @@ func TestDiskPressurePassesSessionsWithNoWorkdir(t *testing.T) {
 }
 
 // Collection with the manager the runner prepares with: a session whose
-// workdir is a git worktree loses it from the bare cache, its WT_SLOT is
-// freed for the next worktree, and its directory goes.
+// workdir is a git worktree has the repository's teardown run in it with
+// its WT_SLOT, loses it from the bare cache, its WT_SLOT is freed for the
+// next worktree, and its directory goes.
 func TestCollectionReclaimsGitWorktrees(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
@@ -515,6 +516,9 @@ func TestCollectionReclaimsGitWorktrees(t *testing.T) {
 	git(src, "init", "--quiet", "--bare", "--initial-branch=main", origin)
 	git(src, "clone", "--quiet", origin, work)
 	os.WriteFile(filepath.Join(work, "README"), []byte("x"), 0o600)
+	tornDown := filepath.Join(t.TempDir(), "torn-down")
+	os.MkdirAll(filepath.Join(work, ".worktree"), 0o755)
+	os.WriteFile(filepath.Join(work, ".worktree", "teardown"), []byte("#!/bin/sh\necho \"$WT_SLOT $WT_ROOT\" > '"+tornDown+"'\n"), 0o755)
 	git(work, "-c", "user.name=t", "-c", "user.email=t@example.com", "checkout", "--quiet", "-b", "main")
 	git(work, "add", ".")
 	git(work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "initial")
@@ -546,6 +550,9 @@ func TestCollectionReclaimsGitWorktrees(t *testing.T) {
 	e.sweep(t)
 	if !gone(dir) {
 		t.Error("the workdir is still there")
+	}
+	if b, err := os.ReadFile(tornDown); err != nil || string(b) != "1 "+dir+"\n" {
+		t.Errorf("the teardown wrote %q (%v), want its slot and root", b, err)
 	}
 	if wts := git(caches[0], "worktree", "list", "--porcelain"); strings.Contains(wts, dir) {
 		t.Errorf("the bare cache still lists the session's worktree:\n%s", wts)

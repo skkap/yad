@@ -8,7 +8,8 @@ holds an executable file at `.worktree/setup`, YAD runs it before the harness
 starts.
 
 The hook is optional. A repository without one still runs, and the run's events
-say there was no hook.
+say there was no hook. Its counterpart, `.worktree/teardown`, runs when the
+worktree is reclaimed ([Teardown](#teardown)).
 
 ## When it runs
 
@@ -32,7 +33,7 @@ say there was no hook.
 | `WT_BRANCH` | the branch the run works on. Unless the hub names one, `yad/<connection>/<session>` — or `yad/<connection>.<n>/<session>` (n from 1) when an earlier hub connected under the same name used the same session id ([0079](decisions/0079-a-reused-connection-name-retires-the-earlier-registrations-rows.md)) |
 | `WT_SLUG` | `WT_BRANCH` with every `/` replaced by `-` |
 | `WT_REPO` | the repository's name, taken from its URL |
-| `WT_SLOT` | a small integer from 1, unique among this repository's live worktrees on this runner. It is freed when the session's workdir is reclaimed, and reused |
+| `WT_SLOT` | a small integer from 1, unique among this repository's live worktrees on this runner. It is freed when the session's workdir is reclaimed, after the [teardown](#teardown) has finished, and reused |
 
 `WT_SLOT` is the one a hook cannot work out for itself. Use it for anything two
 worktrees of one repository must not share: ports, container and compose
@@ -72,6 +73,46 @@ session's next run tries the hook again
 
 The hook's combined output reaches the hub as one `tool_call` and
 `tool_result` pair, capped at 8 KiB from the end.
+
+## Teardown
+
+What setup starts outlives the worktree unless something stops it: a
+`docker compose up` keeps its containers, ports and named volumes after the
+directory is gone, and the next worktree given the same `WT_SLOT` collides with
+them. If the worktree holds an executable file at `.worktree/teardown`, YAD
+runs it when the session's workdir is reclaimed — on the hub's
+`close_session`, the owner's `yad sessions close`, the idle TTL or disk
+pressure — before it removes the worktree and frees the slot
+([0080](decisions/0080-reclaiming-a-workdir-runs-its-teardown-hook-first.md)).
+
+- It is found and run as setup is: the file in the worktree, never one it
+  links to outside the checkout, with the worktree as its working directory,
+  as the runner's own user, in the same environment. The file that runs is
+  the one the session left there, which the harness may have changed.
+- It gets the same variables, with the values setup was given. `WT_BRANCH`
+  is the branch the run started on, even if the harness has switched branch
+  since, so a compose project named from `WT_SLUG` is the one setup made.
+- It runs only in a worktree a run got as far as, whose session still holds
+  its slot, whether or not setup succeeded. A path source never runs one.
+- It never fails anything. A teardown that exits non-zero, runs past
+  `[workdirs] teardown_timeout` (2 minutes by default) or will not start is a
+  warning in the runner's log and `yad status`, and in the recent errors every
+  hub reads in the runner's health, and the worktree is removed and the slot
+  freed anyway. What the hook printed is not kept: the warning gives its exit
+  status. The runner's collector waits for it before going on to the next
+  workdir, so keep it to stopping what is running.
+- **It must be safe to run twice.** A runner stopped while a teardown runs
+  kills it, keeps the worktree, and runs the teardown again after it starts.
+  Stop what is there and ignore what is not:
+
+```sh
+#!/bin/sh
+set -u
+: "${WT_ROOT:=$(git rev-parse --show-toplevel)}"
+: "${WT_SLUG:=$(git branch --show-current | tr / -)}"
+cd "$WT_ROOT"
+docker compose -p "app-$WT_SLUG" down --volumes --remove-orphans || true
+```
 
 ## What it is not
 

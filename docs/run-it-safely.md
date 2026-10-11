@@ -265,7 +265,10 @@ Two details that are easy to miss:
   point: the repository you check out gets to run code too.
 - **A setup hook runs too.** A repository's own `.worktree/setup` is executed in
   a new workdir (`internal/workdir/hook.go`). That is a feature, and it is also
-  a repository executing code on your machine before the harness starts.
+  a repository executing code on your machine before the harness starts. Its
+  `.worktree/teardown` runs the same way when the workdir is reclaimed
+  (`internal/workdir/teardown.go`), and the one that runs is whatever the
+  session left in its worktree, which the harness may have edited.
 
 ## One runner per trust domain
 

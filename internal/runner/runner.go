@@ -132,7 +132,7 @@ func Serve(ctx context.Context, o Options) error {
 	w := o.Config.Workdirs
 	workdirs := &workdir.Manager{
 		Data: o.Paths.Data, Roots: w.EffectiveRoots(), PathSourcesOff: !w.AllowsPathSources(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
-		Slots: st,
+		TeardownTimeout: w.TeardownTimeout.Duration, Slots: st, Log: o.Log,
 	}
 	// Before any run is claimed or any workdir collected: it may move a bare
 	// cache out from under both.

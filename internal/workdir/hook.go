@@ -35,6 +35,8 @@ const setupDone = "yad-setup-done"
 type hookEnv struct {
 	root, main, branch, repo string
 	slot                     int64
+	// gitDir is the worktree's own git directory, where its marks live.
+	gitDir string
 	// fresh is a worktree added by this run.
 	fresh bool
 }
@@ -58,15 +60,11 @@ func (h hookEnv) vars() []string {
 // the harness would otherwise start in a checkout its repository says is not
 // ready. The worktree stays, and the session's next run tries the hook again.
 func (m *Manager) setup(ctx context.Context, req Request, h hookEnv) error {
-	gitDir, err := m.git(ctx, h.root, "rev-parse", "--absolute-git-dir")
-	if err != nil {
-		return &Error{Class: ClassSourceFailed, Msg: err.Error()}
-	}
-	marker := filepath.Join(gitDir, setupDone)
+	marker := filepath.Join(h.gitDir, setupDone)
 	if _, err := os.Stat(marker); err == nil {
 		return nil
 	}
-	hook, why := m.findHook(h.root)
+	hook, why := findHook(h.root, hookPath)
 	if hook == "" {
 		if h.fresh {
 			req.Emit(v1.Event{Kind: v1.EventStatus, Status: fmt.Sprintf("no setup hook in %s: %s — the worktree is a clean checkout", h.repo, why)})
@@ -74,77 +72,111 @@ func (m *Manager) setup(ctx context.Context, req Request, h hookEnv) error {
 		return writeMarker(marker)
 	}
 
-	// The hook is a run's child like the harness, and a `docker compose up`
-	// in it should reach the docker the capability document advertised. The
-	// error is not quoted: it names the profile's data directory.
-	path, err := hostool.Links(hostool.LinksDir(m.Data))
-	if err != nil {
-		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s was not started: the runner could not link its git, gh and docker overrides into its data directory — check that the directory is writable and the disk is not full", hookPath, h.repo)}
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, m.SetupTimeout)
-	defer cancel()
 	// Unique per worktree: two repositories of one name in a run are two
 	// hooks, and a hub joins a call to its result by the id.
 	id := "setup-" + h.repo + "-" + digest(h.root)
-	req.Emit(v1.Event{Kind: v1.EventToolCall, Tool: &v1.ToolEvent{
-		ID: id, Name: "setup hook", Input: fmt.Sprintf("%s in %s on %s, WT_SLOT=%d", hookPath, h.repo, h.branch, h.slot),
-	}})
-	env := append(append([]string{}, noPrompt...), h.vars()...)
-	if path != "" {
-		env = append(env, path)
-	}
-	p, err := supervise.Start(ctx, supervise.Spec{Path: hook, Dir: h.root, Env: env, NoTTY: true, MergeStderr: true})
-	if err != nil {
-		// Not the exec error: it names the hook by its absolute path, under the
-		// owner's home. findHook has proved it an executable file inside the
-		// checkout, so what is left is the interpreter its #! line names.
-		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s could not be started — check that its #! line names an interpreter this runner has", hookPath, h.repo)}
-	}
-	out, truncated := readTail(p, v1.MaxToolOutputBytes)
-	werr := p.Wait()
-	req.Emit(v1.Event{Kind: v1.EventToolResult, Tool: &v1.ToolEvent{ID: id, Output: out, Truncated: truncated}})
+	out, truncated, err := m.runHook(ctx, hook, h, m.SetupTimeout, func() {
+		req.Emit(v1.Event{Kind: v1.EventToolCall, Tool: &v1.ToolEvent{
+			ID: id, Name: "setup hook", Input: fmt.Sprintf("%s in %s on %s, WT_SLOT=%d", hookPath, h.repo, h.branch, h.slot),
+		}})
+	})
 	var exit *exec.ExitError
 	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+	case errors.Is(err, errHookLinks):
+		// Not quoted: the links' error names the profile's data directory.
+		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s was not started: the runner could not link its git, gh and docker overrides into its data directory — check that the directory is writable and the disk is not full", hookPath, h.repo)}
+	case errors.Is(err, errHookStart):
+		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s could not be started — check that its #! line names an interpreter this runner has", hookPath, h.repo)}
+	}
+	req.Emit(v1.Event{Kind: v1.EventToolResult, Tool: &v1.ToolEvent{ID: id, Output: out, Truncated: truncated}})
+	switch {
+	case errors.Is(err, errHookTimeout):
 		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s did not finish within %s and was stopped — the worktree is kept, and the session's next run runs the hook again; the owner raises [workdirs] setup_timeout if it needs longer", hookPath, h.repo, m.SetupTimeout)}
-	case ctx.Err() != nil:
-		return ctx.Err()
-	case errors.As(werr, &exit):
+	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		return err
+	case errors.As(err, &exit):
 		msg := fmt.Sprintf("%s in %s exited %d", hookPath, h.repo, exit.ExitCode())
 		if last := lastLine(out); last != "" {
 			msg += ": " + last
 		}
 		return &Error{Class: ClassSetupFailed, Msg: msg + " — the worktree is kept, and the session's next run runs the hook again"}
-	case werr != nil:
-		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s: %v", hookPath, h.repo, werr)}
+	case err != nil:
+		return &Error{Class: ClassSetupFailed, Msg: fmt.Sprintf("%s in %s: %v", hookPath, h.repo, err)}
 	}
 	return writeMarker(marker)
 }
 
-// findHook returns the worktree's hook, or "" and why there is none. A hook is
-// the repository's own code, run as the runner's user like the harness after
-// it; what is refused is a hook that is really a file outside the checkout.
-func (m *Manager) findHook(root string) (string, string) {
-	path := filepath.Join(root, hookPath)
+// What runHook failed at before the hook's own exit status: each caller says
+// it in its own words.
+var (
+	errHookLinks   = errors.New("the runner could not link its git, gh and docker overrides into its data directory")
+	errHookStart   = errors.New("the hook could not be started")
+	errHookTimeout = errors.New("the hook did not finish within its timeout and was stopped")
+)
+
+// runHook runs a hook found by findHook in h.root with the WT_* contract, for
+// at most timeout, and returns the last of its output. started is called once
+// the hook is about to start, and not at all when it never gets that far.
+//
+// The error is errHookLinks or errHookStart when the hook never ran, and
+// errHookTimeout when it was stopped; ctx's own error when ctx ended; an
+// *exec.ExitError when it exited non-zero. The exec error is never returned:
+// it names the hook by its absolute path, under the owner's home, and
+// findHook has proved the hook an executable file inside the checkout, so
+// what is left is the interpreter its #! line names.
+func (m *Manager) runHook(ctx context.Context, hook string, h hookEnv, timeout time.Duration, started func()) (string, bool, error) {
+	// The hook is a run's child like the harness, and a `docker compose` in it
+	// should reach the docker the capability document advertised.
+	path, err := hostool.Links(hostool.LinksDir(m.Data))
+	if err != nil {
+		return "", false, errHookLinks
+	}
+	hctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	started()
+	env := append(append([]string{}, noPrompt...), h.vars()...)
+	if path != "" {
+		env = append(env, path)
+	}
+	p, err := supervise.Start(hctx, supervise.Spec{Path: hook, Dir: h.root, Env: env, NoTTY: true, MergeStderr: true})
+	if err != nil {
+		return "", false, errHookStart
+	}
+	out, truncated := readTail(p, v1.MaxToolOutputBytes)
+	werr := p.Wait()
+	switch {
+	case ctx.Err() != nil:
+		return out, truncated, ctx.Err()
+	case errors.Is(hctx.Err(), context.DeadlineExceeded):
+		return out, truncated, errHookTimeout
+	}
+	return out, truncated, werr
+}
+
+// findHook returns the worktree's hook at rel, or "" and why there is none. A
+// hook is the repository's own code, run as the runner's user like the
+// harness after it; what is refused is a hook that is really a file outside
+// the checkout.
+func findHook(root, rel string) (string, string) {
+	path := filepath.Join(root, rel)
 	real, err := filepath.EvalSymlinks(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", hookPath + " does not exist"
+		return "", rel + " does not exist"
 	}
 	if err != nil {
-		return "", hookPath + " cannot be read — check its permissions and where it links"
+		return "", rel + " cannot be read — check its permissions and where it links"
 	}
 	if r, err := filepath.EvalSymlinks(root); err != nil || !within(r, real) {
-		return "", hookPath + " links outside the repository, so it is not run"
+		return "", rel + " links outside the repository, so it is not run"
 	}
 	fi, err := os.Stat(real)
 	switch {
 	case err != nil:
-		return "", hookPath + " cannot be read — check its permissions and where it links"
+		return "", rel + " cannot be read — check its permissions and where it links"
 	case !fi.Mode().IsRegular():
-		return "", hookPath + " is not a file"
+		return "", rel + " is not a file"
 	case fi.Mode().Perm()&0o111 == 0:
-		return "", hookPath + " is not executable"
+		return "", rel + " is not executable"
 	}
 	return real, ""
 }

@@ -126,8 +126,9 @@ type Collector struct {
 	IdleTTL time.Duration
 	// DiskFloor is the free space kept under Workdirs; zero turns it off.
 	DiskFloor int64
-	// Reclaim undoes what preparing the workdir left outside it — git
-	// worktrees registered in the bare caches, the session's WT_SLOTs —
+	// Reclaim undoes what preparing the workdir left outside it — the
+	// stacks a repository's teardown hook stops, git worktrees registered
+	// in the bare caches, the session's WT_SLOTs —
 	// before the directory itself is removed: workdir.Manager.Reclaim, the
 	// same manager the executor prepares with. Nil frees the slots alone.
 	Reclaim func(ctx context.Context, connection, session, dir string) error
@@ -309,6 +310,12 @@ func (c *Collector) Sweep(ctx context.Context) error {
 	}
 	// First, so what it closes is reclaimed by this same sweep.
 	errs := []error{c.endRemoved(ctx)}
+	// Before the closes: each close reclaims its workdir at once, and a
+	// reclaim waits for the repository's teardown hook, up to its timeout for
+	// every worktree. A parked run past its hub's max_wait is not kept
+	// waiting behind them — and a session whose close waited on it closes
+	// in this same sweep.
+	errs = append(errs, c.expireWaits(ctx, now))
 	asked, err := c.Store.SessionsCloseRequested(ctx)
 	if err != nil {
 		return err
@@ -323,7 +330,6 @@ func (c *Collector) Sweep(ctx context.Context) error {
 	if c.DiskFloor > 0 {
 		errs = append(errs, c.relieve(ctx, now))
 	}
-	errs = append(errs, c.expireWaits(ctx, now))
 	left, err := c.Store.UnreclaimedSessions(ctx)
 	if err != nil {
 		return errors.Join(append(errs, err)...)

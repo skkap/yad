@@ -253,6 +253,7 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 		"internal/runner/executor.go":           "a run's grant files, deleted when the run ends and inside the data directory",
 		"internal/workdir/hook.go":              "a marker file in a workdir, which holds no secret",
 		"internal/workdir/workdir.go":           "a marker file in a checkout, which holds no secret",
+		"internal/workdir/teardown.go":          "a worktree's branch and repository name and its teardown's mark, in its git directory, which hold no secret",
 		"internal/account/token.go":             "a token account's token, in its home inside the data directory this checks as a whole — and one others can read is refused rather than used (decision 0054)",
 		"internal/account/tokenlogin.go":        "the same token as Claude's login, in the same home inside the data directory this checks as a whole, written 0600 again whenever the home is prepared, and the empty mark of a login beside it, which holds nothing (decision 0076)",
 		"internal/adapter/opencode/opencode.go": "a run's context for OpenCode, in a directory of its own under the temp directory, removed when the run's OpenCode exits (decision 0073)",

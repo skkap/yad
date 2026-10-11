@@ -138,6 +138,9 @@ type WorkdirsConfig struct {
 	GitTimeout Duration `toml:"git_timeout"`
 	// SetupTimeout bounds a repository's .worktree/setup.
 	SetupTimeout Duration `toml:"setup_timeout"`
+	// TeardownTimeout bounds a repository's .worktree/teardown, run when a
+	// workdir is reclaimed (decision 0080).
+	TeardownTimeout Duration `toml:"teardown_timeout"`
 }
 
 // AllowsPathSources is whether a run may name a source on this machine at
@@ -277,6 +280,10 @@ const (
 	// A setup hook installs dependencies and builds; gpiwt measured the
 	// slowest repositories at a few minutes.
 	DefaultSetupTimeout = 15 * time.Minute
+	// A teardown stops containers and drops volumes, which takes seconds; one
+	// still going after two minutes is more likely wedged than busy, and every
+	// reclaim behind it in the sweep waits for it.
+	DefaultTeardownTimeout = 2 * time.Minute
 )
 
 // Default is the config a new profile starts with.
@@ -286,7 +293,7 @@ func Default() Config {
 		Sessions:  SessionsConfig{IdleTTL: Duration{DefaultIdleTTL}, DiskFloor: DefaultDiskFloor},
 		Supervise: SuperviseConfig{Inactivity: Duration{DefaultInactivity}, FirstOutput: Duration{DefaultFirstOutput}},
 		Drain:     DrainConfig{Wait: Duration{DefaultDrainWait}},
-		Workdirs:  WorkdirsConfig{GitTimeout: Duration{DefaultGitTimeout}, SetupTimeout: Duration{DefaultSetupTimeout}},
+		Workdirs:  WorkdirsConfig{GitTimeout: Duration{DefaultGitTimeout}, SetupTimeout: Duration{DefaultSetupTimeout}, TeardownTimeout: Duration{DefaultTeardownTimeout}},
 	}
 }
 
@@ -395,7 +402,7 @@ func (c Config) Validate() error {
 	for _, d := range []struct {
 		name string
 		v    Duration
-	}{{"workdirs.git_timeout", c.Workdirs.GitTimeout}, {"workdirs.setup_timeout", c.Workdirs.SetupTimeout}} {
+	}{{"workdirs.git_timeout", c.Workdirs.GitTimeout}, {"workdirs.setup_timeout", c.Workdirs.SetupTimeout}, {"workdirs.teardown_timeout", c.Workdirs.TeardownTimeout}} {
 		if d.v.Duration < 0 {
 			errs = append(errs, fmt.Errorf("%s must not be negative, got %s", d.name, d.v.Duration))
 		}

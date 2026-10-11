@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,9 @@ func (e *Error) Error() string { return e.Msg }
 // Slots allocates WT_SLOT. The runner's store is the one implementation.
 type Slots interface {
 	Slot(ctx context.Context, repo, connection, session string) (int64, error)
+	// HeldSlot is the slot a session holds for a repository, without
+	// allocating one: false when it holds none.
+	HeldSlot(ctx context.Context, repo, connection, session string) (int64, bool, error)
 	ReleaseSlots(ctx context.Context, connection, session string) error
 }
 
@@ -64,7 +68,12 @@ type Manager struct {
 	Git          string
 	GitTimeout   time.Duration
 	SetupTimeout time.Duration
-	Slots        Slots
+	// TeardownTimeout bounds a repository's .worktree/teardown in Reclaim.
+	TeardownTimeout time.Duration
+	Slots           Slots
+	// Log takes what a teardown did: Reclaim has no run to report it in.
+	// Nil discards it.
+	Log *slog.Logger
 
 	once  sync.Once
 	mu    sync.Mutex
@@ -79,6 +88,12 @@ func (m *Manager) init() {
 		}
 		if m.SetupTimeout <= 0 {
 			m.SetupTimeout = config.DefaultSetupTimeout
+		}
+		if m.TeardownTimeout <= 0 {
+			m.TeardownTimeout = config.DefaultTeardownTimeout
+		}
+		if m.Log == nil {
+			m.Log = slog.New(slog.DiscardHandler)
 		}
 	})
 }
@@ -333,9 +348,15 @@ func (m *Manager) checkout(ctx context.Context, req Request, it item) error {
 	if err != nil {
 		return &Error{Class: ClassSourceFailed, Msg: "no WT_SLOT could be allocated: " + err.Error()}
 	}
-	return m.setup(ctx, req, hookEnv{
-		root: it.dest, main: cache, branch: it.branch, repo: r.name, slot: slot, fresh: fresh,
-	})
+	gitDir, err := m.git(ctx, it.dest, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return &Error{Class: ClassSourceFailed, Msg: err.Error()}
+	}
+	h := hookEnv{root: it.dest, main: cache, branch: it.branch, repo: r.name, slot: slot, gitDir: gitDir, fresh: fresh}
+	if err := keepHookEnv(h); err != nil {
+		return err
+	}
+	return m.setup(ctx, req, h)
 }
 
 // cacheName is the directory under <data>/repos that holds r's bare cache.
@@ -673,12 +694,13 @@ func (m *Manager) Prune(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Reclaim undoes what Prepare left in a session's workdir: its worktrees are
-// removed from their bare caches — uncommitted work in them included — and,
-// once every one is out, the session's slots are freed for the next worktree.
-// A slot freed while its worktree is still registered could go to another
-// session's worktree of the same repository, and a setup hook derives ports
-// from it. Branches stay in the cache; a path source is never touched, and a
+// Reclaim undoes what Prepare left in a session's workdir: each worktree's
+// .worktree/teardown runs (teardown), then the worktrees are removed from
+// their bare caches — uncommitted work in them included — and, once every one
+// is out, the session's slots are freed for the next worktree. A slot freed
+// while its worktree is still registered, or its stacks still up, could go to
+// another session's worktree of the same repository, and a setup hook derives
+// ports from it. Branches stay in the cache; a path source is never touched, and a
 // symlink to one is not followed. Deleting the workdir itself is the caller's,
 // once this has returned without error. Workdir collection (decision 0035)
 // calls it, and calls it again after an error.
@@ -716,6 +738,15 @@ func (m *Manager) Reclaim(ctx context.Context, connection, session, dir string) 
 			continue
 		}
 		if c, err := filepath.EvalSymlinks(common); err != nil || !within(repos, c) {
+			continue
+		}
+		// Outside the repository's lock, like setup: a slow teardown must
+		// not hold up another session preparing a worktree of it.
+		if err := m.teardown(ctx, connection, session, wt, common); err != nil {
+			if ctx.Err() != nil {
+				return errors.Join(append(errs, err)...)
+			}
+			errs = append(errs, err)
 			continue
 		}
 		unlock, err := m.lockRepo(ctx, common)

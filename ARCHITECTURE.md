@@ -81,7 +81,7 @@ internal/adapter/acp     a generic Agent Client Protocol v1 core (0073)
 internal/adapter/opencode OpenCode over the ACP core: its context route, server password, failures
 internal/adapter/fake    a scripted harness for tests
 internal/supervise       spawn, process groups, watchdogs, cancel ladder
-internal/workdir         sources, bare caches, worktrees, setup hook, slots, GC
+internal/workdir         sources, bare caches, worktrees, setup and teardown hooks, slots, GC
 internal/runner          connections, sync loop, capacity, executor, spool, outbox
 internal/hubclient       the runner side of the protocol
 internal/hubapiclient    the caller side of yad hub's service API
@@ -878,7 +878,17 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   that fails fails the run with `setup_failed`
   ([0034](docs/decisions/0034-a-failing-setup-hook-fails-the-run.md)).
   Slots are allocated per repository per runner, from 1, and recycled when a
-  workdir is reclaimed (`workdir.Manager.Reclaim`).
+  workdir is reclaimed (`workdir.Manager.Reclaim`), once its teardown hook
+  has run. `checkout` records the branch and repository setup was given in
+  the worktree's git directory (`yad-hook-env`), for the teardown.
+- **Teardown hook**: when a workdir is reclaimed, each worktree's executable
+  `.worktree/teardown` runs before the worktree is removed, found and started
+  as setup is, with the same `WT_*` values (`internal/workdir/teardown.go`),
+  under `[workdirs] teardown_timeout`, outside the repository's lock. It runs
+  only where the add finished and the session holds a slot; at most once per
+  reclaim (`yad-teardown-done`), again after a cancelled one. A failure is a
+  warning in the log and the reclaim goes on
+  ([0080](docs/decisions/0080-reclaiming-a-workdir-runs-its-teardown-hook-first.md)).
 - **Reclaiming** — [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md),
   [0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md):
   on `close_session`, on the owner's `yad sessions close`, on the idle TTL
@@ -890,9 +900,11 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   deleted with it only when no close was asked for, and otherwise closes, so
   the close is reported and the run offered again is refused. The close is
   recorded first and the workdir removed by the collector's sweep —
-  `workdir.Manager.Reclaim` first takes its worktrees out of their bare caches
-  and frees its slots — which retries a removal that failed and touches
-  nothing outside `<data>/workdirs`.
+  `workdir.Manager.Reclaim` first runs each worktree's teardown hook, takes
+  its worktrees out of their bare caches and frees its slots — which retries
+  a removal that failed and touches nothing outside `<data>/workdirs`. A
+  sweep times out parked runs past their hub's `max_wait` before it closes
+  anything, so the teardowns its closes wait on never delay one.
   The collector runs whether or not any hub is connected: the disk is the
   machine's. It also ends what the store holds of a connection `config.toml`
   no longer lists — its runs no process holds end `lost`, its sessions close
@@ -1312,10 +1324,11 @@ first_output = "2m"    # the same, before the harness's first event: harness_sil
 wait = "30m"   # how long a drain lets runs finish before cancelling them — 0029
 
 [workdirs]
-roots         = ["/home/me/src"]  # where path sources and local git URLs may point — 0033; unset = your home directory (0038)
-path_sources  = false             # refuse path sources and local git URLs altogether, whatever roots says; absent = take them — 0062
-git_timeout   = "10m"
-setup_timeout = "15m"
+roots            = ["/home/me/src"]  # where path sources and local git URLs may point — 0033; unset = your home directory (0038)
+path_sources     = false             # refuse path sources and local git URLs altogether, whatever roots says; absent = take them — 0062
+git_timeout      = "10m"
+setup_timeout    = "15m"
+teardown_timeout = "2m"              # a .worktree/teardown past this is stopped, logged, and the worktree removed anyway — 0080
 
 [update]
 auto = true   # check for a newer release every 6 h, install it, re-exec at an idle moment — 0071; absent = never

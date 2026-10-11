@@ -267,7 +267,7 @@ OpenCode and Cursor Agent, which `yad doctor` recognises but will not run.
 | **[machines/README.md](machines/README.md)** | building a VM for one runner from a spec, and logging it in — at the machine or from the hub |
 | **[docs/containers.md](docs/containers.md)** | running a runner in a Docker container: the image, the volume, connecting, logging in, upgrading |
 | **[docs/trial.md](docs/trial.md)** | running YAD for real on one machine, and removing it cleanly |
-| **[docs/setup-hooks.md](docs/setup-hooks.md)** | making a repository ready for a run: `.worktree/setup` and the `WT_*` variables |
+| **[docs/setup-hooks.md](docs/setup-hooks.md)** | making a repository ready for a run and cleaning up after it: `.worktree/setup`, `.worktree/teardown` and the `WT_*` variables |
 | **[HUB.md](HUB.md)** | building a hub: every call, the run state machine, leases, sessions, grants, errors, and `yad conformance` |
 | **[DOMAIN.md](DOMAIN.md)** | the vocabulary: runner, hub, harness, session, run, account, grant, sync |
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | the shape: packages, the protocol, how each harness is driven, local state |
