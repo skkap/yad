@@ -158,6 +158,9 @@ const (
 	// printed to, found the way a harness's own shell command finds gh: by
 	// name, on the PATH the runner gave it.
 	fakeClaudeGH = "E2E_CLAUDE_GH"
+	// fakeClaudeEnv, when set, is a file the fake writes its whole
+	// environment to, one variable a line.
+	fakeClaudeEnv = "E2E_CLAUDE_ENV"
 	// childYad makes the test binary run as yad.
 	childYad = "E2E_YAD_MAIN"
 )
@@ -211,6 +214,9 @@ func fakeClaude() {
 			out = append(out, []byte("\n"+err.Error())...)
 		}
 		os.WriteFile(f, out, 0o600)
+	}
+	if f := os.Getenv(fakeClaudeEnv); f != "" {
+		os.WriteFile(f, []byte(strings.Join(os.Environ(), "\n")+"\n"), 0o600)
 	}
 	if f := os.Getenv(fakeClaudeArgs); f != "" {
 		wd, _ := os.Getwd()

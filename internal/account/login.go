@@ -144,17 +144,18 @@ func Login(ctx context.Context, harness, binary, home string, in io.Reader, out,
 		return fmt.Errorf("yad does not know how to log %s in — log in with %s's own command inside %s, then run `yad account list` to see it", harness, harness, home)
 	}
 	cmd := exec.CommandContext(ctx, binary, append(slices.Clone(args), extra...)...)
-	// Scrubbed as a run's child is (supervise.Scrub), then the home appended
-	// last — os/exec keeps the last of a repeated name, so an owner whose own
-	// shell exports CLAUDE_CONFIG_DIR still logs in to the account's home and
-	// not to theirs.
+	// Scrubbed as a run's child is, with the owner's [env] on it
+	// (supervise.Environ), then the home appended last — os/exec keeps the
+	// last of a repeated name, so an owner whose own shell exports
+	// CLAUDE_CONFIG_DIR still logs in to the account's home and not to theirs.
 	//
 	// The scrub matters beyond tidiness: a login that inherited CLAUDECODE
 	// from the session the owner typed the command in believes it is nested
 	// inside another Claude Code, and one that inherited ANTHROPIC_API_KEY
 	// would not be logging the subscription in at all. The child a run gets
-	// sees neither, so neither does this.
-	cmd.Env = append(supervise.Scrub(os.Environ(), nil), LoginEnv(harness, home)...)
+	// sees neither, so neither does this; and it sees the owner's [env] — a
+	// proxy the login needs to reach its server is one — so this does too.
+	cmd.Env = append(supervise.Environ(nil), LoginEnv(harness, home)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, errw
 	// Codex refuses to start outside a directory it trusts (DEV-24), and the
 	// home is one it made itself, so the login runs there rather than in

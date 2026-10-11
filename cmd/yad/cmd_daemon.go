@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/signal"
 	"slices"
@@ -108,6 +109,11 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	if err != nil {
 		return err
 	}
+	// Before the first probe: the docker probe and every login check run in
+	// the environment the runs will have (decisions 0045 and 0060). Fixed
+	// until the next start, like the rest of cfg but its account lists.
+	supervise.SetOwnerEnv(cfg.Env)
+	defer supervise.SetOwnerEnv(nil)
 	if err := g.paths.Ensure(); err != nil {
 		return err
 	}
@@ -209,6 +215,10 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	// own. Names only: the values are credentials.
 	if names := supervise.AccountVariables(os.Environ()); len(names) > 0 {
 		log.Warn("the daemon's environment sets variables that choose a harness's credential; each is removed from every child the runner starts, so runs use their account's login instead (decision 0060)", "variables", names)
+	}
+	// Names only, so the log says what a child had without what it was.
+	if len(cfg.Env) > 0 {
+		log.Info("config.toml's [env] is given to every child the runner starts", "variables", slices.Sorted(maps.Keys(cfg.Env)))
 	}
 
 	// Syncs read the document every interval; probing harnesses that often

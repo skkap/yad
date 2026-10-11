@@ -15,6 +15,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/control"
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/supervise"
 	v1 "github.com/skkap/yad/protocol/v1"
 )
 
@@ -115,11 +116,15 @@ func accountAdd(ctx context.Context, g global, args []string, w, stderr io.Write
 	if !ok {
 		return fmt.Errorf("%s is not installed on this machine — `%s` shows where it was looked for", id, g.paths.Command("doctor"))
 	}
-	// Loaded here only to refuse a config.toml that does not parse before the
-	// owner has spent a login on it; it is read again before it is written.
-	if _, err := config.Load(g.paths); err != nil {
+	// Loaded here to refuse a config.toml that does not parse before the
+	// owner has spent a login on it — it is read again before it is written —
+	// and so the login and its check run with the owner's [env], as the
+	// account's runs will.
+	cfg, err := config.Load(g.paths)
+	if err != nil {
 		return err
 	}
+	supervise.SetOwnerEnv(cfg.Env)
 	if err := g.paths.Ensure(); err != nil {
 		return err
 	}
