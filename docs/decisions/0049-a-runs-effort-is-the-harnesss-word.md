@@ -102,6 +102,19 @@ Claude's `--effort` is per process too. So absent means the harness's default
 on every run, as the field's description says, and a hub that wants one
 effort for a whole session sends it with every run.
 
+OpenCode is the harness that does carry it (DEV-178). 1.18.33 restores a
+session's effort from its last run on `session/resume` and copies it into a
+fork on `session/fork` (`restoreVariant` in its ACP service), then prompts at
+it. So a run without an effort that resumes or forks a session whose effort
+option shows anything but `default` (OpenCode's word for no variant, which
+every model with levels takes) sets it back to `default` before its prompt.
+A session the run opened itself is left as it opens: OpenCode picks a
+variant for a new session, `default` where the model has one and its first
+level where it does not, and that pick is its default for a run that names
+none. So a resumed run on such a model runs at `default` and a new one at
+OpenCode's pick; both are OpenCode's own answer to "no effort", and neither
+is an earlier run's.
+
 ## Codex reports its models
 
 In the same change, `HarnessReport.models` for Codex is read from the model

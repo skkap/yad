@@ -689,7 +689,10 @@ driven, with a warning on the harness in the capability document and in
 generic core (`internal/adapter/acp`) that knows nothing of OpenCode:
 `initialize` → `session/new`, `session/resume` (no replay) or `session/fork` →
 `session/set_config_option` for the model and, when the run has one, the
-effort (ACP's `thought_level` option) → one `session/prompt`, whose answer —
+effort (ACP's `thought_level` option) — or, when it has none and resumes or
+forks a session holding another, the agent's default effort, `default` for
+OpenCode ([0049](docs/decisions/0049-a-runs-effort-is-the-harnesss-word.md)) —
+→ one `session/prompt`, whose answer —
 its stop reason and usage — decides the run. Only the run's session's updates,
 once its prompt is sent, are its events; a fork's replay comes before. An
 interrupt is `session/cancel`; ACP v1 has no steer, so none is advertised for
