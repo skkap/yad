@@ -14,6 +14,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/acp/acptest"
 	"github.com/skkap/yad/internal/adapter/jsonrpc"
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
 // The core against agents that are not OpenCode: hand-written conversations
@@ -288,9 +289,7 @@ func TestANullIDErrorFailsTheOneRequestOutstanding(t *testing.T) {
 				!strings.Contains(o.Error.Message, tc.says) || !strings.Contains(o.Error.Message, tc.method) {
 				t.Fatalf("outcome %s %+v", o.State, o.Error)
 			}
-			if !strings.Contains(o.Error.Message, "`agent --version`") {
-				t.Errorf("no next action in %q", o.Error.Message)
-			}
+			checkNext(t, o.Error.Message, testAgent.ID)
 			if !logged(events, tc.says) {
 				t.Errorf("the agent's answer was not logged as a stream event: %+v", events)
 			}
@@ -316,6 +315,7 @@ func TestANullIDErrorWithSeveralOrNoneOutstanding(t *testing.T) {
 				agent: testAgent, wait: tc.wait, finished: make(chan struct{}),
 				in: newInput(nopWriter{}, testAgent.Name),
 			}
+			defer tu.in.Close()
 			tu.tr = newTranslator(func(e v1.Event) { events = append(events, e) }, testAgent, tu.spec)
 			tu.handle(jsonrpc.Line{Msg: &jsonrpc.Message{
 				ID:    json.RawMessage("null"),
@@ -336,6 +336,7 @@ func TestANullIDErrorWithSeveralOrNoneOutstanding(t *testing.T) {
 			if tu.tr.fault == nil || tu.tr.fault.Class != adapter.ClassHarness || !strings.Contains(tu.tr.fault.Message, "something broke") {
 				t.Fatalf("fault %+v", tu.tr.fault)
 			}
+			checkNext(t, tu.tr.fault.Message, testAgent.ID)
 			for _, method := range tc.wait {
 				if strings.Contains(tu.tr.fault.Message, method) {
 					t.Errorf("the error guesses %s: %q", method, tu.tr.fault.Message)
@@ -343,6 +344,18 @@ func TestANullIDErrorWithSeveralOrNoneOutstanding(t *testing.T) {
 			}
 		})
 	}
+}
+
+// checkNext runs the two commands a null-id failure's next action names
+// through a real sh: the agent's version, then yad doctor.
+func checkNext(t *testing.T, msg, id string) {
+	t.Helper()
+	parts := strings.Split(msg, "`")
+	if len(parts) != 5 {
+		t.Fatalf("want two commands set apart in backticks in %q", msg)
+	}
+	shellwordtest.Check(t, parts[1], id, "--version")
+	shellwordtest.Check(t, parts[3], "yad", "doctor")
 }
 
 // logged reports whether a stream event quotes says.

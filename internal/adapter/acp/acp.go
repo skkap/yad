@@ -29,6 +29,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/jsonrpc"
 	"github.com/skkap/yad/internal/buildinfo"
+	"github.com/skkap/yad/internal/shellword"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -405,7 +406,7 @@ func (t *turn) handle(l jsonrpc.Line) {
 func (t *turn) unmatched(e *jsonrpc.RPCError) {
 	t.tr.text.Flush()
 	t.tr.emitErr(adapter.ClassStream, fmt.Sprintf("%s answered with an error tied to no request (id null): %s", t.agent.Name, e.Error()))
-	next := fmt.Sprintf("check `%s --version` against the release this yad was built for (`%s`)", t.agent.ID, t.spec.YadCommand("doctor"))
+	next := fmt.Sprintf("check `%s` against the release this yad was built for (`%s`)", shellword.Command(t.agent.ID, "--version"), t.spec.YadCommand("doctor"))
 	switch len(t.wait) {
 	case 0:
 		return
