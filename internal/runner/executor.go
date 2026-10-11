@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -1405,6 +1407,7 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 	}()
 	return e.Workdirs.Prepare(pctx, workdir.Request{
 		Dir: dir, Connection: c.Connection, Session: c.Run.Session.ID, Sources: sources,
+		Retake: retakeOf(dir, c.Run.Session.ID),
 		Emit: func(ev v1.Event) {
 			if e.spool(bg, c, &ev, *lastSeq+1) {
 				*lastSeq = ev.Seq
@@ -1487,7 +1490,10 @@ func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native, forkOf string
 	}
 	dir = sess.Workdir
 	if dir == "" {
-		dir = filepath.Join(e.Data, "workdirs", c.Connection, pathName(c.Run.Session.ID))
+		dir, err = e.freeWorkdir(ctx, c)
+		if err != nil {
+			return "", "", "", err
+		}
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", "", "", err
@@ -1501,6 +1507,37 @@ func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native, forkOf string
 		forkOf = sess.ForkFrom.String
 	}
 	return dir, sess.NativeID.String, forkOf, nil
+}
+
+// freeWorkdir is the directory a session's first workdir goes in: named for
+// its connection and id, unless another session recorded that directory —
+// one with the same id under an earlier registration of the connection's
+// name, retired since (decision 0078). The collector removes that one's
+// workdir by its recorded path, and its git branches, named for the same
+// connection and id, are still in the caches: so this one takes the path
+// with a mark no id's path name can carry, ~1, ~2 and so on, and its
+// default branch takes the same mark (retakeOf).
+func (e *Exec) freeWorkdir(ctx context.Context, c Claim) (string, error) {
+	base := filepath.Join(e.Data, "workdirs", c.Connection, pathName(c.Run.Session.ID))
+	dir := base
+	for n := 1; ; n++ {
+		taken, err := e.Store.WorkdirTakenByAnother(ctx, db.WorkdirTakenByAnotherParams{Workdir: dir, Connection: c.Connection, ID: c.Run.Session.ID})
+		if err != nil || !taken {
+			return dir, err
+		}
+		dir = base + store.RetiredSeparator + strconv.Itoa(n)
+	}
+}
+
+// retakeOf is the mark freeWorkdir put on a session's workdir, or "" for a
+// workdir with none: read from the recorded path, so every later run of the
+// session derives the same branch its first did.
+func retakeOf(dir, session string) string {
+	n, ok := strings.CutPrefix(filepath.Base(dir), pathName(session)+store.RetiredSeparator)
+	if !ok {
+		return ""
+	}
+	return n
 }
 
 // noConversation is a session to fork that has no conversation yet.

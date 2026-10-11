@@ -938,6 +938,38 @@ func TestUnnamedBranchesAreConnectionScoped(t *testing.T) {
 	}
 }
 
+// A session that reuses the id of one a retired registration of its
+// connection's name left (decision 0078) gets a branch of its own, not that
+// one's, which is still in the cache with its commits.
+func TestARetakenSessionDoesNotInheritTheEarlierOnesBranch(t *testing.T) {
+	f := newFixture(t)
+	o := newOrigin(t, f.root, "acme", map[string]string{"README": "x"})
+	old := filepath.Join(f.m.Data, "workdirs", "home", "work")
+	os.MkdirAll(old, 0o700)
+	p, err := f.m.Prepare(context.Background(), Request{Dir: old, Connection: "home", Session: "work", Sources: []v1.Source{gitSource(o.bare, "", "")}, Emit: func(v1.Event) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.Dir, "old-hub.txt"), []byte("the first hub's work"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sh(t, p.Dir, "git", "add", "old-hub.txt")
+	sh(t, p.Dir, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "the first hub's work")
+
+	dir := old + "~1"
+	os.MkdirAll(dir, 0o700)
+	p, err = f.m.Prepare(context.Background(), Request{Dir: dir, Connection: "home", Session: "work", Retake: "1", Sources: []v1.Source{gitSource(o.bare, "", "")}, Emit: func(v1.Event) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := sh(t, p.Dir, "git", "branch", "--show-current"); b != "yad/home.1/work" {
+		t.Errorf("the new session is on %q, want yad/home.1/work", b)
+	}
+	if _, err := os.Stat(filepath.Join(p.Dir, "old-hub.txt")); err == nil {
+		t.Error("the new session's worktree holds the earlier session's commit")
+	}
+}
+
 // A path is checked against the roots again once its locks are held: the run
 // holding a directory above it may have swapped it for a link out of the
 // roots while this one waited.

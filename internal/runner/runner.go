@@ -105,6 +105,10 @@ func Serve(ctx context.Context, o Options) error {
 		return err
 	}
 	defer st.Close()
+	// Before anything reads a row by its connection: a name `yad connect`
+	// gave to a new registration still holds what the earlier one left, and
+	// the new hub's ids would meet it (decision 0078).
+	unadopted := adoptRegistrations(ctx, st, o.Paths, o.Config.Connections, o.Log)
 	if o.Accounts == nil {
 		o.Accounts = NewAccounts(o.Paths.Data, account.ListsOf(o.Config))
 		o.Accounts.Log = o.Log
@@ -194,6 +198,10 @@ func Serve(ctx context.Context, o Options) error {
 		o.Monitor.starting(conn.Name)
 		// In config order, so the turns go round the ring the owner wrote.
 		pool.Join(conn.Name, conn.Cap)
+		if err := unadopted[conn.Name]; err != nil {
+			sv.fail(conn.Name, err)
+			continue
+		}
 		cred, err := o.Paths.Credential(conn.Name)
 		if err != nil {
 			sv.fail(conn.Name, err)
