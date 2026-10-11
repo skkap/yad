@@ -63,6 +63,13 @@ type Connection struct {
 	// accounts (decision 0057); absent lets it, as the owner trusts the hubs
 	// it connects (0038). Read at start, like the rest of a connection.
 	ManageAccounts *bool `toml:"manage_accounts,omitempty"`
+	// RegisteredAt is when `yad connect` added this entry, in unix
+	// milliseconds, and nothing changes it after: registering again with the
+	// same hub keeps it. The daemon compares it with the registration its
+	// state database holds rows for, and moves an earlier registration's rows
+	// under this name aside before the connection syncs (decision 0079).
+	// Absent on an entry made before the field; such a one is adopted as is.
+	RegisteredAt int64 `toml:"registered_at,omitempty"`
 }
 
 // MayManageAccounts is whether this hub may add and remove accounts.
@@ -418,6 +425,9 @@ func (c Config) Validate() error {
 		}
 		if conn.Cap < 0 {
 			errs = append(errs, fmt.Errorf("connection %q: cap must not be negative", conn.Name))
+		}
+		if conn.RegisteredAt < 0 {
+			errs = append(errs, fmt.Errorf("connection %q: registered_at must not be negative — `yad connect` writes it; delete the line rather than edit it", conn.Name))
 		}
 		names = append(names, conn.Name)
 	}

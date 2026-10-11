@@ -90,7 +90,13 @@ type Request struct {
 	Dir        string
 	Connection string
 	Session    string
-	Sources    []v1.Source
+	// Retake is set when earlier sessions of the same id, under earlier
+	// registrations of the connection's name, took the plain default branch
+	// and workdir: their branches are still in the cache, so the default
+	// branch here carries the same mark the workdir does (decision 0079).
+	// Empty for every other session.
+	Retake  string
+	Sources []v1.Source
 	// Emit puts a status or tool event into the run's stream. Never nil.
 	Emit func(v1.Event)
 }
@@ -242,7 +248,13 @@ func (m *Manager) plan(req Request) ([]item, error) {
 			if it.branch == "" {
 				// Session ids are unique only within a connection, and
 				// every connection shares the cache.
-				it.branch = "yad/" + safeComponent(req.Connection) + "/" + safeComponent(req.Session)
+				conn := safeComponent(req.Connection)
+				if req.Retake != "" {
+					// A connection's name never holds a '.' (config.ValidName),
+					// so no other connection's branches are under this one.
+					conn += "." + safeComponent(req.Retake)
+				}
+				it.branch = "yad/" + conn + "/" + safeComponent(req.Session)
 			} else if err := checkRef("sources["+fmt.Sprint(i)+"].git.branch", it.branch); err != nil {
 				return nil, err
 			}

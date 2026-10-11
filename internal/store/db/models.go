@@ -25,6 +25,11 @@ type AccountWindow struct {
 	UpdatedAt   int64
 }
 
+type ConnectionRegistration struct {
+	Connection   string
+	RegisteredAt int64
+}
+
 type Event struct {
 	Connection string
 	RunID      string

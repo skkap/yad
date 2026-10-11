@@ -447,3 +447,51 @@ UPDATE harness_silence SET until = sqlc.arg(now) WHERE until > sqlc.arg(now);
 
 -- name: ListHarnessSilence :many
 SELECT * FROM harness_silence ORDER BY harness, label;
+
+-- The registration a connection name's rows belong to (decision 0079).
+-- name: ConnectionRegistration :one
+SELECT registered_at FROM connection_registrations WHERE connection = ?;
+
+-- name: SetConnectionRegistration :exec
+INSERT INTO connection_registrations (connection, registered_at) VALUES (?, ?)
+ON CONFLICT (connection) DO UPDATE SET registered_at = excluded.registered_at;
+
+-- Every other table's rows hang off a session by foreign key, so a name with
+-- no session holds nothing.
+-- name: ConnectionHasSessions :one
+SELECT EXISTS (SELECT 1 FROM sessions WHERE connection = ?);
+
+-- An earlier registration's rows, moved to a retired name. Run together in
+-- one transaction with the foreign keys deferred: each statement alone
+-- leaves children naming a parent that has just moved.
+-- name: RetireConnectionSessions :execrows
+UPDATE sessions SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
+
+-- name: RetireConnectionRuns :execrows
+UPDATE runs SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
+
+-- name: RetireConnectionEvents :exec
+UPDATE events SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
+
+-- name: RetireConnectionOutbox :exec
+UPDATE outbox SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
+
+-- name: RetireConnectionSlots :exec
+UPDATE slots SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
+
+-- A new session's workdir is derived from its connection and id, so a new
+-- hub under a reused name can derive the directory an earlier registration's
+-- session recorded: one the collector will remove while it is unreclaimed,
+-- named like the git branches that session left in the caches (decision
+-- 0079).
+-- How many sessions of this id the retired registrations of a name left
+-- (retired is '<name>~'), each of which took a workdir and a default branch
+-- named for the id. Counted by name rather than by matching a recorded path,
+-- which a data directory spelled differently since would miss.
+-- name: RetiredSessionsWithID :one
+SELECT count(*) FROM sessions WHERE id = sqlc.arg(id)
+  AND substr(connection, 1, length(CAST(sqlc.arg(retired) AS TEXT))) = CAST(sqlc.arg(retired) AS TEXT);
+
+-- name: WorkdirTakenByAnother :one
+SELECT EXISTS (SELECT 1 FROM sessions WHERE workdir = sqlc.arg(workdir)
+  AND NOT (connection = sqlc.arg(connection) AND id = sqlc.arg(id)));

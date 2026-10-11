@@ -143,6 +143,31 @@ func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (int
 	return result.RowsAffected()
 }
 
+const connectionHasSessions = `-- name: ConnectionHasSessions :one
+SELECT EXISTS (SELECT 1 FROM sessions WHERE connection = ?)
+`
+
+// Every other table's rows hang off a session by foreign key, so a name with
+// no session holds nothing.
+func (q *Queries) ConnectionHasSessions(ctx context.Context, connection string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, connectionHasSessions, connection)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const connectionRegistration = `-- name: ConnectionRegistration :one
+SELECT registered_at FROM connection_registrations WHERE connection = ?
+`
+
+// The registration a connection name's rows belong to (decision 0079).
+func (q *Queries) ConnectionRegistration(ctx context.Context, connection string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, connectionRegistration, connection)
+	var registered_at int64
+	err := row.Scan(&registered_at)
+	return registered_at, err
+}
+
 const connectionsWithLeftovers = `-- name: ConnectionsWithLeftovers :many
 SELECT connection FROM sessions WHERE state = 'open' OR reported_at IS NULL
 UNION SELECT connection FROM runs WHERE state IN ('claimed', 'preparing', 'running', 'waiting')
@@ -1251,6 +1276,111 @@ func (q *Queries) RequestSessionClose(ctx context.Context, arg RequestSessionClo
 	return err
 }
 
+const retireConnectionEvents = `-- name: RetireConnectionEvents :exec
+UPDATE events SET connection = ?1 WHERE connection = ?2
+`
+
+type RetireConnectionEventsParams struct {
+	Retired    string
+	Connection string
+}
+
+func (q *Queries) RetireConnectionEvents(ctx context.Context, arg RetireConnectionEventsParams) error {
+	_, err := q.db.ExecContext(ctx, retireConnectionEvents, arg.Retired, arg.Connection)
+	return err
+}
+
+const retireConnectionOutbox = `-- name: RetireConnectionOutbox :exec
+UPDATE outbox SET connection = ?1 WHERE connection = ?2
+`
+
+type RetireConnectionOutboxParams struct {
+	Retired    string
+	Connection string
+}
+
+func (q *Queries) RetireConnectionOutbox(ctx context.Context, arg RetireConnectionOutboxParams) error {
+	_, err := q.db.ExecContext(ctx, retireConnectionOutbox, arg.Retired, arg.Connection)
+	return err
+}
+
+const retireConnectionRuns = `-- name: RetireConnectionRuns :execrows
+UPDATE runs SET connection = ?1 WHERE connection = ?2
+`
+
+type RetireConnectionRunsParams struct {
+	Retired    string
+	Connection string
+}
+
+func (q *Queries) RetireConnectionRuns(ctx context.Context, arg RetireConnectionRunsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, retireConnectionRuns, arg.Retired, arg.Connection)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const retireConnectionSessions = `-- name: RetireConnectionSessions :execrows
+UPDATE sessions SET connection = ?1 WHERE connection = ?2
+`
+
+type RetireConnectionSessionsParams struct {
+	Retired    string
+	Connection string
+}
+
+// An earlier registration's rows, moved to a retired name. Run together in
+// one transaction with the foreign keys deferred: each statement alone
+// leaves children naming a parent that has just moved.
+func (q *Queries) RetireConnectionSessions(ctx context.Context, arg RetireConnectionSessionsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, retireConnectionSessions, arg.Retired, arg.Connection)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const retireConnectionSlots = `-- name: RetireConnectionSlots :exec
+UPDATE slots SET connection = ?1 WHERE connection = ?2
+`
+
+type RetireConnectionSlotsParams struct {
+	Retired    string
+	Connection string
+}
+
+func (q *Queries) RetireConnectionSlots(ctx context.Context, arg RetireConnectionSlotsParams) error {
+	_, err := q.db.ExecContext(ctx, retireConnectionSlots, arg.Retired, arg.Connection)
+	return err
+}
+
+const retiredSessionsWithID = `-- name: RetiredSessionsWithID :one
+SELECT count(*) FROM sessions WHERE id = ?1
+  AND substr(connection, 1, length(CAST(?2 AS TEXT))) = CAST(?2 AS TEXT)
+`
+
+type RetiredSessionsWithIDParams struct {
+	ID      string
+	Retired string
+}
+
+// A new session's workdir is derived from its connection and id, so a new
+// hub under a reused name can derive the directory an earlier registration's
+// session recorded: one the collector will remove while it is unreclaimed,
+// named like the git branches that session left in the caches (decision
+// 0079).
+// How many sessions of this id the retired registrations of a name left
+// (retired is '<name>~'), each of which took a workdir and a default branch
+// named for the id. Counted by name rather than by matching a recorded path,
+// which a data directory spelled differently since would miss.
+func (q *Queries) RetiredSessionsWithID(ctx context.Context, arg RetiredSessionsWithIDParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, retiredSessionsWithID, arg.ID, arg.Retired)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const retryOutbox = `-- name: RetryOutbox :exec
 UPDATE outbox SET attempts = attempts + 1, next_attempt_at = ?, last_error = ? WHERE connection = ? AND run_id = ?
 `
@@ -1619,6 +1749,21 @@ func (q *Queries) SetAccountWindow(ctx context.Context, arg SetAccountWindowPara
 		arg.ResetsAt,
 		arg.UpdatedAt,
 	)
+	return err
+}
+
+const setConnectionRegistration = `-- name: SetConnectionRegistration :exec
+INSERT INTO connection_registrations (connection, registered_at) VALUES (?, ?)
+ON CONFLICT (connection) DO UPDATE SET registered_at = excluded.registered_at
+`
+
+type SetConnectionRegistrationParams struct {
+	Connection   string
+	RegisteredAt int64
+}
+
+func (q *Queries) SetConnectionRegistration(ctx context.Context, arg SetConnectionRegistrationParams) error {
+	_, err := q.db.ExecContext(ctx, setConnectionRegistration, arg.Connection, arg.RegisteredAt)
 	return err
 }
 
@@ -2136,4 +2281,22 @@ func (q *Queries) UnreportedClosedSessions(ctx context.Context, arg UnreportedCl
 		return nil, err
 	}
 	return items, nil
+}
+
+const workdirTakenByAnother = `-- name: WorkdirTakenByAnother :one
+SELECT EXISTS (SELECT 1 FROM sessions WHERE workdir = ?1
+  AND NOT (connection = ?2 AND id = ?3))
+`
+
+type WorkdirTakenByAnotherParams struct {
+	Workdir    string
+	Connection string
+	ID         string
+}
+
+func (q *Queries) WorkdirTakenByAnother(ctx context.Context, arg WorkdirTakenByAnotherParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, workdirTakenByAnother, arg.Workdir, arg.Connection, arg.ID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

@@ -74,8 +74,13 @@ the credential lose it, then a running daemon lets it go. What a connection
 runs a crash left, reports owed, logins its hub started — is ended there: at
 once when the daemon is told, at its loop's next refused sync when it is not,
 and at the next start when no daemon ran. Only the hub's own answer makes a
-credential dead; one that cannot be read here never is.
-_See_: [0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md), `internal/config`, `internal/runner/disconnect.go`
+credential dead; one that cannot be read here never is. Once that is done the name is free, and
+a connection made under it later is a new registration, even to the same
+hub. What the earlier one left is kept under a **retired name**,
+`<name>~<moment>`, which no connection can be given, so the new hub never
+meets the old one's sessions and runs. Registering again under a connection
+that still exists, to replace its credential, is the same registration.
+_See_: [0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md), [0079](docs/decisions/0079-a-reused-connection-name-retires-the-earlier-registrations-rows.md), `internal/config`, `internal/runner/disconnect.go`
 
 **Registration token** — the one-time, short-lived secret a hub issues so that
 `yad connect` can register a runner. Exchanged once for a **runner credential**,

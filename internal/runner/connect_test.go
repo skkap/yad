@@ -83,6 +83,11 @@ func TestConnectRoundTrip(t *testing.T) {
 	}
 	if cfg, _ := config.Load(e.paths); len(cfg.Connections) != 1 {
 		t.Errorf("re-connect duplicated the connection: %+v", cfg.Connections)
+	} else if cfg.Connections[0].RegisteredAt == 0 || cfg.Connections[0].RegisteredAt != conn.RegisteredAt {
+		// Registering again with the same hub is the same registration: its
+		// sessions here go on, and the daemon must not move them aside
+		// (decision 0079).
+		t.Errorf("registered_at %d after registering again, want the first connect's %d", cfg.Connections[0].RegisteredAt, conn.RegisteredAt)
 	}
 }
 
