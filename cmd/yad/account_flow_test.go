@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/shellword"
 	"github.com/skkap/yad/internal/shellword/shellwordtest"
 	"github.com/skkap/yad/internal/store"
 )
@@ -408,6 +410,95 @@ func TestAccountAddTakesATokenFromStdin(t *testing.T) {
 	code, out, _ = yadIn(t, "account", "list")
 	if code != 0 || !strings.Contains(out, "token ") || strings.Contains(out, tok) {
 		t.Errorf("list does not show a token account, or shows the token:\n%s", out)
+	}
+}
+
+// A Keychain that will not let go of the login Claude keeps for an account's
+// home stops a token being stored there (decision 0076), and the refusal is
+// the way out: the deletes to run by hand, then the same `yad account add …
+// --token -` again, each running as printed (DEV-183).
+func TestAKeychainRefusalWhileStoringATokenSaysHowToStoreItAgain(t *testing.T) {
+	p := accountHarness(t, claudeE2E)
+	interactive = func() bool { return false }
+	t.Setenv("USER", "owner")
+	// An account already there, as one whose token is being replaced is: a
+	// home made new has its Keychain items deleted before it exists, which
+	// is a refusal of its own, before the token is reached.
+	home, err := account.Ensure(p.Data, "claude", "tl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	locked, calls, fake := filepath.Join(dir, "locked"), filepath.Join(dir, "calls"), filepath.Join(dir, "security")
+	// exit 36 with no one at the screen is what a locked Keychain answers.
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellword.Quote(calls) + "\n" +
+		"if [ -e " + shellword.Quote(locked) + " ]; then\n" +
+		"  echo 'security: SecKeychainItemDelete: User interaction is not allowed.' >&2\n  exit 36\nfi\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(locked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	was := account.SecurityForTests
+	account.SecurityForTests = fake
+	t.Cleanup(func() { account.SecurityForTests = was })
+
+	const tok = "sk-ant-oat01-not-a-real-token"
+	add := func() (int, string, string) {
+		t.Helper()
+		old := stdin
+		stdin = strings.NewReader(tok + "\n")
+		defer func() { stdin = old }()
+		return yadIn(t, "account", "add", "claude", "tl", "--token", "-")
+	}
+	code, out, errs := add()
+	if code == 0 {
+		t.Fatalf("stored with the Keychain refusing:\n%s", out)
+	}
+	if strings.Contains(out+errs, tok) {
+		t.Errorf("the token was printed:\n%s%s", out, errs)
+	}
+	if account.TokenFileExists(home) {
+		t.Errorf("the token was stored with the Keychain's copy still outranking it")
+	}
+	shellwordtest.CheckEnv(t, onlyCommand(t, errs, "yad --profile default account add"), dirsEnv(t),
+		"yad", "--profile", "default", "account", "add", "claude", "tl", "--token", "-")
+
+	// The deletes, run by hand once the Keychain is unlocked, reach the
+	// program the runner runs with the items it names.
+	deletes := shellwordtest.Commands(errs, shellword.Quote(fake)+" ")
+	if len(deletes) != 2 {
+		t.Fatalf("want a delete for each of the home's two items in\n  %s\nfound %q", errs, deletes)
+	}
+	if err := os.Remove(locked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(calls); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range deletes {
+		if b, err := exec.Command("/bin/sh", "-c", line).CombinedOutput(); err != nil {
+			t.Errorf("sh -c %s: %v\n%s", line, err, b)
+		}
+	}
+	b, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want string
+	for _, service := range account.KeychainServices(home) {
+		want += "delete-generic-password -s " + service + " -a owner\n"
+	}
+	if string(b) != want {
+		t.Errorf("the deletes ran as\n%s\nwant\n%s", b, want)
+	}
+
+	if code, out, errs := add(); code != 0 {
+		t.Fatalf("the command printed to run again: exit %d: %s\n%s", code, errs, out)
+	}
+	if !account.TokenFileExists(home) {
+		t.Error("run again with the Keychain unlocked, the token is still not stored")
 	}
 }
 

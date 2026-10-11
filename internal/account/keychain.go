@@ -98,6 +98,23 @@ func keychainAccount() string {
 // fake in its place.
 var security = "/usr/bin/security"
 
+// SecurityForTests, when set, is run in security's place, and the machine is
+// taken to keep Claude's logins in a Keychain whatever it runs: a test in
+// another package drives the Keychain paths of a command against a fake of
+// its own, on any platform, and never reaches the owner's real Keychain. Only
+// a test may set it (TestOnlyTestsReachTheKeychainSeam): a shipped yad that
+// did would run whatever it named with the Keychain's item names.
+var SecurityForTests string
+
+// One answer for the delete that runs and the one printed for the owner, so
+// a test's fake is never what one does and the other names.
+func securityProgram() string {
+	if SecurityForTests != "" {
+		return SecurityForTests
+	}
+	return security
+}
+
 // keychainHere is whether this machine keeps Claude's logins in a Keychain.
 // A variable so that the macOS path is tested on every platform, against
 // the fake.
@@ -105,7 +122,9 @@ var keychainHere = runtime.GOOS == "darwin"
 
 // KeychainLogin says whether this harness keeps its accounts' logins in the
 // Keychain on this machine, rather than only inside their homes.
-func KeychainLogin(harness string) bool { return harness == "claude" && keychainHere }
+func KeychainLogin(harness string) bool {
+	return harness == "claude" && (keychainHere || SecurityForTests != "")
+}
 
 // securityNotFound is security's exit status for "The specified item could
 // not be found in the keychain" — the answer a removal wants, and the one
@@ -131,7 +150,7 @@ func forgetKeychain(harness, home string, leftover bool) (forgot []string, err e
 	if !KeychainLogin(harness) || home == "" {
 		return nil, nil
 	}
-	if security == "/usr/bin/security" && testing.Testing() {
+	if securityProgram() == "/usr/bin/security" && testing.Testing() {
 		return nil, nil
 	}
 	account := keychainAccount()
@@ -157,7 +176,7 @@ func forgetKeychain(harness, home string, leftover bool) (forgot []string, err e
 // to run by hand: the same absolute path in both, since the owner's shell is
 // the one whose PATH could put another `security` first.
 func deleteArgv(service, account string) []string {
-	return []string{security, "delete-generic-password", "-s", service, "-a", account}
+	return []string{securityProgram(), "delete-generic-password", "-s", service, "-a", account}
 }
 
 // deleteKeychainItem runs one delete. gone is whether an item was there and
