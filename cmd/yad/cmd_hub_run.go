@@ -326,6 +326,58 @@ func cmdHubCloseSession(ctx context.Context, g global, args []string, stdout io.
 	return nil
 }
 
+// releasePoll is how often `yad hub release-session` asks how the release
+// stands while it waits for the runner.
+var releasePoll = time.Second
+
+// cmdHubReleaseSession is `yad hub release-session`: the session's runner
+// hands it back, so its next run can go to another runner (decision 0080). It
+// waits for the runner to say how that went, and fails with the runner's
+// reason and next action when it refused.
+func cmdHubReleaseSession(ctx context.Context, g global, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("hub release-session", flag.ContinueOnError)
+	hf := addHubFlags(fs, g)
+	discard := fs.Bool("discard-local", false, "release it even though its workdir holds work its remote does not have, which is then lost")
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return errors.New("usage: yad hub release-session [--hub url] [--token-file f] [--discard-local] <session>")
+	}
+	c, err := hf.client()
+	if err != nil {
+		return err
+	}
+	s, err := c.ReleaseSession(ctx, pos[0], *discard)
+	if err != nil {
+		return err
+	}
+	if s.Release == hubapi.SessionReleasing {
+		fmt.Fprintf(stdout, "session %s is releasing: runner %s uploads its archive at its next sync, once no run of it is held there\n", s.SessionID, s.RunnerID)
+	}
+	for s.Release == hubapi.SessionReleasing {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(releasePoll):
+		}
+		if s, err = c.Session(ctx, pos[0]); err != nil {
+			return err
+		}
+	}
+	switch {
+	case s.Release == hubapi.SessionReleased:
+		fmt.Fprintf(stdout, "session %s is released from runner %s: its next run opens it from its archive on another runner advertising release for %s\n", s.SessionID, s.ReleasedFrom, s.Harness)
+		return nil
+	case s.ReleaseError != nil:
+		return fmt.Errorf("runner %s did not release session %s (%s): %s — %s", s.RunnerID, s.SessionID, s.ReleaseError.Code, s.ReleaseError.Message, s.ReleaseError.NextAction)
+	}
+	// Closed or asked to close while the release was waiting: the runner
+	// closes it rather than releasing it.
+	return fmt.Errorf("session %s is %s, and was not released — start a new session for its work", s.SessionID, s.State)
+}
+
 func follow(ctx context.Context, c *hubapiclient.Client, run hubapi.Run, w io.Writer) error {
 	p := &printer{w: w}
 	p.state(run)

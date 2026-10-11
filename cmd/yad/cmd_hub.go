@@ -22,7 +22,7 @@ import (
 // no-port rule (decision 0004) binds runners, not hubs.
 func cmdHub(ctx context.Context, g global, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: yad hub serve | token create | admin-token create|list|revoke | submit | watch <run> | cancel <run> | interrupt <run> | steer <run> <text> | runners [runner] | drain <runner> | close-session <session> | login start|token|status|cancel")
+		return errors.New("usage: yad hub serve | token create | admin-token create|list|revoke | submit | watch <run> | cancel <run> | interrupt <run> | steer <run> <text> | runners [runner] | drain <runner> | close-session <session> | release-session <session> | login start|token|status|cancel")
 	}
 	switch args[0] {
 	case "serve":
@@ -43,12 +43,14 @@ func cmdHub(ctx context.Context, g global, args []string, stdout, stderr io.Writ
 		return cmdHubDrain(ctx, g, args[1:], stdout)
 	case "close-session":
 		return cmdHubCloseSession(ctx, g, args[1:], stdout)
+	case "release-session":
+		return cmdHubReleaseSession(ctx, g, args[1:], stdout)
 	case "login":
 		return cmdHubLogin(ctx, g, args[1:], stdout, stderr)
 	case "account":
 		return cmdHubAccount(ctx, g, args[1:], stdout)
 	default:
-		return fmt.Errorf("unknown hub subcommand %q — use serve, token, admin-token, submit, watch, cancel, interrupt, steer, runners, drain, close-session, login or account", args[0])
+		return fmt.Errorf("unknown hub subcommand %q — use serve, token, admin-token, submit, watch, cancel, interrupt, steer, runners, drain, close-session, release-session, login or account", args[0])
 	}
 }
 
@@ -58,8 +60,13 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 	dbFile := fs.String("db", g.paths.HubDB(), "the hub's database")
 	minVersion := fs.String("min-version", "", "refuse runners older than this yad version, e.g. 0.4.0 (default: take any version)")
 	abandonAfter := fs.Duration("abandon-after", hub.DefaultAbandonAfter, "close the sessions of a runner that has not synced for this long, and fail the runs queued in them; its credential stays, so it can come back")
+	archiveMax := fs.Int64("archive-max-bytes", hub.DefaultArchiveMaxBytes, "the largest session archive a runner may upload when it releases a session (decision 0080)")
+	archiveTTL := fs.Duration("archive-ttl", hub.DefaultArchiveTTL, "how long a released session's archive waits for a run to open it; past it the session closes")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *archiveMax <= 0 || *archiveTTL <= 0 {
+		return errors.New("--archive-max-bytes and --archive-ttl must be more than zero")
 	}
 	// Checked before the listener: a floor the hub cannot read would refuse
 	// nothing, and the operator would never learn their flag was ignored.
@@ -76,7 +83,8 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 		return err
 	}
 	defer s.Close()
-	h := hub.New(hub.Options{Store: s, MinVersion: *minVersion, AbandonAfter: *abandonAfter, Command: hubAnswerCommand(g.paths, *dbFile)})
+	h := hub.New(hub.Options{Store: s, MinVersion: *minVersion, AbandonAfter: *abandonAfter, Command: hubAnswerCommand(g.paths, *dbFile),
+		ArchiveMaxBytes: *archiveMax, ArchiveTTL: *archiveTTL})
 
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {

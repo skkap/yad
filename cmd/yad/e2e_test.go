@@ -148,11 +148,15 @@ const (
 	// whose contents replace the recorded answer, as if the recorded Read had
 	// read it there: the harness sees what the workdir holds.
 	fakeClaudeRead = "E2E_CLAUDE_READ"
-	// fakeClaudeTranscripts, when set, is a directory where the fake keeps a
-	// conversation per session id, as claude keeps its transcripts: each
-	// instruction is appended, a --resume with no transcript is refused as
-	// claude refuses it, and the answer names the instructions before it —
-	// which is how a test sees that a run had its session's context.
+	// fakeClaudeTranscripts, when set, makes the fake keep a conversation
+	// per session id, as claude keeps its transcripts: under the home it runs
+	// in — CLAUDE_CONFIG_DIR, an account's, or this directory standing in for
+	// the default home — at projects/<the workdir, every character but a
+	// letter or digit a dash>/<id>.jsonl, and found by id from any project
+	// directory, as claude finds one (decision 0080). Each instruction is
+	// appended, a --resume with no transcript is refused as claude refuses
+	// it, and the answer names the instructions before it — which is how a
+	// test sees that a run had its session's context.
 	fakeClaudeTranscripts = "E2E_CLAUDE_TRANSCRIPTS"
 	// fakeClaudeGH, when set, is a file the fake writes what `gh --version`
 	// printed to, found the way a harness's own shell command finds gh: by
@@ -168,6 +172,9 @@ const (
 	// environment, where nothing yad reports may read it.
 	fakeClaudeLeave       = "E2E_CLAUDE_LEAVE"
 	fakeClaudeLeaveMarker = "E2E_CLAUDE_LEAVE_MARKER"
+	// fakeClaudePush, when set, is a file the fake writes, commits and
+	// pushes to its workdir's origin when it opens a new conversation.
+	fakeClaudePush = "E2E_CLAUDE_PUSH"
 	// childYad makes the test binary run as yad.
 	childYad = "E2E_YAD_MAIN"
 )
@@ -215,6 +222,17 @@ func fakeClaude() {
 	if f := os.Getenv(fakeClaudePID); f != "" {
 		os.WriteFile(f, []byte(strconv.Itoa(os.Getpid())), 0o600)
 	}
+	// A new conversation commits a file and pushes its branch, as a harness
+	// asked to finish its work does; a resume leaves the tree alone.
+	if f := os.Getenv(fakeClaudePush); f != "" && !resume {
+		os.WriteFile(f, []byte("committed by the first runner's harness\n"), 0o644)
+		for _, args := range [][]string{{"add", f}, {"commit", "--quiet", "-m", "work"}, {"push", "--quiet", "origin", "HEAD"}} {
+			if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+				os.Stderr.Write(out)
+				os.Exit(3)
+			}
+		}
+	}
 	if f := os.Getenv(fakeClaudeGH); f != "" {
 		out, err := exec.Command("gh", "--version").CombinedOutput()
 		if err != nil {
@@ -236,19 +254,19 @@ func fakeClaude() {
 	// transcript fails at once (testdata/…/resume-missing.jsonl) — a result,
 	// and an exit without waiting for input to close.
 	var earlier []byte
-	if dir := os.Getenv(fakeClaudeTranscripts); dir != "" {
+	if fakeClaudeHome() != "" {
 		var err error
 		read := session
 		if forked != "" {
 			read = forked
 		}
-		earlier, err = os.ReadFile(filepath.Join(dir, read))
+		earlier, err = os.ReadFile(fakeTranscript(read))
 		if (resume || forked != "") && err != nil {
 			os.Stdout.WriteString(`{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["No conversation found with session ID: ` + read + `"],"session_id":` + strconv.Quote(session) + `}` + "\n")
 			os.Exit(1)
 		}
 		if forked != "" {
-			os.WriteFile(filepath.Join(dir, session), earlier, 0o600)
+			os.WriteFile(fakeTranscript(session), earlier, 0o600)
 		}
 	}
 	users, eof := make(chan struct{}, 16), make(chan struct{})
@@ -364,14 +382,47 @@ func leaveRunning() {
 	os.WriteFile(path, []byte(strconv.Itoa(c.Process.Pid)), 0o600)
 }
 
+// fakeClaudeHome is the home the fake keeps its transcripts in, or "" when
+// it keeps none.
+func fakeClaudeHome() string {
+	if os.Getenv(fakeClaudeTranscripts) == "" {
+		return ""
+	}
+	if h := os.Getenv("CLAUDE_CONFIG_DIR"); h != "" {
+		return h
+	}
+	return os.Getenv(fakeClaudeTranscripts)
+}
+
+// fakeTranscript is where the fake has the session's transcript: wherever a
+// project directory of its home holds it, or else the working directory's
+// own, where a new one goes.
+func fakeTranscript(session string) string {
+	projects := filepath.Join(fakeClaudeHome(), "projects")
+	if found, _ := filepath.Glob(filepath.Join(projects, "*", session+".jsonl")); len(found) > 0 {
+		return found[0]
+	}
+	wd, _ := os.Getwd()
+	if r, err := filepath.EvalSymlinks(wd); err == nil {
+		wd = r
+	}
+	name := []byte(wd)
+	for i, c := range name {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			name[i] = '-'
+		}
+	}
+	os.MkdirAll(filepath.Join(projects, string(name)), 0o700)
+	return filepath.Join(projects, string(name), session+".jsonl")
+}
+
 // remember appends an instruction to the session's transcript, when the fake
 // keeps transcripts.
 func remember(session, text string) {
-	dir := os.Getenv(fakeClaudeTranscripts)
-	if dir == "" || session == "" {
+	if fakeClaudeHome() == "" || session == "" {
 		return
 	}
-	f, err := os.OpenFile(filepath.Join(dir, session), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(fakeTranscript(session), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
@@ -1015,7 +1066,7 @@ func testE2ESessionContinues(t *testing.T, h *e2eHarness) {
 		t.Errorf("yad sessions:\n%s", out)
 	}
 
-	if err := os.Remove(filepath.Join(transcripts, list[0].NativeID)); err != nil {
+	if err := os.Remove(h.transcript(t, transcripts, list[0].NativeID)); err != nil {
 		t.Fatal(err)
 	}
 	submit("e2e-third", []string{"--session", "e2e-talk"}, "And now?")
