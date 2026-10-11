@@ -103,7 +103,7 @@ func accountAdd(ctx context.Context, g global, args []string, w, stderr io.Write
 	if useToken {
 		// Read before anything is made, so a command with nothing piped in
 		// leaves no home behind.
-		tok, err = readToken(ctx, stderr, "token", wholeInput)
+		tok, err = readSecret(ctx, stderr, "token", wholeInput)
 		if err != nil {
 			return fmt.Errorf("%s account %q was not added: %w", id, label, err)
 		}

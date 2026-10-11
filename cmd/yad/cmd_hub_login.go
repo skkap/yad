@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -47,7 +46,7 @@ func cmdHubLogin(ctx context.Context, g global, args []string, stdout, stderr io
 	}
 	fs := flag.NewFlagSet("hub login "+args[0], flag.ContinueOnError)
 	hf := addHubFlags(fs, g)
-	code := fs.String("code", "", "with start: `-` reads the code from stdin without asking for it, for a script; a Codex login reads none")
+	code := fs.String("code", "", "with start: `-` reads the code from stdin without saying how to get it, for a script; a Codex login reads none")
 	add := fs.Bool("add", false, "with start or token: add the account to the runner, which lists it once the login takes")
 	pos, err := parseInterleaved(fs, args[1:])
 	if err != nil {
@@ -146,9 +145,9 @@ func (lc loginCLI) start(ctx context.Context, runnerID, harness, label string, q
 	// harness's output, and data.
 	fmt.Fprintln(lc.stdout, cleanLine(l.URL))
 	if !quiet {
-		fmt.Fprint(lc.stderr, "open the link, sign in, and paste the code you are given here: ")
+		fmt.Fprintln(lc.stderr, "open the link and sign in; paste the code you are given here")
 	}
-	code, err := readLine(ctx, stdin)
+	code, err := readSecret(ctx, lc.stderr, "login code", oneLine)
 	if err != nil {
 		lc.giveUp(l)
 		return err
@@ -183,7 +182,7 @@ func (lc loginCLI) device(ctx context.Context, l hubapi.Login) error {
 
 // token is the token way: read from stdin, never from argv, sent once.
 func (lc loginCLI) token(ctx context.Context, runnerID, harness, label string) error {
-	tok, err := readToken(ctx, lc.stderr, "token", wholeInput)
+	tok, err := readSecret(ctx, lc.stderr, "token", wholeInput)
 	if err != nil {
 		return err
 	}
@@ -300,18 +299,6 @@ func (lc loginCLI) what(l hubapi.Login) string {
 
 func (lc loginCLI) statusCommand(l hubapi.Login) string {
 	return lc.hf.command([]string{"hub", "login", "status"}, l.RunnerID, l.LoginID)
-}
-
-// readLine is one line of r, trimmed, or ctx's end: a person may walk away
-// from the prompt, and Ctrl-C must still end the command.
-func readLine(ctx context.Context, r io.Reader) (string, error) {
-	return awaitRead(ctx, func() (string, error) {
-		s, err := bufio.NewReader(io.LimitReader(r, 64<<10)).ReadString('\n')
-		if errors.Is(err, io.EOF) {
-			err = nil
-		}
-		return strings.TrimSpace(s), err
-	})
 }
 
 // command is a `yad hub` command acting on the hub and admin token this one

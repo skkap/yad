@@ -5,7 +5,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +20,8 @@ import (
 
 	"github.com/skkap/yad/internal/account"
 	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/protocol/hubapi"
+	v1 "github.com/skkap/yad/protocol/v1"
 )
 
 // watched is an output a test can wait on: what a command prints, and a
@@ -46,6 +52,23 @@ func (w *watched) String() string {
 	return w.b.String()
 }
 
+// onScreen is what the terminal shows its owner: everything the line
+// discipline echoes back to the master side.
+func onScreen(master *os.File) *watched {
+	screen := watch("\x00never")
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := master.Read(buf)
+			screen.Write(buf[:n])
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return screen
+}
+
 // echoes says whether the terminal f echoes what is typed into it.
 func echoes(t *testing.T, f *os.File) bool {
 	t.Helper()
@@ -74,19 +97,7 @@ func TestAccountAddTakesATokenPastedAtATerminal(t *testing.T) {
 	if !echoes(t, slave) {
 		t.Fatal("a new terminal does not echo; the test cannot tell echo off from the default")
 	}
-	// What the terminal shows the owner: everything the line discipline
-	// echoes back to the master side.
-	screen := watch("\x00never")
-	go func() {
-		buf := make([]byte, 1024)
-		for {
-			n, err := master.Read(buf)
-			screen.Write(buf[:n])
-			if err != nil {
-				return
-			}
-		}
-	}()
+	screen := onScreen(master)
 
 	const tok = "sk-ant-oat01-not-a-real-token"
 	old := stdin
@@ -198,5 +209,158 @@ func TestTerminalEchoOff(t *testing.T) {
 	restore()
 	if got := termios(t, slave); got.Lflag != raw.Lflag || got.Iflag != raw.Iflag {
 		t.Errorf("restore did not put the raw settings back: lflag %#x iflag %#x", got.Lflag, got.Iflag)
+	}
+}
+
+// fakeLoginHub is the service API's login endpoints for one link login on
+// runner r1: waiting with its link until a code comes, then taken. It keeps
+// the code it was sent, and whether the login was cancelled.
+type fakeLoginHub struct {
+	mu        sync.Mutex
+	code      string
+	cancelled bool
+}
+
+func (h *fakeLoginHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	base := hubapi.BasePath + "/runners/r1/logins"
+	l := hubapi.Login{LoginID: "l1", RunnerID: "r1", Harness: "claude", Account: "work", Method: v1.LoginByLink,
+		State: hubapi.LoginState(v1.LoginWaiting), URL: "https://claude.example/authorize"}
+	switch r.Method + " " + r.URL.Path {
+	case "POST " + base:
+	case "POST " + base + "/l1/code":
+		var req hubapi.LoginCodeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		h.code = req.Code
+		l.CodeSent = true
+	case "GET " + base + "/l1":
+		if h.code != "" {
+			l.State = hubapi.LoginState(v1.LoginSucceeded)
+		}
+	case "POST " + base + "/l1/cancel":
+		h.cancelled = true
+		l.State = hubapi.LoginState(v1.LoginCancelled)
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(l)
+}
+
+// DEV-177, through a real terminal: the code `yad hub login start` reads —
+// with --code - or without — is pasted with echo off, after a prompt on
+// stderr, and sent; it is on no screen and in no output. Ctrl-C at the
+// prompt ends the command, cancels the login and leaves echo on.
+func TestHubLoginTakesACodePastedAtATerminal(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		flag  []string
+		steps bool // the line saying how to get the code
+		ctrlC bool
+	}{
+		{name: "--code -", flag: []string{"--code", "-"}},
+		{name: "no --code", steps: true},
+		{name: "Ctrl-C at the prompt", flag: []string{"--code", "-"}, ctrlC: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			accountEnv(t)
+			h := &fakeLoginHub{}
+			srv := httptest.NewServer(h)
+			defer srv.Close()
+			tokFile := filepath.Join(t.TempDir(), "admin-token")
+			if err := os.WriteFile(tokFile, []byte("yad-admin-not-a-real-token\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			old := loginPoll
+			loginPoll = 10 * time.Millisecond
+			defer func() { loginPoll = old }()
+
+			master, slave := openPTY(t)
+			defer master.Close()
+			defer slave.Close()
+			if !echoes(t, slave) {
+				t.Fatal("a new terminal does not echo; the test cannot tell echo off from the default")
+			}
+			screen := onScreen(master)
+			oldIn := stdin
+			stdin = slave
+			defer func() { stdin = oldIn }()
+
+			const loginCode = "not-a-real-login-code#state"
+			var out bytes.Buffer
+			errs := watch("press Enter")
+			done := make(chan int, 1)
+			args := append([]string{"hub", "login", "start", "--hub", srv.URL, "--token-file", tokFile, "r1", "claude", "work"}, c.flag...)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go func() { done <- run(ctx, args, &out, errs) }()
+			select {
+			case <-errs.seen:
+			case code := <-done:
+				t.Fatalf("exit %d before asking for the code: %s", code, errs)
+			case <-time.After(10 * time.Second):
+				t.Fatalf("no prompt for the code after 10s; stderr so far %q", errs)
+			}
+			if echoes(t, slave) {
+				t.Error("the terminal echoes while the code is read")
+			}
+			if c.ctrlC {
+				cancel()
+				select {
+				case code := <-done:
+					if code == 0 {
+						t.Errorf("exit 0 after Ctrl-C: %s", errs)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("Ctrl-C did not end the read after 10s")
+				}
+				if !echoes(t, slave) {
+					t.Error("Ctrl-C left the terminal's echo off")
+				}
+				h.mu.Lock()
+				defer h.mu.Unlock()
+				if !h.cancelled || h.code != "" {
+					t.Errorf("after Ctrl-C the login was cancelled = %v, sent %q", h.cancelled, h.code)
+				}
+				return
+			}
+			if _, err := master.Write([]byte(loginCode + "\n")); err != nil {
+				t.Fatal(err)
+			}
+			var code int
+			select {
+			case code = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("a pasted code and Enter did not end the read after 10s")
+			}
+			if code != 0 {
+				t.Fatalf("exit %d: %s\n%s", code, errs, out.String())
+			}
+			if !echoes(t, slave) {
+				t.Error("the terminal's echo was left off")
+			}
+			h.mu.Lock()
+			sent := h.code
+			h.mu.Unlock()
+			if sent != loginCode {
+				t.Errorf("the hub was sent %q, want %q", sent, loginCode)
+			}
+			if !strings.Contains(errs.String(), "Paste the login code and press Enter") {
+				t.Errorf("the prompt does not name a login code: %q", errs)
+			}
+			if got := strings.Contains(errs.String(), "open the link and sign in"); got != c.steps {
+				t.Errorf("said how to get the code = %v, want %v: %q", got, c.steps, errs)
+			}
+			for name, s := range map[string]string{"stdout": out.String(), "stderr": errs.String(), "the terminal": screen.String()} {
+				if strings.Contains(s, loginCode) {
+					t.Errorf("the code reached %s: %q", name, s)
+				}
+			}
+		})
 	}
 }
