@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/skkap/yad/protocol/hubapi"
+	v1 "github.com/skkap/yad/protocol/v1"
 
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/supervise"
@@ -124,6 +128,40 @@ func TestE2EOwnerEnvReachesTheHarnessAndTheSetupHook(t *testing.T) {
 	}
 	if strings.Contains(watched, ownerDockerHost) {
 		t.Error("the run's events carry DOCKER_HOST's value")
+	}
+}
+
+// A hub's grant under a name [env] declares fails the run as refused, naming
+// the grant, before any harness starts; the hub learns nothing of [env] but
+// the name it sent itself.
+func TestE2EAGrantNamedForAnOwnerVariableIsRefused(t *testing.T) {
+	m := newMachine(t, claudeE2E)
+	declareEnv(t, m.p.config, map[string]string{"DOCKER_HOST": ownerDockerHost, "BASH_MAX_TIMEOUT_MS": ownerBashMax})
+	started := filepath.Join(t.TempDir(), "harness.env")
+	t.Setenv(fakeClaudeEnv, started)
+	_, err := m.client().Submit(context.Background(), hubapi.SubmitRequest{
+		RunID: "env-clash", Harness: m.h.name, Model: m.h.model,
+		Brief:  v1.Brief{Instruction: m.h.instruction},
+		Grants: []v1.Grant{{Name: "DOCKER_HOST", Value: "tcp://hub-chosen:2375", As: v1.GrantEnv}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := m.daemon()
+	m.watch("env-clash")
+	run, err := m.client().Run(context.Background(), "env-clash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Result == nil || run.Result.State != v1.RunFailed || run.Result.Error == nil || run.Result.Error.Class != "refused" ||
+		!strings.Contains(run.Result.Error.Message, "grant DOCKER_HOST") {
+		t.Fatalf("result %+v, want a refusal naming the grant\ndaemon:\n%s", run.Result, d.out.String())
+	}
+	if msg := run.Result.Error.Message; strings.Contains(msg, ownerDockerHost) || strings.Contains(msg, "BASH_MAX_TIMEOUT_MS") {
+		t.Error("the refusal tells the hub more of [env] than the name it sent")
+	}
+	if _, err := os.Stat(started); err == nil {
+		t.Error("the harness started")
 	}
 }
 
