@@ -866,6 +866,15 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   the harness running in it, under `flock`s held until the run ends —
   exclusive on it, shared on the directories above it;
   several lie side by side under the workdir. No sources → an empty directory.
+  A branch the hub named is let go of when a run ends with it pushed and clean
+  — `Manager.Settle`, from the executor's `finishWith` and for each run a
+  restart reports lost, detaches the worktree at the same commit — so another
+  session may check it out; the session's next run fetches and takes it back,
+  and a run needing a branch another worktree still holds fails
+  `source_failed` naming the session, to its own hub only
+  ([0082](docs/decisions/0082-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md)).
+  A branch the cache has is fast-forwarded to the remote's before it is
+  checked out.
   Hub strings are checked before git sees them, git never prompts, and a local
   source must resolve inside the owner's `[workdirs] roots` — with none
   configured, the owner's home directory; with `path_sources = false`, nowhere

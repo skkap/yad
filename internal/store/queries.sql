@@ -344,6 +344,13 @@ SELECT spec FROM runs WHERE connection = ? AND session_id = ? ORDER BY created_a
 -- name: SetSessionSources :exec
 UPDATE sessions SET sources = ? WHERE connection = ? AND id = ?;
 
+-- The session whose workdir a worktree holding a branch is in, for the error
+-- that names it. An open session first: a closed one's workdir is on its way
+-- out, and a later session may have been given the same path.
+-- name: SessionByWorkdir :one
+SELECT connection, id FROM sessions WHERE workdir = ?
+ORDER BY state = 'open' DESC, last_used_at DESC LIMIT 1;
+
 -- A sweep a migration left for the daemon's start (0009_start_sweeps.sql).
 -- name: StartSweepPending :one
 SELECT EXISTS (SELECT 1 FROM start_sweeps WHERE name = ?);

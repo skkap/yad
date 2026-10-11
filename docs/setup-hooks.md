@@ -112,10 +112,42 @@ pressure — before it removes the worktree and frees the slot
 #!/bin/sh
 set -u
 : "${WT_ROOT:=$(git rev-parse --show-toplevel)}"
-: "${WT_SLUG:=$(git branch --show-current | tr / -)}"
+: "${WT_SLOT:=1}"
 cd "$WT_ROOT"
-docker compose -p "app-$WT_SLUG" down --volumes --remove-orphans || true
+docker compose -p "app-$WT_SLOT" down --volumes --remove-orphans || true
 ```
+
+## Branches shared between sessions
+
+git lets one worktree have a branch checked out at a time. A branch the hub
+names is one a later session may name too: one run builds it, another verifies
+or merges it. So when a run ends with that branch **pushed and clean** — no
+change to a tracked file, and every commit on `origin/<branch>` — the session
+lets go of it: its worktree is detached at the same commit, and nothing in it
+changes. Another session naming the branch can then check it out
+([0082](decisions/0082-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md)).
+
+- **Untracked files do not count.** They stay in the worktree whatever becomes
+  of the branch.
+- **A push to a URL does not count as pushed.** Only a push to `origin` moves
+  `origin/<branch>` in the runner's cache, so push to `origin`.
+- **A session's own branch, named after it when the hub names none, is never let go of**, and a
+  run that parks on a usage limit keeps its branch: it comes back to the tree
+  it left.
+- **The session's next run takes the branch back.** The cache is fetched, the
+  branch is fast-forwarded to origin's when origin's has moved on, and the run
+  starts on it — on the other session's commits too. Its status events say how
+  the branch moved while the session was away, or that it was rewritten or has
+  diverged from origin's.
+- **A branch still held** — by a session with a run going, or one that left
+  uncommitted changes or unpushed commits on it — fails the new run with
+  `source_failed`, naming that session when it is the same hub's. Push and
+  commit from that session, or close it, and send the run again.
+
+The hook does not run again when a session takes its branch back: the worktree
+is the one it set up. Two sessions' worktrees can hold the same branch, one
+after the other, so name anything they must not share — containers, databases,
+ports — after `WT_SLOT`, never `WT_BRANCH` or `WT_SLUG`.
 
 ## What it is not
 

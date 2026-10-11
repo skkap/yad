@@ -74,6 +74,9 @@ type Manager struct {
 	// Log takes what a teardown did: Reclaim has no run to report it in.
 	// Nil discards it.
 	Log *slog.Logger
+	// Holders names the session holding a branch a run cannot have; nil
+	// names none.
+	Holders Holders
 
 	once  sync.Once
 	mu    sync.Mutex
@@ -139,6 +142,8 @@ type item struct {
 	base   string
 	branch string
 	path   string
+	// named is a branch the hub named, which another session may name too.
+	named bool
 	// dest is where a git worktree is added, or a path source linked; for
 	// the only source of a run, the workdir itself.
 	dest string
@@ -255,6 +260,7 @@ func (m *Manager) plan(req Request) ([]item, error) {
 			}
 			seen[r.key] = true
 			it.git, it.base, it.branch = &r, src.Git.Base, src.Git.Branch
+			it.named = it.branch != ""
 			if it.base != "" {
 				if err := checkRef("sources["+fmt.Sprint(i)+"].git.base", it.base); err != nil {
 					return nil, err
@@ -411,6 +417,15 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 		}
 		if _, err := os.Stat(filepath.Join(gitDir, checkedOut)); err == nil {
 			req.Emit(v1.Event{Kind: v1.EventStatus, Status: fmt.Sprintf("continuing in the session's worktree of %s", it.git.name)})
+			if err := markNamed(gitDir, it); err != nil {
+				return failed(err)
+			}
+			if err := m.reattach(ctx, req, it, cache, gitDir); err != nil {
+				if _, ok := errors.AsType[*Error](err); ok {
+					return false, "", err
+				}
+				return failed(err)
+			}
 			return false, cache, nil
 		}
 		// An add that was killed — a cancel, the git timeout, the runner
@@ -429,16 +444,34 @@ func (m *Manager) worktree(ctx context.Context, req Request, it item, cache stri
 	if err := m.fetch(ctx, cache, *it.git); err != nil {
 		return failed(err)
 	}
+	if it.named {
+		if _, err := m.git(ctx, cache, "rev-parse", "--verify", "--quiet", "refs/heads/"+it.branch); err == nil {
+			if err := m.take(ctx, req, it, cache, it.branch); err != nil {
+				if _, ok := errors.AsType[*Error](err); ok {
+					return false, "", err
+				}
+				return failed(err)
+			}
+		}
+	}
 	args, from, err := m.addArgs(ctx, cache, it)
 	if err != nil {
 		return failed(err)
 	}
 	if _, err := m.git(ctx, cache, args...); err != nil {
-		return failed(fmt.Errorf("%w — %s", err, "the branch may be checked out by another session, or the workdir not empty"))
+		// A harness's own git does not take the cache's lock, so a
+		// session can still have checked the branch out since take looked.
+		if path, held, herr := m.holder(ctx, cache, it.branch, it.dest); herr == nil && held {
+			return false, "", m.heldBy(ctx, req, it, path, it.branch)
+		}
+		return failed(fmt.Errorf("%w — %s", err, "the session's workdir may not be empty"))
 	}
 	gitDir, err := m.git(ctx, it.dest, "rev-parse", "--absolute-git-dir")
 	if err == nil {
 		err = os.WriteFile(filepath.Join(gitDir, checkedOut), nil, 0o600)
+	}
+	if err == nil {
+		err = markNamed(gitDir, it)
 	}
 	if err != nil {
 		return failed(fmt.Errorf("the worktree's checkout could not be recorded: %w", err))

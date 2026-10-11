@@ -188,6 +188,10 @@ type Loop struct {
 	// counts it, so a harness that stopped being drivable during that build
 	// still counts while its run is held (DEV-169). Nil tells nobody.
 	HeldChanged func()
+	// Settle lets go of a branch a session reported lost here left pushed
+	// and clean, as a run that ends does (workdir.Manager.Settle). Nil
+	// keeps every branch.
+	Settle func(ctx context.Context, dir string) error
 
 	sentFingerprint string
 	wantDocument    bool
@@ -1152,6 +1156,7 @@ func (l *Loop) Recover(ctx context.Context) error {
 			}
 		}
 		l.Log.Warn("a previous process held this run and no process of it is left; reporting it lost", "connection", l.Connection, "run", r.ID, "state", r.State)
+		l.settle(ctx, r.SessionID)
 		msg := fmt.Sprintf("the runner stopped while the run was %s, and a run is never run twice; resume its session with a new run", r.State)
 		err := l.Store.Tx(ctx, func(q *db.Queries) error {
 			last, at, err := lastSpooled(ctx, q, l.Connection, r.ID)
@@ -1198,6 +1203,25 @@ func (l *Loop) Recover(ctx context.Context) error {
 	}
 	l.recovered = true
 	return nil
+}
+
+// settle lets go of the branch of a session whose run was reported lost
+// (decision 0082). Before the result is recorded, as finishWith does it: a
+// runner that stops in between finds the run still held at its next start
+// and tries again, where after it the run would be listed no more. A
+// failure is logged and the run reported lost all the same.
+func (l *Loop) settle(ctx context.Context, session string) {
+	if l.Settle == nil {
+		return
+	}
+	s, err := l.Store.GetSession(ctx, db.GetSessionParams{Connection: l.Connection, ID: session})
+	if err != nil {
+		return
+	}
+	if err := l.Settle(ctx, s.Workdir); err != nil {
+		l.Log.Warn("the session's branch could not be let go of; a session naming it is refused until a later run of this one ends",
+			"connection", l.Connection, "session", session, "err", err)
+	}
 }
 
 // floorOf is the latest moment a run is known to have still been going: the

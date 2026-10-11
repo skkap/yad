@@ -279,7 +279,7 @@ func (e *Exec) init() {
 			w := e.Config.Workdirs
 			e.Workdirs = &workdir.Manager{
 				Data: e.Data, Roots: w.EffectiveRoots(), PathSourcesOff: !w.AllowsPathSources(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
-				TeardownTimeout: w.TeardownTimeout.Duration, Slots: e.Store, Log: e.Log,
+				TeardownTimeout: w.TeardownTimeout.Duration, Slots: e.Store, Holders: e.Store, Log: e.Log,
 			}
 		}
 	})
@@ -1203,6 +1203,15 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 	if res.Error != nil {
 		reason = sql.NullString{String: res.Error.Message, Valid: true}
 	}
+	// Before the result: once the hub has it, the session's next run may
+	// come at once, and so may another session naming the same branch. Not
+	// so for a parked run ended from outside it, whose also is the guard
+	// that it is still waiting: a sync may be resuming it this moment, with
+	// a harness at work on the branch, so it is let go of only once the
+	// transaction has said the run was still parked.
+	if also == nil {
+		e.settle(ctx, c, false)
+	}
 	now := time.Now().UnixMilli()
 	err = e.Store.Tx(ctx, func(q *db.Queries) error {
 		if also != nil {
@@ -1232,12 +1241,45 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 		log.Error("result not recorded; the run stays held", "err", err)
 		return err
 	}
+	if also != nil {
+		e.settle(ctx, c, true)
+	}
 	log.Info("run finished", "state", res.State, "last_seq", res.LastSeq)
 	e.report(c.Connection)
 	if e.Ended != nil {
 		e.Ended()
 	}
 	return nil
+}
+
+// settle lets go of a branch the hub named, when the run's session left it
+// pushed and clean, so another session may check it out; the session's next
+// run takes it back (decision 0082). A failure leaves the branch where it was.
+//
+// afterResult is a call once the result is recorded, when the reporter may
+// already have delivered it and the session's next run been claimed: then a
+// run held in the session, asked under the cache's lock, keeps the branch.
+func (e *Exec) settle(ctx context.Context, c Claim, afterResult bool) {
+	if e.Workdirs == nil {
+		return
+	}
+	sess, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
+	if err != nil {
+		return
+	}
+	var busy func(context.Context) bool
+	if afterResult {
+		busy = func(ctx context.Context) bool {
+			held, err := e.Store.HeldRunInSession(ctx, db.HeldRunInSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
+			// Unknown is busy: a branch kept is let go of at the next run's
+			// end, one detached under a harness loses its commits.
+			return err != nil || held != ""
+		}
+	}
+	if err := e.Workdirs.SettleUnless(ctx, sess.Workdir, busy); err != nil {
+		e.Log.Warn("the session's branch could not be let go of; a session naming it is refused until a later run of this one ends",
+			"connection", c.Connection, "session", c.Run.Session.ID, "err", err)
+	}
 }
 
 func (e *Exec) setState(ctx context.Context, c Claim, s v1.RunState) {

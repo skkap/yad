@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/fake"
 	hubdb "github.com/skkap/yad/internal/hub/store/db"
+	"github.com/skkap/yad/internal/store/db"
 	"github.com/skkap/yad/internal/workdir"
 )
 
@@ -513,6 +515,203 @@ func TestPathSourceDefaultsToTheOwnersHome(t *testing.T) {
 			real, _ := filepath.EvalSymlinks(dir)
 			if len(h.Starts) != 1 || !strings.HasPrefix(h.Starts[0].Workdir, real) {
 				t.Errorf("the harness ran in %v, not in the path source %s", h.Starts, real)
+			}
+		})
+	}
+}
+
+// gitIn is a harness's git in its workdir. Called from the fake harness, so
+// it reports rather than stops.
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Errorf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// branchIn is the branch a workdir has checked out; empty when detached.
+func branchIn(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// The ticket's case end to end (decision 0082): a run in s1 pushes branch
+// work and ends; a run opening s2 names work, starts on s1's commit, pushes
+// its own; s1's next run is back on work with s2's commit, and is told the
+// branch moved.
+func TestASecondSessionTakesABranchTheFirstLeftPushed(t *testing.T) {
+	e := newEnv(t)
+	root := t.TempDir()
+	bare := gitRepo(t, root, "#!/bin/sh\n")
+	l := e.loop(t, 1)
+	src := []v1.Source{{Git: &v1.GitSource{URL: bare, Branch: "work"}}}
+
+	var found []string
+	h := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+		var names []string
+		entries, _ := os.ReadDir(s.Workdir)
+		for _, en := range entries {
+			if strings.HasPrefix(en.Name(), "run-") {
+				names = append(names, en.Name())
+			}
+		}
+		found = append(found, strings.Join(names, " "))
+		name := fmt.Sprintf("run-%d.txt", len(found))
+		os.WriteFile(filepath.Join(s.Workdir, name), []byte(name), 0o600)
+		gitIn(t, s.Workdir, "add", name)
+		gitIn(t, s.Workdir, "commit", "--quiet", "-m", name)
+		gitIn(t, s.Workdir, "push", "--quiet", "origin", "work")
+		return fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-" + filepath.Base(s.Workdir)}}
+	}}
+	x := e.sourcedExec(root, h)
+	first := testRun("a", "s1")
+	first.Sources = src
+	runOne(t, e, l, x, first)
+	second := testRun("b", "s2")
+	second.Sources = src
+	runOne(t, e, l, x, second)
+	third := continued("c", "s1")
+	third.Sources = src
+	runOne(t, e, l, x, third)
+
+	for _, id := range []string{"a", "b", "c"} {
+		if r := localRun(t, e, id); r.State != string(v1.RunSucceeded) {
+			t.Errorf("run %s ended %s: %s", id, r.State, r.Reason.String)
+		}
+	}
+	if want := []string{"", "run-1.txt", "run-1.txt run-2.txt"}; strings.Join(found, "|") != strings.Join(want, "|") {
+		t.Errorf("the runs found %q, want %q", found, want)
+	}
+	var statuses []string
+	for _, ev := range hubEvents(t, e, "c") {
+		if ev.Kind == v1.EventStatus {
+			statuses = append(statuses, ev.Status)
+		}
+	}
+	if got := strings.Join(statuses, "\n"); !strings.Contains(got, "back on work, which moved from") {
+		t.Errorf("s1's second run was not told the branch moved:\n%s", got)
+	}
+}
+
+// A run that parks keeps its branch: it comes back to the tree it left. One
+// a restart reports lost lets go of it, as a run that ends does.
+func TestAParkedRunKeepsItsBranchAndALostOneLetsGo(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	plantCredential(t, e.paths.Data, "work")
+	root := t.TempDir()
+	bare := gitRepo(t, root, "#!/bin/sh\n")
+	reset := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	l := e.loop(t, 1)
+	run := testRun("a", "s1")
+	run.Sources = []v1.Source{{Git: &v1.GitSource{URL: bare, Branch: "work"}}}
+	e.enqueue(t, run)
+	h := &fake.Adapter{ID: "claude", Next: func(s adapter.Spec) fake.Script {
+		gitIn(t, s.Workdir, "push", "--quiet", "origin", "work")
+		return limitScript("five_hour", reset, "native-1")
+	}}
+	x, _ := e.accountExecutor(t, accountConfig("work"), h)
+	x.Config.Workdirs.Roots = []string{root}
+	claimAndRun(t, l, x)
+
+	waitingRow(t, e, "a")
+	dir := session(t, e, "s1").Workdir
+	if b := branchIn(dir); b != "work" {
+		t.Fatalf("a parked run's workdir is on %q, want its branch", b)
+	}
+
+	// The process dies with the run in hand, and the next start reports it
+	// lost.
+	if _, err := e.store.DB.ExecContext(ctx, `UPDATE runs SET state = 'running' WHERE connection = 'hub' AND id = 'a'`); err != nil {
+		t.Fatal(err)
+	}
+	l2 := restartedAs(t, e, l, x)
+	// Settled while the run is still held, so a runner stopping between the
+	// two finds it again at its next start rather than never.
+	var heldAtSettle string
+	l2.Settle = func(ctx context.Context, dir string) error {
+		heldAtSettle = localRun(t, e, "a").State
+		return x.Workdirs.Settle(ctx, dir)
+	}
+	if err := l2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if res, ok := outboxResult(t, e, "a"); !ok || res.State != v1.RunLost {
+		t.Fatalf("result = %+v, %v, want lost", res, ok)
+	}
+	if b := branchIn(dir); b != "" {
+		t.Errorf("a lost run's workdir is still on %q, which it left pushed and clean", b)
+	}
+	if heldAtSettle != string(v1.RunRunning) {
+		t.Errorf("the branch was let go of with the run %q; want it still held, so a restart in between retries it", heldAtSettle)
+	}
+}
+
+// A parked run ended from outside it — the collector past its max_wait, a
+// cancel — while a sync is resuming it is refused by End's own check, and
+// its branch stays where the resumed harness is working on it.
+func TestEndingARunNoLongerWaitingLeavesItsBranch(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	bare := gitRepo(t, root, "#!/bin/sh\n")
+	l := e.loop(t, 1)
+	run := testRun("a", "s1")
+	run.Sources = []v1.Source{{Git: &v1.GitSource{URL: bare, Branch: "work"}}}
+	x := e.sourcedExec(root, fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}}))
+	runOne(t, e, l, x, run)
+	dir := session(t, e, "s1").Workdir
+	// Unpushed at its end, so kept; pushed now, as a resumed harness would.
+	gitIn(t, dir, "push", "--quiet", "origin", "work")
+	if _, err := e.store.DB.ExecContext(ctx, `UPDATE runs SET state = 'running' WHERE connection = 'hub' AND id = 'a'`); err != nil {
+		t.Fatal(err)
+	}
+
+	c := Claim{Connection: "hub", Release: func() {}, Run: v1.Run{RunID: "a", Harness: "claude", Session: v1.SessionRef{ID: "s1"}}}
+	if err := x.End(ctx, c, localRun(t, e, "a"), v1.RunTimedOut, &v1.RunError{Class: ClassMaxWait, Message: "past max_wait"}, time.Now()); !errors.Is(err, errNoLongerWaiting) {
+		t.Fatalf("End = %v, want it refused", err)
+	}
+	if b := branchIn(dir); b != "work" {
+		t.Errorf("a run being resumed was taken off its branch: on %q", b)
+	}
+}
+
+// A parked run ended from outside it is settled once its result is
+// recorded, when the reporter may already have delivered it and the
+// session's next run been claimed: that run keeps the branch. With none, the
+// branch is let go of as at any run's end.
+func TestASettleAfterTheResultLeavesTheBranchToTheSessionsNextRun(t *testing.T) {
+	for _, next := range []bool{true, false} {
+		t.Run(fmt.Sprintf("next run claimed %v", next), func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			root := t.TempDir()
+			bare := gitRepo(t, root, "#!/bin/sh\n")
+			l := e.loop(t, 1)
+			run := testRun("a", "s1")
+			run.Sources = []v1.Source{{Git: &v1.GitSource{URL: bare, Branch: "work"}}}
+			x := e.sourcedExec(root, fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}}))
+			runOne(t, e, l, x, run)
+			dir := session(t, e, "s1").Workdir
+			// Unpushed at its end, so kept; pushed since.
+			gitIn(t, dir, "push", "--quiet", "origin", "work")
+			if next {
+				if err := e.store.CreateRun(ctx, db.CreateRunParams{Connection: "hub", ID: "b", SessionID: "s1", Harness: "claude", Model: "opus", Spec: "{}", CreatedAt: 1, UpdatedAt: 1}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			x.settle(ctx, Claim{Connection: "hub", Run: v1.Run{RunID: "a", Session: v1.SessionRef{ID: "s1"}}}, true)
+			want := ""
+			if next {
+				want = "work"
+			}
+			if b := branchIn(dir); b != want {
+				t.Errorf("on %q, want %q", b, want)
 			}
 		})
 	}

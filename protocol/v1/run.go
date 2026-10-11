@@ -91,7 +91,7 @@ type Source struct {
 type GitSource struct {
 	URL    string `json:"url" doc:"The repository: an https or ssh URL, fetched with the machine's own credentials and never with a password in the URL, or an absolute path or file:// URL of a repository on the runner's machine, inside the directories its owner allows and never at a runner whose capability document says path_sources is false. Required."`
 	Base   string `json:"base,omitempty" doc:"The ref a new branch is cut from. Absent: the repository's default branch."`
-	Branch string `json:"branch,omitempty" doc:"The branch the run works on, checked out as a worktree of the repository. Absent: yad/<connection>/<session>, named after the session."`
+	Branch string `json:"branch,omitempty" doc:"The branch the run works on, checked out as a worktree of the repository, fast-forwarded to the remote's when the runner already has it behind. One session has it at a time: a session lets go of it when a run of it ends with the branch committed and pushed to origin, and takes it back at its next run; until then a run of another session naming it fails with class source_failed. Absent: yad/<connection>/<session>, named after the session, which no other session takes."`
 }
 
 // GrantDelivery is how a grant reaches the harness. Never argv.

@@ -628,6 +628,31 @@ the claim opened unless its owner asked to close that session meanwhile (§8)
 may be offered again, to it or to another runner. `yad hub` does exactly that
 with a run whose offer lapsed and whose late claim it cancelled (§5).
 
+### A branch two sessions name
+
+A git source's `branch` is checked out as a worktree, and git lets one worktree
+have a branch at a time. When one session builds a branch and a second one
+verifies or merges it, the runner hands the branch over
+([0082](docs/decisions/0082-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md)):
+
+- **A session lets go of the branch you named when a run of it ends with the
+  branch pushed and clean** — no change to a tracked file, and every commit
+  pushed to `origin`. Untracked files do not count. A run that parks keeps it,
+  and a session's own branch, named after it when you name none, is never let go of.
+- **A new session naming that branch then starts on it**, fast-forwarded to
+  the remote's when the remote has moved on. Tell the harness to push to
+  `origin`: a push to a URL is not seen, and the session keeps the branch.
+- **The first session's next run takes the branch back**, with the second
+  session's commits on it. Its status events say how the branch moved —
+  `back on X, which moved from <old> to <new>`, a fast-forward, a branch that
+  was rewritten or has diverged. The harness is not told; if it should know,
+  say so in the run's instruction.
+- **While a session still holds the branch** — a run going in it, or
+  uncommitted changes or unpushed commits left on it — a run that needs the
+  branch fails `source_failed`, naming that session when it is yours and "a
+  session of another hub" when it is not. Have the holder push and commit, or
+  close it, then send the run again.
+
 ### Who may be offered what
 
 **Only a harness the runner can drive.** In the capability document, a
@@ -769,7 +794,7 @@ these are the ones worth acting on:
 | `wall_clock_timeout`, `inactivity_timeout` | timed_out | stopped by the run's own caps |
 | `harness_silent` | timed_out | the harness produced no event within the runner owner's first-output timeout of starting — of the run's start, or of its move to another account when it moved (2 minutes unless they changed it, or the run's `inactivity_ms` if lower ends it as `inactivity_timeout` instead). It is the machine's problem, not the run's: the message carries the end of the harness's stderr and what the owner should check. Sending the same run again to the same runner is likely to end the same way; the third in a row on one home makes the runner report it not ready (`silent_until`, §4) |
 | `source_refused` | failed | a source breaks the owner's rules — a path outside the allowed directories, any source on the machine at a runner whose document says `path_sources: false`, a transport the runner does not use |
-| `source_failed`, `setup_failed`, `prepare_failed` | failed | the workdir could not be built, or the repository's setup hook failed |
+| `source_failed`, `setup_failed`, `prepare_failed` | failed | the workdir could not be built, or the repository's setup hook failed. A `source_failed` that names a session holding the run's branch, or "a session of another hub", clears once that session lets go of it (§4, "A branch two sessions name"): send the run again then |
 | `prompt_too_long` | failed | the conversation no longer fits the model's context |
 | `runner_stopping` | cancelled | the runner cancelled it on its way down, not you |
 | `runner_restarted` | lost | the runner process holding it stopped without finishing it |
