@@ -699,7 +699,10 @@ interrupt is `session/cancel`; ACP v1 has no steer, so none is advertised for
 OpenCode. A permission request is answered from the owner's `permission_mode`
 (`allow`, the default, or `reject`). A resume or fork OpenCode refuses is
 checked against every page of `session/list`, up to fifty, and one no page
-lists is `session_not_found`; past fifty the refusal is reported as it is. What is OpenCode's own is in `internal/adapter/opencode`:
+lists is `session_not_found`; past fifty the refusal is reported as it is. An
+error answered with a null id — JSON-RPC's answer to a request whose id the
+agent could not read — fails the one request outstanding, or the turn when
+several are, rather than leaving the prompt to the inactivity watchdog. What is OpenCode's own is in `internal/adapter/opencode`:
 the run's context goes into its system prompt as an instruction file named in
 `OPENCODE_CONFIG_CONTENT`; its own HTTP server on 127.0.0.1 gets a random
 `OPENCODE_SERVER_PASSWORD` per run; `OPENCODE_*` from a run's grants is

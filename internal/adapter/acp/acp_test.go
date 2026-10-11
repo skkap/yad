@@ -13,6 +13,8 @@ import (
 
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/acp/acptest"
+	"github.com/skkap/yad/internal/adapter/jsonrpc"
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
 // The core against agents that are not OpenCode: hand-written conversations
@@ -264,3 +266,126 @@ func TestARefusedResumeReadsEveryPage(t *testing.T) {
 		})
 	}
 }
+
+// An error answered with a null id — JSON-RPC's answer to a request whose id
+// the agent could not read — ties to no request by its id. With one request
+// outstanding it is that request's: the run fails at once with the agent's
+// words, not on the inactivity watchdog a prompt with no deadline of its own
+// would wait for.
+func TestANullIDErrorFailsTheOneRequestOutstanding(t *testing.T) {
+	for _, tc := range []struct {
+		fixture, method, says string
+	}{
+		{"prompt-null-id", "session/prompt", "Invalid request: prompt[0] is not a content block"},
+		{"new-null-id", "session/new", "Parse error: unexpected token"},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			start := time.Now()
+			events, o := play(t, tc.fixture, nil)
+			if took := time.Since(start); took > 10*time.Second {
+				t.Errorf("the run took %s to end", took)
+			}
+			if o.State != v1.RunFailed || o.Error.Class != adapter.ClassHarness ||
+				!strings.Contains(o.Error.Message, tc.says) || !strings.Contains(o.Error.Message, tc.method) {
+				t.Fatalf("outcome %s %+v", o.State, o.Error)
+			}
+			checkNext(t, o.Error.Message, testAgent.ID)
+			if !logged(events, tc.says) {
+				t.Errorf("the agent's answer was not logged as a stream event: %+v", events)
+			}
+		})
+	}
+}
+
+// With several requests outstanding the answer names none of them, and none
+// is guessed: the turn fails with the agent's error. With none outstanding it
+// is the agent's to explain, logged, and the run goes on. Either way its
+// words are masked of the run's environment and file grants, as its stderr
+// is: an agent that could not read a request may quote it back.
+func TestANullIDErrorWithSeveralOrNoneOutstanding(t *testing.T) {
+	const password, grant = "pw-0123456789abcdef", "grant-file-value-42"
+	for _, tc := range []struct {
+		name   string
+		wait   map[int64]string
+		failed bool
+	}{
+		{"several", map[int64]string{3: "session/prompt", 4: "session/set_config_option"}, true},
+		{"none", map[int64]string{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var events []v1.Event
+			tu := &turn{
+				agent: testAgent, wait: tc.wait, finished: make(chan struct{}),
+				in:   newInput(nopWriter{}, testAgent.Name),
+				env:  []string{"OPENCODE_SERVER_PASSWORD=" + password},
+				spec: adapter.Spec{Secrets: []string{grant}},
+			}
+			defer tu.in.Close()
+			tu.tr = newTranslator(func(e v1.Event) { events = append(events, e) }, testAgent, tu.spec)
+			tu.handle(jsonrpc.Line{Msg: &jsonrpc.Message{
+				ID:    json.RawMessage("null"),
+				Error: &jsonrpc.RPCError{Code: jsonrpc.CodeInternal, Message: "something broke reading " + password + " and " + grant},
+			}})
+			if !logged(events, "something broke reading "+adapter.Redacted+" and "+adapter.Redacted) {
+				t.Errorf("not logged, masked, as a stream event: %+v", events)
+			}
+			var said string
+			for _, e := range events {
+				if e.Error != nil {
+					said += e.Error.Message + "\n"
+				}
+			}
+			if tu.tr.fault != nil {
+				said += tu.tr.fault.Message
+			}
+			if strings.Contains(said, password) || strings.Contains(said, grant) {
+				t.Errorf("a secret went out unmasked: %s", said)
+			}
+			if tu.over != tc.failed {
+				t.Errorf("turn over %v, want %v", tu.over, tc.failed)
+			}
+			if !tc.failed {
+				if tu.tr.fault != nil || len(tu.wait) != 0 {
+					t.Errorf("fault %+v, wait %v", tu.tr.fault, tu.wait)
+				}
+				return
+			}
+			if tu.tr.fault == nil || tu.tr.fault.Class != adapter.ClassHarness || !strings.Contains(tu.tr.fault.Message, "something broke") {
+				t.Fatalf("fault %+v", tu.tr.fault)
+			}
+			checkNext(t, tu.tr.fault.Message, testAgent.ID)
+			for _, method := range tc.wait {
+				if strings.Contains(tu.tr.fault.Message, method) {
+					t.Errorf("the error guesses %s: %q", method, tu.tr.fault.Message)
+				}
+			}
+		})
+	}
+}
+
+// checkNext runs the two commands a null-id failure's next action names
+// through a real sh: the agent's version, then yad doctor.
+func checkNext(t *testing.T, msg, id string) {
+	t.Helper()
+	parts := strings.Split(msg, "`")
+	if len(parts) != 5 {
+		t.Fatalf("want two commands set apart in backticks in %q", msg)
+	}
+	shellwordtest.Check(t, parts[1], id, "--version")
+	shellwordtest.Check(t, parts[3], "yad", "doctor")
+}
+
+// logged reports whether a stream event quotes says.
+func logged(events []v1.Event, says string) bool {
+	for _, e := range events {
+		if e.Kind == v1.EventError && e.Error.Class == adapter.ClassStream && strings.Contains(e.Error.Message, says) {
+			return true
+		}
+	}
+	return false
+}
+
+type nopWriter struct{}
+
+func (nopWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (nopWriter) Close() error                { return nil }
