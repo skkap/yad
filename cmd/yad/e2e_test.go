@@ -83,6 +83,9 @@ func TestMain(m *testing.M) {
 		return nil, errors.New("the end-to-end fakes are not asked for models")
 	}
 	hostool.VersionTimeoutForTests, hostool.StatusTimeoutForTests = probeBudget, probeBudget
+	// No test reads the machine's own process table, where the owner's
+	// Claude sessions are; children too, so before they branch.
+	capability.ProcessesForTests = func(context.Context) ([]capability.Process, error) { return nil, nil }
 	if os.Getenv(childYad) != "" {
 		// The test binary as yad itself, for tests that signal a runner as a
 		// service manager would; the harness it spawns is still the fake.

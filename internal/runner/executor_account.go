@@ -69,8 +69,12 @@ func (e *noFreeAccountError) Error() string {
 	// Only the states that can actually be in the way are named. A state
 	// added later and not handled here leaves the account out of the reason
 	// rather than mislabelling it as something it is not.
-	var limited, needsLogin []string
+	var limited, needsLogin, silent []string
 	for _, a := range e.accounts {
+		if a.State == v1.AccountFree && a.SilentUntil != nil {
+			silent = append(silent, a.Label+" silent until "+a.SilentUntil.UTC().Format(time.RFC3339))
+			continue
+		}
 		switch a.State {
 		case v1.AccountNeedsLogin:
 			needsLogin = append(needsLogin, a.Label)
@@ -91,6 +95,11 @@ func (e *noFreeAccountError) Error() string {
 	}
 	if len(limited) > 0 {
 		msg += " — " + list(limited)
+	}
+	if len(silent) > 0 {
+		// Decision 0077: its last runs said nothing, and the time is when it
+		// is tried again.
+		msg += " — " + list(silent)
 	}
 	return msg
 }

@@ -50,7 +50,8 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		return err
 	}
 	found := capability.Detect(ctx)
-	var locked map[string]bool
+	var locked, silent map[string]bool
+	var sharedErr error
 	// The login check needs to know which harnesses have accounts. A profile
 	// with no config yet has none, which is what Load's default says; one
 	// that cannot be read is no reason to refuse the rest of the answer.
@@ -62,9 +63,17 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		locked = keychainLocked(found, os.Getenv)
 		// Read-only, as `yad account list` reads it (decision 0043). States
 		// that cannot be read change nothing here: `yad account list` says why.
-		if accounts, err := account.Read(ctx, g.paths, account.ListsOf(cfg), time.Now()); err == nil {
+		accounts, silences, err := account.ReadAll(ctx, g.paths, account.ListsOf(cfg), time.Now())
+		if err == nil {
 			accountLogins(found, accounts, g.paths)
+			// The daemon's record of runs gone silent (decision 0077), read
+			// as the capability document reads it, so doctor says not ready
+			// exactly when health does.
+			silent = capability.SilentHomes(found, cfg, accounts, silences, time.Now(), g.paths.Command)
 		}
+		// With or without the states: a harness with no accounts runs from
+		// its default home, which needs none of them to look in.
+		sharedErr = capability.SharedHomes(ctx, found, cfg, accounts, g.paths.Command, true)
 	}
 	if *asJSON {
 		return writeJSON(w, found)
@@ -73,7 +82,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "HARNESS\tSTATUS\tVERSION\tPATH")
-	ready, broken, needsLogin, noAdapter, unknown := 0, 0, 0, 0, 0
+	ready, broken, needsLogin, noAdapter, unknown, notReady := 0, 0, 0, 0, 0, 0
 	for _, d := range found {
 		status := "—"
 		switch {
@@ -86,6 +95,11 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		case d.Present && d.Error != "":
 			status = "broken"
 			broken++
+		case silent[d.ID]:
+			// Drivable, and given no run until its cool-down ends: the
+			// warning below says until when and why.
+			status = "not ready"
+			notReady++
 		case d.Ready():
 			status = "ready"
 			ready++
@@ -130,6 +144,9 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 				who, f.Since.Local().Format("2006-01-02 15:04"), f.Reason)
 		}
 	}
+	if sharedErr != nil {
+		fmt.Fprintf(w, "\nnote: this machine's processes could not be listed, so whether another Claude runs from the home yad's runs use is not shown: %v\n", sharedErr)
+	}
 	if unanswered {
 		fmt.Fprintf(w, "\nnote: the daemon did not answer, so why a harness's models may be the catalog's is not shown — `%s` says what it is doing\n", g.paths.Command("status"))
 	}
@@ -166,6 +183,9 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	case needsLogin > 0:
 		// Its version probe passed; the error above names the login to run.
 		fmt.Fprintln(w, "No drivable harness: an installed one is not logged in — log it in as the error above says, and run this again.")
+		return nil
+	case notReady > 0:
+		fmt.Fprintln(w, "No harness ready now: the runs of an installed one have gone silent, and it is given none until its cool-down ends — the warning above says when, and what to do.")
 		return nil
 	case noAdapter > 0:
 		fmt.Fprintln(w, "No drivable harness: what is installed has no adapter in this yad yet — install Claude Code or Codex, which have one.")
@@ -292,12 +312,12 @@ func cmdHarnesses(ctx context.Context, g global, args []string, w, errw io.Write
 	// The note goes to stderr: the document goes to w and has to stay
 	// parseable, and an owner reading "free" for an account that may need
 	// login should be told the states were never read.
-	accounts, err := account.Read(ctx, g.paths, account.ListsOf(cfg), time.Now())
+	accounts, silences, err := account.ReadAll(ctx, g.paths, account.ListsOf(cfg), time.Now())
 	if err != nil {
 		fmt.Fprintln(errw, "note: account states could not be read, so every configured account is shown free:", err)
-		accounts = nil
+		accounts, silences = nil, nil
 	}
-	return writeJSON(w, capability.Build(ctx, id, cfg, accounts))
+	return writeJSON(w, capability.Build(ctx, id, cfg, capability.State{Accounts: accounts, Silences: silences, Paths: g.paths}))
 }
 
 func writeJSON(w io.Writer, v any) error {

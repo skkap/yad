@@ -17,8 +17,12 @@ components:
           items:
             type: string
           type: array
+        silent_until:
+          description: "Set while the account's last runs said nothing at all before the runner's first-output timeout stopped them, three or more in a row each ending harness_silent: the runner starts no run on it until this time, whatever its state says, and then offers it again. A run on it that produces any output clears it. Absent otherwise, and from runners older than this field."
+          format: date-time
+          type: string
         state:
-          description: "free takes runs. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again, at the machine or with a hub login (start_login or login_token). Absent from runners older than this field: the runner cannot say, which is not a fault."
+          description: "free takes runs, unless silent_until is set. limited is at a usage limit until limited_until. needs_login cannot run a turn until the owner logs it in again, at the machine or with a hub login (start_login or login_token). Absent from runners older than this field: the runner cannot say, which is not a fault."
           enum:
             - free
             - limited
@@ -360,8 +364,12 @@ components:
           description: The harness id.
           type: string
         ready:
-          description: "Whether the harness can take a run now: at least one account is free, or it has no accounts and runs on its own login."
+          description: "Whether the harness can take a run now: at least one account is free and not silent, or it has no accounts and runs on its own login, which is not silent."
           type: boolean
+        silent_until:
+          description: "For a harness with no accounts, running on its own login: set while that login's last runs said nothing at all before the runner's first-output timeout stopped them, three or more in a row each ending harness_silent. ready is false until this time, and then the harness is offered again. A run that produces any output clears it. Absent otherwise, for a harness with accounts (each account says it for itself), and from runners older than this field."
+          format: date-time
+          type: string
       required:
         - id
         - ready

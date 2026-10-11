@@ -58,6 +58,13 @@ type Account struct {
 	// run a turn, and one at 100% outlives the limit it caused.
 	Windows   []v1.AccountWindow
 	UpdatedAt time.Time
+	// SilentUntil is set while the account's home is not ready because its
+	// last runs went silent (decision 0077), judged at Load's moment as the
+	// state is; SilentRuns is how many did. Beside the state, not in it: the
+	// state set is the protocol's, closed for v1, and silence says nothing
+	// about the login or its quota.
+	SilentUntil *time.Time
+	SilentRuns  int
 }
 
 // stateOf is the one rule for reading a stored account row, in one place so
@@ -184,7 +191,7 @@ func (a Account) Report() v1.AccountReport {
 	if state == "" {
 		state = v1.AccountFree
 	}
-	r := v1.AccountReport{Label: a.Label, State: state, Windows: a.Windows}
+	r := v1.AccountReport{Label: a.Label, State: state, Windows: a.Windows, SilentUntil: a.SilentUntil}
 	// A reset in the past beside state: free is the disagreement a hub would
 	// act on, and DEV-28 decides whether to claim from exactly this pair. The
 	// window that caused the limit keeps its reset in Windows, so nothing a
@@ -734,12 +741,16 @@ func (l Lists) Apply(cfg config.Config) config.Config {
 func Load(ctx context.Context, q *db.Queries, data string, lists Lists, now time.Time) ([]Account, error) {
 	var rows []db.Account
 	var wrows []db.AccountWindow
+	var silences Silences
 	if q != nil {
 		var err error
 		if rows, err = q.ListAllAccounts(ctx); err != nil {
 			return nil, err
 		}
 		if wrows, err = q.ListAllAccountWindows(ctx); err != nil {
+			return nil, err
+		}
+		if silences, err = LoadSilences(ctx, q); err != nil {
 			return nil, err
 		}
 	}
@@ -797,6 +808,10 @@ func Load(ctx context.Context, q *db.Queries, data string, lists Lists, now time
 					a.State = v1.AccountNeedsLogin
 				}
 			}
+			if sl, ok := silences[Ref{Harness: id, Label: label}]; ok && sl.Holds(now) {
+				until := sl.Until
+				a.SilentUntil, a.SilentRuns = &until, sl.Runs
+			}
 			out = append(out, a)
 		}
 	}
@@ -836,7 +851,10 @@ func Soonest(accounts []Account, harness string, now time.Time) (Account, bool) 
 	var at time.Time
 	found := false
 	for _, a := range For(accounts, harness) {
-		if a.State != v1.AccountFree {
+		// A silent account is skipped as a limited one is: its home has
+		// shown it cannot start a harness, and another account is a home of
+		// its own (decision 0077).
+		if a.State != v1.AccountFree || a.SilentUntil != nil {
 			continue
 		}
 		reset := SoonestReset(now, a.Windows)
@@ -997,15 +1015,28 @@ func SetWindows(ctx context.Context, q *db.Queries, harness, label string, windo
 //
 // now is passed to Load, which says why it is the caller's.
 func Read(ctx context.Context, paths config.Paths, lists Lists, now time.Time) ([]Account, error) {
+	accounts, _, err := ReadAll(ctx, paths, lists, now)
+	return accounts, err
+}
+
+// ReadAll is Read with every home's silent runs beside the accounts, the
+// default logins' among them (decision 0077), from the one read-only open.
+func ReadAll(ctx context.Context, paths config.Paths, lists Lists, now time.Time) ([]Account, Silences, error) {
 	st, err := store.OpenProfile(ctx, paths)
 	if errors.Is(err, store.ErrNoState) {
-		return Load(ctx, nil, paths.Data, lists, now)
+		accounts, err := Load(ctx, nil, paths.Data, lists, now)
+		return accounts, nil, err
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer st.Close()
-	return Load(ctx, st.Queries, paths.Data, lists, now)
+	accounts, err := Load(ctx, st.Queries, paths.Data, lists, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	silences, err := LoadSilences(ctx, st.Queries)
+	return accounts, silences, err
 }
 
 // Forget deletes an account's state row and its windows. Left behind, the
@@ -1013,6 +1044,11 @@ func Read(ctx context.Context, paths config.Paths, lists Lists, now time.Time) (
 // different subscription, and a limit would park it.
 func Forget(ctx context.Context, q *db.Queries, r Ref) error {
 	if err := q.DeleteAccountWindows(ctx, db.DeleteAccountWindowsParams{Harness: r.Harness, Label: r.Label}); err != nil {
+		return err
+	}
+	// Its silent runs too: a label added again later is a new login in a
+	// new home, and has said nothing yet either way.
+	if err := NoteSpoke(ctx, q, r.Harness, r.Label); err != nil {
 		return err
 	}
 	return q.DeleteAccount(ctx, db.DeleteAccountParams{Harness: r.Harness, Label: r.Label})
@@ -1034,12 +1070,22 @@ func Prune(ctx context.Context, q *db.Queries, lists Lists) ([]Ref, error) {
 	if err != nil {
 		return nil, err
 	}
+	silences, err := LoadSilences(ctx, q)
+	if err != nil {
+		return nil, err
+	}
 	stale := map[Ref]bool{}
 	for _, r := range rows {
 		stale[Ref{r.Harness, r.Label}] = true
 	}
 	for _, w := range wrows {
 		stale[Ref{w.Harness, w.Label}] = true
+	}
+	// A default login's record has no label and is no account's to prune.
+	for r := range silences {
+		if r.Label != "" {
+			stale[r] = true
+		}
 	}
 	var gone []Ref
 	for r := range stale {

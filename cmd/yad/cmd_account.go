@@ -339,6 +339,11 @@ func accountList(ctx context.Context, g global, args []string, w io.Writer) erro
 		if a.State == v1.AccountLimited && a.LimitedUntil != nil {
 			state += " until " + a.LimitedUntil.Local().Format(time.RFC3339)
 		}
+		// Decision 0077: no run is started on it until then, whatever the
+		// state says.
+		if a.SilentUntil != nil {
+			state += ", silent until " + a.SilentUntil.Local().Format(time.RFC3339)
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Harness, a.Label, state, loginColumn(a), windowsColumn(a.Windows), since, a.Home)
 	}
 	if err := tw.Flush(); err != nil {

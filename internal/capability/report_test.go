@@ -24,6 +24,9 @@ func TestMain(m *testing.M) {
 	const answerBudget = 30 * time.Second
 	harness.VersionTimeoutForTests = answerBudget
 	hostool.VersionTimeoutForTests, hostool.StatusTimeoutForTests = answerBudget, answerBudget
+	// The machine's own processes are the owner's, and its ~/.claude may
+	// hold sessions: a test that wants a process table sets its own.
+	ProcessesForTests = noProcesses
 	os.Exit(m.Run())
 }
 
@@ -44,7 +47,7 @@ func noTools(t *testing.T) {
 func TestFingerprintIgnoresTimeOnly(t *testing.T) {
 	noTools(t)
 	cfg := config.Default()
-	a := Build(context.Background(), "r1", cfg, nil)
+	a := Build(context.Background(), "r1", cfg, State{})
 	b := a
 	b.ObservedAt = a.ObservedAt.Add(time.Hour)
 	if Fingerprint(a) != Fingerprint(b) {
@@ -61,9 +64,9 @@ func TestLabelOrderDoesNotMoveFingerprint(t *testing.T) {
 	noTools(t)
 	cfg := config.Default()
 	cfg.Labels = []string{"b", "a"}
-	x := Build(context.Background(), "r", cfg, nil)
+	x := Build(context.Background(), "r", cfg, State{})
 	cfg.Labels = []string{"a", "b"}
-	if Fingerprint(x) != Fingerprint(Build(context.Background(), "r", cfg, nil)) {
+	if Fingerprint(x) != Fingerprint(Build(context.Background(), "r", cfg, State{})) {
 		t.Error("label order moved the fingerprint")
 	}
 }
@@ -124,7 +127,7 @@ func TestHostToolReportIsPublicSafe(t *testing.T) {
 // is too old to know the question".
 func TestBuildReportsEveryHostTool(t *testing.T) {
 	noTools(t)
-	doc := Build(context.Background(), "r1", config.Default(), nil)
+	doc := Build(context.Background(), "r1", config.Default(), State{})
 	if len(doc.HostTools) != len(hostool.Catalog()) {
 		t.Fatalf("document carries %d host tools, want %d", len(doc.HostTools), len(hostool.Catalog()))
 	}
@@ -184,7 +187,7 @@ func TestDocumentCarriesNoChildOutputOrHomePath(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Name = "r1"
-	doc := Build(context.Background(), "r1", cfg, nil)
+	doc := Build(context.Background(), "r1", cfg, State{})
 	b, err := json.Marshal(doc)
 	if err != nil {
 		t.Fatal(err)

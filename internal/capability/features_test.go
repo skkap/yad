@@ -144,7 +144,7 @@ func TestInstallingAHarnessMovesTheDocumentAndLeavesTheOtherListsAlone(t *testin
 // runner's own.
 func TestBuildAdvertisesThePerRunFeaturesOfWhatIsInstalled(t *testing.T) {
 	noTools(t)
-	got := Build(context.Background(), "r1", config.Default(), nil).ProtocolFeatures
+	got := Build(context.Background(), "r1", config.Default(), State{}).ProtocolFeatures
 	if len(perRun(got)) != 0 {
 		t.Errorf("a machine with no harness advertises %v runner-wide", perRun(got))
 	}

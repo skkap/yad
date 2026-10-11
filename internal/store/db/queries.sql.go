@@ -65,6 +65,21 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) error 
 	return err
 }
 
+const clearHarnessSilence = `-- name: ClearHarnessSilence :exec
+DELETE FROM harness_silence WHERE harness = ? AND label = ?
+`
+
+type ClearHarnessSilenceParams struct {
+	Harness string
+	Label   string
+}
+
+// A turn on the home produced an event: the run of silent starts is over.
+func (q *Queries) ClearHarnessSilence(ctx context.Context, arg ClearHarnessSilenceParams) error {
+	_, err := q.db.ExecContext(ctx, clearHarnessSilence, arg.Harness, arg.Label)
+	return err
+}
+
 const closeRequestedEmptySession = `-- name: CloseRequestedEmptySession :execrows
 UPDATE sessions SET state = CASE WHEN close_reason IN ('expired', 'disk_pressure') THEN 'expired' ELSE 'closed' END,
   closed_at = ?1, close_requested_at = NULL
@@ -399,6 +414,18 @@ func (q *Queries) DueOutbox(ctx context.Context, arg DueOutboxParams) ([]Outbox,
 		return nil, err
 	}
 	return items, nil
+}
+
+const endHarnessSilenceCoolDowns = `-- name: EndHarnessSilenceCoolDowns :exec
+UPDATE harness_silence SET until = ?1 WHERE until > ?1
+`
+
+// The daemon's start ends every cool-down in progress and keeps the counts:
+// a restart is the owner's way to say the cause is fixed, and one more silent
+// run trips the home again at once.
+func (q *Queries) EndHarnessSilenceCoolDowns(ctx context.Context, now int64) error {
+	_, err := q.db.ExecContext(ctx, endHarnessSilenceCoolDowns, now)
+	return err
 }
 
 const endRemovedRun = `-- name: EndRemovedRun :execrows
@@ -826,6 +853,39 @@ func (q *Queries) ListAllHeldRuns(ctx context.Context) ([]Run, error) {
 	return items, nil
 }
 
+const listHarnessSilence = `-- name: ListHarnessSilence :many
+SELECT harness, label, runs, until, updated_at FROM harness_silence ORDER BY harness, label
+`
+
+func (q *Queries) ListHarnessSilence(ctx context.Context) ([]HarnessSilence, error) {
+	rows, err := q.db.QueryContext(ctx, listHarnessSilence)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HarnessSilence{}
+	for rows.Next() {
+		var i HarnessSilence
+		if err := rows.Scan(
+			&i.Harness,
+			&i.Label,
+			&i.Runs,
+			&i.Until,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHeldRuns = `-- name: ListHeldRuns :many
 SELECT connection, id, session_id, harness, model, state, spec, account, resumes_at, reason, created_at, updated_at, started_at, waited_ms, waiting_since, account_switches, had_grants, spent, acknowledged FROM runs
 WHERE connection = ? AND state IN ('claimed', 'preparing', 'running', 'waiting')
@@ -1048,6 +1108,27 @@ func (q *Queries) ListWaitingRuns(ctx context.Context) ([]Run, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const noteHarnessSilent = `-- name: NoteHarnessSilent :one
+INSERT INTO harness_silence (harness, label, runs, until, updated_at) VALUES (?, ?, 1, 0, ?)
+ON CONFLICT (harness, label) DO UPDATE SET runs = harness_silence.runs + 1, updated_at = excluded.updated_at
+RETURNING runs
+`
+
+type NoteHarnessSilentParams struct {
+	Harness   string
+	Label     string
+	UpdatedAt int64
+}
+
+// One more run on a home ended harness_silent. until is computed by the caller
+// from the new count (account.NoteSilent), so it is passed for both branches.
+func (q *Queries) NoteHarnessSilent(ctx context.Context, arg NoteHarnessSilentParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, noteHarnessSilent, arg.Harness, arg.Label, arg.UpdatedAt)
+	var runs int64
+	err := row.Scan(&runs)
+	return runs, err
 }
 
 const openSessionsOf = `-- name: OpenSessionsOf :many
@@ -1553,6 +1634,21 @@ type SetConnectionSessionsReportedParams struct {
 // No hub will hear these closes: the connection they would go to is gone.
 func (q *Queries) SetConnectionSessionsReported(ctx context.Context, arg SetConnectionSessionsReportedParams) error {
 	_, err := q.db.ExecContext(ctx, setConnectionSessionsReported, arg.Now, arg.Connection)
+	return err
+}
+
+const setHarnessSilenceUntil = `-- name: SetHarnessSilenceUntil :exec
+UPDATE harness_silence SET until = ? WHERE harness = ? AND label = ?
+`
+
+type SetHarnessSilenceUntilParams struct {
+	Until   int64
+	Harness string
+	Label   string
+}
+
+func (q *Queries) SetHarnessSilenceUntil(ctx context.Context, arg SetHarnessSilenceUntilParams) error {
+	_, err := q.db.ExecContext(ctx, setHarnessSilenceUntil, arg.Until, arg.Harness, arg.Label)
 	return err
 }
 

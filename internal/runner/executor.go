@@ -818,6 +818,13 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		if w.stopped != "" && res.Error != nil && res.Error.Class == w.stopped {
 			res.Error.Message += e.stoppedDetail(w.stopped, run, out, hasAccount)
 		}
+		label := ""
+		if hasAccount {
+			label = acct.Label
+		}
+		if note := e.noteSilence(bg, run.Harness, label, w, turnLog); note != "" && res.Error != nil && res.Error.Class == ClassHarnessSilent {
+			res.Error.Message += note
+		}
 		if res.Error != nil {
 			res.Error.Class = hubClass(res.Error.Class, resumed)
 		}
@@ -1294,6 +1301,63 @@ func (e *Exec) stoppedDetail(class string, run v1.Run, out adapter.Outcome, hasA
 			e.Paths.RemoteCommand("account", "add", run.Harness, "<label>") + "`"
 	}
 	return s
+}
+
+// noteSilence keeps the record of the turn's home — the account's, or the
+// harness's own login for label "" — that readiness is decided from (decision
+// 0077): a turn whose harness produced any event clears it, one stopped for
+// saying nothing adds to it, and anything else — a cancel before the first
+// word, a run's own shorter inactivity — says nothing about the home either
+// way. It returns what the run's error adds when this run is the one that
+// leaves the home not ready.
+func (e *Exec) noteSilence(ctx context.Context, harness, label string, w watch, log *slog.Logger) string {
+	switch {
+	case w.firstEventMS >= 0:
+		if err := account.NoteSpoke(ctx, e.Store.Queries, harness, label); err != nil {
+			log.Warn("could not clear the record of silent runs on this home; it ends with its cool-down", "err", err)
+		}
+		return ""
+	case w.stopped != ClassHarnessSilent:
+		return ""
+	}
+	var s account.Silence
+	err := e.Store.Tx(ctx, func(q *db.Queries) error {
+		var err error
+		s, err = account.NoteSilent(ctx, q, harness, label, time.Now())
+		return err
+	})
+	if err != nil {
+		log.Warn("could not record a silent run; readiness is decided without it", "err", err)
+		return ""
+	}
+	if s.Runs < account.SilentRuns {
+		return ""
+	}
+	who := harness + "'s own login"
+	if label != "" {
+		who = harness + " account " + label
+	}
+	at := s.Until.UTC().Format(time.RFC3339)
+	// A hub's health carries the message alone (recent_errors), and says
+	// which home in silent_until.
+	log.Warn("the harness has said nothing in its last runs on this home; no run is started on it until its cool-down ends", "harness", harness, "home", who, "silent_runs", s.Runs, "until", s.Until)
+	return fmt.Sprintf("; this is the %d%s run in a row on %s to say nothing, so the runner reports it not ready until %s and then tries it again — once the cause is fixed, `%s` on the runner offers it again at once",
+		s.Runs, ordinal(s.Runs), who, at, e.Paths.RemoteCommand("daemon", "restart"))
+}
+
+// ordinal is the English suffix of n: 3rd, 11th, 22nd.
+func ordinal(n int) string {
+	switch {
+	case n%100 >= 11 && n%100 <= 13:
+		return "th"
+	case n%10 == 1:
+		return "st"
+	case n%10 == 2:
+		return "nd"
+	case n%10 == 3:
+		return "rd"
+	}
+	return "th"
 }
 
 // prepare builds the run's workdir from its sources (internal/workdir), with

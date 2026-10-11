@@ -423,3 +423,26 @@ DELETE FROM outbox WHERE connection = ?;
 
 -- name: DropConnectionEvents :exec
 UPDATE events SET acked = 1 WHERE connection = ? AND acked = 0;
+
+-- One more run on a home ended harness_silent. until is computed by the caller
+-- from the new count (account.NoteSilent), so it is passed for both branches.
+-- name: NoteHarnessSilent :one
+INSERT INTO harness_silence (harness, label, runs, until, updated_at) VALUES (?, ?, 1, 0, ?)
+ON CONFLICT (harness, label) DO UPDATE SET runs = harness_silence.runs + 1, updated_at = excluded.updated_at
+RETURNING runs;
+
+-- name: SetHarnessSilenceUntil :exec
+UPDATE harness_silence SET until = ? WHERE harness = ? AND label = ?;
+
+-- A turn on the home produced an event: the run of silent starts is over.
+-- name: ClearHarnessSilence :exec
+DELETE FROM harness_silence WHERE harness = ? AND label = ?;
+
+-- The daemon's start ends every cool-down in progress and keeps the counts:
+-- a restart is the owner's way to say the cause is fixed, and one more silent
+-- run trips the home again at once.
+-- name: EndHarnessSilenceCoolDowns :exec
+UPDATE harness_silence SET until = sqlc.arg(now) WHERE until > sqlc.arg(now);
+
+-- name: ListHarnessSilence :many
+SELECT * FROM harness_silence ORDER BY harness, label;

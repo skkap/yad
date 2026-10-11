@@ -27,7 +27,7 @@ func TestPathSourcesIsSentOnlyWhenOff(t *testing.T) {
 	} {
 		cfg := config.Default()
 		cfg.Workdirs.PathSources = tc.set
-		b, err := json.Marshal(Build(ctx, "r1", cfg, nil))
+		b, err := json.Marshal(Build(ctx, "r1", cfg, State{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -37,10 +37,10 @@ func TestPathSourcesIsSentOnlyWhenOff(t *testing.T) {
 		}
 	}
 
-	on := Build(ctx, "r1", config.Default(), nil)
+	on := Build(ctx, "r1", config.Default(), State{})
 	cfg := config.Default()
 	cfg.Workdirs.PathSources = new(false)
-	if Fingerprint(on) == Fingerprint(Build(ctx, "r1", cfg, nil)) {
+	if Fingerprint(on) == Fingerprint(Build(ctx, "r1", cfg, State{})) {
 		t.Error("switching path sources off did not move the fingerprint, so a hub would never hear of it")
 	}
 }

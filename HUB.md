@@ -287,7 +287,7 @@ the runner the path names, and the body's `runner_id` must equal the path's.
 | `fingerprint` | an opaque hash of the runner's capability document. Compare it with the one that arrived with the document you hold |
 | `capabilities` | present on the first sync of every runner process, after the fingerprint moves, and after you asked with `report_capabilities`. When present it replaces what you hold |
 | `health.free_capacity` | how many runs you may offer in this response: `total` overall, and `by_harness` per harness (§4) |
-| `health.harnesses` | per harness, `ready` and each account's state. A harness with `ready: false` has every account at a usage limit or needing a login; the runner will not claim for it. A harness missing from the list, or the list missing, says nothing either way: `yad hub` does not read `ready` at all, and offers by the capability document and the free capacity alone |
+| `health.harnesses` | per harness, `ready` and each account's state. A harness with `ready: false` has every account at a usage limit, needing a login or silent, or runs on its own login and that is silent; the runner will not claim for it. `silent_until`, on an account or on a harness with no accounts, is when a home whose last runs all ended `harness_silent` is tried again: the account's `state` may still read `free`, and is not taken until then. A harness missing from the list, or the list missing, says nothing either way: `yad hub` does not read `ready` at all, and offers by the capability document and the free capacity alone |
 | `health.draining` | the runner has stopped taking work (§7) |
 | `runs` | **every run the runner holds**, with its state. Listing is claiming and lease renewal (below) |
 | `closed_sessions` | sessions the runner has closed, repeated until answered (§8) |
@@ -658,9 +658,12 @@ is not sent — the machine's owner sees it in `yad doctor`. Neither is a
 limit: a run may name any model, and the harness decides whether it exists.
 
 **Prefer a harness whose health says `ready`.** An offer for a harness whose
-every account is at a usage limit or needs a login is not refused — there is
-nothing wrong with the run — but it is left unlisted, and comes back to your
-queue a sync later.
+every account is at a usage limit, needs a login or is silent — or whose own
+login is silent — is not refused — there is nothing wrong with the run — but
+it is left unlisted, and comes back to your queue a sync later. A silent home
+is tried again at its `silent_until`, with no word from you: send a run then
+and it decides whether the home is back
+([0077](docs/decisions/0077-a-home-whose-runs-go-silent-is-not-ready-for-a-while.md)).
 
 **Never offer more than the free capacity, on either count.** The sync
 request's `health.free_capacity` is **already net of the runs the runner
@@ -764,7 +767,7 @@ these are the ones worth acting on:
 | `grants_lost` | lost | a run parked on a usage limit was picked up by a later runner process, and its grants, or the credential in a source's URL, did not survive. Submit a new run, with them |
 | `max_wait_exceeded` | timed_out | it waited longer than `max_wait_ms` for a free account |
 | `wall_clock_timeout`, `inactivity_timeout` | timed_out | stopped by the run's own caps |
-| `harness_silent` | timed_out | the harness produced no event within the runner owner's first-output timeout of starting — of the run's start, or of its move to another account when it moved (2 minutes unless they changed it, or the run's `inactivity_ms` if lower ends it as `inactivity_timeout` instead). It is the machine's problem, not the run's: the message carries the end of the harness's stderr and what the owner should check. Sending the same run again to the same runner is likely to end the same way |
+| `harness_silent` | timed_out | the harness produced no event within the runner owner's first-output timeout of starting — of the run's start, or of its move to another account when it moved (2 minutes unless they changed it, or the run's `inactivity_ms` if lower ends it as `inactivity_timeout` instead). It is the machine's problem, not the run's: the message carries the end of the harness's stderr and what the owner should check. Sending the same run again to the same runner is likely to end the same way; the third in a row on one home makes the runner report it not ready (`silent_until`, §4) |
 | `source_refused` | failed | a source breaks the owner's rules — a path outside the allowed directories, any source on the machine at a runner whose document says `path_sources: false`, a transport the runner does not use |
 | `source_failed`, `setup_failed`, `prepare_failed` | failed | the workdir could not be built, or the repository's setup hook failed |
 | `prompt_too_long` | failed | the conversation no longer fits the model's context |

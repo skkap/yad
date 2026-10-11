@@ -537,6 +537,9 @@ func printRunners(w io.Writer, runners []hubapi.Runner, now time.Time) {
 			if hh.Ready {
 				ready = "ready"
 			}
+			if hh.SilentUntil != nil {
+				ready += ", its own login silent until " + hh.SilentUntil.Local().Format(time.DateTime)
+			}
 			if n, ok := h.FreeCapacity.ByHarness[hh.ID]; ok {
 				ready += fmt.Sprintf(", %d free", n)
 			}
@@ -564,6 +567,9 @@ func accountLine(accounts []v1.AccountReport) string {
 		part := cleanLine(a.Label) + " " + accountStateWord(a.State)
 		if a.LimitedUntil != nil {
 			part += " until " + a.LimitedUntil.Local().Format(time.DateTime)
+		}
+		if a.SilentUntil != nil {
+			part += ", silent until " + a.SilentUntil.Local().Format(time.DateTime)
 		}
 		if w, ok := busiestWindow(a.Windows); ok {
 			part += fmt.Sprintf(" (%s %.0f%%)", cleanLine(w.Name), w.UsedPercent)
