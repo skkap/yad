@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -629,7 +630,13 @@ func TestAParkedRunKeepsItsBranchAndALostOneLetsGo(t *testing.T) {
 		t.Fatal(err)
 	}
 	l2 := restartedAs(t, e, l, x)
-	l2.Settle = x.Workdirs.Settle
+	// Settled while the run is still held, so a runner stopping between the
+	// two finds it again at its next start rather than never.
+	var heldAtSettle string
+	l2.Settle = func(ctx context.Context, dir string) error {
+		heldAtSettle = localRun(t, e, "a").State
+		return x.Workdirs.Settle(ctx, dir)
+	}
 	if err := l2.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -638,5 +645,37 @@ func TestAParkedRunKeepsItsBranchAndALostOneLetsGo(t *testing.T) {
 	}
 	if b := branchIn(dir); b != "" {
 		t.Errorf("a lost run's workdir is still on %q, which it left pushed and clean", b)
+	}
+	if heldAtSettle != string(v1.RunRunning) {
+		t.Errorf("the branch was let go of with the run %q; want it still held, so a restart in between retries it", heldAtSettle)
+	}
+}
+
+// A parked run ended from outside it — the collector past its max_wait, a
+// cancel — while a sync is resuming it is refused by End's own check, and
+// its branch stays where the resumed harness is working on it.
+func TestEndingARunNoLongerWaitingLeavesItsBranch(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	bare := gitRepo(t, root, "#!/bin/sh\n")
+	l := e.loop(t, 1)
+	run := testRun("a", "s1")
+	run.Sources = []v1.Source{{Git: &v1.GitSource{URL: bare, Branch: "work"}}}
+	x := e.sourcedExec(root, fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}}))
+	runOne(t, e, l, x, run)
+	dir := session(t, e, "s1").Workdir
+	// Unpushed at its end, so kept; pushed now, as a resumed harness would.
+	gitIn(t, dir, "push", "--quiet", "origin", "work")
+	if _, err := e.store.DB.ExecContext(ctx, `UPDATE runs SET state = 'running' WHERE connection = 'hub' AND id = 'a'`); err != nil {
+		t.Fatal(err)
+	}
+
+	c := Claim{Connection: "hub", Release: func() {}, Run: v1.Run{RunID: "a", Harness: "claude", Session: v1.SessionRef{ID: "s1"}}}
+	if err := x.End(ctx, c, localRun(t, e, "a"), v1.RunTimedOut, &v1.RunError{Class: ClassMaxWait, Message: "past max_wait"}, time.Now()); !errors.Is(err, errNoLongerWaiting) {
+		t.Fatalf("End = %v, want it refused", err)
+	}
+	if b := branchIn(dir); b != "work" {
+		t.Errorf("a run being resumed was taken off its branch: on %q", b)
 	}
 }

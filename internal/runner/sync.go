@@ -1156,6 +1156,7 @@ func (l *Loop) Recover(ctx context.Context) error {
 			}
 		}
 		l.Log.Warn("a previous process held this run and no process of it is left; reporting it lost", "connection", l.Connection, "run", r.ID, "state", r.State)
+		l.settle(ctx, r.SessionID)
 		msg := fmt.Sprintf("the runner stopped while the run was %s, and a run is never run twice; resume its session with a new run", r.State)
 		err := l.Store.Tx(ctx, func(q *db.Queries) error {
 			last, at, err := lastSpooled(ctx, q, l.Connection, r.ID)
@@ -1199,16 +1200,16 @@ func (l *Loop) Recover(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		l.settle(ctx, r.SessionID)
 	}
 	l.recovered = true
 	return nil
 }
 
 // settle lets go of the branch of a session whose run was reported lost
-// (decision 0080). After the result is recorded rather than before, as
-// finishWith does it: nothing is offered before Recover returns, and a
-// failure here must not keep the lost run from being reported.
+// (decision 0080). Before the result is recorded, as finishWith does it: a
+// runner that stops in between finds the run still held at its next start
+// and tries again, where after it the run would be listed no more. A
+// failure is logged and the run reported lost all the same.
 func (l *Loop) settle(ctx context.Context, session string) {
 	if l.Settle == nil {
 		return

@@ -34,7 +34,11 @@ What building it settled:
   is called from the executor's `finishWith`, before the result's
   transaction — once the hub has the result, the session's next run, or
   another session's, may come at once — and for each run a restart reports
-  lost. A parked run comes back to the tree it left, branch and all.
+  lost, before its result too, so a runner that stops in between tries again.
+  A parked run comes back to the tree it left, branch and all, and one ended
+  while parked — past its `max_wait`, or cancelled — is settled only after
+  the transaction that checks it is still waiting has committed: a sync may
+  be resuming it at that moment, with a harness at work on the branch.
 - **Only the branch the hub named.** A session's own
   `yad/<connection>/<session>` is never let go of: no other session names it.
   Sessions naming no branch behave exactly as before, with no new fetch. The
@@ -91,7 +95,10 @@ What building it settled:
 - Every run ending in a session that names a branch runs `git status` on its
   worktree, which on a large tree delays the result by seconds. Every
   continuing run whose branch was let go of fetches, best effort.
-- Unpushed work is never carried from one session to another.
+- Letting go never hands unpushed work to another session. A session closed
+  with commits it never pushed still leaves them on the cache's branch, as it
+  did before this decision, and a later session naming that branch — of any
+  hub on the runner — starts from them as they stand.
 
 ## Considered options
 

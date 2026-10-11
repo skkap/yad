@@ -1204,8 +1204,14 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 		reason = sql.NullString{String: res.Error.Message, Valid: true}
 	}
 	// Before the result: once the hub has it, the session's next run may
-	// come at once, and so may another session naming the same branch.
-	e.settle(ctx, c)
+	// come at once, and so may another session naming the same branch. Not
+	// so for a parked run ended from outside it, whose also is the guard
+	// that it is still waiting: a sync may be resuming it this moment, with
+	// a harness at work on the branch, so it is let go of only once the
+	// transaction has said the run was still parked.
+	if also == nil {
+		e.settle(ctx, c)
+	}
 	now := time.Now().UnixMilli()
 	err = e.Store.Tx(ctx, func(q *db.Queries) error {
 		if also != nil {
@@ -1234,6 +1240,9 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 	case err != nil:
 		log.Error("result not recorded; the run stays held", "err", err)
 		return err
+	}
+	if also != nil {
+		e.settle(ctx, c)
 	}
 	log.Info("run finished", "state", res.State, "last_seq", res.LastSeq)
 	e.report(c.Connection)
