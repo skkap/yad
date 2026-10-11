@@ -86,6 +86,12 @@ func Connect(ctx context.Context, p config.Paths, hubURL, token, name string) (c
 	next := cfg
 	next.Connections = append([]config.Connection(nil), cfg.Connections...)
 	if existing < 0 {
+		// A new entry is a new registration under the name: what the state
+		// database still holds under it is an earlier one's, which the
+		// daemon moves aside at its next start (decision 0078). Registering
+		// again under the same entry keeps its stamp — the same hub, whose
+		// sessions here go on.
+		conn.RegisteredAt = time.Now().UnixMilli()
 		next.Connections = append(next.Connections, conn)
 	}
 	if err := next.Validate(); err != nil {
