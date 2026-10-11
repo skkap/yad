@@ -540,7 +540,7 @@ func branchIn(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// The ticket's case end to end (decision 0080): a run in s1 pushes branch
+// The ticket's case end to end (decision 0081): a run in s1 pushes branch
 // work and ends; a run opening s2 names work, starts on s1's commit, pushes
 // its own; s1's next run is back on work with s2's commit, and is told the
 // branch moved.

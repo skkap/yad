@@ -633,7 +633,7 @@ with a run whose offer lapsed and whose late claim it cancelled (§5).
 A git source's `branch` is checked out as a worktree, and git lets one worktree
 have a branch at a time. When one session builds a branch and a second one
 verifies or merges it, the runner hands the branch over
-([0080](docs/decisions/0080-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md)):
+([0081](docs/decisions/0081-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md)):
 
 - **A session lets go of the branch you named when a run of it ends with the
   branch pushed and clean** — no change to a tracked file, and every commit

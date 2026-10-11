@@ -125,7 +125,7 @@ or merges it. So when a run ends with that branch **pushed and clean** — no
 change to a tracked file, and every commit on `origin/<branch>` — the session
 lets go of it: its worktree is detached at the same commit, and nothing in it
 changes. Another session naming the branch can then check it out
-([0080](decisions/0080-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md)).
+([0081](decisions/0081-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md)).
 
 - **Untracked files do not count.** They stay in the worktree whatever becomes
   of the branch.

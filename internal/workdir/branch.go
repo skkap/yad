@@ -18,7 +18,7 @@ import (
 // it, another verifies or merges it. git lets one worktree have a branch
 // checked out at a time, so a session lets go of its branch when a run of it
 // ends with the branch pushed and clean, and takes it back at its next run
-// (decision 0080).
+// (decision 0081).
 
 // Holders names the session a workdir belongs to, for a branch another
 // session holds to be refused naming it. The runner's store is the one

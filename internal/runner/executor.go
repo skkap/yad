@@ -1254,7 +1254,7 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 
 // settle lets go of a branch the hub named, when the run's session left it
 // pushed and clean, so another session may check it out; the session's next
-// run takes it back (decision 0080). A failure leaves the branch where it was.
+// run takes it back (decision 0081). A failure leaves the branch where it was.
 //
 // afterResult is a call once the result is recorded, when the reporter may
 // already have delivered it and the session's next run been claimed: then a

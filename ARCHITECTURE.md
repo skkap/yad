@@ -872,7 +872,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   session may check it out; the session's next run fetches and takes it back,
   and a run needing a branch another worktree still holds fails
   `source_failed` naming the session, to its own hub only
-  ([0080](docs/decisions/0080-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md)).
+  ([0081](docs/decisions/0081-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md)).
   A branch the cache has is fast-forwarded to the remote's before it is
   checked out.
   Hub strings are checked before git sees them, git never prompts, and a local
