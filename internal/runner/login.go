@@ -640,6 +640,48 @@ func (m *Logins) accountRemoved(r account.Ref) {
 	}
 }
 
+// connectionRemoved ends every login a removed connection's hub started, as
+// its cancel_login would, and forgets each once it has let go of the
+// account's home (DEV-182). That hub can send no login_code or cancel_login
+// again, and no sync will carry an end to it: left alone, a link login keeps
+// its process in the home until its code wait runs out, and its end stays
+// owed for the life of the process, holding a self-update's drain and one of
+// maxLogins. A restart needs none of this: it forgets every login.
+func (m *Logins) connectionRemoved(conn, why string) {
+	if m == nil {
+		return
+	}
+	m.init()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var gone []*hubLogin
+	for k, l := range m.byKey {
+		if k.conn == conn {
+			m.endLocked(l, v1.LoginCancelled, why)
+			gone = append(gone, l)
+		}
+	}
+	if len(gone) == 0 {
+		return
+	}
+	// Each keeps its place among maxLogins until it has let go: a login
+	// still stopping its process or checking the home is still held here.
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		for _, l := range gone {
+			<-l.done
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for _, l := range gone {
+			if k := (loginKey{l.conn, l.id}); m.byKey[k] == l {
+				delete(m.byKey, k)
+			}
+		}
+	}()
+}
+
 // byLink drives the harness's own login over pipes: the link out, the code
 // in, and the harness's own check to say whether it took. Only the link is
 // read from what it prints (decision 0055); its wording decides nothing.
