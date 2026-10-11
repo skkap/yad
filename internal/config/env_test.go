@@ -84,6 +84,25 @@ func TestEnvRefused(t *testing.T) {
 	}
 }
 
+// A misspelt setting beside [env] is named by key and line, and the error
+// quotes none of the lines around it — the decoder's own description of it
+// would, and doctor and `yad config apply` print this error.
+func TestAnUnknownSettingQuotesNoNeighbouringValue(t *testing.T) {
+	const value = "unix:///owner/only/docker.sock"
+	p := testPaths(t)
+	writeConfig(t, p, "capacity = 2\n\n[env]\nDOCKER_HOST = \""+value+"\"\n\n[drain]\nwiat = \"1m\"\n")
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("loaded")
+	}
+	if !strings.Contains(err.Error(), "unknown setting drain.wiat (line 7)") {
+		t.Errorf("the error does not name the setting and its line: %v", err)
+	}
+	if strings.Contains(err.Error(), value) {
+		t.Error("the error quotes an [env] value")
+	}
+}
+
 // A NUL byte in a value is refused at load: no child could start with it.
 func TestEnvRefusesNUL(t *testing.T) {
 	c := Default()

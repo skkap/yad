@@ -337,7 +337,7 @@ func ReadFile(path string) (Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		var strict *toml.StrictMissingError
 		if errors.As(err, &strict) {
-			return c, fmt.Errorf("%s: unknown setting:\n%s", path, strict.String())
+			return c, fmt.Errorf("%s: %s", path, unknownSettings(strict))
 		}
 		return c, fmt.Errorf("%s: %w", path, err)
 	}
@@ -347,6 +347,19 @@ func ReadFile(path string) (Config, error) {
 		return c, fmt.Errorf("%s: %w", path, err)
 	}
 	return c, nil
+}
+
+// unknownSettings names each setting the strict decoder found no field for,
+// by key and line. Not the decoder's own String, which quotes the three
+// lines either side of each — an [env] value among them, and this error is
+// what doctor and `yad config apply` print.
+func unknownSettings(strict *toml.StrictMissingError) string {
+	parts := make([]string, 0, len(strict.Errors))
+	for i := range strict.Errors {
+		row, _ := strict.Errors[i].Position()
+		parts = append(parts, fmt.Sprintf("%s (line %d)", strings.Join(strict.Errors[i].Key(), "."), row))
+	}
+	return "unknown setting " + strings.Join(parts, ", ") + " — check its spelling and the section it is in"
 }
 
 // envStrings refuses an [env] value that is not a string before the decoder

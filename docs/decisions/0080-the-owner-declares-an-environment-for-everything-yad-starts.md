@@ -54,9 +54,12 @@ reached runs alone. The rest was settled while building it.
   ([0040](0040-a-grant-may-not-move-a-run-off-its-account.md)): the message
   names the grant the hub sent and nothing else of `[env]`. Which names are
   declared is not published to hubs.
-- **Values never leave the machine through yad.** `yad config apply` reports
+- **yad never prints or sends a value.** `yad config apply` reports
   an `[env]` change as set, changed or removed; doctor and the daemon's log
-  name variables, never values; `adapter.Mask` replaces `[env]` values in the
+  name variables, never values — a context `[env]`'s `DOCKER_CONTEXT` chooses
+  is named by the variable; an unknown setting in config.toml is named by key
+  and line, not by the decoder's quote of the lines around it, which could
+  hold an `[env]` value; `adapter.Mask` replaces `[env]` values in the
   stderr a run's error quotes, as it replaces the spec's. A harness can still
   print its environment into a run's events, so the docs say `[env]` is not
   for secrets: those are grants.

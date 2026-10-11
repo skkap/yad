@@ -247,9 +247,19 @@ func TestDoctorWarnsOfADockerContextOffTheDefaultSocket(t *testing.T) {
 		t.Fatalf("doctor does not warn about the colima socket:\n%s", out)
 	}
 
-	declareEnv(t, p.config, map[string]string{"DOCKER_HOST": "unix://" + socket})
+	// A context [env] chooses is named by the variable, never by its value.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"currentContext":"default"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	declareEnv(t, p.config, map[string]string{"DOCKER_CONTEXT": "colima"})
 	_, out, _ = p.yad("", "doctor")
-	if strings.Contains(out, "docker's context") {
+	if !strings.Contains(out, "warning: the docker context [env]'s DOCKER_CONTEXT names points at "+socket) || strings.Contains(out, `"colima"`) {
+		t.Errorf("doctor does not warn by the variable's name alone:\n%s", out)
+	}
+
+	declareEnv(t, p.config, map[string]string{"DOCKER_HOST": "unix://" + socket, "DOCKER_CONTEXT": "colima"})
+	_, out, _ = p.yad("", "doctor")
+	if strings.Contains(out, "docker context") || strings.Contains(out, "docker's context") {
 		t.Errorf("doctor still warns once [env] declares DOCKER_HOST:\n%s", out)
 	}
 }

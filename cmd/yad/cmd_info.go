@@ -275,10 +275,16 @@ func envNotes(cfg config.Config, p config.Paths, getenv func(string) string) []s
 		return getenv(k)
 	}
 	if ctx, socket, ok := hostool.OffDefaultDockerSocket(lookup); ok {
-		out = append(out, fmt.Sprintf("warning: docker's context %q points at %s, not %s, and config.toml's [env] does not declare DOCKER_HOST. "+
+		which := fmt.Sprintf("docker's context %q", ctx)
+		if _, declared := cfg.Env["DOCKER_CONTEXT"]; declared {
+			// The context's name is then an [env] value, and doctor
+			// prints none.
+			which = "the docker context [env]'s DOCKER_CONTEXT names"
+		}
+		out = append(out, fmt.Sprintf("warning: %s points at %s, not %s, and config.toml's [env] does not declare DOCKER_HOST. "+
 			"docker itself follows the context, but a tool that reads no context — Testcontainers among them — finds no daemon in a run. "+
 			"Declare it in %s, then restart the daemon:\n\n    [env]\n    DOCKER_HOST = \"unix://%s\"",
-			ctx, socket, hostool.DefaultDockerSocket, p.ConfigFile(), socket))
+			which, socket, hostool.DefaultDockerSocket, p.ConfigFile(), socket))
 	}
 	return out
 }
