@@ -69,6 +69,46 @@ func TestLaunchdThatCannotBeAskedChangesNothing(t *testing.T) {
 	}
 }
 
+// A bootout launchd took has changed the job, so a launchd that stops
+// answering after it — the owner logged out during the drain — is not an
+// UnansweredError, which the CLI reports as a refusal that changed nothing.
+func TestLaunchdUnansweredAfterABootoutIsNotARefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(l *Launchd, sp Spec) error
+	}{
+		{"install", func(l *Launchd, sp Spec) error { _, err := l.Install(context.Background(), sp); return err }},
+		{"uninstall", func(l *Launchd, sp Spec) error { return l.Uninstall(context.Background(), sp.Profile) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeRunner{answer: func(call string, n int) ([]byte, error) {
+				if strings.HasPrefix(call, "launchctl print") && n > 0 {
+					return nil, errors.New("exit status 112: Could not find domain for port identifier")
+				}
+				return nil, nil // loaded at first, and the bootout is taken
+			}}
+			h := host(t, r)
+			l := &Launchd{Host: h, settle: 1}
+			if err := writeFile(l.File("work"), []byte("the plist launchd loaded\n")); err != nil {
+				t.Fatal(err)
+			}
+			err := tc.run(l, specIn(t, h))
+			var unanswered *UnansweredError
+			if err == nil || errors.As(err, &unanswered) || !strings.Contains(err.Error(), "accepted the bootout") {
+				t.Fatalf("err = %v, want a plain error saying the bootout was taken", err)
+			}
+			checkCalls(t, r.calls, []string{
+				"launchctl print gui/501/yad.runner.work",
+				"launchctl bootout gui/501/yad.runner.work",
+				"launchctl print gui/501/yad.runner.work",
+			}, "")
+			if b, err := os.ReadFile(l.File("work")); err != nil || string(b) != "the plist launchd loaded\n" {
+				t.Errorf("plist changed: %q, %v", b, err)
+			}
+		})
+	}
+}
+
 // With no user bus, systemd install and uninstall stop at the first question,
 // before the unit is touched, and say it is the manager that did not answer.
 func TestSystemdThatCannotBeAskedChangesNothing(t *testing.T) {

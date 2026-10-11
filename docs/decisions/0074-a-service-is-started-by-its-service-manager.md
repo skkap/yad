@@ -57,7 +57,9 @@ refuse before anything changes. They print the manager's own command to ask
 it (`launchctl print …`, `systemctl --user status …`), uninstall also the
 one that unloads the job (`launchctl bootout …`,
 `systemctl --user disable --now …`), and the yad command to run again
-where the manager answers. systemd never had this mistake: with no user bus
+where the manager answers. A launchd that stops answering after it accepted
+a bootout is not that refusal: the job has already changed, and the error
+says so. systemd never had this mistake: with no user bus
 both stop at the first `systemctl --user show`, before the unit is touched.
 They now refuse in the same words.
 

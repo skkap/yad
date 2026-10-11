@@ -201,6 +201,14 @@ func (l *Launchd) bootout(ctx context.Context, profile string) error {
 	deadline := time.Now().Add(settle)
 	for {
 		ok, _, err := l.loaded(ctx, profile)
+		// Past a bootout launchd took, the job is no longer as it was: a
+		// launchd that stops answering now — the owner logged out during the
+		// drain — must not reach the caller as an UnansweredError, which
+		// install and uninstall report as a refusal that changed nothing.
+		var unanswered *UnansweredError
+		if errors.As(err, &unanswered) {
+			return fmt.Errorf("launchd accepted the bootout of %s, so its runner is stopping or stopped, then could not say whether it has let the job go (%v) — check `%s`, then run this again", l.Name(profile), unanswered.Err, shellword.Command(l.StatusCommand(profile)...))
+		}
 		if err != nil {
 			return err
 		}
