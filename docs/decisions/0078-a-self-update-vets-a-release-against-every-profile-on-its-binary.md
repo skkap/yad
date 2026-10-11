@@ -39,7 +39,10 @@ What building it settled:
   another's binary there. A `.yad-needs` that is a link or a file is never
   written through or read: planted by another user beside a binary in a
   directory they may write, it would send the records, and that widening,
-  wherever it points. Both the write and the check fail and name it.
+  wherever it points. Both the write and the check fail and name it. A
+  record is read only if it is a regular file, opened without waiting: a
+  FIFO under a record's name would otherwise hold a daemon at its start for
+  ever.
 - **The record follows `config.toml`, not the process.** Once a minute the
   daemon looks at `config.toml` and writes again when its connections have
   changed or the record has gone missing. `yad connect` does not reach a

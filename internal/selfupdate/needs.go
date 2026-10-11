@@ -162,6 +162,11 @@ func shareLike(dir string) {
 // ReadRecord is the record dir holds for the profile at configDir, and whether
 // there is one: the owning daemon compares what it would write with it.
 func ReadRecord(dir, configDir string) (Record, bool, error) {
+	if err := realDir(dir); errors.Is(err, fs.ErrNotExist) {
+		return Record{}, false, nil
+	} else if err != nil {
+		return Record{}, false, err
+	}
 	r, err := readRecord(filepath.Join(dir, recordName(configDir)))
 	if errors.Is(err, fs.ErrNotExist) {
 		return Record{}, false, nil
@@ -169,12 +174,22 @@ func ReadRecord(dir, configDir string) (Record, bool, error) {
 	return r, err == nil, err
 }
 
+// readRecord reads one record, and nothing that is not a regular file: a
+// directory another user may write can hold a FIFO under a record's name,
+// and a daemon blocked opening it would never start.
 func readRecord(path string) (Record, error) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|openNonblock, 0)
 	if err != nil {
 		return Record{}, err
 	}
 	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return Record{}, err
+	}
+	if !fi.Mode().IsRegular() {
+		return Record{}, fmt.Errorf("it is not a regular file (%s)", fi.Mode().Type())
+	}
 	b, err := io.ReadAll(io.LimitReader(f, maxRecord+1))
 	if err != nil {
 		return Record{}, err
