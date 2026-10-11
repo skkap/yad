@@ -16,7 +16,7 @@ const leftRunningNames = 20
 // leftRunningText is the left_running event's text. Each process is named by
 // the kernel's name for its command and how long it had run, and by nothing
 // else: its argv and environment can hold a token, and its pid means nothing
-// off this machine (decision 0081).
+// off this machine (decision 0082).
 func leftRunningText(left []supervise.Leftover) string {
 	var b strings.Builder
 	if len(left) == 1 {

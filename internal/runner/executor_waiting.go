@@ -63,7 +63,7 @@ type spent struct {
 	Answered bool `json:"answered,omitempty"`
 	// LeftRunning is what the turns measured left running, summed; nil
 	// until a turn is measured, since a run none of whose turns was
-	// measured has no figure, which is not a figure of 0 (decision 0081).
+	// measured has no figure, which is not a figure of 0 (decision 0082).
 	LeftRunning *int `json:"left_running,omitempty"`
 }
 

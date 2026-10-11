@@ -633,7 +633,7 @@ func (t *turn) warning(params json.RawMessage) {
 // turn/completed is Codex's own end of the turn, and the census of its tool
 // work is taken here, before input closes: Codex runs each command in a
 // process group of its own, keeps a background terminal's command running past the
-// turn, and stops them when it exits (decision 0081). Its code-mode host is
+// turn, and stops them when it exits (decision 0082). Its code-mode host is
 // its own helper, not the run's work.
 func (t *turn) completed() {
 	t.mu.Lock()
