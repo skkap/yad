@@ -7,8 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"slices"
+	"strings"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
@@ -21,6 +23,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 	"github.com/skkap/yad/internal/control"
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/hostool"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -49,13 +52,19 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// The login check needs to know which harnesses have accounts. A profile
+	// with no config yet has none, which is what Load's default says; one
+	// that cannot be read is no reason to refuse the rest of the answer, and
+	// is said below, since the daemon will not start with it.
+	cfg, cfgErr := config.Load(g.paths)
+	if cfgErr == nil {
+		// Before the probes, which then see what the daemon's will.
+		supervise.SetOwnerEnv(cfg.Env)
+	}
 	found := capability.Detect(ctx)
 	var locked, silent map[string]bool
 	var sharedErr error
-	// The login check needs to know which harnesses have accounts. A profile
-	// with no config yet has none, which is what Load's default says; one
-	// that cannot be read is no reason to refuse the rest of the answer.
-	if cfg, err := config.Load(g.paths); err == nil {
+	if cfgErr == nil {
 		capability.DefaultLogins(ctx, found, cfg)
 		// Before accountLogins: an account's state is the daemon's own
 		// check, made where the daemon runs, and this session's keychain
@@ -165,6 +174,13 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	for _, warn := range accountVariableWarnings(os.Environ()) {
 		fmt.Fprintf(w, "\nwarning: %s\n", warn)
 	}
+	if cfgErr != nil {
+		fmt.Fprintf(w, "\nerror: config.toml could not be read, and the daemon will not start until it can — %v\n", cfgErr)
+	} else {
+		for _, line := range envNotes(cfg, g.paths, os.Getenv) {
+			fmt.Fprintf(w, "\n%s\n", line)
+		}
+	}
 	fmt.Fprintf(w, "\nprofile %s — config %s\n", g.paths.Profile, g.paths.Config)
 	// Each way to reach zero has a different next action, and telling someone
 	// with both CLIs installed to install them is worse than saying nothing.
@@ -239,6 +255,34 @@ func accountVariableWarnings(env []string) []string {
 	return out
 }
 
+// envNotes is what doctor says of config.toml's [env]: the names it gives
+// every child, never a value, and a warning when docker's current context
+// names a socket a tool reading no context cannot find and DOCKER_HOST is not
+// among them. The context is read as a daemon started from this shell would
+// read it — [env] first, then this environment.
+func envNotes(cfg config.Config, p config.Paths, getenv func(string) string) []string {
+	var out []string
+	if len(cfg.Env) > 0 {
+		out = append(out, fmt.Sprintf("note: config.toml's [env] gives every child yad starts %s (values not shown)", strings.Join(slices.Sorted(maps.Keys(cfg.Env)), ", ")))
+	}
+	if _, ok := cfg.Env["DOCKER_HOST"]; ok {
+		return out
+	}
+	lookup := func(k string) string {
+		if v, ok := cfg.Env[k]; ok {
+			return v
+		}
+		return getenv(k)
+	}
+	if ctx, socket, ok := hostool.OffDefaultDockerSocket(lookup); ok {
+		out = append(out, fmt.Sprintf("warning: docker's context %q points at %s, not %s, and config.toml's [env] does not declare DOCKER_HOST. "+
+			"docker itself follows the context, but a tool that reads no context — Testcontainers among them — finds no daemon in a run. "+
+			"Declare it in %s, then restart the daemon:\n\n    [env]\n    DOCKER_HOST = \"unix://%s\"",
+			ctx, socket, hostool.DefaultDockerSocket, p.ConfigFile(), socket))
+	}
+	return out
+}
+
 // keychainLogin is account.KeychainLogin, swapped by a test so the macOS
 // answer is tested on every platform.
 var keychainLogin = account.KeychainLogin
@@ -300,6 +344,9 @@ func cmdHarnesses(ctx context.Context, g global, args []string, w, errw io.Write
 	if err != nil {
 		return err
 	}
+	// Probed as the daemon probes, or the document printed is not the one
+	// a hub receives.
+	supervise.SetOwnerEnv(cfg.Env)
 	id, err := g.paths.RunnerID()
 	if err != nil {
 		return err
