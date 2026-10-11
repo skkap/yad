@@ -61,10 +61,19 @@ func (a Adapter) agent() acp.Agent {
 		// Its model list is its login check (account.statusArgs): on Zen's
 		// free models it runs with no credential, so `auth list` saying none
 		// would be no answer.
-		LoginCheck: []string{"models"},
-		Raw:        a.Raw,
+		LoginCheck:    []string{"models"},
+		DefaultEffort: defaultEffort,
+		Raw:           a.Raw,
 	}
 }
+
+// defaultEffort is OpenCode's effort that is no variant: the model's own
+// settings. Its option offers it on every model that has levels, and it
+// takes it on every one of them (DEFAULT_VARIANT_VALUE and hasVariant in
+// packages/opencode/src/acp, 1.18.33). A session/resume restores the
+// variant the session's last run used and a session/fork copies it, so a
+// run without an effort is set back to this one first.
+const defaultEffort = "default"
 
 // The variables the adapter sets on every run.
 const (

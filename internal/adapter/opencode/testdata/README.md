@@ -41,3 +41,16 @@ login:
 | `usage-limit` | `-32603`, `errorName: APIError`, Zen's `5-hour usage limit reached. Resets in 2hr 30min.` |
 | `auth-rejected` | `-32000`, authentication required, `providerId: opencode` |
 | `prompt-too-long` | `-32603`, `errorName: ContextOverflowError` |
+
+Written by hand in the shape of `effort` and `resume`, from OpenCode
+1.18.33's source rather than a recording. Each is what that release answers
+(`restoreSession` → `restoreVariant` in `packages/opencode/src/acp/service.ts`):
+a resumed or forked session's effort option shows the variant its last run
+used, and a new one shows OpenCode's own pick for the model.
+
+| Fixture | The run |
+|---|---|
+| `resume-held-effort` | `session/resume` of a session at `high` on `opencode/longcat-2.5-preview-free`, set back to `default` before the prompt |
+| `fork-held-effort` | `session/fork` of the same: the new session shows `high` and is set back to `default` |
+| `resume-default-effort` | `session/resume` of a session already at `default`: straight to the prompt |
+| `new-effort` | `session/new`, then the model set to one with levels: OpenCode's own pick, `low`, and straight to the prompt |
