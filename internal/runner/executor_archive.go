@@ -28,28 +28,28 @@ func rejected(format string, args ...any) error {
 	return archiveRefusal{ClassArchiveRejected, fmt.Sprintf(format, args...)}
 }
 
-// sourcesDiffer says why a run opening a session from an archive names
-// sources other than the session's, or "". A continuing run names its
-// session's sources or none, and the runner that opens a released session
-// has only the archive's word for which those are: by URL, as the session
-// keeps it, and every one a git source — a released session has no other.
-func sourcesDiffer(run []v1.Source, carried []carriedSource) string {
-	if len(run) == 0 {
-		return ""
-	}
+// sourcesDiffer says why the sources a session opened from an archive is
+// about to be built from are not the ones the archive carries, or "". The
+// runner opening a released session has only the archive's word for what it
+// was built from: by URL, as the session keeps it, and every one a git
+// source — a released session has no other. sources are what preparing will
+// use (Exec.sessionSources): the run's own, or for one naming none the ones
+// the session's first run here named, which may be a run already refused
+// for naming others.
+func sourcesDiffer(sources []v1.Source, carried []carriedSource) string {
 	want := map[string]bool{}
 	for _, s := range carried {
 		want[s.URL] = true
 	}
 	got := map[string]bool{}
-	for _, s := range workdir.StoredSources(run) {
+	for _, s := range workdir.StoredSources(sources) {
 		if s.Git == nil || !want[s.Git.URL] {
-			return "the run names sources other than the ones its session was built from on the runner that released it — send the same sources, or none, to continue it"
+			return "the session would be built from sources other than the ones it was built from on the runner that released it — send its own sources to open it"
 		}
 		got[s.Git.URL] = true
 	}
 	if len(got) != len(want) {
-		return "the run names fewer sources than its session was built from on the runner that released it — send the same sources, or none, to continue it"
+		return "the session would be built from fewer sources than it was built from on the runner that released it — send its own sources to open it"
 	}
 	return ""
 }
@@ -136,7 +136,11 @@ func (e *Exec) importArchive(ctx context.Context, c Claim, ad adapter.Adapter, d
 	if m.Harness != c.Run.Harness {
 		return "", rejected("the archive holds a %s session, and the run is a %s one", m.Harness, c.Run.Harness)
 	}
-	if why := sourcesDiffer(c.Run.Sources, m.Sources); why != "" {
+	sources, _, err := e.sessionSources(bg, c)
+	if err != nil {
+		return "", err
+	}
+	if why := sourcesDiffer(sources, m.Sources); why != "" {
 		return "", rejected("%s", why)
 	}
 	conv := conversationOf(e.Data, e.Accounts.Lists(), c.Run.Harness, m.NativeID, dir, true)

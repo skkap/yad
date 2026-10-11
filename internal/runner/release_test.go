@@ -605,7 +605,7 @@ func TestAnArchiveMeetsWhatIsAlreadyThere(t *testing.T) {
 		{"other sources", nil, func(r v1.Run) v1.Run {
 			r.Sources = []v1.Source{{Git: &v1.GitSource{URL: "https://example.com/other.git"}}}
 			return r
-		}, "sources other than"},
+		}, "other than the ones it was built from"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
@@ -645,6 +645,20 @@ func TestAnArchiveMeetsWhatIsAlreadyThere(t *testing.T) {
 			}
 			if res := hubResult(t, e, "r2"); res.Error == nil || res.Error.Class != ClassArchiveRejected {
 				t.Errorf("the hub heard %+v", res.Error)
+			}
+			if tc.run == nil {
+				return
+			}
+			// The next run names none, so it would be built from what the
+			// refused one named: refused too, never opened on them.
+			e.enqueue(t, continued("r3", "s1"))
+			b.sync(t)
+			b.sync(t)
+			if got, err := b.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "r3"}); err != nil || got.State != "failed" || !strings.Contains(got.Reason.String, tc.want) {
+				t.Fatalf("the run after the refused one: %+v, %v", got, err)
+			}
+			if s := b.session(t, "s1"); !s.Archive.Valid || s.NativeID.Valid {
+				t.Errorf("the session opened from its archive on other sources: native %q", s.NativeID.String)
 			}
 		})
 	}
