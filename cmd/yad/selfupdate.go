@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -26,9 +27,12 @@ var selfUpdateTimings struct{ first, every, idleWait, poll time.Duration }
 func newUpdater(g global, cfg config.Config, exe string, drain *runner.Drain, monitor *runner.Monitor, log *slog.Logger) *selfupdate.Updater {
 	src := releaseSource()
 	src.Yad = g.paths.Command
+	// Relative only when YAD_CONFIG_DIR is, and then the record recordNeeds
+	// wrote names it absolute the same way.
+	configDir, _ := filepath.Abs(g.paths.Config)
 	return selfupdate.New(selfupdate.Options{
 		Source: src, Target: exe, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
-		Installed: buildinfo.Version, Needs: connectionProtocols(cfg),
+		Installed: buildinfo.Version, Needs: connectionProtocols(cfg), ConfigDir: configDir,
 		Ask: selfupdate.Ask, Idle: monitor.Idle, Swap: drain.Update,
 		Repo: src.Repo, Yad: src.Yad,
 		First: selfUpdateTimings.first, Every: selfUpdateTimings.every,

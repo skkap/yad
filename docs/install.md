@@ -117,10 +117,23 @@ release, turn self-update off first, or the runner puts the newest release
 back within hours. From a fork, set `YAD_REPO` when you run `yad service
 install`: the unit keeps it, and the runner fetches from the fork.
 
-Every profile on a machine runs the one binary, and a runner vets a release
-against its own profile's hubs only. Profiles whose hubs speak different
-protocol versions — none do yet, since there is only v1 — should not share a
-binary that updates itself.
+Every profile on a machine can run the one binary, so a release is vetted
+against all of them, not only the profile that updates it
+([0078](decisions/0078-a-self-update-vets-a-release-against-every-profile-on-its-binary.md)).
+Each running daemon — self-update on or off — records which protocol
+versions its hubs use in a `.yad-needs/` directory beside the binary (the
+real file, if `yad` on your `PATH` is a link), and keeps it current with
+`config.toml` within a minute. A release one of them could not use is
+refused, and `yad status` names that profile and where its config is. The
+record of a profile whose config directory is gone is removed. One that
+cannot be read stops every check until it is removed — the warning gives the
+`rm` — or its daemon writes it again. A daemon that cannot write its record
+runs as before, and warns in its log and in `yad status`, since a runner
+updating that binary would not see what its hubs need — unless only root may
+write the binary's directory, as with a root-owned `/usr/local/bin`; then no
+runner of yours can update that binary anyway, and it only notes it in the
+log. A profile still on a release older than this records
+nothing, so upgrade every profile on the binary before relying on it.
 
 Releases are built by CI on a `v*` tag: linux and darwin × amd64 and arm64,
 `CGO_ENABLED=0`, with a `checksums.txt` covering all four. To check a download

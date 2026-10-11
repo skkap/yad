@@ -226,6 +226,15 @@ func TestE2ESelfUpdateTakesOverInPlace(t *testing.T) {
 	c := m.childDaemonAt(bin, e2eVersion+"=v0.1.0", e2eReleases+"="+srv.URL, e2eUpdateFast+"=1")
 	pid := c.cmd.Process.Pid
 	m.waitAtGate()
+	// Every daemon says beside its binary what its hubs need (decision
+	// 0078), so another profile updating the binary sees it.
+	needsDir, err := selfupdate.NeedsDir(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec, ok, err := selfupdate.ReadRecord(needsDir, m.p.config); err != nil || !ok || len(rec.Protocols["1"]) == 0 {
+		t.Errorf("the runner's needs record beside %s: %+v (there: %v, %v), want its connection on v1", bin, rec, ok, err)
+	}
 	// Published only now, so the release finds the runner busy: until then
 	// each check finds nothing, which is a warning and the next check.
 	c.said(t, "published no release yet")
