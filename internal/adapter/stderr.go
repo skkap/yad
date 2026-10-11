@@ -38,16 +38,7 @@ const Redacted = "[redacted]"
 // line is dropped, since a credential cut at its start would no longer match
 // and would go out in part.
 func StderrTail(stderr string, env, secrets []string, truncated bool) string {
-	var masked []string
-	for _, kv := range env {
-		if _, v, ok := strings.Cut(kv, "="); ok {
-			masked = appendSecret(masked, v)
-		}
-	}
-	for _, v := range secrets {
-		masked = appendSecret(masked, v)
-	}
-	stderr = mask(stderr, masked)
+	stderr = Mask(stderr, env, secrets)
 	lines := strings.Split(stderr, "\n")
 	if truncated && len(lines) > 0 {
 		lines = lines[1:]
@@ -75,7 +66,23 @@ func StderrTail(stderr string, env, secrets []string, truncated bool) string {
 	return "…" + out[cut:]
 }
 
-// appendSecret adds to secrets what StderrTail replaces of one value: the
+// Mask is s with every value of env and every one of secrets replaced as
+// StderrTail replaces them, for anything else of a harness's stderr a run's
+// error quotes — Claude's line refusing an effort.
+func Mask(s string, env, secrets []string) string {
+	var masked []string
+	for _, kv := range env {
+		if _, v, ok := strings.Cut(kv, "="); ok {
+			masked = appendSecret(masked, v)
+		}
+	}
+	for _, v := range secrets {
+		masked = appendSecret(masked, v)
+	}
+	return mask(s, masked)
+}
+
+// appendSecret adds to secrets what Mask replaces of one value: the
 // value, when it is at least minSecret long.
 func appendSecret(secrets []string, v string) []string {
 	if len(v) >= minSecret {

@@ -140,6 +140,10 @@ lines, so its content without the newline is replaced too. `Spec.Secrets` is
 for masking alone. No adapter puts it in the child's environment, its argv or
 anything else it is handed: the harness reads the file, as before.
 
+The one other line of stderr a run's error quotes, Claude's warning that it
+ignores an effort it does not know, was not masked at all, of the environment
+either. It is now masked the same way (`adapter.Mask`), with both.
+
 ## Considered options
 
 **Lower the inactivity default.** Multica's grew from 5 minutes to 2 hours,

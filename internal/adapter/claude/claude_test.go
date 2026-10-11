@@ -1233,6 +1233,29 @@ func TestEffortIsClaudesFlag(t *testing.T) {
 	}
 }
 
+// Claude's line refusing an effort is quoted in the run's error, and is
+// masked of what yad handed Claude as the tail is: here a file grant's value
+// that, in this fake, stands in the line's own words.
+func TestTheEffortRefusalIsMaskedOfSecrets(t *testing.T) {
+	const secret = "ignoring it and using the default effort"
+	h := &harness{fixture: fixture("plain")}
+	spec := h.spec(t)
+	spec.Effort = "bogus"
+	spec.Secrets = []string{secret}
+	evs, out, _ := drive(t, context.Background(), spec, nil)
+	if out.Error == nil || out.Error.Class != adapter.ClassHarness {
+		t.Fatalf("outcome %+v (%+v), want failed %s", out, out.Error, adapter.ClassHarness)
+	}
+	if want := "Unknown --effort value 'bogus' — " + adapter.Redacted; !strings.Contains(out.Error.Message, want) || strings.Contains(out.Error.Message, secret) {
+		t.Errorf("message %q, want it to carry %q and not the secret", out.Error.Message, want)
+	}
+	for _, ev := range evs {
+		if strings.Contains(ev.Text, secret) || ev.Error != nil && strings.Contains(ev.Error.Message, secret) {
+			t.Errorf("event %+v carries the secret", ev)
+		}
+	}
+}
+
 // Claude does not refuse an effort it does not know: it warns on stderr and
 // runs the turn at its default. A run that went on would succeed having done
 // its work at an effort nobody asked for, so the warning is taken as Claude's

@@ -547,6 +547,8 @@ loop:
 		// been copied by its first line of output; the whole tail is here now.
 		e.effortRefused = effortRefusal(e.stderr)
 	}
+	// Claude's own line, quoted in the run's error as the tail is.
+	e.effortRefused = adapter.Mask(e.effortRefused, t.env, t.secrets)
 	t.mu.Unlock()
 	t.outcome = tr.outcome(e)
 	t.q.Close()
