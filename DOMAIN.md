@@ -349,9 +349,21 @@ _Rules_: A hook that fails fails the run while it is preparing; the session's
 next run tries it again.
 _See_: [docs/setup-hooks.md](docs/setup-hooks.md), [0034](docs/decisions/0034-a-failing-setup-hook-fails-the-run.md)
 
+**Teardown hook** — a repository's own `.worktree/teardown`, which YAD runs
+in a worktree when its workdir is reclaimed, before removing it, with the
+`WT_*` values setup was given: it stops what setup and the runs started.
+Optional.
+_Avoid_: cleanup hook, a teardown of a run — a run ending tears nothing down
+_Rules_: A teardown that fails is logged and the reclaim goes on. It runs at
+most once per reclaim, but again after a daemon stopped in the middle of it,
+so it must be safe to repeat.
+_See_: [docs/setup-hooks.md](docs/setup-hooks.md#teardown), [0080](docs/decisions/0080-reclaiming-a-workdir-runs-its-teardown-hook-first.md)
+
 **Slot** — `WT_SLOT`: a small integer unique among one repository's live
 worktrees on a machine, from which the setup hook derives ports and container
-names.
+names. A session keeps it until its workdir is reclaimed and the teardown
+hook has run, so no other worktree is given the ports of a stack still going
+down.
 _Avoid_: slot for a unit of capacity
 
 **Grant** — a short-lived secret a hub attaches to one run, scoped to it — a
