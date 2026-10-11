@@ -102,15 +102,36 @@ type Runner struct {
 }
 
 type Session struct {
-	ID               string
-	Harness          string
-	RunnerID         sql.NullString
-	CreatedAt        int64
-	CloseRequestedAt sql.NullInt64
-	ClosedAt         sql.NullInt64
-	CloseReason      sql.NullString
-	OfferedTo        sql.NullString
-	CloseOwed        int64
-	ForkFrom         sql.NullString
-	BoundByRun       sql.NullString
+	ID                  string
+	Harness             string
+	RunnerID            sql.NullString
+	CreatedAt           int64
+	CloseRequestedAt    sql.NullInt64
+	ClosedAt            sql.NullInt64
+	CloseReason         sql.NullString
+	OfferedTo           sql.NullString
+	CloseOwed           int64
+	ForkFrom            sql.NullString
+	BoundByRun          sql.NullString
+	ReleaseRequestedAt  sql.NullInt64
+	ReleaseDiscardLocal int64
+	ReleaseError        sql.NullString
+	ReleasedAt          sql.NullInt64
+	ReleasedFrom        sql.NullString
+}
+
+type SessionArchive struct {
+	SessionID  string
+	Sha256     string
+	Bytes      int64
+	Data       []byte
+	RunnerID   string
+	UploadedAt int64
+	Released   int64
+}
+
+type SessionRelease struct {
+	SessionID  string
+	RunnerID   string
+	ReleasedAt int64
 }

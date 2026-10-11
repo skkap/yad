@@ -318,8 +318,8 @@ var gated = []v1.ControlKind{v1.ControlDrain, v1.ControlCloseSession, v1.Control
 func checkControlsAreGated(_ context.Context, s *session) error {
 	for _, seen := range s.syncs {
 		for _, c := range seen.res.Controls {
-			if c.Kind == v1.ControlSteer || c.Kind == v1.ControlInterrupt {
-				return brokenf("answering %s the hub sent a %q control, which goes only to a runner advertising %q for the harness of the run it names; this one advertises harness_features, so that harness's own list is the answer, and the list is empty — the runner-wide %q beside it is not the answer",
+			if c.Kind == v1.ControlSteer || c.Kind == v1.ControlInterrupt || c.Kind == v1.ControlReleaseSession {
+				return brokenf("answering %s the hub sent a %q control, which goes only to a runner advertising %q for the harness of the run or session it names; this one advertises harness_features, so that harness's own list is the answer, and the list is empty — the runner-wide %q beside it is not the answer",
 					seen.call, c.Kind, gatedBy(c.Kind), gatedBy(c.Kind))
 			}
 			if slices.Contains(gated, c.Kind) {
@@ -339,13 +339,16 @@ func checkControlsAreGated(_ context.Context, s *session) error {
 
 // gatedBy is the feature a gated control needs: its own name, but for the
 // four hub-login controls, which share the "login" feature (decision 0055),
-// and remove_account, which is "accounts" (decision 0057).
+// remove_account, which is "accounts" (decision 0057), and release_session,
+// which is "release" (decision 0084).
 func gatedBy(k v1.ControlKind) string {
 	switch k {
 	case v1.ControlStartLogin, v1.ControlLoginCode, v1.ControlLoginToken, v1.ControlCancelLogin:
 		return "login"
 	case v1.ControlRemoveAccount:
 		return "accounts"
+	case v1.ControlReleaseSession:
+		return "release"
 	}
 	return string(k)
 }

@@ -21,6 +21,7 @@ func TestEachHarnessListsWhatItsAdapterDoes(t *testing.T) {
 		FeatureInterrupt: func(adapter.Adapter) bool { return true },
 		FeatureEffort:    adapter.AppliesEffort,
 		FeatureFork:      adapter.Forks,
+		FeatureRelease:   adapter.Releases,
 	}
 	if len(does) != len(RunFeatures()) {
 		t.Fatalf("this test knows %d per-run features and RunFeatures lists %v: teach it the new one", len(does), RunFeatures())
@@ -69,6 +70,9 @@ func perRun(features []string) []string {
 // drive nothing advertises no per-run feature (decision 0069).
 func TestTheRunnerWideStringsAreWhatEveryDrivableHarnessMayUse(t *testing.T) {
 	all := RunFeatures()
+	// Codex's adapter cannot carry a session (decision 0084), so a machine
+	// that can drive it advertises release for Claude alone.
+	withCodex := HarnessFeatures("codex")
 	brokenOpenCode := machine("claude", "opencode")
 	for i := range brokenOpenCode {
 		if brokenOpenCode[i].ID == "opencode" {
@@ -80,7 +84,7 @@ func TestTheRunnerWideStringsAreWhatEveryDrivableHarnessMayUse(t *testing.T) {
 		reports []v1.HarnessReport
 		want    []string
 	}{
-		{"claude and codex, no opencode", machine("claude", "codex"), all},
+		{"claude and codex, no opencode", machine("claude", "codex"), withCodex},
 		{"claude alone", machine("claude"), all},
 		{"with opencode", machine("claude", "codex", "opencode"), HarnessFeatures("opencode")},
 		{"opencode alone", machine("opencode"), HarnessFeatures("opencode")},
@@ -125,6 +129,7 @@ func TestTheRunnerWideStringsAreWhatEveryDrivableHarnessMayUse(t *testing.T) {
 // again (DEV-169).
 func TestAHarnessWithARunHeldCountsInTheRunnerWideStrings(t *testing.T) {
 	all := RunFeatures()
+	withCodex := HarnessFeatures("codex")
 	goneOpenCode := machine("claude", "codex")
 	brokenOpenCode := machine("claude", "codex", "opencode")
 	for i := range brokenOpenCode {
@@ -138,12 +143,12 @@ func TestAHarnessWithARunHeldCountsInTheRunnerWideStrings(t *testing.T) {
 		held    []string
 		want    []string
 	}{
-		{"drivable only, nothing held", goneOpenCode, nil, all},
+		{"drivable only, nothing held", goneOpenCode, nil, withCodex},
 		{"opencode gone with a run held on it", goneOpenCode, []string{"opencode"}, HarnessFeatures("opencode")},
 		{"opencode failing its probe with a run held on it", brokenOpenCode, []string{"opencode"}, HarnessFeatures("opencode")},
-		{"opencode's run ended", brokenOpenCode, nil, all},
+		{"opencode's run ended", brokenOpenCode, nil, withCodex},
 		{"held and drivable changes nothing", machine("claude", "codex", "opencode"), []string{"claude", "opencode"}, HarnessFeatures("opencode")},
-		{"a held drivable harness changes nothing", goneOpenCode, []string{"claude", "codex"}, all},
+		{"a held drivable harness changes nothing", goneOpenCode, []string{"claude", "codex"}, withCodex},
 		{"held twice counts once", goneOpenCode, []string{"opencode", "opencode"}, HarnessFeatures("opencode")},
 		{"nothing drivable, a claude run held", machine(), []string{"claude"}, all},
 		{"nothing drivable, an opencode run held", machine(), []string{"opencode"}, HarnessFeatures("opencode")},

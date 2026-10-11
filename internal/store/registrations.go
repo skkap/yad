@@ -110,5 +110,8 @@ func retire(ctx context.Context, tx *sql.Tx, q *db.Queries, conn string, now tim
 	if err := q.RetireConnectionSlots(ctx, db.RetireConnectionSlotsParams{Retired: out.As, Connection: conn}); err != nil {
 		return fmt.Errorf("retire the WT_SLOTs under %q: %w", conn, err)
 	}
+	if err := q.RetireConnectionReleases(ctx, db.RetireConnectionReleasesParams{Retired: out.As, Connection: conn}); err != nil {
+		return fmt.Errorf("retire the releases under %q: %w", conn, err)
+	}
 	return nil
 }

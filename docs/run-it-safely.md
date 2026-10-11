@@ -85,6 +85,19 @@ Two things follow, and they are the practical ones:
 If you want a hub's runs to reach less, the answer is a smaller machine, not a
 tighter protocol.
 
+**A hub may release a session, and the conversation goes with it.** Releasing
+a session ([0084](decisions/0084-a-hub-may-release-a-session-to-resume-on-another-runner.md))
+uploads its whole conversation to the hub, which hands it to the next runner
+that takes the session: everything the harness was told and read — your
+`CLAUDE.md` as it saw it, the account's e-mail where the transcript names it,
+every file it read and every command's output. It is on by default, because
+the hubs you connect are trusted already. To keep a hub from taking
+conversations off this machine, and from sending it conversations from other
+machines, set `release_sessions = false` on its `[[connection]]` in
+`config.toml` and restart the daemon. A release never carries work the remote
+does not have unless the hub says `discard_local`, and then that work is
+deleted with the session's workdir, not sent anywhere.
+
 ### The guards that remain, and what they are for
 
 0038 removed the guards that pretended to be defences against hubs. Several
@@ -611,6 +624,8 @@ What turning it on trusts, spelled out:
       decided about
 - [ ] `manage_accounts = false` on every connection whose hub should not add
       or remove accounts (`yad status` shows each connection's setting)
+- [ ] `release_sessions = false` on every connection whose hub should not
+      take a session's conversation to another runner
 - [ ] Only hubs you would hand this machine to are in `config.toml`
 - [ ] `[workdirs] roots` set, if a hub should be able to check out less than
       your whole home directory — or `path_sources = false`, if nothing on

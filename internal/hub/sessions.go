@@ -234,13 +234,16 @@ func sessionView(ctx context.Context, q *db.Queries, id string) (hubapi.Session,
 		SessionID: s.ID, Harness: s.Harness, RunnerID: s.RunnerID.String, ForkFrom: s.ForkFrom.String, State: hubapi.SessionOpen,
 		CloseReason: s.CloseReason.String, CreatedAt: time.UnixMilli(s.CreatedAt).UTC(),
 	}
+	if err := releaseView(ctx, q, s, &view); err != nil {
+		return hubapi.Session{}, err
+	}
 	if s.CloseRequestedAt.Valid {
 		t := time.UnixMilli(s.CloseRequestedAt.Int64).UTC()
 		view.CloseRequestedAt, view.State = &t, hubapi.SessionClosing
 	}
 	if s.ClosedAt.Valid {
 		t := time.UnixMilli(s.ClosedAt.Int64).UTC()
-		view.ClosedAt, view.State = &t, hubapi.SessionClosed
+		view.ClosedAt, view.State, view.Release = &t, hubapi.SessionClosed, ""
 	}
 	return view, nil
 }

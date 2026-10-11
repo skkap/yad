@@ -132,6 +132,12 @@ func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 			default:
 				accounts = "manage_accounts off"
 			}
+			// Only when off, as path_sources is: on is the default, and
+			// the one a hub expects.
+			if c.ReleaseSessions != nil && !*c.ReleaseSessions {
+				accounts = strings.TrimSpace(accounts + ", release_sessions off")
+				accounts = strings.TrimPrefix(accounts, ", ")
+			}
 			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\n", cleanLine(c.Name), c.State, held, last, accounts, cleanLine(c.URL))
 			if c.LastError != "" && c.LastErrorAt != nil {
 				fmt.Fprintf(tw, "  \t\tlast error %s: %s\t\n", ago(*c.LastErrorAt), cleanLine(c.LastError))

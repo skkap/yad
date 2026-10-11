@@ -88,6 +88,13 @@ const (
 	// context cannot come back on this runner; the hub starts a new session
 	// (decision 0031).
 	ClassResumeRejected = "resume_rejected"
+	// ClassArchiveRejected — the run opens a session from a session archive
+	// (session.archive) and this runner could not take it: the hub's bytes
+	// do not match the run's sha256, the archive is not one this runner
+	// reads, or the harness here already has a conversation by its id
+	// (decision 0084). The session keeps the archive it is to open from, and
+	// its next run here tries again.
+	ClassArchiveRejected = "archive_rejected"
 )
 
 // hubClass is the class a hub sees for an adapter's. The adapters name what
@@ -151,6 +158,10 @@ type Exec struct {
 	// Report wakes a connection's reporter, so a result or a full batch goes
 	// out now rather than at the next tick. Nil is fine: the tick finds it.
 	Report func(connection string)
+	// Archives is a connection's hub, for the session archive a run opening
+	// a released session fetches (decision 0084). Nil fetches none, and such
+	// a run fails.
+	Archives func(connection string) ArchiveHub
 	// Ended hears that a run's terminal state is in the store: a close of
 	// its session may have been waiting on it. Nil is fine: the collector's
 	// next sweep finds it.
@@ -602,6 +613,27 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		log.Warn("the session's workdir could not be made", "err", err)
 		fail(ClassPrepare, e.localFailure("the session's workdir could not be made on this runner", err))
 		return
+	}
+	// A session opened from another runner's archive takes its conversation
+	// before anything else is made: its native id is the conversation's,
+	// and the branches it carries decide the checkout (decision 0084).
+	if native == "" {
+		imported, err := e.importArchive(ctx, c, ad, dir, &lastSeq)
+		if err != nil {
+			if stoppedEarly() {
+				return
+			}
+			if r, ok := errors.AsType[archiveRefusal](err); ok {
+				fail(r.class, r.msg)
+				return
+			}
+			log.Warn("the session's archive could not be opened", "err", err)
+			fail(ClassPrepare, e.localFailure("the session's archive could not be opened on this runner", err))
+			return
+		}
+		if imported != "" {
+			native = imported
+		}
 	}
 	// A session opened as a fork starts from the forked session's
 	// conversation until the harness has given it one of its own (decision
@@ -1452,6 +1484,14 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 			return nil, fmt.Errorf("the session's sources could not be recorded: %w", err)
 		}
 	}
+	sess, err := e.Store.GetSession(bg, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
+	if err != nil {
+		return nil, err
+	}
+	branches, err := carriedOf(sess)
+	if err != nil {
+		return nil, err
+	}
 	pctx, stop := context.WithCancel(ctx)
 	defer stop()
 	go func() {
@@ -1463,7 +1503,7 @@ func (e *Exec) prepare(ctx context.Context, c Claim, a *activeRun, dir string, l
 	}()
 	return e.Workdirs.Prepare(pctx, workdir.Request{
 		Dir: dir, Connection: c.Connection, Session: c.Run.Session.ID, Sources: sources,
-		Retake: retakeOf(dir, c.Run.Session.ID),
+		Retake: retakeOf(dir, c.Run.Session.ID), Branches: branches,
 		Emit: func(ev v1.Event) {
 			if e.spool(bg, c, &ev, *lastSeq+1) {
 				*lastSeq = ev.Seq

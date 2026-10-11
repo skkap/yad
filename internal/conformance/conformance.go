@@ -409,7 +409,7 @@ func (s *session) doc() v1.Capabilities {
 // perRunFeatures is what the suite advertises runner-wide: the features the
 // harness a run targets decides, and harness_features, which says that
 // harness's own list — empty here — is the answer for its runs.
-var perRunFeatures = []string{"steer", "interrupt", "effort", "fork", "harness_features"}
+var perRunFeatures = []string{"steer", "interrupt", "effort", "fork", "release", "harness_features"}
 
 // runsWanted is the most the suite holds at once: one run for the event and
 // result rules, one to leave unrenewed for the lease to lapse.

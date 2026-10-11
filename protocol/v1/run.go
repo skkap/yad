@@ -57,7 +57,7 @@ const (
 
 // SessionRef names the session a run belongs to.
 type SessionRef struct {
-	ID   string      `json:"id" doc:"The session's id, chosen by the hub. A session lives on the runner that claimed its first run and is continued only there."`
+	ID   string      `json:"id" doc:"The session's id, chosen by the hub. A session lives on the runner that claimed its first run and is continued only there, until the hub releases it and a run opens it from its archive on another runner."`
 	New  bool        `json:"new" doc:"true for the run that opens the session, false for every later run. A runner refuses new true for a session id it already has, and new false for one it does not hold."`
 	Mode SessionMode `json:"mode,omitempty" enum:"per_run,live" doc:"per_run, the default: a fresh harness process for each run, resuming the session's conversation. live is reserved: offer it only to a runner advertising live_sessions, which none does yet."`
 	// ForkFrom opens a session whose conversation starts as a copy of
@@ -67,6 +67,11 @@ type SessionRef struct {
 	// offers it only to the runner holding the session it names, and only
 	// while that runner advertises fork for the run's harness (decision 0069).
 	ForkFrom string `json:"fork_from,omitempty" doc:"Only with new true: open this session as a fork of the session named here — a new conversation that starts from a copy of that session's, as far as the harness has written it, and diverges from there, while the session forked goes on unchanged. Offer the run only to the runner that holds that session, and only while it advertises fork for the run's harness — in that harness's features when protocol_features lists harness_features; the runner refuses it (class refused) for a session it does not hold for this hub, of another harness, or closed or closing. The fork gets its own workdir from its own sources, as any new session does; nothing of the forked session's workdir comes with it. Absent: the session starts with an empty conversation."`
+	// Archive opens a session released by another runner (decision 0084):
+	// the runner claiming the run fetches the archive, checks it against
+	// this, and continues the conversation in it under the same session id.
+	// It rides on the run that opens the session, never beside ForkFrom.
+	Archive *SessionArchive `json:"archive,omitempty" doc:"Only with new true, and never beside fork_from: open this session from the session archive its last runner uploaded when it released it, continuing that conversation under the same session id. The runner fetches it with GET /sessions/{session}/archive, refuses one that does not hash to sha256, and fails the run with class archive_rejected when it cannot take it. Offer the run only to a runner advertising release for the run's harness — in that harness's features when protocol_features lists harness_features. A source naming no branch is checked out on the branch the session's last runner worked on. Absent: the session starts as any new one does."`
 }
 
 // Brief is what the run is told: context goes into the harness's system prompt
@@ -180,6 +185,20 @@ func (r Run) Validate() error {
 		errs = append(errs, fmt.Errorf("session.fork_from is only for the run that opens a session: send it with session.new true, or leave it out to continue session %s", r.Session.ID))
 	case r.Session.ForkFrom == r.Session.ID:
 		errs = append(errs, fmt.Errorf("session.fork_from names the session the run opens, %s: name the session to fork", r.Session.ID))
+	}
+	if a := r.Session.Archive; a != nil {
+		switch {
+		case !r.Session.New:
+			// A continuing run resumes the conversation its runner already
+			// holds; an archive would be a second one.
+			errs = append(errs, fmt.Errorf("session.archive is only for the run that opens a session: send it with session.new true, or leave it out to continue session %s", r.Session.ID))
+		case r.Session.ForkFrom != "":
+			errs = append(errs, fmt.Errorf("session.archive and session.fork_from both name a conversation to start session %s from: send one", r.Session.ID))
+		case !ValidSHA256(a.SHA256):
+			errs = append(errs, fmt.Errorf("session.archive.sha256 %q is not a sha256: send 64 lower-case hex digits", clip(a.SHA256, 64)))
+		case a.Bytes <= 0:
+			errs = append(errs, fmt.Errorf("session.archive.bytes is %d: send the archive's size", a.Bytes))
+		}
 	}
 	for i, src := range r.Sources {
 		if err := src.Validate(); err != nil {

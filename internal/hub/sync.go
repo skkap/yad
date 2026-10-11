@@ -52,6 +52,9 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		NextSyncMS: int(h.interval / time.Millisecond),
 		LeaseMS:    int(h.lease / time.Millisecond),
 		MinVersion: h.minVersion,
+		// In every answer, so a runner registered before this hub named it,
+		// or changed it, hears it before it builds an archive.
+		ArchiveMaxBytes: h.archiveMax,
 	}
 
 	err = h.store.Tx(ctx, func(q *db.Queries) error {
@@ -166,6 +169,14 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 					return err
 				}
 			}
+			// A run running in a session opened from an archive has its
+			// conversation in place on this runner: the archive has done its
+			// work (decision 0084).
+			if held.State == v1.RunRunning {
+				if _, err := q.DropOpenedArchive(ctx, db.DropOpenedArchiveParams{ID: run.SessionID, RunnerID: me}); err != nil {
+					return err
+				}
+			}
 			controls, err := deliver(ctx, q, run.ID, run.Harness, doc, described)
 			if err != nil {
 				return err
@@ -237,6 +248,15 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 				out.Controls = append(out.Controls, v1.Control{Kind: v1.ControlCloseSession, SessionID: id})
 			}
 		}
+
+		// Releases a runner reports, then the ones it is still asked for.
+		// Before the unlisted offers go back below: a released session's
+		// runs are offered at this very answer's offer, opening it.
+		releases, err := syncReleases(ctx, q, runner.ID, req.ReleasedSessions, doc, described, now)
+		if err != nil {
+			return err
+		}
+		out.Controls = append(out.Controls, releases...)
 
 		// Logins before the early return below: a draining runner still
 		// reports them, and still takes a cancel or a code.
@@ -468,6 +488,11 @@ func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) 
 	// run waits, as it can go nowhere else. An undescribed runner is offered
 	// none, for the reason above.
 	forks := func(h string) bool { return described && capability.RunMayUse(doc, h, capability.FeatureFork) }
+	// A run opening a released session goes only to a runner that opens one
+	// from its archive: any other would start the conversation empty
+	// (decision 0084). It waits for one, as a fork does for its runner. An
+	// undescribed runner is offered none, for the reason above.
+	opensArchive := func(h string) bool { return described && capability.RunMayUse(doc, h, capability.FeatureRelease) }
 	return func(run v1.Run) bool {
 		if run.StartAt != nil && run.StartAt.After(now) && !holdsStartAt {
 			return false
@@ -476,6 +501,9 @@ func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) 
 			return false
 		}
 		if run.Session.ForkFrom != "" && !forks(run.Harness) {
+			return false
+		}
+		if run.Session.Archive != nil && !opensArchive(run.Harness) {
 			return false
 		}
 		return !run.Session.New || takesLocal || !slices.ContainsFunc(run.Sources, onTheMachine)
@@ -563,6 +591,18 @@ func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
 	if run.Session.New {
 		run.Session.ForkFrom = sess.ForkFrom.String
 	}
+	// A released session is opened from its archive by whichever run opens
+	// it next, on whichever runner takes it (decision 0084).
+	run.Session.Archive = nil
+	if run.Session.New {
+		a, err := releasedArchive(ctx, q, sess)
+		if err != nil {
+			return err
+		}
+		if a != nil {
+			run.Session.Archive, run.Session.ForkFrom = a, ""
+		}
+	}
 	if !run.Session.New || len(run.Sources) > 0 {
 		return nil
 	}
@@ -612,6 +652,9 @@ func (h *Hub) sweep(ctx context.Context, q *db.Queries, now time.Time) error {
 		return err
 	}
 	if err := sweepLogins(ctx, q, now); err != nil {
+		return err
+	}
+	if err := h.expireArchives(ctx, q, now); err != nil {
 		return err
 	}
 	return h.abandonSilent(ctx, q, now)

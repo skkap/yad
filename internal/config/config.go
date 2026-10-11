@@ -75,6 +75,12 @@ type Connection struct {
 	// accounts (decision 0057); absent lets it, as the owner trusts the hubs
 	// it connects (0038). Read at start, like the rest of a connection.
 	ManageAccounts *bool `toml:"manage_accounts,omitempty"`
+	// ReleaseSessions false stops this hub releasing the runner's sessions to
+	// resume on another runner, and this runner opening one another runner
+	// released (decision 0084); absent lets it. A release hands the
+	// session's whole conversation to the hub and to whichever runner takes
+	// it next. Read at start, like the rest of a connection.
+	ReleaseSessions *bool `toml:"release_sessions,omitempty"`
 	// RegisteredAt is when `yad connect` added this entry, in unix
 	// milliseconds, and nothing changes it after: registering again with the
 	// same hub keeps it. The daemon compares it with the registration its
@@ -87,6 +93,12 @@ type Connection struct {
 // MayManageAccounts is whether this hub may add and remove accounts.
 func (c Connection) MayManageAccounts() bool {
 	return c.ManageAccounts == nil || *c.ManageAccounts
+}
+
+// MayReleaseSessions is whether this hub may release the runner's sessions,
+// and open the ones other runners released.
+func (c Connection) MayReleaseSessions() bool {
+	return c.ReleaseSessions == nil || *c.ReleaseSessions
 }
 
 // SessionsConfig governs reclaiming workdirs (decisions 0011 and 0035).

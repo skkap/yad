@@ -102,6 +102,7 @@ const (
 	flawOffersLiveMode   = "a run is offered in a live session to a runner advertising nothing"
 	flawOffersEffort     = "a run carrying an effort is offered to a runner whose harness lists no effort"
 	flawOffersFork       = "a run opening a fork is offered to a runner whose harness lists no fork"
+	flawOffersArchive    = "a run opening a released session is offered to a runner whose harness lists no release"
 	flawGrantInTheOpen   = "a run's grant value comes back quoted in a later refusal"
 	flawRegistersAnyone  = "anyone registers, and the credential comes back under a name of the hub's own"
 	flawUngatedControl   = "a steer goes to a runner that never advertised one"
@@ -488,6 +489,9 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 		}
 		if f.flaw == flawOffersFork {
 			spec.Session.New, spec.Session.ForkFrom = true, "conformance-forked"
+		}
+		if f.flaw == flawOffersArchive {
+			spec.Session.New, spec.Session.Archive = true, &v1.SessionArchive{SHA256: strings.Repeat("ab", 32), Bytes: 1}
 		}
 		if f.flaw == flawGrantInTheOpen {
 			spec.Grants = []v1.Grant{{Name: "TOKEN", Value: grantValue, As: v1.GrantEnv}}

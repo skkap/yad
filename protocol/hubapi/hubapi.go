@@ -177,11 +177,25 @@ type Session struct {
 	SessionID string `json:"session_id" doc:"The session id."`
 	Harness   string `json:"harness" doc:"The harness every run in the session uses."`
 	// RunnerID is the runner the session is bound to — the one that claimed
-	// its first run, and the only one that can continue it. Absent until then.
-	RunnerID string `json:"runner_id,omitempty" doc:"The runner that claimed the session's first run, the only one that can continue it. Absent until then."`
+	// its first run, or its first run since a release, and the only one that
+	// can continue it. Absent until then.
+	RunnerID string `json:"runner_id,omitempty" doc:"The runner the session is on: the one that claimed its first run, or its first run since it was released, and the only one that can continue it. Absent until then, and while it is released."`
 	// ForkFrom is the session this one was opened as a fork of.
 	ForkFrom string       `json:"fork_from,omitempty" doc:"The session this one was started as a fork of. Absent for a session that started its own conversation."`
 	State    SessionState `json:"state" enum:"open,closing,closed" doc:"open takes runs. closing: a close was asked for and its runner has not yet done it. closed takes no new run."`
+	// Release is beside State rather than in it: the service API's enums
+	// are closed, and an open session being released is still open
+	// (decision 0084).
+	Release SessionRelease `json:"release,omitempty" enum:"releasing,released" doc:"Where an open session's release is. releasing: a release was asked for and its runner has not yet said how it went; its runs wait. released: its runner handed it back, and its next run opens it from its archive on any runner that takes it. Absent when no release is under way or done."`
+	// The release's details: asked for, done, or refused by the runner.
+	ReleaseRequestedAt *time.Time `json:"release_requested_at,omitempty" doc:"When a release was asked for, until the runner reports how it went."`
+	ReleasedAt         *time.Time `json:"released_at,omitempty" doc:"When the session was last released."`
+	ReleasedFrom       string     `json:"released_from,omitempty" doc:"The runner the session was last released from."`
+	// ReleaseError is the last release the runner refused, with why and
+	// what to do, until another is asked for.
+	ReleaseError *v1.ReleaseError `json:"release_error,omitempty" doc:"Why the runner refused the last release asked for, with the next action, until another is asked for. The session stayed open on it."`
+	// Archive is the session archive its next run opens from.
+	Archive *v1.SessionArchive `json:"archive,omitempty" doc:"The session archive the hub holds for the session: uploaded by a runner releasing it, and gone once a run opened from it is running."`
 	// CloseRequestedAt is when a close was asked for, until the runner says
 	// it is done; the runner hears it at its next sync.
 	CloseRequestedAt *time.Time `json:"close_requested_at,omitempty" doc:"When a close was asked for, until the runner reports it done."`
@@ -203,6 +217,21 @@ const (
 	SessionClosing SessionState = "closing"
 	SessionClosed  SessionState = "closed"
 )
+
+// SessionRelease is where an open session's release is (decision 0084):
+// asked for and not yet settled by its runner, or handed back by it, bound
+// to none, its next run opening it from its archive.
+type SessionRelease string
+
+const (
+	SessionReleasing SessionRelease = "releasing"
+	SessionReleased  SessionRelease = "released"
+)
+
+// ReleaseRequest asks a session's runner to hand it back (decision 0084).
+type ReleaseRequest struct {
+	DiscardLocal bool `json:"discard_local,omitempty" doc:"Release the session even though its workdir holds work its remote does not — changes not committed, commits not pushed — which is then lost. Without it the runner refuses such a release and keeps the session; send a run that commits and pushes first."`
+}
 
 // SteerRequest is input for a running turn.
 type SteerRequest struct {

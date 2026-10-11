@@ -118,13 +118,48 @@ const FeatureLogin = "login"
 // the document that connection's hub is sent.
 const FeatureAccounts = "accounts"
 
+// FeatureRelease is a runner that hands a session back to its hub on the
+// release_session control, uploading its session archive, and opens a session
+// from one (session.archive), so its next run can go to another runner
+// (decision 0084). A per-run feature, listed for each harness whose adapter
+// can carry its conversation (adapter.Releaser) and runner-wide only while
+// every harness this machine can drive can, as fork is (decision 0069). Its
+// owner may turn it off for one hub (release_sessions = false), and then
+// ForConnection takes it out of every list that hub is sent: a release puts
+// the conversation in the hub's hands and in another runner's.
+const FeatureRelease = "release"
+
+// Link is how a connection's owner set the per-hub features: whether its hub
+// may add and remove accounts (manage_accounts), and whether it may release
+// sessions (release_sessions).
+type Link struct {
+	ManageAccounts  bool
+	ReleaseSessions bool
+}
+
 // ForConnection is the document as one connection's hub is sent it: doc, with
 // FeatureAccounts for a hub its owner lets add and remove accounts, and only
-// beside FeatureLogin, since an add is a login. doc itself, which every other
-// hub is sent too, is left as it was.
-func ForConnection(doc v1.Capabilities, manageAccounts bool) v1.Capabilities {
-	if manageAccounts && slices.Contains(doc.ProtocolFeatures, FeatureLogin) {
+// beside FeatureLogin, since an add is a login; and without FeatureRelease,
+// runner-wide or in any harness's list, for a hub its owner does not let
+// release sessions. doc itself, which every other hub is sent too, is left as
+// it was.
+func ForConnection(doc v1.Capabilities, link Link) v1.Capabilities {
+	if link.ManageAccounts && slices.Contains(doc.ProtocolFeatures, FeatureLogin) {
 		doc.ProtocolFeatures = append(slices.Clone(doc.ProtocolFeatures), FeatureAccounts)
+	}
+	if !link.ReleaseSessions {
+		without := func(fs []string) []string {
+			if !slices.Contains(fs, FeatureRelease) {
+				return fs
+			}
+			return slices.DeleteFunc(slices.Clone(fs), func(f string) bool { return f == FeatureRelease })
+		}
+		doc.ProtocolFeatures = without(doc.ProtocolFeatures)
+		hs := slices.Clone(doc.Harnesses)
+		for i := range hs {
+			hs[i].Features = without(hs[i].Features)
+		}
+		doc.Harnesses = hs
 	}
 	return doc
 }

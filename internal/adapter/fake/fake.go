@@ -62,6 +62,10 @@ type Adapter struct {
 	// NoSteer makes the adapter one whose turns take no steer; it steers by
 	// default, as both real adapters do.
 	NoSteer bool
+	// NoRelease makes the adapter one whose sessions cannot be released; it
+	// releases by default, with a conversation that is one file per native id
+	// (release.go).
+	NoRelease bool
 
 	mu     sync.Mutex
 	Starts []adapter.Spec

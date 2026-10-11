@@ -38,8 +38,9 @@ func TestTheV1EnumsAreClosed(t *testing.T) {
 		{HarnessReport{}, "ModelsSource", "hub", []string{"harness", "catalog"}},
 		// The four login kinds came after v1 shipped, gated on the "login"
 		// feature a runner advertises (decision 0055); remove_account after
-		// them, gated on "accounts" (decision 0057).
-		{Control{}, "Kind", "runner", []string{"cancel", "interrupt", "steer", "close_session", "drain", "report_capabilities", "update", "start_login", "login_code", "login_token", "cancel_login", "remove_account"}},
+		// them, gated on "accounts" (decision 0057); release_session after
+		// that, gated on "release" for the session's harness (decision 0084).
+		{Control{}, "Kind", "runner", []string{"cancel", "interrupt", "steer", "close_session", "drain", "report_capabilities", "update", "start_login", "login_code", "login_token", "cancel_login", "remove_account", "release_session"}},
 		// New with hub login, and sent only to a hub that asked for a login.
 		{LoginReport{}, "Method", "hub", []string{"link", "token"}},
 		{LoginReport{}, "State", "hub", []string{"starting", "waiting", "checking", "succeeded", "failed", "expired", "cancelled"}},

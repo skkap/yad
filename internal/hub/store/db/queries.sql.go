@@ -391,6 +391,15 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const deleteSessionArchive = `-- name: DeleteSessionArchive :exec
+DELETE FROM session_archives WHERE session_id = ?
+`
+
+func (q *Queries) DeleteSessionArchive(ctx context.Context, sessionID string) error {
+	_, err := q.db.ExecContext(ctx, deleteSessionArchive, sessionID)
+	return err
+}
+
 const deleteSteersThrough = `-- name: DeleteSteersThrough :exec
 DELETE FROM run_controls WHERE run_id = ? AND kind = 'steer' AND id <= ?
 `
@@ -403,6 +412,27 @@ type DeleteSteersThroughParams struct {
 func (q *Queries) DeleteSteersThrough(ctx context.Context, arg DeleteSteersThroughParams) error {
 	_, err := q.db.ExecContext(ctx, deleteSteersThrough, arg.RunID, arg.ID)
 	return err
+}
+
+const dropOpenedArchive = `-- name: DropOpenedArchive :execrows
+DELETE FROM session_archives
+WHERE session_id = ?1 AND released = 1
+  AND EXISTS (SELECT 1 FROM sessions s WHERE s.id = session_archives.session_id AND s.runner_id = ?2)
+`
+
+type DropOpenedArchiveParams struct {
+	ID       string
+	RunnerID sql.NullString
+}
+
+// A run of the session is running on the runner it is bound to, which opened
+// it from the archive: the conversation is there now, and the archive goes.
+func (q *Queries) DropOpenedArchive(ctx context.Context, arg DropOpenedArchiveParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, dropOpenedArchive, arg.ID, arg.RunnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const endAccountRemoval = `-- name: EndAccountRemoval :exec
@@ -461,6 +491,27 @@ type EndRunnerLoginsParams struct {
 // A runner that deregisters finishes none of its logins.
 func (q *Queries) EndRunnerLogins(ctx context.Context, arg EndRunnerLoginsParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, endRunnerLogins, arg.Error, arg.Now, arg.RunnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const endSessionRelease = `-- name: EndSessionRelease :execrows
+UPDATE sessions SET release_requested_at = NULL, release_error = ?1
+WHERE id = ?2 AND runner_id = ?3 AND release_requested_at IS NOT NULL
+`
+
+type EndSessionReleaseParams struct {
+	Error    sql.NullString
+	ID       string
+	RunnerID sql.NullString
+}
+
+// A release the runner refused, or the hub gave up asking for: the session
+// stays bound to its runner, as it was, and its runs go out again.
+func (q *Queries) EndSessionRelease(ctx context.Context, arg EndSessionReleaseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, endSessionRelease, arg.Error, arg.ID, arg.RunnerID)
 	if err != nil {
 		return 0, err
 	}
@@ -653,6 +704,39 @@ func (q *Queries) ExpireUndeliveredLogins(ctx context.Context, arg ExpireUndeliv
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const expiredArchives = `-- name: ExpiredArchives :many
+SELECT session_id, released FROM session_archives WHERE uploaded_at <= ? ORDER BY session_id
+`
+
+type ExpiredArchivesRow struct {
+	SessionID string
+	Released  int64
+}
+
+// Archives uploaded before the cutoff.
+func (q *Queries) ExpiredArchives(ctx context.Context, uploadedAt int64) ([]ExpiredArchivesRow, error) {
+	rows, err := q.db.QueryContext(ctx, expiredArchives, uploadedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpiredArchivesRow{}
+	for rows.Next() {
+		var i ExpiredArchivesRow
+		if err := rows.Scan(&i.SessionID, &i.Released); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const finishRun = `-- name: FinishRun :exec
@@ -867,7 +951,7 @@ func (q *Queries) GetRunnerByCredential(ctx context.Context, credentialHash stri
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason, offered_to, close_owed, fork_from, bound_by_run FROM sessions WHERE id = ?
+SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason, offered_to, close_owed, fork_from, bound_by_run, release_requested_at, release_discard_local, release_error, released_at, released_from FROM sessions WHERE id = ?
 `
 
 func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
@@ -885,6 +969,38 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.CloseOwed,
 		&i.ForkFrom,
 		&i.BoundByRun,
+		&i.ReleaseRequestedAt,
+		&i.ReleaseDiscardLocal,
+		&i.ReleaseError,
+		&i.ReleasedAt,
+		&i.ReleasedFrom,
+	)
+	return i, err
+}
+
+const getSessionArchive = `-- name: GetSessionArchive :one
+SELECT session_id, sha256, bytes, runner_id, uploaded_at, released FROM session_archives WHERE session_id = ?
+`
+
+type GetSessionArchiveRow struct {
+	SessionID  string
+	Sha256     string
+	Bytes      int64
+	RunnerID   string
+	UploadedAt int64
+	Released   int64
+}
+
+func (q *Queries) GetSessionArchive(ctx context.Context, sessionID string) (GetSessionArchiveRow, error) {
+	row := q.db.QueryRowContext(ctx, getSessionArchive, sessionID)
+	var i GetSessionArchiveRow
+	err := row.Scan(
+		&i.SessionID,
+		&i.Sha256,
+		&i.Bytes,
+		&i.RunnerID,
+		&i.UploadedAt,
+		&i.Released,
 	)
 	return i, err
 }
@@ -1012,6 +1128,30 @@ func (q *Queries) MarkLoginSent(ctx context.Context, arg MarkLoginSentParams) er
 	return err
 }
 
+const markSessionReleased = `-- name: MarkSessionReleased :execrows
+UPDATE sessions SET runner_id = NULL, bound_by_run = NULL, offered_to = NULL, fork_from = NULL,
+  release_requested_at = NULL, release_error = NULL, released_at = ?1, released_from = ?2
+WHERE id = ?3 AND runner_id = ?2 AND release_requested_at IS NOT NULL AND closed_at IS NULL
+`
+
+type MarkSessionReleasedParams struct {
+	Now      sql.NullInt64
+	RunnerID sql.NullString
+	ID       string
+}
+
+// A release its runner reported: the session is bound to no runner, and its
+// next run opens it from the archive wherever it goes. A fork's source is
+// history by now, and the runner the session was offered to while unbound
+// earlier has nothing of it.
+func (q *Queries) MarkSessionReleased(ctx context.Context, arg MarkSessionReleasedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markSessionReleased, arg.Now, arg.RunnerID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const noteSessionOffer = `-- name: NoteSessionOffer :exec
 UPDATE sessions SET offered_to = ?1 WHERE id = ?2 AND runner_id IS NULL
 `
@@ -1028,13 +1168,31 @@ func (q *Queries) NoteSessionOffer(ctx context.Context, arg NoteSessionOfferPara
 	return err
 }
 
+const noteSessionReleased = `-- name: NoteSessionReleased :exec
+INSERT INTO session_releases (session_id, runner_id, released_at) VALUES (?, ?, ?)
+ON CONFLICT (session_id, runner_id) DO UPDATE SET released_at = excluded.released_at
+`
+
+type NoteSessionReleasedParams struct {
+	SessionID  string
+	RunnerID   string
+	ReleasedAt int64
+}
+
+func (q *Queries) NoteSessionReleased(ctx context.Context, arg NoteSessionReleasedParams) error {
+	_, err := q.db.ExecContext(ctx, noteSessionReleased, arg.SessionID, arg.RunnerID, arg.ReleasedAt)
+	return err
+}
+
 const offerCandidates = `-- name: OfferCandidates :many
 SELECT r.id, r.session_id, r.harness, r.model, r.spec, r.state, r.runner_id, r.lease_expires_at, r.resumes_at, r.reason, r.created_at, r.updated_at, r.events_through FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
-  AND s.close_requested_at IS NULL AND s.closed_at IS NULL
+  AND s.close_requested_at IS NULL AND s.closed_at IS NULL AND s.release_requested_at IS NULL
   AND r.harness IN (SELECT value FROM json_each(?1))
   AND (r.created_at > ?2 OR (r.created_at = ?2 AND r.id > ?3))
   AND (s.runner_id IS NULL OR s.runner_id = ?4)
+  AND (s.runner_id IS NOT NULL OR NOT EXISTS (
+      SELECT 1 FROM session_releases x WHERE x.session_id = s.id AND x.runner_id = ?4))
   AND (s.fork_from IS NULL OR s.runner_id IS NOT NULL OR EXISTS (
       SELECT 1 FROM sessions f WHERE f.id = s.fork_from AND f.runner_id = ?4))
   AND NOT EXISTS (
@@ -1064,6 +1222,10 @@ type OfferCandidatesParams struct {
 // session has at most one live run. Nor in a session whose close is asked
 // for: the runner acts on close_session before the offers beside it and would
 // refuse the run, which instead ends with the close once reported (DEV-120).
+// Nor in one whose release is asked for: the run waits to hear whether it
+// goes to the same runner or, released, to any (decision 0084) -- any but
+// the ones it was ever released from, each of which closed it and keeps the
+// closed row.
 // A session opened as a fork and not yet bound goes only to the runner that
 // holds the session it forks, where the conversation is (decision 0065).
 // Filtering here rather than in Go is what keeps runs it must skip from
@@ -1271,6 +1433,36 @@ func (q *Queries) PutResult(ctx context.Context, arg PutResultParams) (int64, er
 	return result.RowsAffected()
 }
 
+const putSessionArchive = `-- name: PutSessionArchive :exec
+INSERT INTO session_archives (session_id, sha256, bytes, data, runner_id, uploaded_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT (session_id) DO UPDATE SET sha256 = excluded.sha256, bytes = excluded.bytes, data = excluded.data,
+  runner_id = excluded.runner_id, uploaded_at = excluded.uploaded_at, released = 0
+`
+
+type PutSessionArchiveParams struct {
+	SessionID  string
+	Sha256     string
+	Bytes      int64
+	Data       []byte
+	RunnerID   string
+	UploadedAt int64
+}
+
+// An upload replaces what an earlier one of the same release left: the
+// runner built the archive again after a restart.
+func (q *Queries) PutSessionArchive(ctx context.Context, arg PutSessionArchiveParams) error {
+	_, err := q.db.ExecContext(ctx, putSessionArchive,
+		arg.SessionID,
+		arg.Sha256,
+		arg.Bytes,
+		arg.Data,
+		arg.RunnerID,
+		arg.UploadedAt,
+	)
+	return err
+}
+
 const recordLoginReport = `-- name: RecordLoginReport :execrows
 UPDATE logins SET state = ?1, url = ?2, user_code = ?3, error = ?4,
   hub_ended = 0,
@@ -1466,6 +1658,31 @@ func (q *Queries) RequestSessionClose(ctx context.Context, arg RequestSessionClo
 	return err
 }
 
+const requestSessionRelease = `-- name: RequestSessionRelease :execrows
+
+UPDATE sessions SET release_requested_at = COALESCE(release_requested_at, ?1),
+  release_discard_local = ?2, release_error = NULL
+WHERE id = ?3 AND runner_id IS NOT NULL AND closed_at IS NULL AND close_requested_at IS NULL
+`
+
+type RequestSessionReleaseParams struct {
+	Now          sql.NullInt64
+	DiscardLocal int64
+	ID           string
+}
+
+// Releasing a session (decision 0084, 0013_session_release.sql).
+// A release asked for: of a session bound to a runner, not closed or
+// closing. A repeat keeps the first request's time and takes the latest
+// discard_local.
+func (q *Queries) RequestSessionRelease(ctx context.Context, arg RequestSessionReleaseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, requestSessionRelease, arg.Now, arg.DiscardLocal, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const requeueRun = `-- name: RequeueRun :exec
 UPDATE runs SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = ?
 WHERE id = ? AND state = 'offered'
@@ -1547,6 +1764,22 @@ func (q *Queries) RevokeAdminToken(ctx context.Context, name string) (int64, err
 	return result.RowsAffected()
 }
 
+const runOfferedInSession = `-- name: RunOfferedInSession :one
+SELECT EXISTS (SELECT 1 FROM runs WHERE session_id = ?1 AND runner_id = ?2 AND state = 'offered')
+`
+
+type RunOfferedInSessionParams struct {
+	SessionID string
+	RunnerID  sql.NullString
+}
+
+func (q *Queries) RunOfferedInSession(ctx context.Context, arg RunOfferedInSessionParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, runOfferedInSession, arg.SessionID, arg.RunnerID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const runsOfferedTo = `-- name: RunsOfferedTo :many
 SELECT id, session_id, harness, model, spec, state, runner_id, lease_expires_at, resumes_at, reason, created_at, updated_at, events_through FROM runs WHERE runner_id = ? AND state = 'offered'
 `
@@ -1586,6 +1819,17 @@ func (q *Queries) RunsOfferedTo(ctx context.Context, runnerID sql.NullString) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const sessionArchiveData = `-- name: SessionArchiveData :one
+SELECT data FROM session_archives WHERE session_id = ?
+`
+
+func (q *Queries) SessionArchiveData(ctx context.Context, sessionID string) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, sessionArchiveData, sessionID)
+	var data []byte
+	err := row.Scan(&data)
+	return data, err
 }
 
 const sessionCreatorSpec = `-- name: SessionCreatorSpec :one
@@ -1635,6 +1879,53 @@ func (q *Queries) SessionsToClose(ctx context.Context, runnerID sql.NullString) 
 	return items, nil
 }
 
+const sessionsToRelease = `-- name: SessionsToRelease :many
+SELECT id, harness, runner_id, created_at, close_requested_at, closed_at, close_reason, offered_to, close_owed, fork_from, bound_by_run, release_requested_at, release_discard_local, release_error, released_at, released_from FROM sessions
+WHERE runner_id = ?1 AND release_requested_at IS NOT NULL AND closed_at IS NULL
+ORDER BY id
+`
+
+// The sessions release_session goes to this runner for.
+func (q *Queries) SessionsToRelease(ctx context.Context, runnerID sql.NullString) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, sessionsToRelease, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.Harness,
+			&i.RunnerID,
+			&i.CreatedAt,
+			&i.CloseRequestedAt,
+			&i.ClosedAt,
+			&i.CloseReason,
+			&i.OfferedTo,
+			&i.CloseOwed,
+			&i.ForkFrom,
+			&i.BoundByRun,
+			&i.ReleaseRequestedAt,
+			&i.ReleaseDiscardLocal,
+			&i.ReleaseError,
+			&i.ReleasedAt,
+			&i.ReleasedFrom,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sessionsToSettle = `-- name: SessionsToSettle :many
 SELECT s.id FROM sessions s
 WHERE s.closed_at IS NULL
@@ -1669,6 +1960,26 @@ func (q *Queries) SessionsToSettle(ctx context.Context, runnerID sql.NullString)
 		return nil, err
 	}
 	return items, nil
+}
+
+const setArchiveReleased = `-- name: SetArchiveReleased :execrows
+UPDATE session_archives SET released = 1 WHERE session_id = ? AND sha256 = ? AND runner_id = ?
+`
+
+type SetArchiveReleasedParams struct {
+	SessionID string
+	Sha256    string
+	RunnerID  string
+}
+
+// The archive the runner reported releasing the session with: from now the
+// session's conversation.
+func (q *Queries) SetArchiveReleased(ctx context.Context, arg SetArchiveReleasedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setArchiveReleased, arg.SessionID, arg.Sha256, arg.RunnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setCapabilities = `-- name: SetCapabilities :exec
@@ -1766,7 +2077,7 @@ func (q *Queries) SilentRunners(ctx context.Context, cutoff sql.NullInt64) ([]st
 const soonCandidates = `-- name: SoonCandidates :many
 SELECT r.id, r.session_id, r.harness, r.model, r.spec, r.state, r.runner_id, r.lease_expires_at, r.resumes_at, r.reason, r.created_at, r.updated_at, r.events_through FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
-  AND s.close_requested_at IS NULL AND s.closed_at IS NULL
+  AND s.close_requested_at IS NULL AND s.closed_at IS NULL AND s.release_requested_at IS NULL
   AND r.harness IN (SELECT value FROM json_each(?1))
   AND (r.created_at > ?2 OR (r.created_at = ?2 AND r.id > ?3))
   AND ((s.runner_id = ?4 AND NOT EXISTS (
@@ -1775,6 +2086,8 @@ WHERE r.state = 'queued'
       SELECT 1 FROM runs o
       WHERE o.session_id = r.session_id
         AND o.state IN ('offered', 'claimed', 'preparing', 'running', 'waiting'))))
+  AND (s.runner_id IS NOT NULL OR NOT EXISTS (
+      SELECT 1 FROM session_releases x WHERE x.session_id = s.id AND x.runner_id = ?4))
   AND (s.fork_from IS NULL OR s.runner_id IS NOT NULL OR EXISTS (
       SELECT 1 FROM sessions f WHERE f.id = s.fork_from AND f.runner_id = ?4))
   AND NOT EXISTS (

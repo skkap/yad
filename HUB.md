@@ -58,6 +58,10 @@ and your answer to it. There are five calls:
 | `POST /runs/{run}/result` | once per run, retried until you answer 2xx | how the run ended |
 | `POST /runners/{runner}/deregister` | when the runner is leaving for good | its credential dies and you settle what it held |
 
+A hub that releases sessions (§8) has two more, which carry a session's
+archive as bytes rather than JSON: `PUT /sessions/{session}/archive` from the
+runner releasing it, and `GET` the same path from the runner opening it.
+
 **The sync is the whole conversation.** One call is the heartbeat, the claim
 of what you offered last time, the lease renewal on every run the runner
 holds, its health report and its ask for work. Your answer carries the runs
@@ -93,7 +97,8 @@ that the runner withdrew unstarted (§3). §4 has the full state machine.
 to one session. The first run in a session binds it to the runner that claims
 it, because the harness's transcript and the working directory are on that
 runner's disk; every later run in the session goes to that runner, one at a
-time (§8).
+time — until you release the session, when its runner hands its conversation
+to you and the next run opens it on another runner (§8).
 
 **What is yours to decide**: how runs are queued and prioritised, which runner
 you prefer among several that could take a run, what `lost` means to your
@@ -193,12 +198,13 @@ the operator's token on a request you were always going to refuse.
 precedence the protocol fixes. The rest is `yad hub`'s order, one conforming
 choice, and the one a runner has been tested against:
 
-1. a `POST` whose `Yad-Protocol` is missing or wrong: `426
+1. a `POST` or a `PUT` whose `Yad-Protocol` is missing or wrong: `426
    unsupported_protocol` — before the route, so an unknown path says so too;
 2. a path that is no operation: `404 not_found`; a method an operation does
-   not have: `405 invalid`;
-3. the body: `413` when it is too large (16 MiB on events and result, 1 MiB
-   elsewhere), and `400 invalid` when it is not JSON or fails the document's
+   not have: `405 invalid`; then a `GET` whose `Yad-Protocol` is missing or
+   wrong: `426 unsupported_protocol`;
+3. the body: `413` when it is too large (16 MiB on events and result, the
+   archive limit on a session archive's `PUT`, 1 MiB elsewhere), and `400 invalid` when it is not JSON or fails the document's
    schema — a missing required field, a value outside an enum. This comes
    *before* the credential: `yad hub` reads and validates the body first;
 4. the credential: `401 unauthorized`, or `403 unauthorized` for another
@@ -264,6 +270,7 @@ sync carries a newer one.
 | `lease_ms` | required; never shorter than `sync_interval_ms` (§5) |
 | `hub_features` | optional; v1 defines none, so omit it |
 | `min_version` | optional; the oldest yad you accept (§11) |
+| `archive_max_bytes` | optional; the largest session archive you take (§8). Send it in every sync answer as well |
 
 **Omitting both optional fields is a complete, conforming hub** — nothing
 checks either, and a hub that never refuses on version never emits
@@ -292,6 +299,7 @@ the runner the path names, and the body's `runner_id` must equal the path's.
 | `runs` | **every run the runner holds**, with its state. Listing is claiming and lease renewal (below) |
 | `closed_sessions` | sessions the runner has closed, repeated until answered (§8) |
 | `logins` | the hub logins you started on this runner, each repeated until one carrying its end is answered (§7) |
+| `released_sessions` | the releases you asked of this runner that it has settled, each released with its archive or refused with an error, repeated until one carrying it is answered (§8) |
 
 The rest of `health` — load, disk, spool and outbox depth, recent errors — is
 for your operators and dashboards. It is the runner's own words, bounded, and
@@ -365,6 +373,8 @@ says why it goes where it does):
    ([0048](docs/decisions/0048-six-hub-behaviours-settled-by-zuminos-hub.md)).
 5. **Take the closes** in `closed_sessions` (§8), and add a `close_session`
    control for each session you are closing on this runner. Take the
+   releases in `released_sessions` (§8), and add a `release_session`
+   control for each release you are still waiting on from it. Take the
    `logins` too, and add the login controls each open one still needs (§7) —
    a draining runner still reports them.
 6. **Take back every run you offered this runner that this sync did not
@@ -506,6 +516,17 @@ it forgets the credential. It takes a `401 unauthorized` or any
 how running the command again after a half-finished one completes — and
 anything else as a refusal that leaves the runner registered with you. The
 conformance suite lists `deregister` among the rules it cannot check (§12).
+
+### `PUT` and `GET /sessions/{session}/archive`
+
+**Authenticated by the runner credential.** Only a hub that releases
+sessions serves them, and §8 states their rules in full: the `PUT` is a
+session's archive, from the runner releasing it, and the `GET` hands it to
+the runner opening the session from it. Both carry bytes, not JSON —
+`application/gzip`, with the SHA-256 in `Yad-Archive-Sha256` — and both
+answer errors in the envelope. A `PUT` is refused, like a `POST`, with `426
+unsupported_protocol` before anything else when `Yad-Protocol` is missing or
+wrong; a `GET`, once its path names the operation.
 
 ## 4. Runs
 
@@ -739,6 +760,13 @@ the runner can go nowhere else — offer it, and the refusal's message tells
 whoever submitted it which setting refused it (decision
 [0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md)).
 
+**A released session's run only where it can be opened.** A run opening a
+session released from another runner carries `session.archive`, and goes only
+to a runner advertising `release` for the run's harness (§7) — any other would
+open the session with none of the conversation — and never to a runner it
+was ever released from, each of which closed it and keeps it closed. Like a `fork_from`, it never lapses: hold
+it until such a runner can take it (§8).
+
 **Session rules** decide the rest (§8): a run in a session bound to another
 runner is not offerable here, and neither is a run whose session already has
 a run offered or held.
@@ -798,6 +826,7 @@ these are the ones worth acting on:
 | `prompt_too_long` | failed | the conversation no longer fits the model's context |
 | `runner_stopping` | cancelled | the runner cancelled it on its way down, not you |
 | `runner_restarted` | lost | the runner process holding it stopped without finishing it |
+| `archive_rejected` | failed | the run opened a released session and the runner would not take its archive: the bytes you sent are not the `session.archive` the run named, the archive is not one it reads, or its harness already has the conversation. The session stays bound to that runner and keeps waiting for its archive: its next run there fetches it again (§8) |
 | `harness_error`, `harness_exited`, `harness_start_failed`, `adapter_error` | failed | the harness failed, or could not be started — including a harness refusing the run's `effort`, in its own words |
 
 `steer_failed` and `interrupt_failed` appear only as `error` *events*, never
@@ -1129,6 +1158,7 @@ a rule for when to stop sending it:
 | `login_token` | `login_id`, `harness`, `account`, `token`, `add` | stores a `claude setup-token` token as the account's login; with `add`, as `start_login` | in every response until the runner reports the login — then forget the token |
 | `cancel_login` | `login_id` | ends the login `cancelled`; one it never had is reported `cancelled` all the same | in every response until the runner reports the login over |
 | `remove_account` | `harness`, `account` | removes the account as its owner's `yad account remove` does: listed nowhere from then on, a run on it finishes there, its home is deleted when the last one ends, and a login in flight on it ends `cancelled`. One it does not list is nothing to do | in every response until neither the runner's current capability document nor the sync's health lists the account, or the runner stops advertising `accounts` |
+| `release_session` | `session_id`, `discard_local` | hands the session back once no run is held in it (§8): uploads its archive with `PUT /sessions/{session}/archive`, closes the session and reports it released — or refuses, keeping it as it was, and reports why | in every response until the session appears in the runner's `released_sessions` |
 | `update` | — | reserved; never send it. A yad runner ignores it: it updates itself only when its owner turns that on ([0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)) | never |
 
 **Features are promises, not decoration.** A runner advertises
@@ -1146,19 +1176,21 @@ asked for it.
 | `start_at` | a run carrying `start_at` — offer one only to a runner that advertises it |
 | `effort` | a run carrying `effort` — offer one only to a runner that advertises it, however long it waits |
 | `fork` | a run carrying `session.fork_from` — offer one only to the runner holding the session it forks, and only while that runner advertises it (§8) |
+| `release` | the `release_session` control, and a run carrying `session.archive` (§8). Per hub as well: a runner whose owner turned release off for your connection advertises it to you nowhere |
 | `login` | the four login controls. A runner advertising it reports each login in `logins` |
 | `accounts` | `add` on `start_login` and `login_token`, and the `remove_account` control. Per hub: a runner advertises it only to a hub its owner lets add and remove accounts, and only beside `login`, so its fingerprint for you may differ from another hub's |
 | `live_sessions` | a run whose `session.mode` is `live` — offer one only to a runner that advertises it. The spec lists `live` as an enum value and connects it to no feature, so this pairing exists only here |
-| `harness_features` | nothing by itself: it says each harness report carries `features`, the per-run features a run on that harness may use, and that those lists — not the runner-wide strings — answer for `steer`, `interrupt`, `effort` and `fork` |
+| `harness_features` | nothing by itself: it says each harness report carries `features`, the per-run features a run on that harness may use, and that those lists — not the runner-wide strings — answer for `steer`, `interrupt`, `effort`, `fork` and `release` |
 
-**`steer`, `interrupt`, `effort` and `fork` are the harness's.** Whether a
+**`steer`, `interrupt`, `effort`, `fork` and `release` are the harness's.** Whether a
 run may use one depends on the harness it targets: a harness driven one way
 may fork and not take a steer, another the reverse. A runner advertising
 `harness_features` lists each harness's in its report's `features`, and then
 that list is the whole answer for runs on that harness — absent means none,
-and a harness the document does not list takes nothing. Gate a run's `effort`
-and `fork_from`, and a `steer` or `interrupt` for a run, on the list of the
-run's `harness`. The runner-wide strings stay, for a hub that does not read
+and a harness the document does not list takes nothing. Gate a run's `effort`,
+`fork_from` and `session.archive`, a `steer` or `interrupt` for a run, and a
+`release_session` for a session, on the list of the run's or the session's
+`harness`. The runner-wide strings stay, for a hub that does not read
 the lists: a yad runner lists one there only while every harness it can
 drive — first-class, present, no `error` — and every harness with a run held
 supports it, and none while it can drive nothing and holds no run, so a hub going by them alone is never wrong, only more cautious
@@ -1372,7 +1404,8 @@ the same, seen from the hub.
 Its later runs are offered to that runner alone — a session is resumable only
 where its transcript is — and **one at a time**: do not offer a run in a
 session while another run in it is offered or held. A runner refuses a second
-live run in a session.
+live run in a session. A release (below) is the one way a session leaves its
+runner: its transcript goes with it.
 
 **Closing.** A session closes by your word (`close_session`, where the runner
 advertises it), by its owner's (`yad sessions close` on the machine), when it
@@ -1455,6 +1488,72 @@ fork should see the same code), bound by its claim.
   A fork a claim has bound has its own conversation, and is left alone —
   until you unbind it because that claim was withdrawn: then it has none,
   and if its source can no longer be forked it closes the same way.
+
+**Releasing a session** ([0084](docs/decisions/0084-a-hub-may-release-a-session-to-resume-on-another-runner.md))
+hands it back from the runner that holds it, so its next run can go to
+another: a runner draining, dying or being replaced need not strand a long
+conversation. Ask for one only of a runner advertising `release` for the
+session's harness (§7); its owner may turn it off for your connection.
+
+- **Send `release_session`** with the session's id in every answer to its
+  runner's syncs until the runner reports the session in
+  `released_sessions`. While you wait, offer no run in the session: the
+  runner leaves one it is offered unclaimed, and the session may yet stay
+  where it is. A run held in it when you ask finishes first; the release goes
+  once nothing is held.
+- **The runner refuses** — reporting `error` with a `code`, a `message` and
+  a `next_action` — when the session's workdir holds work its remote does not
+  have (`local_changes`, `unpushed_commits`), when a source is a directory on
+  its machine (`path_source`), when no run of the session has started a
+  conversation (`no_conversation`), when the archive is past your
+  `archive_max_bytes` (`archive_too_large`), and for the other codes the
+  document lists. The session stays open on it exactly as it was: stop
+  asking, and offer its runs there again. Work only on the runner is lost by a
+  release, so the runner never leaves it behind unless you send
+  `discard_local: true`; the usual way through is a run in the session that
+  commits and pushes, and then the release again. The codes are not a closed
+  set: show one you do not know.
+- **The archive comes first.** Before reporting a release, the runner uploads
+  the session's archive with `PUT /sessions/{session}/archive`: the body is
+  bytes, `application/gzip`, with its SHA-256 in `Yad-Archive-Sha256`. Take
+  it only from the runner the session is bound to, and only while you are
+  asking for its release (`403 not_holder`, `409 conflict` otherwise); refuse
+  a body that does not hash to the header as `400 invalid`, and one past your
+  limit with `413`. The same bytes again are answered as the first time; other
+  bytes replace them, since a runner restarted mid-release builds the archive
+  anew. Store it as it is: it is opaque, and yours only to hand back. Answer
+  `{"sha256", "bytes"}`.
+- **A release is reported with the archive's `sha256` and `bytes`.** Believe
+  it only from the runner the session is bound to, while you are asking for
+  it, and only when you hold an archive from that runner with that sha256.
+  Then the session is bound to no runner, and its runner has closed it and
+  kept nothing of it. If you do not hold that archive, the conversation is
+  gone: close the session and end the runs waiting in it.
+- **The next run opens it.** Offer the session's next run as opening it —
+  `session.new: true`, with the sources its first run named — carrying
+  `session.archive: {sha256, bytes}`, to a runner advertising `release` for
+  its harness, and not to any runner it was ever released from (§4). That runner
+  fetches the archive with `GET /sessions/{session}/archive`: answer it only
+  to a runner a run of the session is offered to or that the session is bound
+  to, with the bytes as you stored them and the same `Yad-Archive-Sha256`
+  header, and `403 not_holder` to any other. It continues the conversation
+  under the same session id, its workdir built again from the sources on the
+  branch the first runner worked on. A run that could not open it fails
+  `archive_rejected` or `prepare_failed`, and the session — bound to that
+  runner by the claim — waits for its archive there: its next run fetches it
+  again, so keep the archive.
+- **Keep the archive only as long as it can be opened.** Delete it once a run
+  of the session is running on the runner that opened it, or has succeeded
+  there; when the session closes; and after a time of your choosing — `yad
+  hub` keeps one seven days (`--archive-ttl`) and then closes a released
+  session nothing opened, since no runner could open it any more.
+- **Send an archive only to a runner in the same trust domain as the one that
+  released it.** It holds the whole conversation: what the harness read from
+  its owner's instructions, every tool's output, and for Claude the
+  account's e-mail where the transcript names it.
+
+A runner releases Claude's sessions only, for now: a harness whose list has no
+`release` is never sent the control or such a run.
 
 **A session whose runner has gone** — deregistered, or silent past your
 abandon-after — is covered in §5: close it and end its queued runs; never hand
@@ -1700,7 +1799,7 @@ out a lease.
 
 ### What it does not check
 
-The suite prints this list itself, and it is seventeen rules — not a footnote. Each
+The suite prints this list itself, and it is eighteen rules — not a footnote. Each
 is something **your hub still has to get right** with nothing to catch you:
 
 | rule | why the suite cannot reach it |
@@ -1715,6 +1814,7 @@ is something **your hub still has to get right** with nothing to catch you:
 | Offers only for a harness the runner can drive — first-class, present, no `error` — and preferably one whose health says `ready` | the suite is offered only what you queued for the one harness it advertises; seeing another offered needs a run queued for it |
 | Lapsed leases found by a timer as well as by a sync | anything the suite sends to find out is itself a request you could settle leases on, so a hub that settles them only when asked looks the same |
 | A known runner id re-registers only with a token issued for that runner | such a token comes from your own API, outside v1; trying the second token on the first runner's id could spend it before the runner it is for |
+| Releasing a session — `release_session` repeated until `released_sessions` answers it, its runs held back meanwhile; the report believed only from the bound runner; the archive taken by `PUT` only from that runner while a release is asked for and handed by `GET` only to a runner a run of the session is offered to or bound to; the session's next run opening it with `session.archive` on another runner advertising `release`; the archive kept until a run opened from it runs, the session closes or its time is up | only your own API asks for a release, outside v1, and the suite advertises `release` runner-wide alone, beside an empty list for its harness. What is checked: that neither `release_session` nor a run carrying `session.archive` reaches it |
 | Grant values kept only until the run is terminal (§9) | v1 gives a runner no way to read a run back |
 | `internal` only with a `5xx`, never for a request you will never accept | a fault cannot be caused from outside. What is checked: the refusals the suite can cause — an invalid body, a run the caller does not hold, a body too large |
 | A runner silent past your abandon-after — its sessions closed and their queued runs ended, its credential kept, `close_session` sent when it returns | the silence is a day by default and every hub names its own, which v1 gives a runner no way to ask |
@@ -1800,5 +1900,6 @@ checks; the rest is yours to get right.
 - [ ] Sessions bound by their first claim, later runs to that runner only, one at a time; `session.new` set right — [§8](#8-sessions)
 - [ ] Nothing offered in a session you have sent `close_session` for until its close is reported — [§8](#8-sessions)
 - [ ] Closes in `closed_sessions` believed from the holder or the last-offered runner, whatever features it advertises; queued runs in a closed session ended — [§8](#8-sessions)
+- [ ] If you release sessions: `release_session` only to a runner advertising `release` for the session's harness, repeated until `released_sessions` answers it, the session's runs held back meanwhile; the archive taken by `PUT` only from the bound runner while asked and handed by `GET` only to a runner a run of the session is offered to or bound to; the released session's next run opening it with `session.archive` on another runner advertising `release`; the archive deleted once a run opened from it runs or the session closes — [§8](#8-sessions)
 - [ ] Grant values kept only until the run is terminal — [§9](#9-grants)
 - [ ] If you set `min_version`: refused at register before spending the token, and at sync — [§11](#11-versioning)

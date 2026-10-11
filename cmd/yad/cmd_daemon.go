@@ -506,7 +506,7 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		// Redacted here rather than where status prints it, so nothing that
 		// reads the control socket is handed a credential from the URL.
 		conn := control.Connection{Name: c.Name, URL: config.RedactURL(c.URL), State: cs.State, LastError: cs.LastError, Held: cs.Held, Cap: cs.Cap,
-			ManageAccounts: new(c.MayManageAccounts())}
+			ManageAccounts: new(c.MayManageAccounts()), ReleaseSessions: new(c.MayReleaseSessions())}
 		if !cs.LastSync.IsZero() {
 			conn.LastSync = &cs.LastSync
 		}

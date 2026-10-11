@@ -50,6 +50,9 @@ type e2eHarness struct {
 	resumed func(native string) string
 	// forked is how a start line shows a fork of another conversation.
 	forked string
+	// transcript is where the fake keeps a conversation, in the directory
+	// remember was given.
+	transcript func(t *testing.T, dir, native string) string
 }
 
 var claudeE2E = &e2eHarness{
@@ -70,6 +73,13 @@ var claudeE2E = &e2eHarness{
 	fresh:    "--session-id ",
 	resumed:  func(native string) string { return "--resume " + native },
 	forked:   "--fork-session",
+	transcript: func(t *testing.T, dir, native string) string {
+		found, _ := filepath.Glob(filepath.Join(dir, "projects", "*", native+".jsonl"))
+		if len(found) != 1 {
+			t.Fatalf("the fake claude keeps %d transcripts of %s under %s", len(found), native, dir)
+		}
+		return found[0]
+	},
 }
 
 var codexE2E = &e2eHarness{
@@ -96,6 +106,9 @@ var codexE2E = &e2eHarness{
 	fresh:   "thread/start",
 	resumed: func(native string) string { return "thread/resume " + native },
 	forked:  "thread/fork",
+	transcript: func(_ *testing.T, dir, native string) string {
+		return filepath.Join(dir, native)
+	},
 }
 
 var e2eHarnesses = []*e2eHarness{claudeE2E, codexE2E}

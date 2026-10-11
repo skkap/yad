@@ -9,8 +9,8 @@
 -- costs an afternoon. (Confirmed by adding one and removing it again, DEV-27.)
 
 -- name: CreateSession :exec
-INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at, fork_from)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at, fork_from, archive)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetSession :one
 SELECT * FROM sessions WHERE connection = ? AND id = ?;
@@ -69,6 +69,8 @@ SELECT * FROM sessions s WHERE s.state = 'open' AND s.last_used_at > 0 AND s.las
   AND (sqlc.arg(with_workdir) = 0 OR s.workdir != '')
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.connection = s.connection AND r.session_id = s.id
     AND r.state IN ('claimed', 'preparing', 'running', 'waiting'))
+  AND NOT EXISTS (SELECT 1 FROM releases rl WHERE rl.connection = s.connection AND rl.session_id = s.id
+    AND rl.settled_at IS NULL)
 ORDER BY s.last_used_at, s.connection, s.id
 LIMIT sqlc.arg(max);
 
@@ -486,6 +488,12 @@ UPDATE outbox SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(con
 -- name: RetireConnectionSlots :exec
 UPDATE slots SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
 
+-- A release is keyed like its session, so it goes with it: left under the
+-- name, the new hub's session of the same id would be told the old one's
+-- outcome (decision 0079, for the table decision 0084 added).
+-- name: RetireConnectionReleases :exec
+UPDATE releases SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
+
 -- A new session's workdir is derived from its connection and id, so a new
 -- hub under a reused name can derive the directory an earlier registration's
 -- session recorded: one the collector will remove while it is unreclaimed,
@@ -502,3 +510,72 @@ SELECT count(*) FROM sessions WHERE id = sqlc.arg(id)
 -- name: WorkdirTakenByAnother :one
 SELECT EXISTS (SELECT 1 FROM sessions WHERE workdir = sqlc.arg(workdir)
   AND NOT (connection = sqlc.arg(connection) AND id = sqlc.arg(id)));
+
+-- Releasing a session (decision 0084, 0012_session_release.sql).
+
+-- name: GetRelease :one
+SELECT * FROM releases WHERE connection = ? AND session_id = ?;
+
+-- A release asked for: a new one, or one refused and heard of before, asked
+-- again. One still in progress, or settled and not yet heard of, stays as it is.
+-- name: RequestRelease :exec
+INSERT INTO releases (connection, session_id, discard_local, requested_at)
+VALUES (sqlc.arg(connection), sqlc.arg(session_id), sqlc.arg(discard_local), sqlc.arg(now))
+ON CONFLICT (connection, session_id) DO UPDATE SET
+  discard_local = excluded.discard_local, requested_at = excluded.requested_at,
+  archive = NULL, sha256 = NULL, bytes = NULL, attempts = 0, next_attempt_at = 0, last_error = NULL,
+  settled_at = NULL, error = NULL, reported_at = NULL
+WHERE releases.error IS NOT NULL AND releases.reported_at IS NOT NULL;
+
+-- A release refused before it began: the runner has no such session, say.
+-- name: RefuseRelease :exec
+INSERT INTO releases (connection, session_id, requested_at, settled_at, error)
+VALUES (sqlc.arg(connection), sqlc.arg(session_id), sqlc.arg(now), sqlc.arg(now), sqlc.arg(error))
+ON CONFLICT (connection, session_id) DO UPDATE SET
+  settled_at = excluded.settled_at, error = excluded.error, reported_at = NULL
+WHERE releases.settled_at IS NOT NULL AND releases.reported_at IS NOT NULL;
+
+-- A release the hub heard of and asks about again: told once more.
+-- name: ReportReleaseAgain :exec
+UPDATE releases SET reported_at = NULL WHERE connection = ? AND session_id = ? AND settled_at IS NOT NULL;
+
+-- name: PendingReleases :many
+SELECT * FROM releases WHERE settled_at IS NULL AND next_attempt_at <= ? ORDER BY requested_at, connection, session_id;
+
+-- name: SetReleaseArchive :exec
+UPDATE releases SET archive = ?, sha256 = ?, bytes = ? WHERE connection = ? AND session_id = ? AND settled_at IS NULL;
+
+-- name: RetryRelease :exec
+UPDATE releases SET attempts = attempts + 1, next_attempt_at = ?, last_error = ?
+WHERE connection = ? AND session_id = ? AND settled_at IS NULL;
+
+-- name: SettleRelease :execrows
+UPDATE releases SET settled_at = ?, error = ? WHERE connection = ? AND session_id = ? AND settled_at IS NULL;
+
+-- name: UnreportedReleases :many
+SELECT * FROM releases WHERE connection = sqlc.arg(connection) AND settled_at IS NOT NULL AND reported_at IS NULL
+ORDER BY settled_at, session_id LIMIT sqlc.arg(max);
+
+-- name: SetReleaseReported :exec
+UPDATE releases SET reported_at = ? WHERE connection = ? AND session_id = ? AND settled_at IS NOT NULL AND reported_at IS NULL;
+
+-- The session closes as released, in the transaction that settles its
+-- release. Its hub hears of it in released_sessions, never in
+-- closed_sessions, whose reasons are a closed set: reported_at is set here.
+-- name: CloseReleasedSession :execrows
+UPDATE sessions SET state = 'closed', close_reason = 'released', closed_at = sqlc.arg(now), close_requested_at = NULL,
+  reported_at = sqlc.arg(now)
+WHERE connection = sqlc.arg(connection) AND id = sqlc.arg(id) AND state = 'open';
+
+-- Whether a session of this runner other than the one named holds this
+-- native id and is open: a conversation by that id on disk is then that
+-- session's, and an import never replaces it.
+-- name: OtherOpenSessionWithNativeID :one
+SELECT EXISTS (SELECT 1 FROM sessions WHERE native_id = sqlc.arg(native_id) AND state = 'open'
+  AND NOT (connection = sqlc.arg(connection) AND id = sqlc.arg(id)));
+
+-- The conversation of a session opened from an archive is in place, and the
+-- session is bound to the sources it was checked against in the same write:
+-- recorded apart, a continuing run in between would be prepared from others.
+-- name: SetSessionImported :exec
+UPDATE sessions SET native_id = ?, archive = NULL, carried = ?, sources = ?, last_used_at = ? WHERE connection = ? AND id = ?;

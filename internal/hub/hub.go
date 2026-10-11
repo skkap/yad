@@ -124,7 +124,26 @@ type Options struct {
 	// the profile or the --db that opened it, so only its caller can name
 	// them. Nil, and the command carries placeholders for both.
 	Command func(args ...string) string
+	// ArchiveMaxBytes is the largest session archive the hub takes (decision
+	// 0084); zero means DefaultArchiveMaxBytes. Runners hear it at register
+	// and in every sync answer.
+	ArchiveMaxBytes int64
+	// ArchiveTTL is how long a session archive is kept for a run to open
+	// from; zero means DefaultArchiveTTL. A released session whose archive
+	// outlives it closes, since nothing else could open it.
+	ArchiveTTL time.Duration
 }
+
+// DefaultArchiveMaxBytes bounds a session archive. A Claude conversation of
+// a long session reached about 100 MB of transcript and 64 MB beside it when
+// measured, and both compress well; 256 MiB takes that with room, and is what
+// one SQLite row of this hub's holds without trouble.
+const DefaultArchiveMaxBytes = 256 << 20
+
+// DefaultArchiveTTL is how long an archive waits for a run to open it. A
+// week outlasts a weekend with no runner for its harness, and a released
+// session nobody continues for longer than that is one nobody will.
+const DefaultArchiveTTL = 7 * 24 * time.Hour
 
 // Hub is the protocol server.
 type Hub struct {
@@ -145,13 +164,24 @@ type Hub struct {
 	// runner in the register and sync responses so it can say why it stopped.
 	minVersion string
 	command    func(args ...string) string
+	// archiveMax and archiveTTL bound the session archives this hub keeps
+	// (decision 0084).
+	archiveMax int64
+	archiveTTL time.Duration
 }
 
 // New builds a hub with every v1 operation registered.
 func New(opts Options) *Hub {
-	h := &Hub{store: opts.Store, now: opts.Now, minVersion: opts.MinVersion, command: opts.Command, abandonAfter: opts.AbandonAfter}
+	h := &Hub{store: opts.Store, now: opts.Now, minVersion: opts.MinVersion, command: opts.Command, abandonAfter: opts.AbandonAfter,
+		archiveMax: opts.ArchiveMaxBytes, archiveTTL: opts.ArchiveTTL}
 	if h.now == nil {
 		h.now = time.Now
+	}
+	if h.archiveMax <= 0 {
+		h.archiveMax = DefaultArchiveMaxBytes
+	}
+	if h.archiveTTL <= 0 {
+		h.archiveTTL = DefaultArchiveTTL
 	}
 	h.interval, h.lease = timings(opts.SyncInterval)
 	if h.abandonAfter == 0 {
@@ -224,11 +254,17 @@ func protocolRoutes(ops *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The version is checked before the route: a newer runner calling an
 		// operation this version does not have must hear "version mismatch",
-		// not "check your URL".
-		if r.Method == http.MethodPost && r.Header.Get(v1.HeaderProtocol) != v1.Version {
+		// not "check your URL". A PUT is a session archive's upload, refused
+		// as a POST is; a GET is checked once it names an operation, so a
+		// wrong method on a POST's path still says so.
+		wrongVersion := r.Header.Get(v1.HeaderProtocol) != v1.Version
+		refuse := func() {
 			writeError(w, Fail(http.StatusUpgradeRequired, v1.CodeUnsupportedProtocol,
 				"this hub speaks protocol "+v1.Version+"; the request said "+strconv.Quote(r.Header.Get(v1.HeaderProtocol)),
 				"upgrade yad or the hub so both speak protocol "+v1.Version))
+		}
+		if wrongVersion && (r.Method == http.MethodPost || r.Method == http.MethodPut) {
+			refuse()
 			return
 		}
 		// huma hands operations the request's context and nothing else of the
@@ -236,8 +272,12 @@ func protocolRoutes(ops *http.ServeMux) http.Handler {
 		// as a declared header parameter keeps it out of the operations'
 		// parameters: openapi.yaml already declares it as the security scheme.
 		r = r.WithContext(context.WithValue(r.Context(), bearerKey{}, bearerFrom(r)))
-		if unmatched(ops, w, r, "every protocol call is a POST — see protocol/v1/openapi.yaml",
+		if unmatched(ops, w, r, "every protocol call is a POST but a session archive's PUT and GET — see protocol/v1/openapi.yaml",
 			"check the connection URL and the path against protocol/v1/openapi.yaml") {
+			return
+		}
+		if wrongVersion {
+			refuse()
 			return
 		}
 		ops.ServeHTTP(w, r)
@@ -462,6 +502,8 @@ func (h *Hub) register(api huma.API) {
 			"registering again with a token issued for that runner brings it back, with new sessions.",
 		Security: security, Errors: []int{400, 401, 403, 413, 426},
 	}, h.deregister)
+
+	h.registerArchives(api)
 }
 
 // protocolOp registers one protocol operation and makes its declared responses
@@ -478,12 +520,26 @@ func (h *Hub) register(api huma.API) {
 // generated client knows every error under the base is the same envelope.
 func protocolOp[I, O any](api huma.API, op huma.Operation, handler func(context.Context, *I) (*O, error)) {
 	huma.Register(api, op, handler)
-	declared := api.OpenAPI().Paths[op.Path].Post
+	declared := operationOf(api.OpenAPI().Paths[op.Path], op.Method)
 	delete(declared.Responses, strconv.Itoa(http.StatusUnprocessableEntity))
+	// Every protocol operation declares 401, so its envelope is the one to
+	// copy, whether or not the operation takes a body to refuse with 400.
 	declared.Responses["default"] = &huma.Response{
 		Description: "Any other error, in the same envelope: 404 not_found for a path that is no operation, 405 invalid for a method an operation does not have.",
-		Content:     declared.Responses[strconv.Itoa(http.StatusBadRequest)].Content,
+		Content:     declared.Responses[strconv.Itoa(http.StatusUnauthorized)].Content,
 	}
+}
+
+// operationOf is the operation a path item has for method: every protocol
+// call is a POST, and a session archive's are a PUT and a GET.
+func operationOf(p *huma.PathItem, method string) *huma.Operation {
+	switch method {
+	case http.MethodGet:
+		return p.Get
+	case http.MethodPut:
+		return p.Put
+	}
+	return p.Post
 }
 
 // bearerFrom returns the request's bearer secret, or "" when it has none.
