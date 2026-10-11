@@ -259,6 +259,10 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 		"internal/account/tokenlogin.go":        "the same token as Claude's login, in the same home inside the data directory this checks as a whole, written 0600 again whenever the home is prepared, and the empty mark of a login beside it, which holds nothing (decision 0076)",
 		"internal/adapter/opencode/opencode.go": "a run's context for OpenCode, in a directory of its own under the temp directory, removed when the run's OpenCode exits (decision 0073)",
 		"internal/account/removal.go":           "the removal marker in an account's home, which holds no secret — only that the home is going (decision 0070)",
+		"internal/adapter/claude/archive.go":    "a conversation imported from a session archive, put where Claude keeps its own — the shared transcripts inside the data directory, or the harness's own home — 0600 as Claude writes them (decision 0080)",
+		"internal/adapter/fake/release.go":      "the fake harness's conversation, which tests write in their own temporary directories",
+		"internal/runner/archive.go":            "a session archive being built or unpacked, under <data>/releases inside the data directory, deleted once the hub has it or the conversation is in place (decision 0080)",
+		"internal/runner/executor_archive.go":   "a session archive fetched from the hub, under <data>/releases inside the data directory, deleted once it is unpacked (decision 0080)",
 	}
 	root := filepath.Join("..", "..")
 	sources, err := moduleSources(root)

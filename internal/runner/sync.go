@@ -893,7 +893,8 @@ func (l *Loop) claim(ctx context.Context, run v1.Run, doc v1.Capabilities, res *
 		}
 		var later releasing
 		if errors.As(err, &later) {
-			l.Log.Warn(string(later), "connection", l.Connection, "run", run.RunID)
+			l.Log.Warn("offered a run in a session this runner is releasing; leaving it for the hub to offer again once the release is reported",
+				"connection", l.Connection, "run", run.RunID, "session", run.Session.ID)
 			return
 		}
 		l.Log.Error("claim not recorded; leaving it for the hub to offer again", "connection", l.Connection, "run", run.RunID, "err", err)

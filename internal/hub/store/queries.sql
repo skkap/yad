@@ -98,7 +98,8 @@ SELECT * FROM runs WHERE id = ?;
 -- for: the runner acts on close_session before the offers beside it and would
 -- refuse the run, which instead ends with the close once reported (DEV-120).
 -- Nor in one whose release is asked for: the run waits to hear whether it
--- goes to the same runner or, released, to any (decision 0080).
+-- goes to the same runner or, released, to any (decision 0080) -- any but
+-- the one it was released from, which closed it and keeps the closed row.
 -- A session opened as a fork and not yet bound goes only to the runner that
 -- holds the session it forks, where the conversation is (decision 0065).
 -- Filtering here rather than in Go is what keeps runs it must skip from
@@ -109,6 +110,7 @@ WHERE r.state = 'queued'
   AND r.harness IN (SELECT value FROM json_each(sqlc.arg(harnesses_json)))
   AND (r.created_at > sqlc.arg(after_created_at) OR (r.created_at = sqlc.arg(after_created_at) AND r.id > sqlc.arg(after_id)))
   AND (s.runner_id IS NULL OR s.runner_id = sqlc.arg(runner_id))
+  AND (s.released_from IS NULL OR s.runner_id IS NOT NULL OR s.released_from != sqlc.arg(runner_id))
   AND (s.fork_from IS NULL OR s.runner_id IS NOT NULL OR EXISTS (
       SELECT 1 FROM sessions f WHERE f.id = s.fork_from AND f.runner_id = sqlc.arg(runner_id)))
   AND NOT EXISTS (
@@ -142,6 +144,7 @@ WHERE r.state = 'queued'
       SELECT 1 FROM runs o
       WHERE o.session_id = r.session_id
         AND o.state IN ('offered', 'claimed', 'preparing', 'running', 'waiting'))))
+  AND (s.released_from IS NULL OR s.runner_id IS NOT NULL OR s.released_from != sqlc.arg(runner_id))
   AND (s.fork_from IS NULL OR s.runner_id IS NOT NULL OR EXISTS (
       SELECT 1 FROM sessions f WHERE f.id = s.fork_from AND f.runner_id = sqlc.arg(runner_id)))
   AND NOT EXISTS (

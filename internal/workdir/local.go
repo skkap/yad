@@ -51,11 +51,13 @@ func (m *Manager) Local(ctx context.Context, req Request) ([]LocalWork, error) {
 		return nil, err
 	}
 	var out []LocalWork
-	for _, it := range items {
+	for i, it := range items {
 		if it.git == nil {
 			continue
 		}
-		w := LocalWork{URL: withoutCredential(it.git.url), Shown: shownURL(it.git.url), Branch: it.branch}
+		// The URL as the run named it, which is what the next runner's run
+		// names too; it.git.url is the one this machine resolved.
+		w := LocalWork{URL: withoutCredential(req.Sources[i].Git.URL), Shown: shownURL(it.git.url), Branch: it.branch}
 		if fi, err := os.Lstat(filepath.Join(it.dest, ".git")); err != nil || fi.IsDir() {
 			// No worktree yet — no run of the session got that far — so
 			// there is nothing here to lose.

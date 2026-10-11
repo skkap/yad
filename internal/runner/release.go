@@ -257,6 +257,7 @@ func (r *Releases) Reports(ctx context.Context, connection string) ([]v1.Release
 	if r == nil {
 		return nil, nil
 	}
+	r.init()
 	rows, err := r.Store.UnreportedReleases(ctx, db.UnreportedReleasesParams{Connection: connection, Max: releasedPerSync})
 	if err != nil {
 		return nil, err
@@ -283,6 +284,7 @@ func (r *Releases) Reported(ctx context.Context, connection string, rs []v1.Rele
 	if r == nil {
 		return
 	}
+	r.init()
 	now := sql.NullInt64{Int64: r.Now().UnixMilli(), Valid: true}
 	for _, s := range rs {
 		if err := r.Store.SetReleaseReported(ctx, db.SetReleaseReportedParams{ReportedAt: now, Connection: connection, SessionID: s.SessionID}); err != nil {

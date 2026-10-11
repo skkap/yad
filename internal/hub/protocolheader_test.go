@@ -31,7 +31,7 @@ func TestProtocolHeaderIsDeclaredWhereEnforced(t *testing.T) {
 		// in front of it — fails here instead of passing vacuously.
 		enforced int
 	}{
-		{"protocol/v1", BasePath, "", docs.api.OpenAPI(), 5},
+		{"protocol/v1", BasePath, "", docs.api.OpenAPI(), 7},
 		{"protocol/hubapi", hubapi.BasePath, admin, docs.service.OpenAPI(), 0},
 	} {
 		t.Run(d.name, func(t *testing.T) {

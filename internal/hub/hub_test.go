@@ -37,14 +37,21 @@ func TestOpenAPIIsCurrent(t *testing.T) {
 func TestTheDocumentDeclaresWhatTheHubSends(t *testing.T) {
 	api := New(Options{}).api.OpenAPI()
 	for path, item := range api.Paths {
-		op := item.Post
-		for _, status := range []string{"413", "default"} {
-			if op.Responses[status] == nil {
-				t.Errorf("POST %s declares no %s response", path, status)
+		for method, op := range operations(item) {
+			// A body is what can be too large: a session archive's GET has
+			// none.
+			want := []string{"413", "default"}
+			if method == http.MethodGet {
+				want = []string{"default"}
 			}
-		}
-		if op.Responses["422"] != nil {
-			t.Errorf("POST %s declares 422, which this hub never sends", path)
+			for _, status := range want {
+				if op.Responses[status] == nil {
+					t.Errorf("%s %s declares no %s response", method, path, status)
+				}
+			}
+			if op.Responses["422"] != nil {
+				t.Errorf("%s %s declares 422, which this hub never sends", method, path)
+			}
 		}
 	}
 }
