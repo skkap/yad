@@ -69,10 +69,10 @@ _Rules_: `yad disconnect` ends one in a fixed order: the hub retires the runner
 first — its held runs lost, its sessions there closed — then `config.toml` and
 the credential lose it, then a running daemon lets it go. What a connection
 `config.toml` no longer lists leaves on the runner — sessions, parked runs,
-runs a crash left, reports owed — is ended there: at once when the daemon is
-told, at its loop's next refused sync when it is not, and at the next start
-when no daemon ran. Only the hub's own answer makes a credential dead; one
-that cannot be read here never is.
+runs a crash left, reports owed, logins its hub started — is ended there: at
+once when the daemon is told, at its loop's next refused sync when it is not,
+and at the next start when no daemon ran. Only the hub's own answer makes a
+credential dead; one that cannot be read here never is.
 _See_: [0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md), `internal/config`, `internal/runner/disconnect.go`
 
 **Registration token** — the one-time, short-lived secret a hub issues so that

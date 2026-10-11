@@ -1113,6 +1113,9 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   neither the file nor the lists name is nothing to do, and one from a hub
   not allowed to is ignored. Logins are memory only — nothing in `state.db`, the code and
   the token in no log, report or error — so a restart forgets those in flight.
+  A connection's removal ends its hub's, as a `cancel_login` would, and
+  forgets each once it has let go of the home: no control or sync of that hub
+  comes again to stop it or carry its end (DEV-182).
   `yad hub` keeps them in `hub.db` and blanks the token once the runner has
   reported its login, and the code once it has taken it. It ends a login on
   its own word only while no answer has carried it (`sent_at`); once one has,
@@ -1346,7 +1349,8 @@ yad disconnect <name> [--now] [--force]
                                    the hub retires the runner, config.toml and the
                                    credential lose the connection, then a running
                                    daemon lets it go live — its loop stops, its runs
-                                   are cancelled, its sessions close — or the next
+                                   are cancelled, its sessions close, its hub's
+                                   logins end — or the next
                                    start ends what it left (0072). Refuses while its
                                    runs are in progress; --now goes on and the hub
                                    records them lost; --force goes on past a hub
