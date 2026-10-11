@@ -28,7 +28,7 @@ import (
 	"github.com/skkap/yad/internal/store/db"
 )
 
-// Releasing a session (decision 0081), through yad hub in process with two
+// Releasing a session (decision 0084), through yad hub in process with two
 // runners on it: a session released by one opens on the other from its
 // archive, under the same native id, with the conversation the first left.
 

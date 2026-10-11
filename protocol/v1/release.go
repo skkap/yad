@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// A release (decision 0081) hands a session back to its hub so that its next
+// A release (decision 0084) hands a session back to its hub so that its next
 // run can go to another runner. The runner holding the session uploads its
 // session archive — the harness's conversation and what a runner needs to
 // carry it on — with PUT /sessions/{session}/archive, closes the session, and

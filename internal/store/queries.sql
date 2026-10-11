@@ -490,7 +490,7 @@ UPDATE slots SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(conn
 
 -- A release is keyed like its session, so it goes with it: left under the
 -- name, the new hub's session of the same id would be told the old one's
--- outcome (decision 0079, for the table decision 0081 added).
+-- outcome (decision 0079, for the table decision 0084 added).
 -- name: RetireConnectionReleases :exec
 UPDATE releases SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
 
@@ -511,7 +511,7 @@ SELECT count(*) FROM sessions WHERE id = sqlc.arg(id)
 SELECT EXISTS (SELECT 1 FROM sessions WHERE workdir = sqlc.arg(workdir)
   AND NOT (connection = sqlc.arg(connection) AND id = sqlc.arg(id)));
 
--- Releasing a session (decision 0081, 0012_session_release.sql).
+-- Releasing a session (decision 0084, 0012_session_release.sql).
 
 -- name: GetRelease :one
 SELECT * FROM releases WHERE connection = ? AND session_id = ?;

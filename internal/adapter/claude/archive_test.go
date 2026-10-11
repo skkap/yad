@@ -14,7 +14,7 @@ import (
 const testNative = "61df8b38-c652-4ed6-9575-90d8a16e3daa"
 
 // The project directory Claude names after a workdir, as 2.1.296 named it in
-// the measurement of decision 0081: every character but a letter or a digit
+// the measurement of decision 0084: every character but a letter or a digit
 // a dash, and a path too long for one name cut and hashed.
 func TestProjectName(t *testing.T) {
 	if got, want := projectName("/private/tmp/claude-501/-Users-x/phase0/runnerA/workdirs/conn/sess-1"),

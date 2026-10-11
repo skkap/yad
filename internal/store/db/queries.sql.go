@@ -554,7 +554,7 @@ type GetReleaseParams struct {
 	SessionID  string
 }
 
-// Releasing a session (decision 0081, 0012_session_release.sql).
+// Releasing a session (decision 0084, 0012_session_release.sql).
 func (q *Queries) GetRelease(ctx context.Context, arg GetReleaseParams) (Release, error) {
 	row := q.db.QueryRowContext(ctx, getRelease, arg.Connection, arg.SessionID)
 	var i Release
@@ -1512,7 +1512,7 @@ type RetireConnectionReleasesParams struct {
 
 // A release is keyed like its session, so it goes with it: left under the
 // name, the new hub's session of the same id would be told the old one's
-// outcome (decision 0079, for the table decision 0081 added).
+// outcome (decision 0079, for the table decision 0084 added).
 func (q *Queries) RetireConnectionReleases(ctx context.Context, arg RetireConnectionReleasesParams) error {
 	_, err := q.db.ExecContext(ctx, retireConnectionReleases, arg.Retired, arg.Connection)
 	return err

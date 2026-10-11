@@ -1489,7 +1489,7 @@ fork should see the same code), bound by its claim.
   until you unbind it because that claim was withdrawn: then it has none,
   and if its source can no longer be forked it closes the same way.
 
-**Releasing a session** ([0081](docs/decisions/0081-a-hub-may-release-a-session-to-resume-on-another-runner.md))
+**Releasing a session** ([0084](docs/decisions/0084-a-hub-may-release-a-session-to-resume-on-another-runner.md))
 hands it back from the runner that holds it, so its next run can go to
 another: a runner draining, dying or being replaced need not strand a long
 conversation. Ask for one only of a runner advertising `release` for the

@@ -55,7 +55,7 @@ func sourcesDiffer(sources []v1.Source, carried []carriedSource) string {
 }
 
 // importArchive opens a session from the session archive its hub said it
-// opens from (decision 0081): fetched from the hub, checked against the
+// opens from (decision 0084): fetched from the hub, checked against the
 // run's sha256 and size, unpacked, and handed to the harness's adapter, which
 // puts the conversation where the harness resumes it from this session's
 // workdir. It returns the conversation's native id, or "" for a session with

@@ -25,7 +25,7 @@ import (
 	"github.com/skkap/yad/internal/workdir"
 )
 
-// Releasing a session (decision 0081): the hub's release_session hands one
+// Releasing a session (decision 0084): the hub's release_session hands one
 // back, so its next run can go to another runner. The session's conversation
 // and what a runner needs to carry it on go in a session archive, uploaded to
 // the hub; once the hub has it the session closes here as released, its

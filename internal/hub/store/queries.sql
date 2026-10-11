@@ -98,7 +98,7 @@ SELECT * FROM runs WHERE id = ?;
 -- for: the runner acts on close_session before the offers beside it and would
 -- refuse the run, which instead ends with the close once reported (DEV-120).
 -- Nor in one whose release is asked for: the run waits to hear whether it
--- goes to the same runner or, released, to any (decision 0081) -- any but
+-- goes to the same runner or, released, to any (decision 0084) -- any but
 -- the ones it was ever released from, each of which closed it and keeps the
 -- closed row.
 -- A session opened as a fork and not yet bound goes only to the runner that
@@ -464,7 +464,7 @@ SELECT * FROM account_removals WHERE runner_id = ? ORDER BY requested_at, harnes
 -- name: EndAccountRemoval :exec
 DELETE FROM account_removals WHERE runner_id = ? AND harness = ? AND account = ?;
 
--- Releasing a session (decision 0081, 0013_session_release.sql).
+-- Releasing a session (decision 0084, 0013_session_release.sql).
 
 -- A release asked for: of a session bound to a runner, not closed or
 -- closing. A repeat keeps the first request's time and takes the latest

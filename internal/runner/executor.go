@@ -92,7 +92,7 @@ const (
 	// (session.archive) and this runner could not take it: the hub's bytes
 	// do not match the run's sha256, the archive is not one this runner
 	// reads, or the harness here already has a conversation by its id
-	// (decision 0081). The session keeps the archive it is to open from, and
+	// (decision 0084). The session keeps the archive it is to open from, and
 	// its next run here tries again.
 	ClassArchiveRejected = "archive_rejected"
 )
@@ -159,7 +159,7 @@ type Exec struct {
 	// out now rather than at the next tick. Nil is fine: the tick finds it.
 	Report func(connection string)
 	// Archives is a connection's hub, for the session archive a run opening
-	// a released session fetches (decision 0081). Nil fetches none, and such
+	// a released session fetches (decision 0084). Nil fetches none, and such
 	// a run fails.
 	Archives func(connection string) ArchiveHub
 	// Ended hears that a run's terminal state is in the store: a close of
@@ -616,7 +616,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	}
 	// A session opened from another runner's archive takes its conversation
 	// before anything else is made: its native id is the conversation's,
-	// and the branches it carries decide the checkout (decision 0081).
+	// and the branches it carries decide the checkout (decision 0084).
 	if native == "" {
 		imported, err := e.importArchive(ctx, c, ad, dir, &lastSeq)
 		if err != nil {

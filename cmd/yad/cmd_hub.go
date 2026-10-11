@@ -60,7 +60,7 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 	dbFile := fs.String("db", g.paths.HubDB(), "the hub's database")
 	minVersion := fs.String("min-version", "", "refuse runners older than this yad version, e.g. 0.4.0 (default: take any version)")
 	abandonAfter := fs.Duration("abandon-after", hub.DefaultAbandonAfter, "close the sessions of a runner that has not synced for this long, and fail the runs queued in them; its credential stays, so it can come back")
-	archiveMax := fs.Int64("archive-max-bytes", hub.DefaultArchiveMaxBytes, "the largest session archive a runner may upload when it releases a session (decision 0081)")
+	archiveMax := fs.Int64("archive-max-bytes", hub.DefaultArchiveMaxBytes, "the largest session archive a runner may upload when it releases a session (decision 0084)")
 	archiveTTL := fs.Duration("archive-ttl", hub.DefaultArchiveTTL, "how long a released session's archive waits for a run to open it; past it the session closes")
 	if err := fs.Parse(args); err != nil {
 		return err

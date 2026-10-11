@@ -67,7 +67,7 @@ type SessionRef struct {
 	// offers it only to the runner holding the session it names, and only
 	// while that runner advertises fork for the run's harness (decision 0069).
 	ForkFrom string `json:"fork_from,omitempty" doc:"Only with new true: open this session as a fork of the session named here — a new conversation that starts from a copy of that session's, as far as the harness has written it, and diverges from there, while the session forked goes on unchanged. Offer the run only to the runner that holds that session, and only while it advertises fork for the run's harness — in that harness's features when protocol_features lists harness_features; the runner refuses it (class refused) for a session it does not hold for this hub, of another harness, or closed or closing. The fork gets its own workdir from its own sources, as any new session does; nothing of the forked session's workdir comes with it. Absent: the session starts with an empty conversation."`
-	// Archive opens a session released by another runner (decision 0081):
+	// Archive opens a session released by another runner (decision 0084):
 	// the runner claiming the run fetches the archive, checks it against
 	// this, and continues the conversation in it under the same session id.
 	// It rides on the run that opens the session, never beside ForkFrom.

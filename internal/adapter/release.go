@@ -6,7 +6,7 @@ import (
 )
 
 // Releaser is an adapter whose sessions can be carried to another runner
-// (decision 0081): it says which files on this machine are one session's
+// (decision 0084): it says which files on this machine are one session's
 // conversation, puts a conversation exported elsewhere where its harness will
 // resume it, and deletes one that has gone. The runner packs and unpacks the
 // session archive and talks to the hub; the adapter knows only where its

@@ -19,7 +19,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 )
 
-// A session archive (decision 0081) is a gzip'd tar of manifest.json and the
+// A session archive (decision 0084) is a gzip'd tar of manifest.json and the
 // conversation's files under conversation/, by the names its adapter gave
 // them. A hub stores it and hands it back and reads none of it; the runner
 // that opens a session from it reads the manifest and gives the rest to the

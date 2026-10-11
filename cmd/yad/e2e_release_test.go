@@ -55,7 +55,7 @@ func allowRoot(t *testing.T, p *profile, root string) {
 	}
 }
 
-// A session released by one runner resumes on another (decision 0081), end
+// A session released by one runner resumes on another (decision 0084), end
 // to end through the operator's commands, with two runners on one yad hub,
 // each a process of its own with a Claude home of its own: the first run
 // learns a word and pushes its work to the repository, `yad hub

@@ -238,7 +238,7 @@ type Connection struct {
 	// daemon older than the setting.
 	ManageAccounts *bool `json:"manage_accounts,omitempty"`
 	// ReleaseSessions is the owner's release_sessions: whether this hub may
-	// release the runner's sessions (decision 0081). Nil from a daemon older
+	// release the runner's sessions (decision 0084). Nil from a daemon older
 	// than the setting.
 	ReleaseSessions *bool      `json:"release_sessions,omitempty"`
 	State           string     `json:"state"` // starting | syncing | retrying | stopped
