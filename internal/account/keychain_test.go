@@ -13,7 +13,6 @@ import (
 
 	"github.com/skkap/yad/internal/shellword"
 	"github.com/skkap/yad/internal/shellword/shellwordtest"
-	"github.com/skkap/yad/internal/supervise"
 )
 
 // fakeSecurity is the test binary playing /usr/bin/security, so no test ever
@@ -146,13 +145,6 @@ func TestKeychainAccountIsClaudes(t *testing.T) {
 		if got := keychainAccount(); got != c.want {
 			t.Errorf("USER=%q: keychainAccount() = %q, want %q", c.user, got, c.want)
 		}
-	}
-	// A USER the owner's [env] declares is the one every claude inherits.
-	t.Setenv("USER", "owner")
-	t.Cleanup(func() { supervise.SetOwnerEnv(nil) })
-	supervise.SetOwnerEnv(map[string]string{"USER": "declared"})
-	if got := keychainAccount(); got != "declared" {
-		t.Errorf("with [env] USER: keychainAccount() = %q, want the declared one", got)
 	}
 }
 

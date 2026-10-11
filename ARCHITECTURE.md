@@ -743,7 +743,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   ([0080](docs/decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md));
   `supervise.OwnerRefusal` refuses at load every name the scrub removes or a
   grant may not carry for choosing a credential, and `IS_SANDBOX`, `PATH`,
-  `HOME` and `WT_*`. A run's grants and its account's home and
+  `HOME`, `USER` and `WT_*`. A run's grants and its account's home and
   token are added after that, which is why a grant may not name
   `ANTHROPIC_API_KEY` or any other variable that chooses the harness's
   credential (0040), nor one `[env]` declares (0080). The check that decides whether an account can take a run

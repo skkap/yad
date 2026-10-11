@@ -30,6 +30,7 @@ func TestOwnerRefusal(t *testing.T) {
 		{"IS_SANDBOX", "root check"},
 		{"PATH", "install the service again"},
 		{"HOME", "configuration and credentials"},
+		{"USER", "Keychain"},
 		{"WT_SLOT", "setup hook"},
 		{"DOCKER_HOST", ""},
 		{"BASH_MAX_TIMEOUT_MS", ""},

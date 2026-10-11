@@ -173,7 +173,7 @@ does not, and warns when docker's context points at a socket other than
 secrets: a harness can print its environment into a run's events. Names that
 would be removed or beaten anyway are refused with the way round —
 `CLAUDE_CODE_*`, the variables that choose a harness's login, `IS_SANDBOX`,
-`PATH`, `HOME`, `WT_*`
+`PATH`, `HOME`, `USER`, `WT_*`
 ([0080](decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md)).
 A Claude setting can also go in the `env` block of `~/.claude/settings.json`,
 which every Claude account's home shares; that is the only route for a

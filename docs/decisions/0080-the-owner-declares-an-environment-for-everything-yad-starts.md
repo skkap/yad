@@ -33,18 +33,21 @@ reached runs alone. The rest was settled while building it.
   and 0060 require. Code that reads a variable in order to build on what a
   child inherits reads it through `supervise.LookupEnv`, `[env]` first:
   OpenCode's inline configuration, which a run's context is added to rather
-  than written over ([0073](0073-opencode-is-first-class-through-a-generic-acp-core.md)),
-  and the `USER` Claude files its Keychain login under. What yad sets for one
-  child still wins: an account's
-  home and token, a hook's `WT_*`, the host-tool `PATH`, a git command's own
-  variables.
+  than written over ([0073](0073-opencode-is-first-class-through-a-generic-acp-core.md)).
+  That answers truly only in a process that set the layer, so a name read
+  where none may have is refused instead (`USER`, below). What yad sets for
+  one child still wins: an account's home and token, a hook's `WT_*`, the
+  host-tool `PATH`, a git command's own variables.
 - **Refused at load, from one rule in `supervise`** (`OwnerRefusal`, in an
   untagged file so `internal/config` can call it): every name
   `v1.AccountVariable` lists, the harness homes included; everything `Scrub`
   removes (`CLAUDECODE`, `CLAUDE_CODE_*`, `YAD_*`); `IS_SANDBOX`, which yad's
   root check and doctor read from the runner's own environment and `[env]`
-  would not change; `PATH`, `HOME` and `WT_*`. Each refusal names the rule and
-  the way round it, and a test reads the grant list's source so a name added
+  would not change; `PATH`, `HOME` and `WT_*`; and `USER`, which names the
+  Keychain item Claude files its login under and which `yad account remove`
+  reads with no daemon running, so a declared one would file a login under
+  one name and delete it under another. Each refusal names the rule and the
+  way round it, and a test reads the grant list's source so a name added
   there is refused here too. A refused name stops the daemon starting — a
   runner quietly running without a variable the owner declared would fail as
   it did before, with nothing saying why — and doctor prints the reason.

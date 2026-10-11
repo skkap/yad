@@ -129,10 +129,13 @@ func Declared(name string) bool {
 // LookupEnv is name as a child Start runs inherits it, before its spec's own
 // Env: the owner's [env] value when it declares name, else this process's.
 // For code that reads a variable in order to build on what the child will
-// get — OpenCode's inline configuration, the keychain account Claude files
-// its login under — since os.LookupEnv alone misses what [env] declares, and
-// what the code builds would then replace or contradict the owner's value.
-// Not for a name Scrub removes, which no child inherits from this process.
+// get — OpenCode's inline configuration — since os.LookupEnv alone misses
+// what [env] declares, and what the code builds would then replace the
+// owner's value. It answers truly only in a process that has set the layer,
+// as every one that starts a run has; a name read where none may have —
+// USER, which `yad account remove` reads with no daemon running — is
+// refused in [env] instead (OwnerRefusal). Not for a name Scrub removes,
+// which no child inherits from this process.
 func LookupEnv(name string) (string, bool) {
 	if p := owner.Load(); p != nil {
 		for _, kv := range *p {
@@ -178,6 +181,12 @@ func OwnerRefusal(name string) string {
 	case name == "PATH":
 		return "PATH is the runner's own — the one its service was installed with, which yad builds a run's from with its host-tool links in front (decision 0045) — " +
 			"so a declared one would reach some children and lose to yad's in others; install the service again from a shell whose PATH you want"
+	case name == "USER":
+		// Read wherever yad names a claude's Keychain item — at an account's
+		// removal too, from a CLI that may run with no daemon and no layer —
+		// so a declared one would file a login under one name and delete it
+		// under another.
+		return "USER names the account Claude files its macOS Keychain login under, and yad reads it from the runner's environment to find and remove that login — set it where the runner starts, if anywhere"
 	case name == "HOME":
 		return "HOME moves every tool's configuration and credentials, the harness's own login among them, and yad resolves its own paths from it — set it where the runner starts, if anywhere"
 	case strings.HasPrefix(name, "WT_"):

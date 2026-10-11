@@ -140,7 +140,7 @@ wanted any of this could simply ask the harness for it.
   you list — a `DOCKER_HOST`, a `BASH_MAX_TIMEOUT_MS`
   ([0080](decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md)).
   It refuses at load every name the scrub above removes or that chooses a
-  credential, and `IS_SANDBOX`, `PATH`, `HOME` and `WT_*`, each with the way
+  credential, and `IS_SANDBOX`, `PATH`, `HOME`, `USER` and `WT_*`, each with the way
   round it; a hub's grant under a name you declared fails its run rather than
   replace yours. yad never prints or sends a value — doctor, its log and
   `yad config apply` name the variables, and a run's quoted stderr masks them
