@@ -34,7 +34,12 @@ What building it settled:
   binary has to read it. Beside a bin directory a group may write, the
   needs directory takes that group and its write, with the sticky bit as
   `/tmp` has it: each member may replace the binary, so each has to be able
-  to record beside it, whoever made the directory first.
+  to record beside it, whoever made the directory first. Beside a sticky
+  one, `/tmp`'s kind, nothing is widened, since no user may replace
+  another's binary there. A `.yad-needs` that is a link or a file is never
+  written through or read: planted by another user beside a binary in a
+  directory they may write, it would send the records, and that widening,
+  wherever it points. Both the write and the check fail and name it.
 - **The record follows `config.toml`, not the process.** Once a minute the
   daemon looks at `config.toml` and writes again when its connections have
   changed or the record has gone missing. `yad connect` does not reach a

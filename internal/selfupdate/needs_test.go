@@ -274,3 +274,58 @@ func TestANeedsDirectoryIsWritableByWhoeverMayReplaceTheBinary(t *testing.T) {
 		t.Errorf("needs directory mode %v is world-writable, which its parent is not", fi.Mode())
 	}
 }
+
+// A sticky bin directory, /tmp's kind, lets no user replace another's binary,
+// and a needs directory there is one another user may have planted as a link:
+// nothing is widened beside it, and a link is neither written through, which
+// would chmod what it points at, nor read from.
+func TestANeedsDirectoryIsNeverALinkAndNeverWidenedBesideAStickyOne(t *testing.T) {
+	sticky := t.TempDir()
+	if err := os.Chmod(sticky, 0o777|os.ModeSticky); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(sticky, NeedsDirName)
+	if err := WriteRecord(dir, Record{ConfigDir: profileDir(t), Profile: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm()&0o022 != 0 {
+		t.Errorf("needs directory beside a sticky bin directory is %v (%v), want it its maker's alone", fi.Mode(), err)
+	}
+
+	open := t.TempDir()
+	if err := os.Chmod(open, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	victim := t.TempDir()
+	if err := os.Chmod(victim, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	planted := filepath.Join(open, NeedsDirName)
+	if err := os.Symlink(victim, planted); err != nil {
+		t.Fatal(err)
+	}
+	err := WriteRecord(planted, Record{ConfigDir: profileDir(t), Profile: "work"})
+	if err == nil || !strings.Contains(err.Error(), "a symbolic link") {
+		t.Errorf("WriteRecord through a link: %v, want a refusal naming it", err)
+	} else {
+		shellwordtest.Check(t, onlyRm(t, err.Error()), "rm", planted)
+	}
+	if fi, _ := os.Stat(victim); fi.Mode().Perm() != 0o700 || fi.Mode()&os.ModeSticky != 0 {
+		t.Errorf("the link's target became %v", fi.Mode())
+	}
+	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
+		t.Errorf("a record was written through the link: %v", entries)
+	}
+	if _, err := records(planted); err == nil {
+		t.Error("records read through a link")
+	}
+}
+
+func onlyRm(t *testing.T, msg string) string {
+	t.Helper()
+	cmds := shellwordtest.Commands(msg, "rm ")
+	if len(cmds) != 1 {
+		t.Fatalf("%q offers %d rm commands, want one", msg, len(cmds))
+	}
+	return cmds[0]
+}

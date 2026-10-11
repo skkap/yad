@@ -83,6 +83,9 @@ func WriteRecord(dir string, r Record) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	if err := realDir(dir); err != nil {
+		return err
+	}
 	shareLike(dir)
 	name := filepath.Join(dir, recordName(r.ConfigDir))
 	// A leading dot, so a reader passing over a write in progress skips it.
@@ -105,24 +108,46 @@ func WriteRecord(dir string, r Record) error {
 	return os.Rename(tmp.Name(), name)
 }
 
+// realDir refuses a needs directory that is anything but a directory: a link
+// planted beside a binary in a directory others may write would send records
+// — and shareLike's chmod — wherever it points.
+func realDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if fi.IsDir() {
+		return nil
+	}
+	what := "a file"
+	if fi.Mode()&os.ModeSymlink != 0 {
+		what = "a symbolic link"
+	}
+	return fmt.Errorf("%s is %s, not a directory, and yad neither writes records through it nor reads them from it — `%s` removes it, if no one made it on purpose",
+		dir, what, shellword.Command("rm", dir))
+}
+
 // shareLike opens the needs directory to whoever may write the directory
 // holding the binary: a group-writable bin directory shared by profiles of
 // several users lets each of them replace the binary, so each has to be able
 // to record what it needs beside it, whoever made the directory first. The
-// sticky bit keeps each user to their own records, as in /tmp. Best effort: a
-// directory another user made, and left narrower, fails the write that
-// follows, which says so.
+// sticky bit keeps each user to their own records, as in /tmp. A sticky bin
+// directory is left alone: there no user may replace another's binary, so
+// none needs to write beside it. Best effort: a directory another user made,
+// and left narrower, fails the write that follows, which says so.
 func shareLike(dir string) {
 	parent, err := os.Stat(filepath.Dir(dir))
-	if err != nil {
+	if err != nil || parent.Mode()&os.ModeSticky != 0 {
 		return
 	}
 	open := parent.Mode().Perm() & 0o022
 	if open == 0 {
 		return
 	}
-	fi, err := os.Stat(dir)
-	if err != nil {
+	// Checked again here, not only by the caller, since this is the one
+	// place that widens anything.
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() {
 		return
 	}
 	// Readable by all, as every record is, and writable by whoever may
@@ -190,10 +215,12 @@ func (u unreadable) Error() string {
 // A directory that does not exist holds no record: no profile has written one
 // yet.
 func records(dir string) (map[string]Record, error) {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
+	if err := realDir(dir); errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("what the other profiles running this binary need cannot be told — nothing was downloaded: %w", err)
 	}
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read the needs records in %s, so what the other profiles running this binary need cannot be told — nothing was downloaded: %w", dir, err)
 	}
