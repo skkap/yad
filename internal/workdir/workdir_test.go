@@ -193,6 +193,7 @@ func newFixture(t *testing.T) *fixture {
 	needGit(t)
 	f := &fixture{t: t, root: t.TempDir(), slots: &fakeSlots{}}
 	f.m = &Manager{Data: t.TempDir(), Roots: []string{f.root}, Slots: f.slots, GitTimeout: time.Minute, SetupTimeout: time.Minute}
+	f.m.Holders = fakeHolders{data: f.m.Data}
 	return f
 }
 
@@ -320,9 +321,12 @@ func TestExistingRemoteBranch(t *testing.T) {
 		t.Errorf("upstream %q", up)
 	}
 
-	// Two sessions cannot hold one branch; the second is told why.
+	// Two sessions cannot hold one branch while the first has a run going;
+	// the second is told which session has it, not git's line, which quotes
+	// the other workdir's path.
 	_, _, err = f.prepare("s2", gitSource(o.bare, "main", "pr-7"))
-	if class(err) != ClassSourceFailed || !strings.Contains(err.Error(), "another session") {
+	if class(err) != ClassSourceFailed || !strings.Contains(err.Error(), "checked out by session s1, which has a run going") ||
+		strings.Contains(err.Error(), "fatal") || strings.Contains(err.Error(), p.Dir) {
 		t.Errorf("a branch another session holds: %v", err)
 	}
 }

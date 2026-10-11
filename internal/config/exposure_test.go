@@ -251,6 +251,7 @@ func TestEveryPrivateFileIsCheckedOrExcused(t *testing.T) {
 		"internal/logfile/logfile.go":           "the daemon's log, inside the data directory this checks as a whole",
 		"cmd/yad/cmd_lifecycle.go":              "stderr.log, inside the data directory this checks as a whole",
 		"internal/runner/executor.go":           "a run's grant files, deleted when the run ends and inside the data directory",
+		"internal/workdir/branch.go":            "a branch's name in a worktree's git directory, which holds no secret",
 		"internal/workdir/hook.go":              "a marker file in a workdir, which holds no secret",
 		"internal/workdir/workdir.go":           "a marker file in a checkout, which holds no secret",
 		"internal/workdir/teardown.go":          "a worktree's branch and repository name and its teardown's mark, in its git directory, which hold no secret",
