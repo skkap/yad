@@ -1206,7 +1206,7 @@ type OfferCandidatesParams struct {
 // for: the runner acts on close_session before the offers beside it and would
 // refuse the run, which instead ends with the close once reported (DEV-120).
 // Nor in one whose release is asked for: the run waits to hear whether it
-// goes to the same runner or, released, to any (decision 0080) -- any but
+// goes to the same runner or, released, to any (decision 0081) -- any but
 // the one it was released from, which closed it and keeps the closed row.
 // A session opened as a fork and not yet bound goes only to the runner that
 // holds the session it forks, where the conversation is (decision 0065).
@@ -1653,7 +1653,7 @@ type RequestSessionReleaseParams struct {
 	ID           string
 }
 
-// Releasing a session (decision 0080, 0013_session_release.sql).
+// Releasing a session (decision 0081, 0013_session_release.sql).
 // A release asked for: of a session bound to a runner, not closed or
 // closing. A repeat keeps the first request's time and takes the latest
 // discard_local.

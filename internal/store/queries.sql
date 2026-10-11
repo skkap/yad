@@ -505,7 +505,7 @@ SELECT count(*) FROM sessions WHERE id = sqlc.arg(id)
 SELECT EXISTS (SELECT 1 FROM sessions WHERE workdir = sqlc.arg(workdir)
   AND NOT (connection = sqlc.arg(connection) AND id = sqlc.arg(id)));
 
--- Releasing a session (decision 0080, 0012_session_release.sql).
+-- Releasing a session (decision 0081, 0012_session_release.sql).
 
 -- name: GetRelease :one
 SELECT * FROM releases WHERE connection = ? AND session_id = ?;

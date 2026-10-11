@@ -331,7 +331,7 @@ func cmdHubCloseSession(ctx context.Context, g global, args []string, stdout io.
 var releasePoll = time.Second
 
 // cmdHubReleaseSession is `yad hub release-session`: the session's runner
-// hands it back, so its next run can go to another runner (decision 0080). It
+// hands it back, so its next run can go to another runner (decision 0081). It
 // waits for the runner to say how that went, and fails with the runner's
 // reason and next action when it refused.
 func cmdHubReleaseSession(ctx context.Context, g global, args []string, stdout io.Writer) error {

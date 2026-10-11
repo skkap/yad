@@ -77,7 +77,7 @@ type Connection struct {
 	ManageAccounts *bool `toml:"manage_accounts,omitempty"`
 	// ReleaseSessions false stops this hub releasing the runner's sessions to
 	// resume on another runner, and this runner opening one another runner
-	// released (decision 0080); absent lets it. A release hands the
+	// released (decision 0081); absent lets it. A release hands the
 	// session's whole conversation to the hub and to whichever runner takes
 	// it next. Read at start, like the rest of a connection.
 	ReleaseSessions *bool `toml:"release_sessions,omitempty"`

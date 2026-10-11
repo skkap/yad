@@ -125,7 +125,7 @@ type Options struct {
 	// them. Nil, and the command carries placeholders for both.
 	Command func(args ...string) string
 	// ArchiveMaxBytes is the largest session archive the hub takes (decision
-	// 0080); zero means DefaultArchiveMaxBytes. Runners hear it at register
+	// 0081); zero means DefaultArchiveMaxBytes. Runners hear it at register
 	// and in every sync answer.
 	ArchiveMaxBytes int64
 	// ArchiveTTL is how long a session archive is kept for a run to open
@@ -165,7 +165,7 @@ type Hub struct {
 	minVersion string
 	command    func(args ...string) string
 	// archiveMax and archiveTTL bound the session archives this hub keeps
-	// (decision 0080).
+	// (decision 0081).
 	archiveMax int64
 	archiveTTL time.Duration
 }

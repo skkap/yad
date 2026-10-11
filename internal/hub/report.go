@@ -168,7 +168,7 @@ func (h *Hub) submitResult(ctx context.Context, in *resultInput) (*ackOutput, er
 		// A run that succeeded ran its harness, so a session it opened from
 		// an archive has its conversation on the runner: the archive has done
 		// its work, whether or not a sync ever listed the run running
-		// (decision 0080). A failure keeps it: the run may have failed
+		// (decision 0081). A failure keeps it: the run may have failed
 		// opening it, and the session's next run tries again.
 		if res.State == v1.RunSucceeded {
 			if _, err := q.DropOpenedArchive(ctx, db.DropOpenedArchiveParams{ID: run.SessionID, RunnerID: sql.NullString{String: runner.ID, Valid: true}}); err != nil {

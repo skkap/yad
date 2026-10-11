@@ -117,7 +117,7 @@ func (c *Client) CloseSession(ctx context.Context, sessionID string) (hubapi.Ses
 }
 
 // ReleaseSession asks a session's runner to hand it back, so its next run can
-// go to another runner (decision 0080).
+// go to another runner (decision 0081).
 func (c *Client) ReleaseSession(ctx context.Context, sessionID string, discardLocal bool) (hubapi.Session, error) {
 	var out hubapi.Session
 	err := c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(sessionID)+"/release", hubapi.ReleaseRequest{DiscardLocal: discardLocal}, &out)

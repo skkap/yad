@@ -1,4 +1,4 @@
--- Releasing a session (decision 0080): its hub's release_session asks this
+-- Releasing a session (decision 0081): its hub's release_session asks this
 -- runner to hand the session back, so its next run can go to another runner.
 -- One row per session asked about, kept until the hub has heard how it ended.
 --

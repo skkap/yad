@@ -86,7 +86,7 @@ If you want a hub's runs to reach less, the answer is a smaller machine, not a
 tighter protocol.
 
 **A hub may release a session, and the conversation goes with it.** Releasing
-a session ([0080](decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md))
+a session ([0081](decisions/0081-a-hub-may-release-a-session-to-resume-on-another-runner.md))
 uploads its whole conversation to the hub, which hands it to the next runner
 that takes the session: everything the harness was told and read — your
 `CLAUDE.md` as it saw it, the account's e-mail where the transcript names it,

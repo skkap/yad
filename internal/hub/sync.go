@@ -171,7 +171,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			}
 			// A run running in a session opened from an archive has its
 			// conversation in place on this runner: the archive has done its
-			// work (decision 0080).
+			// work (decision 0081).
 			if held.State == v1.RunRunning {
 				if _, err := q.DropOpenedArchive(ctx, db.DropOpenedArchiveParams{ID: run.SessionID, RunnerID: me}); err != nil {
 					return err
@@ -490,7 +490,7 @@ func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) 
 	forks := func(h string) bool { return described && capability.RunMayUse(doc, h, capability.FeatureFork) }
 	// A run opening a released session goes only to a runner that opens one
 	// from its archive: any other would start the conversation empty
-	// (decision 0080). It waits for one, as a fork does for its runner. An
+	// (decision 0081). It waits for one, as a fork does for its runner. An
 	// undescribed runner is offered none, for the reason above.
 	opensArchive := func(h string) bool { return described && capability.RunMayUse(doc, h, capability.FeatureRelease) }
 	return func(run v1.Run) bool {
@@ -592,7 +592,7 @@ func opening(ctx context.Context, q *db.Queries, run *v1.Run) error {
 		run.Session.ForkFrom = sess.ForkFrom.String
 	}
 	// A released session is opened from its archive by whichever run opens
-	// it next, on whichever runner takes it (decision 0080).
+	// it next, on whichever runner takes it (decision 0081).
 	run.Session.Archive = nil
 	if run.Session.New {
 		a, err := releasedArchive(ctx, q, sess)

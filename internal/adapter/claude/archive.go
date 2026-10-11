@@ -21,7 +21,7 @@ import (
 // Releases: a Claude conversation is files — <native>.jsonl and its companion
 // directory <native>/ — under the project directory Claude names after the
 // workdir, and a home that never wrote them resumes them by id (decision 0013,
-// and 0080 for a copy in another home and another workdir, measured on
+// and 0081 for a copy in another home and another workdir, measured on
 // 2.1.296).
 func (Adapter) Releases() bool { return true }
 
@@ -172,7 +172,7 @@ func (Adapter) Export(c adapter.Conversation) (adapter.Exported, error) {
 // first root, where the next run's home reads it, and points every path the
 // transcript names under the exporting runner's directory at this one's: a
 // tool result Claude saved beside the transcript is named by its absolute
-// path, and is readable again only there (measured, decision 0080).
+// path, and is readable again only there (measured, decision 0081).
 func (Adapter) Import(c adapter.Conversation, staged, from string) error {
 	if !nativeID.MatchString(c.Native) {
 		return fmt.Errorf("%q is not a Claude session id", c.Native)

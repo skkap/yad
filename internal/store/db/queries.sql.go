@@ -554,7 +554,7 @@ type GetReleaseParams struct {
 	SessionID  string
 }
 
-// Releasing a session (decision 0080, 0012_session_release.sql).
+// Releasing a session (decision 0081, 0012_session_release.sql).
 func (q *Queries) GetRelease(ctx context.Context, arg GetReleaseParams) (Release, error) {
 	row := q.db.QueryRowContext(ctx, getRelease, arg.Connection, arg.SessionID)
 	var i Release

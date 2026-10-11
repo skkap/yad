@@ -153,7 +153,7 @@ const (
 	// in — CLAUDE_CONFIG_DIR, an account's, or this directory standing in for
 	// the default home — at projects/<the workdir, every character but a
 	// letter or digit a dash>/<id>.jsonl, and found by id from any project
-	// directory, as claude finds one (decision 0080). Each instruction is
+	// directory, as claude finds one (decision 0081). Each instruction is
 	// appended, a --resume with no transcript is refused as claude refuses
 	// it, and the answer names the instructions before it — which is how a
 	// test sees that a run had its session's context.

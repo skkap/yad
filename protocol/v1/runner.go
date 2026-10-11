@@ -206,7 +206,7 @@ type RegisterResponse struct {
 	LeaseMS          int      `json:"lease_ms" doc:"The lease the hub will name in its sync answers: how long a run offered to this runner, or held by it, is kept for it without a sync. Never shorter than sync_interval_ms."`
 	MinVersion       string   `json:"min_version,omitempty" doc:"The oldest yad this hub takes, such as 0.4.0, compared on the release core alone. Absent is no floor."`
 	// ArchiveMaxBytes bounds a session archive this hub takes (decision
-	// 0080), so a runner refuses a release it could not upload rather than
+	// 0081), so a runner refuses a release it could not upload rather than
 	// closing a session for an archive the hub will turn away.
 	ArchiveMaxBytes int64 `json:"archive_max_bytes,omitempty" doc:"The largest session archive this hub takes, in bytes. A runner refuses to release a session whose archive is larger (archive_too_large) and keeps it open. Sync answers carry it too, and the latest one heard wins. Absent: the hub names none, and refuses one too large with 413."`
 }

@@ -179,7 +179,7 @@ type Loop struct {
 	ManageAccounts bool
 	// ReleaseSessions is the owner's release_sessions for this connection:
 	// whether its hub may release this runner's sessions, and send it one
-	// another runner released (decision 0080). Only then is it sent the
+	// another runner released (decision 0081). Only then is it sent the
 	// release feature, and only then is its release_session acted on.
 	ReleaseSessions bool
 	// Releases does this connection's releases and says how each ended,
@@ -706,13 +706,13 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 // the runner's, with the accounts feature added for a hub its owner lets add
 // and remove accounts, and only beside login (decision 0057), and release
 // taken out for a hub its owner does not let release sessions (decision
-// 0080). So the fingerprint is this hub's own, and turning either off moves
+// 0081). So the fingerprint is this hub's own, and turning either off moves
 // it.
 func (l *Loop) document() v1.Capabilities {
 	return capability.ForConnection(l.Capabilities(), capability.Link{ManageAccounts: l.ManageAccounts, ReleaseSessions: l.ReleaseSessions && l.Releases != nil})
 }
 
-// releaseSession is a hub's release_session (decision 0080). One from a hub
+// releaseSession is a hub's release_session (decision 0081). One from a hub
 // its owner has not let release sessions — never sent the feature — is
 // refused, so the hub stops asking.
 func (l *Loop) releaseSession(ctx context.Context, c v1.Control) {
@@ -970,7 +970,7 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 				}
 			}
 			// The archive a session opens from is kept on it until its
-			// conversation is in place (decision 0080): a run that cannot
+			// conversation is in place (decision 0081): a run that cannot
 			// import it fails, and the next one tries again.
 			var archive sql.NullString
 			if a := run.Session.Archive; a != nil {
@@ -994,7 +994,7 @@ func (l *Loop) record(ctx context.Context, run v1.Run) (newSession bool, err err
 		}
 		// A session being released takes no run: the hub offers none while
 		// it waits to hear, and a run here now would change the conversation
-		// on its way out (decision 0080). Left unclaimed rather than refused:
+		// on its way out (decision 0081). Left unclaimed rather than refused:
 		// the release may yet be refused, and the run is the session's next.
 		if rel, err := q.GetRelease(ctx, db.GetReleaseParams{Connection: l.Connection, SessionID: run.Session.ID}); err == nil && !rel.SettledAt.Valid {
 			return releasing(fmt.Sprintf("session %s is being released by this runner; the run is left for the hub to offer again once the release is reported", run.Session.ID))
@@ -1060,7 +1060,7 @@ func refusal(run v1.Run, doc v1.Capabilities) string {
 		return fmt.Sprintf("harness %q is not one this runner can drive — see its capability document", run.Harness)
 	}
 	// The document as this hub was sent it: release is off in it for a hub
-	// its owner does not let release sessions (decision 0080).
+	// its owner does not let release sessions (decision 0081).
 	if run.Session.Archive != nil && !capability.RunMayUse(doc, run.Harness, capability.FeatureRelease) {
 		return fmt.Sprintf("this runner does not open sessions from a session archive for this hub and harness %q — offer the run to a runner advertising release for it", run.Harness)
 	}

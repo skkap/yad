@@ -184,7 +184,7 @@ type Session struct {
 	State    SessionState `json:"state" enum:"open,closing,closed" doc:"open takes runs. closing: a close was asked for and its runner has not yet done it. closed takes no new run."`
 	// Release is beside State rather than in it: the service API's enums
 	// are closed, and an open session being released is still open
-	// (decision 0080).
+	// (decision 0081).
 	Release SessionRelease `json:"release,omitempty" enum:"releasing,released" doc:"Where an open session's release is. releasing: a release was asked for and its runner has not yet said how it went; its runs wait. released: its runner handed it back, and its next run opens it from its archive on any runner that takes it. Absent when no release is under way or done."`
 	// The release's details: asked for, done, or refused by the runner.
 	ReleaseRequestedAt *time.Time `json:"release_requested_at,omitempty" doc:"When a release was asked for, until the runner reports how it went."`
@@ -217,7 +217,7 @@ const (
 	SessionClosed  SessionState = "closed"
 )
 
-// SessionRelease is where an open session's release is (decision 0080):
+// SessionRelease is where an open session's release is (decision 0081):
 // asked for and not yet settled by its runner, or handed back by it, bound
 // to none, its next run opening it from its archive.
 type SessionRelease string
@@ -227,7 +227,7 @@ const (
 	SessionReleased  SessionRelease = "released"
 )
 
-// ReleaseRequest asks a session's runner to hand it back (decision 0080).
+// ReleaseRequest asks a session's runner to hand it back (decision 0081).
 type ReleaseRequest struct {
 	DiscardLocal bool `json:"discard_local,omitempty" doc:"Release the session even though its workdir holds work its remote does not — changes not committed, commits not pushed — which is then lost. Without it the runner refuses such a release and keeps the session; send a run that commits and pushes first."`
 }

@@ -1,4 +1,4 @@
--- Releasing a session (decision 0080). The service API asks for one; the
+-- Releasing a session (decision 0081). The service API asks for one; the
 -- release_session control goes out in every answer to the bound runner's
 -- syncs until it reports the session in released_sessions. While it is asked
 -- for, the session's queued runs are held back, as a close holds them. A

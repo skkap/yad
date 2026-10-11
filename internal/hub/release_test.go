@@ -19,7 +19,7 @@ import (
 	"github.com/skkap/yad/internal/hub/store/db"
 )
 
-// Releasing a session (decision 0080), from the hub's side: the service API
+// Releasing a session (decision 0081), from the hub's side: the service API
 // asks, the bound runner hears release_session until it reports, the archive
 // goes up with PUT and down with GET only to the runners it is for, and a
 // released session's next run opens it, with the archive, on another runner.

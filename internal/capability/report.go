@@ -121,7 +121,7 @@ const FeatureAccounts = "accounts"
 // FeatureRelease is a runner that hands a session back to its hub on the
 // release_session control, uploading its session archive, and opens a session
 // from one (session.archive), so its next run can go to another runner
-// (decision 0080). A per-run feature, listed for each harness whose adapter
+// (decision 0081). A per-run feature, listed for each harness whose adapter
 // can carry its conversation (adapter.Releaser) and runner-wide only while
 // every harness this machine can drive can, as fork is (decision 0069). Its
 // owner may turn it off for one hub (release_sessions = false), and then

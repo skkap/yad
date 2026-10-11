@@ -136,8 +136,8 @@ Contract: [HUB.md §3](HUB.md#3-the-calls), one call at a time, and
 | `POST /runs/{run}/events` | a batch of events, idempotent by `(run, seq)`; answers `acked_through` |
 | `POST /runs/{run}/result` | the terminal state, idempotent; retried from the outbox until acknowledged |
 | `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost (a claim it has asked to cancel, cancelled — 0061), requeues its offers, and closes its sessions, ending the runs queued in them |
-| `PUT /sessions/{session}/archive` | a session's archive, as bytes, from the runner releasing it; idempotent by its sha256 (0080) |
-| `GET /sessions/{session}/archive` | the archive back, to the runner a run of the released session is offered to or bound to (0080) |
+| `PUT /sessions/{session}/archive` | a session's archive, as bytes, from the runner releasing it; idempotent by its sha256 (0081) |
+| `GET /sessions/{session}/archive` | the archive back, to the runner a run of the released session is offered to or bound to (0081) |
 
 Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
@@ -289,7 +289,7 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   decides: health names only harnesses the runner can drive, and at most
   sixteen accounts of each), or the runner stops advertising `accounts`.
   An added account is the machine's, and every hub's runs rotate through it.
-- **Releasing a session** — [0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md).
+- **Releasing a session** — [0081](docs/decisions/0081-a-hub-may-release-a-session-to-resume-on-another-runner.md).
   A hub sends `release_session {session_id, discard_local?}` only to a runner
   advertising `release` for the session's harness — a per-run feature, and
   per hub: a connection with `release_sessions = false` is sent it nowhere —
@@ -588,7 +588,7 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `GET /runners/{runner}` | one runner, the same view |
 | `POST /runners/{runner}/drain` | a `drain` control, repeated until the runner says it is draining; 409 for a runner without the `drain` feature |
 | `GET /sessions/{session}` | the session: its runner, and `open`, `closing` or `closed` with the reason; `release` says `releasing` or `released`, beside the archive the hub holds and the last refusal |
-| `POST /sessions/{session}/release` | `{discard_local?}`: its runner hands the session back (0080), and its next run opens it on another runner from its archive; 409 for a session on no runner, closed or closing, or on a runner without `release` for its harness |
+| `POST /sessions/{session}/release` | `{discard_local?}`: its runner hands the session back (0081), and its next run opens it on another runner from its archive; 409 for a session on no runner, closed or closing, or on a runner without `release` for its harness |
 | `POST /sessions/{session}/close` | a session no runner holds closes here, its unstarted runs cancelled; a held one gets `close_session` until its runner reports it closed; 409 for a runner without the `close_session` feature. A closing or closed session takes no new run |
 | `POST /runners/{runner}/logins` | a hub login for `{harness, account?, add?}`: by link, or by token with `token` — `requested` until the runner's next sync takes it; 409 for a runner without the `login` feature, and for an `add` to one without `accounts`. A newer login for the account replaces an older one |
 | `GET /runners/{runner}/logins/{login}` | the login's state, its `url` (and for Codex its `user_code`) while `waiting`, and the runner's `error` at an end; never its code or token |
@@ -950,7 +950,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   reclaim (`yad-teardown-done`), again after a cancelled one. A failure is a
   warning in the log and the reclaim goes on
   ([0080](docs/decisions/0080-reclaiming-a-workdir-runs-its-teardown-hook-first.md)).
-- **Releasing** — [0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md):
+- **Releasing** — [0081](docs/decisions/0081-a-hub-may-release-a-session-to-resume-on-another-runner.md):
   `runner.Releases`, one for every connection, built like the collector and
   woken when a run ends. A `release_session` writes a `releases` row; once no
   run is held in the session the worker checks it (`workdir.Manager.Local`
@@ -1394,7 +1394,7 @@ name = "yashiki"
 url  = "https://ashikaga.tail.ts.net/yad/v1"
 cap  = 2   # at most this many runs held for this hub at once; absent = only capacity limits it
 manage_accounts = false   # this hub may not add or remove accounts; absent = it may — 0057. Read at start
-release_sessions = false  # this hub may not release sessions, nor send one another runner released; absent = it may — 0080
+release_sessions = false  # this hub may not release sessions, nor send one another runner released; absent = it may — 0081
 registered_at = 1760227200000   # written by yad connect when it adds the entry, never by hand: which registration the state under this name belongs to — 0079
 
 [sessions]
@@ -1433,7 +1433,7 @@ run of silent starts and the end of its cool-down, label `''` for a harness's
 own login — 0077), `slots`, `connection_registrations` (the `registered_at`
 the rows under each connection name belong to — 0079), `releases` (each
 release a hub asked for: its archive once built, its upload's retries, how it
-ended and whether the hub heard — 0080); a session row keeps the sources its
+ended and whether the hub heard — 0081); a session row keeps the sources its
 workdir was built from, and for one opened from an archive the archive until
 its conversation is in place and the branches it carried. Session and run ids are the hubs', so every one is keyed with
 its connection: two hubs may pick the same id. A name `yad disconnect` freed
@@ -1480,7 +1480,7 @@ archive a runner uploaded, as a blob, `released` once its release is
 reported: deleted once a run of the session is running or has succeeded on
 the runner that opened it, by the `sessions_forget_archive` trigger when the
 session closes, and after the archive TTL
-([0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md)).
+([0081](docs/decisions/0081-a-hub-may-release-a-session-to-resume-on-another-runner.md)).
 Both databases are opened with `secure_delete`, so freed bytes are zeroed
 rather than left in the file.
 
@@ -1553,7 +1553,7 @@ yad hub drain <runner>             the runner takes no new runs, finishes those 
 yad hub close-session <session>    the session takes no new run; its runner deletes
                                    its workdir
 yad hub release-session [--discard-local] <session>
-                                   its runner hands it back (0080); waits for how
+                                   its runner hands it back (0081); waits for how
                                    that went, and fails with the runner's reason
 yad hub login start <runner> <harness> [account] [--add] [--code -]
                                    log an account in on a runner by link: prints the

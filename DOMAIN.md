@@ -306,7 +306,7 @@ A session its hub **releases** leaves its runner: the runner uploads the
 session's conversation as a **session archive** and closes the session as
 released, and the session's next run opens it on another runner from that
 archive, under the same id — continuing the conversation, with a workdir built
-again from its sources ([0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md)).
+again from its sources ([0081](docs/decisions/0081-a-hub-may-release-a-session-to-resume-on-another-runner.md)).
 A session may be opened as a **fork** of another on the same runner: its
 conversation starts as the harness's copy of that one's, and the two diverge —
 the one forked goes on untouched. A fork is a session like any other from its
@@ -315,7 +315,7 @@ _States_: open | closed (its hub or its owner closed it) | expired (the idle TTL
 or disk pressure did)
 _Avoid_: thread, conversation, chat — as names for this; Codex's "thread" is the
 native id underneath
-_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md), [0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md), `internal/store`
+_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md), [0081](docs/decisions/0081-a-hub-may-release-a-session-to-resume-on-another-runner.md), `internal/store`
 
 **Release** — a hub handing a session back from the runner that holds it, so
 that its next run can go to another: the runner builds the session archive
@@ -333,7 +333,7 @@ conversation. A release puts the whole conversation in the hub's hands and in
 the next runner's. Claude's sessions only, for now.
 _Avoid_: hand-off, migrate, move, transfer — and the release `yad upgrade`
 installs, a tagged build of this binary, which shares only the word
-_See_: [0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md), `internal/runner/release.go`, `internal/hub/archive.go`
+_See_: [0081](docs/decisions/0081-a-hub-may-release-a-session-to-resume-on-another-runner.md), `internal/runner/release.go`, `internal/hub/archive.go`
 
 **Session archive** — what a release carries: a session's conversation, as
 its harness keeps it, and a manifest naming the harness, its version, the

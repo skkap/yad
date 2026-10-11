@@ -93,7 +93,7 @@ func archiveTimeout(size int64) time.Duration {
 	return time.Minute + time.Duration(size/archiveRate)*time.Second
 }
 
-// PutArchive uploads a session archive of size bytes (decision 0080). The
+// PutArchive uploads a session archive of size bytes (decision 0081). The
 // hub checks the body against sha, and an upload of the same bytes again is
 // answered as the first was.
 func (c *Client) PutArchive(ctx context.Context, sessionID, sha string, size int64, body io.Reader) (v1.SessionArchive, error) {

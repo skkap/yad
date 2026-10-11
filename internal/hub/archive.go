@@ -21,7 +21,7 @@ import (
 	"github.com/skkap/yad/internal/hub/store/db"
 )
 
-// Releasing a session (decision 0080), the hub's half: the service API asks
+// Releasing a session (decision 0081), the hub's half: the service API asks
 // for a release, the bound runner hears release_session in every sync answer
 // until it reports how it went, uploads the session archive in between, and
 // a release it reports leaves the session unbound with its archive here. The

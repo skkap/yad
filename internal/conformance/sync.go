@@ -340,7 +340,7 @@ func checkControlsAreGated(_ context.Context, s *session) error {
 // gatedBy is the feature a gated control needs: its own name, but for the
 // four hub-login controls, which share the "login" feature (decision 0055),
 // remove_account, which is "accounts" (decision 0057), and release_session,
-// which is "release" (decision 0080).
+// which is "release" (decision 0081).
 func gatedBy(k v1.ControlKind) string {
 	switch k {
 	case v1.ControlStartLogin, v1.ControlLoginCode, v1.ControlLoginToken, v1.ControlCancelLogin:

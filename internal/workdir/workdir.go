@@ -117,7 +117,7 @@ type Request struct {
 	// Branches are the branches a session opened from a session archive
 	// carries, by each git source's URL as StoredSources keeps it: the branch
 	// its last runner worked on, which a source naming no branch is checked
-	// out on here, as the remote has it (decision 0080). Nil for every other
+	// out on here, as the remote has it (decision 0081). Nil for every other
 	// session.
 	Branches map[string]string
 	Sources  []v1.Source

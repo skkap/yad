@@ -39,7 +39,7 @@ func (w LocalWork) Clean() bool { return w.Changed == 0 && w.Unpushed == 0 }
 
 // Local is what a session's workdir holds of each of its git sources that
 // the remote does not: the check before a session is released (decision
-// 0080), since the runner that takes it next builds the workdir again from
+// 0081), since the runner that takes it next builds the workdir again from
 // the remote, and anything only here would be gone without a word. A path
 // source has none — it is not carried at all — and is not listed. It reads
 // the worktrees and fetches nothing, so it needs neither the network nor a

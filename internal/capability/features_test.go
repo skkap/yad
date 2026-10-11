@@ -70,7 +70,7 @@ func perRun(features []string) []string {
 // drive nothing advertises no per-run feature (decision 0069).
 func TestTheRunnerWideStringsAreWhatEveryDrivableHarnessMayUse(t *testing.T) {
 	all := RunFeatures()
-	// Codex's adapter cannot carry a session (decision 0080), so a machine
+	// Codex's adapter cannot carry a session (decision 0081), so a machine
 	// that can drive it advertises release for Claude alone.
 	withCodex := HarnessFeatures("codex")
 	brokenOpenCode := machine("claude", "opencode")
