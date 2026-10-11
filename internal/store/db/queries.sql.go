@@ -1542,6 +1542,26 @@ func (q *Queries) ScrubSessions(ctx context.Context, arg ScrubSessionsParams) (i
 	return result.RowsAffected()
 }
 
+const sessionByWorkdir = `-- name: SessionByWorkdir :one
+SELECT connection, id FROM sessions WHERE workdir = ?
+ORDER BY state = 'open' DESC, last_used_at DESC LIMIT 1
+`
+
+type SessionByWorkdirRow struct {
+	Connection string
+	ID         string
+}
+
+// The session whose workdir a worktree holding a branch is in, for the error
+// that names it. An open session first: a closed one's workdir is on its way
+// out, and a later session may have been given the same path.
+func (q *Queries) SessionByWorkdir(ctx context.Context, workdir string) (SessionByWorkdirRow, error) {
+	row := q.db.QueryRowContext(ctx, sessionByWorkdir, workdir)
+	var i SessionByWorkdirRow
+	err := row.Scan(&i.Connection, &i.ID)
+	return i, err
+}
+
 const sessionOpenerSpec = `-- name: SessionOpenerSpec :one
 SELECT spec FROM runs WHERE connection = ? AND session_id = ? ORDER BY created_at, id LIMIT 1
 `
