@@ -51,7 +51,17 @@ func (l *logs) at(level slog.Level) []string {
 // executable as commit makes the setup hook.
 func withTeardown(t *testing.T, root, name, body string) *origin {
 	t.Helper()
-	o := newOrigin(t, root, name, map[string]string{"README": "x"})
+	return withHooks(t, root, name, "", body)
+}
+
+// withHooks is withTeardown with a setup hook as well, when setup is not "".
+func withHooks(t *testing.T, root, name, setup, body string) *origin {
+	t.Helper()
+	files := map[string]string{"README": "x"}
+	if setup != "" {
+		files[hookPath] = setup
+	}
+	o := newOrigin(t, root, name, files)
 	path := filepath.Join(o.work, teardownPath)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -502,6 +512,36 @@ func TestRepoOfCache(t *testing.T) {
 		if got := repoOfCache(cache); got != want {
 			t.Errorf("repoOfCache(%q) = %q, want %q", cache, got, want)
 		}
+	}
+}
+
+// A setup that fails half way may already have started something, so its
+// worktree is torn down all the same.
+func TestTeardownAfterAFailedSetup(t *testing.T) {
+	f := newFixture(t)
+	dir := t.TempDir()
+	started, out := filepath.Join(dir, "started"), filepath.Join(dir, "env")
+	setup := fmt.Sprintf("#!/bin/sh\necho up > %q\necho 'migrations failed' >&2\nexit 1\n", started)
+	o := withHooks(t, f.root, "acme", setup, recordEnv(out))
+	p, _, err := f.prepare("s1", gitSource(o.bare, "", ""))
+	if class(err) != ClassSetupFailed {
+		t.Fatalf("err = %v, want the setup to fail", err)
+	}
+	if _, err := os.Stat(started); err != nil {
+		t.Fatalf("the setup started nothing: %v", err)
+	}
+	wt := filepath.Join(f.m.Data, "workdirs", "hub", "s1")
+	if p != nil {
+		wt = p.Dir
+	}
+	if err := f.m.Reclaim(context.Background(), "hub", "s1", wt); err != nil {
+		t.Fatal(err)
+	}
+	if runs(t, out) != 1 || !strings.Contains(read(t, out), "WT_SLOT=1\n") {
+		t.Errorf("the teardown did not run, with its slot, after a failed setup")
+	}
+	if f.slots.held() != 0 {
+		t.Error("the session's slot was not freed")
 	}
 }
 

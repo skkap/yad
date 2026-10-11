@@ -14,7 +14,8 @@ import (
 )
 
 // teardownPath is where a repository keeps its teardown hook, beside its
-// setup hook and under the same rules: the committed one only.
+// setup hook and found by the same rules: the executable file in the
+// worktree, as the session left it, never one it links to outside.
 const teardownPath = ".worktree/teardown"
 
 // teardownDone marks a worktree whose teardown has run, however it ended, so
