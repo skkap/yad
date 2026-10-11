@@ -61,6 +61,10 @@ type spent struct {
 	// Set is what tells an unset FirstEventMS of 0 from a turn that really
 	// answered within a millisecond.
 	Answered bool `json:"answered,omitempty"`
+	// LeftRunning is what the turns measured left running, summed; nil
+	// until a turn is measured, since a run none of whose turns was
+	// measured has no figure, which is not a figure of 0 (decision 0083).
+	LeftRunning *int `json:"left_running,omitempty"`
 }
 
 // absorb folds a finished turn into what the run has spent.
@@ -69,6 +73,13 @@ func (p *progress) absorb(out adapter.Outcome, w watch, turnStarted time.Time, n
 	p.spent.ToolCalls += w.toolCalls
 	p.spent.APIRetries += out.APIRetries
 	p.spent.Stalls += w.stalls
+	if out.LeftRunning != nil {
+		n := len(*out.LeftRunning)
+		if p.spent.LeftRunning != nil {
+			n += *p.spent.LeftRunning
+		}
+		p.spent.LeftRunning = &n
+	}
 	if !p.spent.Answered && w.firstEventMS >= 0 {
 		p.spent.Answered = true
 		p.spent.FirstEventMS = w.firstEventMS
@@ -321,7 +332,7 @@ func (p *progress) metrics(now time.Time) v1.Metrics {
 	return v1.Metrics{
 		DurationMS: max(now.Sub(p.started).Milliseconds(), 0), FirstEventMS: p.spent.FirstEventMS,
 		ToolCalls: p.spent.ToolCalls, APIRetries: p.spent.APIRetries, Stalls: p.spent.Stalls,
-		WaitedMS: p.waitedMS, AccountSwitches: p.switches,
+		WaitedMS: p.waitedMS, AccountSwitches: p.switches, LeftRunning: p.spent.LeftRunning,
 	}
 }
 

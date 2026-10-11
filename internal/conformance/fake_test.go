@@ -1,10 +1,12 @@
 package conformance
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -91,6 +93,9 @@ const (
 	flawQuickSync          = "a sync names the 3 s a hub holding work for the runner may"
 	flawShortLease         = "the lease named is shorter than the interval named beside it"
 	flawStrictResultFields = "a result carrying an unknown field is refused"
+	// Strict about one nested object alone, as a hub whose generated Metrics
+	// type rejects what its schema lacks: left_running reached a hub that way.
+	flawStrictMetricsFields = "a result whose metrics carry an unknown field is refused"
 	// The token in the error code rather than the message: a place a check
 	// writes into its own sentence, not one the answer's printing covers.
 	flawTokenInTheCode   = "the code of a refusal is built from the bearer it was given"
@@ -590,7 +595,11 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 		f.fail(w, http.StatusUnauthorized, v1.CodeUnauthorized, "this hub does not know that runner credential", "register again")
 		return false
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, fakeBodyLimit)).Decode(body); err != nil {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, fakeBodyLimit))
+	if err == nil {
+		err = json.Unmarshal(raw, body)
+	}
+	if err != nil {
 		var tooLarge *http.MaxBytesError
 		switch {
 		case errors.As(err, &tooLarge) && f.flaw == flawTooLargeIsInvalid:
@@ -607,6 +616,12 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 	if f.flaw == flawStrictEventFields {
 		if _, isBatch := body.(*v1.EventBatch); isBatch {
 			f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the batch carries a field this hub does not know", "send only the fields in protocol/v1/openapi.yaml")
+			return false
+		}
+	}
+	if f.flaw == flawStrictMetricsFields {
+		if _, isResult := body.(*v1.Result); isResult && unknownInMetrics(raw) {
+			f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the result's metrics carry a field this hub does not know", "send only the fields in protocol/v1/openapi.yaml")
 			return false
 		}
 	}
@@ -627,6 +642,20 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 		return false
 	}
 	return true
+}
+
+// unknownInMetrics says whether a result's metrics carry a field v1.Metrics
+// does not have.
+func unknownInMetrics(raw []byte) bool {
+	var res struct {
+		Metrics json.RawMessage `json:"metrics"`
+	}
+	if json.Unmarshal(raw, &res) != nil || res.Metrics == nil {
+		return false
+	}
+	dec := json.NewDecoder(bytes.NewReader(res.Metrics))
+	dec.DisallowUnknownFields()
+	return dec.Decode(&v1.Metrics{}) != nil
 }
 
 // caller is the runner a request's credential belongs to. Anything but the

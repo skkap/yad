@@ -254,6 +254,10 @@ func TestPlainRun(t *testing.T) {
 	if out.State != v1.RunSucceeded || out.FinalText != "pong" || out.Error != nil {
 		t.Fatalf("outcome = %+v", out)
 	}
+	// Codex's own end of the turn is measured, and the fake left nothing.
+	if out.LeftRunning == nil || len(*out.LeftRunning) != 0 {
+		t.Errorf("left running = %v, want measured and empty", out.LeftRunning)
+	}
 	if got := text(evs); got != "pong" {
 		t.Errorf("text = %q", got)
 	}
@@ -709,6 +713,9 @@ func TestInterrupt(t *testing.T) {
 	})
 	if out.State != v1.RunCancelled || out.Error != nil || out.FinalText != "" {
 		t.Fatalf("outcome = %+v", out)
+	}
+	if out.LeftRunning != nil {
+		t.Errorf("an interrupted turn was measured: %v", *out.LeftRunning)
 	}
 	if text(evs) == "" {
 		t.Error("the text before the interrupt was lost")

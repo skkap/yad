@@ -98,6 +98,10 @@ const (
 	defaultSandbox  = "danger-full-access"
 )
 
+// codeModeHost is the helper Codex 0.160.1 starts beside a turn's commands,
+// in a process group of its own, and keeps until it exits.
+const codeModeHost = "codex-code-mode-host"
+
 // threadID is the shape of a Codex thread id: a UUID (v7 today).
 var threadID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
@@ -168,10 +172,11 @@ type turn struct {
 
 	// Owned by run's goroutine until done is closed.
 	tr       *translator
-	wait     map[int64]string // requests run has sent, by id, still unanswered
-	deadline time.Time        // when the oldest of them is late
-	late     string           // its method
-	askedFor bool             // the rate limits have been asked for once
+	wait     map[int64]string      // requests run has sent, by id, still unanswered
+	deadline time.Time             // when the oldest of them is late
+	late     string                // its method
+	askedFor bool                  // the rate limits have been asked for once
+	left     *[]supervise.Leftover // the census completed took
 
 	mu          sync.Mutex
 	thread      string
@@ -330,6 +335,7 @@ loop:
 	}
 	t.mu.Unlock()
 	t.outcome = t.tr.outcome(e)
+	t.outcome.LeftRunning = t.left
 	t.q.Close()
 	close(t.done)
 }
@@ -623,7 +629,19 @@ func (t *turn) warning(params json.RawMessage) {
 // completed ends the conversation once the turn is over. A usage limit whose
 // window Codex has not named yet is asked for first: its reset time is what
 // the hub needs to decide where the next run goes (decision 0013).
+//
+// turn/completed is Codex's own end of the turn, and the census of its tool
+// work is taken here, before input closes: Codex runs each command in a
+// process group of its own, keeps a background terminal's command running past the
+// turn, and stops them when it exits (decision 0083). Its code-mode host is
+// its own helper, not the run's work.
 func (t *turn) completed() {
+	t.mu.Lock()
+	measure := !t.interrupted
+	t.mu.Unlock()
+	if measure {
+		t.left = adapter.Census(t.ctx, t.p, codeModeHost)
+	}
 	if d := t.tr.done; d != nil && d.Error.kind() == "usageLimitExceeded" && t.tr.limits == nil && !t.askedFor {
 		t.askedFor = true
 		t.send("account/rateLimits/read", nil)

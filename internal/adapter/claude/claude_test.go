@@ -288,16 +288,21 @@ func TestRecordedStreams(t *testing.T) {
 		// not wait for it. Asserting a count here fails 299 times in 300
 		// under GOMAXPROCS=1, and intermittently on a runner with more cores.
 		diesBeforeReading bool
+		// census is whether the turn's tool work was measured: "measured"
+		// for a turn that ended on Claude's own answer while Claude waited
+		// for its input, "absent" for one an interrupt ended, "" where a
+		// fake that exits at once makes it a race.
+		census string
 	}{
-		{name: "plain", state: v1.RunSucceeded, final: "pong", textHas: "pong"},
-		{name: "tool", state: v1.RunSucceeded, final: "hello from a small file", textHas: "hello from a small file"},
+		{name: "plain", state: v1.RunSucceeded, final: "pong", textHas: "pong", census: "measured"},
+		{name: "tool", state: v1.RunSucceeded, final: "hello from a small file", textHas: "hello from a small file", census: "measured"},
 		{name: "error", state: v1.RunFailed, class: adapter.ClassHarness, textHas: "issue with the selected model"},
 		{name: "prompt-too-long", state: v1.RunFailed, class: adapter.ClassPromptTooLong},
 		{name: "resume-missing", resume: true, state: v1.RunFailed, class: adapter.ClassSessionNotFound, diesBeforeReading: true},
-		{name: "interrupt", act: interruptOn(v1.EventText), state: v1.RunCancelled, interrupt: true},
-		{name: "steer-tool", act: steerOn(v1.EventToolCall, "end with STEERED"), state: v1.RunSucceeded, textHas: "STEERED", steers: 1},
-		{name: "steer-followup", act: steerOn(v1.EventText, "reply: steered"), state: v1.RunSucceeded, final: "steered", steers: 1},
-		{name: "permission-denied", state: v1.RunSucceeded},
+		{name: "interrupt", act: interruptOn(v1.EventText), state: v1.RunCancelled, interrupt: true, census: "absent"},
+		{name: "steer-tool", act: steerOn(v1.EventToolCall, "end with STEERED"), state: v1.RunSucceeded, textHas: "STEERED", steers: 1, census: "measured"},
+		{name: "steer-followup", act: steerOn(v1.EventText, "reply: steered"), state: v1.RunSucceeded, final: "steered", steers: 1, census: "measured"},
+		{name: "permission-denied", state: v1.RunSucceeded, census: "measured"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -345,6 +350,12 @@ func TestRecordedStreams(t *testing.T) {
 			// Text arrives in coalesced chunks, never one event per delta.
 			if n := len(kinds(evs, v1.EventText)); n > 20 {
 				t.Errorf("%d text events: deltas are not being coalesced", n)
+			}
+			switch {
+			case c.census == "measured" && (out.LeftRunning == nil || len(*out.LeftRunning) != 0):
+				t.Errorf("left running %v; want measured, and nothing", out.LeftRunning)
+			case c.census == "absent" && out.LeftRunning != nil:
+				t.Errorf("left running %v after an interrupt; want it not measured", *out.LeftRunning)
 			}
 		})
 	}

@@ -173,6 +173,9 @@ func TestPlainRun(t *testing.T) {
 	if o.State != v1.RunSucceeded || o.FinalText != "pong" {
 		t.Fatalf("outcome %s %q %+v", o.State, o.FinalText, o.Error)
 	}
+	if o.LeftRunning == nil || len(*o.LeftRunning) != 0 {
+		t.Errorf("left running %v, want measured and empty", o.LeftRunning)
+	}
 	if !strings.HasPrefix(o.NativeSessionID, "ses_") {
 		t.Errorf("native session %q", o.NativeSessionID)
 	}

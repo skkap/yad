@@ -817,6 +817,13 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			turnLog.Warn("run killed with the runner; the next start reports it lost")
 			return
 		}
+		// Spooled before the result, so last_seq covers it and a hub reading
+		// left_running finds what it counts.
+		if out.LeftRunning != nil && len(*out.LeftRunning) > 0 {
+			turnLog.Info("the turn ended with its tool work still running", "left_running", leftRunningLog(*out.LeftRunning))
+			e.note(bg, c, &w, v1.Event{Kind: v1.EventStatus, Status: "left_running", Text: leftRunningText(*out.LeftRunning)})
+			lastSeq = w.lastSeq
+		}
 		// Folded in before the result is built, so the result is the whole
 		// run's rather than this turn's — and written down at once, so a park
 		// that follows carries this turn's cost with it and a restart that

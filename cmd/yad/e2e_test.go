@@ -161,6 +161,13 @@ const (
 	// fakeClaudeEnv, when set, is a file the fake writes its whole
 	// environment to, one variable a line.
 	fakeClaudeEnv = "E2E_CLAUDE_ENV"
+	// fakeClaudeLeave, when set, is a file the fake writes the pid of a sleep
+	// to: one it starts in a session of its own just before its result, as
+	// a Bash command run in the background leaves one, for the test to end.
+	// fakeClaudeLeaveMarker is that sleep's argv[0] and is in its
+	// environment, where nothing yad reports may read it.
+	fakeClaudeLeave       = "E2E_CLAUDE_LEAVE"
+	fakeClaudeLeaveMarker = "E2E_CLAUDE_LEAVE_MARKER"
 	// childYad makes the test binary run as yad.
 	childYad = "E2E_YAD_MAIN"
 )
@@ -314,6 +321,7 @@ func fakeClaude() {
 			}
 		case f.Type == "result":
 			out.Flush()
+			leaveRunning()
 			if id, ok := awaitGate(interrupts); ok {
 				// As the recorded interrupt stream has it: the request is
 				// acknowledged, then the turn ends in an aborted result, and
@@ -335,6 +343,25 @@ func fakeClaude() {
 	case <-eof:
 	case <-time.After(30 * time.Second): // never outlive a broken test by much
 	}
+}
+
+// leaveRunning starts the sleep fakeClaudeLeave asks for, once.
+func leaveRunning() {
+	path := os.Getenv(fakeClaudeLeave)
+	if path == "" {
+		return
+	}
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	marker := os.Getenv(fakeClaudeLeaveMarker)
+	c := &exec.Cmd{Path: "/bin/sleep", Args: []string{marker, "60"},
+		Env: append(os.Environ(), "LEFT_SECRET="+marker), SysProcAttr: &syscall.SysProcAttr{Setsid: true}}
+	if err := c.Start(); err != nil {
+		os.Stderr.WriteString(err.Error())
+		os.Exit(2)
+	}
+	os.WriteFile(path, []byte(strconv.Itoa(c.Process.Pid)), 0o600)
 }
 
 // remember appends an instruction to the session's transcript, when the fake
@@ -646,6 +673,11 @@ func testE2ERunSucceeds(t *testing.T, h *e2eHarness) {
 	}
 	if len(run.Result.Usage.ByModel) == 0 {
 		t.Error("result carries no usage")
+	}
+	// The turn ended on the harness's own answer and left nothing running:
+	// measured, and 0, which is not the same as absent.
+	if n := run.Result.Metrics.LeftRunning; n == nil || *n != 0 {
+		t.Errorf("left_running = %v; want 0", n)
 	}
 
 	// Nothing is left owed on the runner.

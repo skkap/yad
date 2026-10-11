@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -97,6 +98,10 @@ func TestE2EOpenCode(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("watch output lacks %q:\n%s", want, out)
 		}
+	}
+	if run, err := m.client().Run(context.Background(), "oc-first"); err != nil || run.Result == nil ||
+		run.Result.Metrics.LeftRunning == nil || *run.Result.Metrics.LeftRunning != 0 {
+		t.Errorf("an OpenCode run that left nothing running: %+v, %v; want left_running 0", run, err)
 	}
 
 	// A steer is refused by the hub, never queued: OpenCode takes none, and

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"os/signal"
 	"slices"
 	"strconv"
@@ -56,6 +57,31 @@ func fakeHelp(mode string) {
 		os.Stderr.WriteString("Error: something went badly wrong\n")
 		os.Exit(1)
 	}
+}
+
+// leave plays a turn that leaves work running, as a Bash command started
+// with run_in_background does: when CLAUDE_TEST_LEAVE names a file, a sleep
+// in a session of its own is started before the result, once, and its pid
+// written there for the test to end. CLAUDE_TEST_LEAVE_MARKER is its argv[0]
+// and is in its environment, where nothing may read it.
+func leave() {
+	path := os.Getenv("CLAUDE_TEST_LEAVE")
+	if path == "" {
+		return
+	}
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	marker := os.Getenv("CLAUDE_TEST_LEAVE_MARKER")
+	c := &exec.Cmd{Path: "/bin/sleep", Args: []string{marker, "30"},
+		Env: append(os.Environ(), "LEFT_SECRET="+marker), SysProcAttr: &syscall.SysProcAttr{Setsid: true}}
+	// Start returns once sleep has replaced the child's image, so the
+	// census sees sleep and not the fork before it.
+	if err := c.Start(); err != nil {
+		os.Stderr.WriteString(err.Error())
+		os.Exit(2)
+	}
+	os.WriteFile(path, []byte(strconv.Itoa(c.Process.Pid)), 0o600)
 }
 
 func fakeClaude() {
@@ -186,6 +212,9 @@ func fakeClaude() {
 			warned = false
 		}
 		endsInResult = !oversized && isResult(line)
+		if endsInResult {
+			leave()
+		}
 		// An oversized line goes through the pipe a piece at a time, each
 		// logged, so drive can tell a slow pipe from a stuck one: one write
 		// of it is tens of seconds of silence on a loaded machine.
