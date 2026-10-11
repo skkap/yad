@@ -44,6 +44,20 @@ func (s *Store) Slot(ctx context.Context, repo, connection, session string) (int
 	return slot, err
 }
 
+// HeldSlot returns the WT_SLOT a session holds for a repository, and false
+// when it holds none. Unlike Slot it never allocates: a teardown is told the
+// slot its setup was given, or does not run.
+func (s *Store) HeldSlot(ctx context.Context, repo, connection, session string) (int64, bool, error) {
+	slot, err := s.SessionSlot(ctx, db.SessionSlotParams{Repo: repo, Connection: connection, SessionID: session})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return slot, true, nil
+}
+
 // ReleaseSlots frees every slot a session holds, for a workdir being
 // reclaimed; the next worktree of the same repository may reuse them.
 func (s *Store) ReleaseSlots(ctx context.Context, connection, session string) error {

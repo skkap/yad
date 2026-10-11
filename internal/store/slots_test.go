@@ -53,3 +53,28 @@ func TestSlots(t *testing.T) {
 		t.Errorf("c's slot in other was not recycled: d got %d", got)
 	}
 }
+
+// HeldSlot reads a session's slot and never takes one: a teardown asking for
+// a slot its session never held must not be handed a fresh one.
+func TestHeldSlot(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	if err := s.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: "a", Harness: "claude", CreatedAt: 1, LastUsedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if n, ok, err := s.HeldSlot(ctx, "r", "hub", "a"); err != nil || ok || n != 0 {
+		t.Errorf("before any slot: %d, %v, %v; want none", n, ok, err)
+	}
+	if used, _ := s.SlotsInUse(ctx, "r"); len(used) != 0 {
+		t.Errorf("HeldSlot allocated %v", used)
+	}
+	if _, err := s.Slot(ctx, "r", "hub", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if n, ok, err := s.HeldSlot(ctx, "r", "hub", "a"); err != nil || !ok || n != 1 {
+		t.Errorf("after Slot: %d, %v, %v; want 1", n, ok, err)
+	}
+	if _, ok, _ := s.HeldSlot(ctx, "other", "hub", "a"); ok {
+		t.Error("a slot in r was reported held in another repository")
+	}
+}

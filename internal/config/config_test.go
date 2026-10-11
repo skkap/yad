@@ -112,7 +112,7 @@ roots = ["/home/me/src"]
 	if c.Supervise.Inactivity.Duration != DefaultInactivity {
 		t.Errorf("an unset section lost its default: %v", c.Supervise.Inactivity)
 	}
-	if c.Workdirs.Roots[0] != "/home/me/src" || c.Workdirs.GitTimeout.Duration != DefaultGitTimeout || c.Workdirs.SetupTimeout.Duration != DefaultSetupTimeout {
+	if c.Workdirs.Roots[0] != "/home/me/src" || c.Workdirs.GitTimeout.Duration != DefaultGitTimeout || c.Workdirs.SetupTimeout.Duration != DefaultSetupTimeout || c.Workdirs.TeardownTimeout.Duration != DefaultTeardownTimeout {
 		t.Errorf("workdirs %+v: the root must load and the unset timeouts keep their defaults", c.Workdirs)
 	}
 	if c.Drain.Wait.Duration != DefaultDrainWait {
@@ -147,6 +147,7 @@ func TestLoadRefuses(t *testing.T) {
 		"relative root":     "[workdirs]\nroots = [\"src\"]\n",
 		"root is /":         "[workdirs]\nroots = [\"/\"]\n",
 		"negative git":      "[workdirs]\ngit_timeout = \"-1s\"\n",
+		"negative teardown": "[workdirs]\nteardown_timeout = \"-1s\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := testPaths(t)
