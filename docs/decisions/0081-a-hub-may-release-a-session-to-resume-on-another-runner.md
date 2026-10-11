@@ -69,10 +69,14 @@ The agent working DEV-43 decided the rest:
   bounds.
 - **The same session id.** A release unbinds the session on the hub. Its
   next run goes out `new: true` with the archive, to any runner advertising
-  release for its harness **but the one it was released from**: that runner
-  closed the session and keeps the closed row, so it would refuse the run as
-  a closed session. The runner that takes it imports the conversation under
-  its native id, refusing one its harness already has.
+  release for its harness **but any it was ever released from**: each of
+  those closed the session and keeps the closed row, so it would refuse the
+  run as a closed session. The runner that takes it imports the conversation
+  under its native id. One its harness already has is refused when an open
+  session there holds it, and replaced otherwise: it is this session's own,
+  left by an import cut short or by an earlier stay. A run naming sources
+  other than the ones the archive carries is refused, since that runner has
+  only the archive's word for what the session was built from.
 - **The releasing runner.** A release waits while a run is held in the
   session, as a close does, and claims no run in the session while it is
   under way. The archive is a 0600 file under `<data>/releases/`, built once

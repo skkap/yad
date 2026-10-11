@@ -572,3 +572,80 @@ func TestARunOpeningAReleasedSessionGoesOnlyWhereReleaseIsAdvertised(t *testing.
 		t.Errorf("a release asked of a connection with release off: %+v, %v", rs, err)
 	}
 }
+
+// A conversation by the archive's id already on the opening runner is that
+// session's own — left by an import whose end was never recorded — and is
+// replaced, unless an open session there holds it. A run naming sources the
+// archive does not carry is refused: the opening runner has only the
+// archive's word for what the session was built from.
+func TestAnArchiveMeetsWhatIsAlreadyThere(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, b *side, native string)
+		run     func(v1.Run) v1.Run
+		want    string // "" for success, else a phrase of the failure
+	}{
+		{"a leftover of this session's", func(t *testing.T, b *side, native string) {
+			if err := fake.WriteConversation(account.TranscriptDir(b.paths.Data, "claude"), native, "stale\n"); err != nil {
+				t.Fatal(err)
+			}
+		}, nil, ""},
+		{"another open session's", func(t *testing.T, b *side, native string) {
+			ctx := context.Background()
+			if err := fake.WriteConversation(account.TranscriptDir(b.paths.Data, "claude"), native, "somebody's\n"); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: "holder", Harness: "claude", Workdir: "/w"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.store.SetSessionNativeID(ctx, db.SetSessionNativeIDParams{NativeID: sql.NullString{String: native, Valid: true}, Connection: "hub", ID: "holder"}); err != nil {
+				t.Fatal(err)
+			}
+		}, nil, "another session on this runner holds"},
+		{"other sources", nil, func(r v1.Run) v1.Run {
+			r.Sources = []v1.Source{{Git: &v1.GitSource{URL: "https://example.com/other.git"}}}
+			return r
+		}, "sources other than"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+			ctx := context.Background()
+			e := newEnv(t)
+			conv := &conversation{}
+			a := newSide(t, e, conv.harness(t, nil))
+			b := newSide(t, e, conv.harness(t, nil))
+			e.enqueue(t, testRun("r1", "s1"))
+			a.sync(t)
+			a.sync(t)
+			native := conv.native.Load().(string)
+			askRelease(t, e, "s1", false)
+			a.release(t)
+			if tc.prepare != nil {
+				tc.prepare(t, b, native)
+			}
+			next := continued("r2", "s1")
+			if tc.run != nil {
+				next = tc.run(next)
+			}
+			e.enqueue(t, next)
+			b.sync(t)
+			b.sync(t)
+			got, err := b.store.GetRun(ctx, db.GetRunParams{Connection: "hub", ID: "r2"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == "" {
+				if got.State != "succeeded" || conv.recalls[len(conv.recalls)-1] != "do r1\n" {
+					t.Fatalf("the run ended %s (%s) and found %q", got.State, got.Reason.String, conv.recalls[len(conv.recalls)-1])
+				}
+				return
+			}
+			if got.State != "failed" || !strings.Contains(got.Reason.String, tc.want) {
+				t.Fatalf("the run ended %s: %q; want a failure saying %q", got.State, got.Reason.String, tc.want)
+			}
+			if res := hubResult(t, e, "r2"); res.Error == nil || res.Error.Class != ClassArchiveRejected {
+				t.Errorf("the hub heard %+v", res.Error)
+			}
+		})
+	}
+}

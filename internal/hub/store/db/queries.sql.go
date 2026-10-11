@@ -1168,6 +1168,22 @@ func (q *Queries) NoteSessionOffer(ctx context.Context, arg NoteSessionOfferPara
 	return err
 }
 
+const noteSessionReleased = `-- name: NoteSessionReleased :exec
+INSERT INTO session_releases (session_id, runner_id, released_at) VALUES (?, ?, ?)
+ON CONFLICT (session_id, runner_id) DO UPDATE SET released_at = excluded.released_at
+`
+
+type NoteSessionReleasedParams struct {
+	SessionID  string
+	RunnerID   string
+	ReleasedAt int64
+}
+
+func (q *Queries) NoteSessionReleased(ctx context.Context, arg NoteSessionReleasedParams) error {
+	_, err := q.db.ExecContext(ctx, noteSessionReleased, arg.SessionID, arg.RunnerID, arg.ReleasedAt)
+	return err
+}
+
 const offerCandidates = `-- name: OfferCandidates :many
 SELECT r.id, r.session_id, r.harness, r.model, r.spec, r.state, r.runner_id, r.lease_expires_at, r.resumes_at, r.reason, r.created_at, r.updated_at, r.events_through FROM runs r JOIN sessions s ON s.id = r.session_id
 WHERE r.state = 'queued'
@@ -1175,7 +1191,8 @@ WHERE r.state = 'queued'
   AND r.harness IN (SELECT value FROM json_each(?1))
   AND (r.created_at > ?2 OR (r.created_at = ?2 AND r.id > ?3))
   AND (s.runner_id IS NULL OR s.runner_id = ?4)
-  AND (s.released_from IS NULL OR s.runner_id IS NOT NULL OR s.released_from != ?4)
+  AND (s.runner_id IS NOT NULL OR NOT EXISTS (
+      SELECT 1 FROM session_releases x WHERE x.session_id = s.id AND x.runner_id = ?4))
   AND (s.fork_from IS NULL OR s.runner_id IS NOT NULL OR EXISTS (
       SELECT 1 FROM sessions f WHERE f.id = s.fork_from AND f.runner_id = ?4))
   AND NOT EXISTS (
@@ -1207,7 +1224,8 @@ type OfferCandidatesParams struct {
 // refuse the run, which instead ends with the close once reported (DEV-120).
 // Nor in one whose release is asked for: the run waits to hear whether it
 // goes to the same runner or, released, to any (decision 0081) -- any but
-// the one it was released from, which closed it and keeps the closed row.
+// the ones it was ever released from, each of which closed it and keeps the
+// closed row.
 // A session opened as a fork and not yet bound goes only to the runner that
 // holds the session it forks, where the conversation is (decision 0065).
 // Filtering here rather than in Go is what keeps runs it must skip from
@@ -2068,7 +2086,8 @@ WHERE r.state = 'queued'
       SELECT 1 FROM runs o
       WHERE o.session_id = r.session_id
         AND o.state IN ('offered', 'claimed', 'preparing', 'running', 'waiting'))))
-  AND (s.released_from IS NULL OR s.runner_id IS NOT NULL OR s.released_from != ?4)
+  AND (s.runner_id IS NOT NULL OR NOT EXISTS (
+      SELECT 1 FROM session_releases x WHERE x.session_id = s.id AND x.runner_id = ?4))
   AND (s.fork_from IS NULL OR s.runner_id IS NOT NULL OR EXISTS (
       SELECT 1 FROM sessions f WHERE f.id = s.fork_from AND f.runner_id = ?4))
   AND NOT EXISTS (

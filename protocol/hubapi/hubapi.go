@@ -177,8 +177,9 @@ type Session struct {
 	SessionID string `json:"session_id" doc:"The session id."`
 	Harness   string `json:"harness" doc:"The harness every run in the session uses."`
 	// RunnerID is the runner the session is bound to — the one that claimed
-	// its first run, and the only one that can continue it. Absent until then.
-	RunnerID string `json:"runner_id,omitempty" doc:"The runner that claimed the session's first run, the only one that can continue it. Absent until then."`
+	// its first run, or its first run since a release, and the only one that
+	// can continue it. Absent until then.
+	RunnerID string `json:"runner_id,omitempty" doc:"The runner the session is on: the one that claimed its first run, or its first run since it was released, and the only one that can continue it. Absent until then, and while it is released."`
 	// ForkFrom is the session this one was opened as a fork of.
 	ForkFrom string       `json:"fork_from,omitempty" doc:"The session this one was started as a fork of. Absent for a session that started its own conversation."`
 	State    SessionState `json:"state" enum:"open,closing,closed" doc:"open takes runs. closing: a close was asked for and its runner has not yet done it. closed takes no new run."`

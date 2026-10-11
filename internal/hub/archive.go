@@ -301,6 +301,11 @@ func syncReleases(ctx context.Context, q *db.Queries, runnerID string, reported 
 		if _, err := q.MarkSessionReleased(ctx, db.MarkSessionReleasedParams{Now: sql.NullInt64{Int64: store.Ms(now), Valid: true}, RunnerID: me, ID: sess.ID}); err != nil {
 			return nil, err
 		}
+		// Every runner it leaves keeps its closed row, so none of them is
+		// offered it again, however many moves later.
+		if err := q.NoteSessionReleased(ctx, db.NoteSessionReleasedParams{SessionID: sess.ID, RunnerID: runnerID, ReleasedAt: store.Ms(now)}); err != nil {
+			return nil, err
+		}
 		// A fork of it waiting to open can no longer: a fork opens only on
 		// the runner holding the session it forks, and this one is on none.
 		if err := endForksOf(ctx, q, sess.ID, sourceReleased(sess.ID), now); err != nil {

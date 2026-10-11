@@ -95,6 +95,15 @@ func TestAConversationMovesBetweenHomes(t *testing.T) {
 		t.Fatal(err)
 	}
 	to := adapter.Conversation{Native: testNative, Workdir: wb, Transcripts: bShared, DefaultHome: filepath.Join(b, "default")}
+	// An import cut short before its transcript was in place left part of
+	// the companion behind; the next import is not tripped by it.
+	left := filepath.Join(bShared, projectName(resolved(wb)), testNative, "tool-results")
+	if err := os.MkdirAll(left, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(left, "b1.txt"), []byte("half"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := (Adapter{}).Import(to, staged, exp.Dir); err != nil {
 		t.Fatal(err)
 	}

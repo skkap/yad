@@ -15,6 +15,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/hubclient"
 	"github.com/skkap/yad/internal/store/db"
+	"github.com/skkap/yad/internal/workdir"
 )
 
 // archiveRefusal is a session archive this runner will not open, with the
@@ -25,6 +26,32 @@ func (r archiveRefusal) Error() string { return r.msg }
 
 func rejected(format string, args ...any) error {
 	return archiveRefusal{ClassArchiveRejected, fmt.Sprintf(format, args...)}
+}
+
+// sourcesDiffer says why a run opening a session from an archive names
+// sources other than the session's, or "". A continuing run names its
+// session's sources or none, and the runner that opens a released session
+// has only the archive's word for which those are: by URL, as the session
+// keeps it, and every one a git source — a released session has no other.
+func sourcesDiffer(run []v1.Source, carried []carriedSource) string {
+	if len(run) == 0 {
+		return ""
+	}
+	want := map[string]bool{}
+	for _, s := range carried {
+		want[s.URL] = true
+	}
+	got := map[string]bool{}
+	for _, s := range workdir.StoredSources(run) {
+		if s.Git == nil || !want[s.Git.URL] {
+			return "the run names sources other than the ones its session was built from on the runner that released it — send the same sources, or none, to continue it"
+		}
+		got[s.Git.URL] = true
+	}
+	if len(got) != len(want) {
+		return "the run names fewer sources than its session was built from on the runner that released it — send the same sources, or none, to continue it"
+	}
+	return ""
 }
 
 // importArchive opens a session from the session archive its hub said it
@@ -73,7 +100,7 @@ func (e *Exec) importArchive(ctx context.Context, c Claim, ad adapter.Adapter, d
 	if err := os.MkdirAll(in, 0o700); err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(in)
+	defer removeArchive(in, e.Log)
 	file := filepath.Join(in, "archive.tar.gz")
 	out, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -109,11 +136,31 @@ func (e *Exec) importArchive(ctx context.Context, c Claim, ad adapter.Adapter, d
 	if m.Harness != c.Run.Harness {
 		return "", rejected("the archive holds a %s session, and the run is a %s one", m.Harness, c.Run.Harness)
 	}
+	if why := sourcesDiffer(c.Run.Sources, m.Sources); why != "" {
+		return "", rejected("%s", why)
+	}
 	conv := conversationOf(e.Data, e.Accounts.Lists(), c.Run.Harness, m.NativeID, dir, true)
-	switch err := rel.Import(conv, staged, m.Dir); {
-	case errors.Is(err, adapter.ErrConversationExists):
-		return "", rejected("the harness on this runner already has a conversation with the archive's id %s, and it is never overwritten — offer the session's next run to another runner, or start a new session", m.NativeID)
-	case err != nil:
+	err = rel.Import(conv, staged, m.Dir)
+	if errors.Is(err, adapter.ErrConversationExists) {
+		// A conversation by this id that no open session here holds is this
+		// session's own, left by an import whose end this runner never
+		// recorded, or by an earlier stay of the session here: the archive
+		// is newer. One an open session holds is somebody's, and stays.
+		taken, qerr := e.Store.OtherOpenSessionWithNativeID(bg, db.OtherOpenSessionWithNativeIDParams{
+			NativeID: sql.NullString{String: m.NativeID, Valid: true}, Connection: c.Connection, ID: c.Run.Session.ID,
+		})
+		switch {
+		case qerr != nil:
+			return "", qerr
+		case taken:
+			return "", rejected("another session on this runner holds a conversation with the archive's id %s, and it is never overwritten — offer the session's next run to another runner, or start a new session", m.NativeID)
+		}
+		e.Log.Info("replacing a conversation no open session holds with the session's archive", "connection", c.Connection, "session", c.Run.Session.ID)
+		if err = rel.Forget(conversationOf(e.Data, e.Accounts.Lists(), c.Run.Harness, m.NativeID, dir, false)); err == nil {
+			err = rel.Import(conv, staged, m.Dir)
+		}
+	}
+	if err != nil {
 		return "", err
 	}
 	branches := map[string]string{}

@@ -488,6 +488,12 @@ UPDATE outbox SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(con
 -- name: RetireConnectionSlots :exec
 UPDATE slots SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
 
+-- A release is keyed like its session, so it goes with it: left under the
+-- name, the new hub's session of the same id would be told the old one's
+-- outcome (decision 0079, for the table decision 0081 added).
+-- name: RetireConnectionReleases :exec
+UPDATE releases SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(connection);
+
 -- A new session's workdir is derived from its connection and id, so a new
 -- hub under a reused name can derive the directory an earlier registration's
 -- session recorded: one the collector will remove while it is unreclaimed,
@@ -560,6 +566,13 @@ UPDATE releases SET reported_at = ? WHERE connection = ? AND session_id = ? AND 
 UPDATE sessions SET state = 'closed', close_reason = 'released', closed_at = sqlc.arg(now), close_requested_at = NULL,
   reported_at = sqlc.arg(now)
 WHERE connection = sqlc.arg(connection) AND id = sqlc.arg(id) AND state = 'open';
+
+-- Whether a session of this runner other than the one named holds this
+-- native id and is open: a conversation by that id on disk is then that
+-- session's, and an import never replaces it.
+-- name: OtherOpenSessionWithNativeID :one
+SELECT EXISTS (SELECT 1 FROM sessions WHERE native_id = sqlc.arg(native_id) AND state = 'open'
+  AND NOT (connection = sqlc.arg(connection) AND id = sqlc.arg(id)));
 
 -- The conversation of a session opened from an archive is in place.
 -- name: SetSessionImported :exec

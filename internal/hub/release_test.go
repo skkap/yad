@@ -112,7 +112,7 @@ func TestASessionIsReleasedAndOpensOnAnotherRunner(t *testing.T) {
 
 	// The run ended, and the release is reported: the session is on no
 	// runner, and the run waiting in it goes out opening it, with the
-	// archive, to a runner that opens one — not the one it left.
+	// archive, to a runner that opens one — not one it was released from.
 	if err := f.store.FinishRun(t.Context(), db.FinishRunParams{State: "succeeded", UpdatedAt: f.clock.Now().UnixMilli(), ID: "a"}); err != nil {
 		t.Fatal(err)
 	}
@@ -274,5 +274,47 @@ func TestTheArchiveIsDeclaredAsBytes(t *testing.T) {
 	ok := get.Responses["200"]
 	if ok == nil || len(ok.Content) != 1 || ok.Content[v1.ArchiveContentType] == nil || ok.Content[v1.ArchiveContentType].Schema.Format != "binary" {
 		t.Fatalf("the GET's 200 is declared as %+v", ok)
+	}
+}
+
+// A session moved twice goes back to neither runner it left: each closed it
+// and keeps it closed, and would refuse a run opening it.
+func TestAReleasedSessionGoesToNoRunnerItWasReleasedFrom(t *testing.T) {
+	f := newFixture(t)
+	tok := f.admin(t, "ops")
+	r1 := releasing(t, f, tok)
+	r2 := f.register(t, "r2")
+	f.mustSync(t, "r2", r2, first("r2", 2))
+	release := func(runner, cred string, archive []byte) {
+		t.Helper()
+		if rec, env := archiveCall(t, f, http.MethodPut, cred, "s-a", archive, sum(archive)); rec.Code != http.StatusOK {
+			t.Fatalf("upload from %s: %d %+v", runner, rec.Code, env)
+		}
+		r := req(runner, 1)
+		r.ReleasedSessions = []v1.ReleasedSession{{SessionID: "s-a", ReleasedAt: f.clock.Now(), Archive: &v1.SessionArchive{SHA256: sum(archive), Bytes: int64(len(archive))}}}
+		f.mustSync(t, runner, cred, r)
+	}
+	release("r1", r1, []byte("first"))
+	f.enqueue(t, v1.Run{RunID: "b", Session: v1.SessionRef{ID: "s-a"}, Harness: "claude", Model: "opus", Brief: v1.Brief{Instruction: "go on"}})
+	if got := ids(f.mustSync(t, "r2", r2, req("r2", 2)).Runs); !slices.Equal(got, []string{"b"}) {
+		t.Fatalf("r2 was offered %v", got)
+	}
+	f.mustSync(t, "r2", r2, req("r2", 1, running("b")...))
+	if err := f.store.FinishRun(t.Context(), db.FinishRunParams{State: "succeeded", UpdatedAt: f.clock.Now().UnixMilli(), ID: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if code, e := f.api(t, "POST", "/sessions/s-a/release", tok, hubapi.ReleaseRequest{}, nil); code != http.StatusOK {
+		t.Fatalf("the second release: %d %+v", code, e)
+	}
+	release("r2", r2, []byte("second"))
+	f.enqueue(t, v1.Run{RunID: "c", Session: v1.SessionRef{ID: "s-a"}, Harness: "claude", Model: "opus", Brief: v1.Brief{Instruction: "and on"}})
+	for _, r := range []struct{ id, cred string }{{"r1", r1}, {"r2", r2}} {
+		if got := f.mustSync(t, r.id, r.cred, req(r.id, 2)); len(got.Runs) != 0 {
+			t.Errorf("%s, which the session was released from, was offered %v", r.id, ids(got.Runs))
+		}
+	}
+	r3 := f.register(t, "r3")
+	if got := ids(f.mustSync(t, "r3", r3, first("r3", 2)).Runs); !slices.Equal(got, []string{"c"}) {
+		t.Errorf("a third runner was offered %v, want c", got)
 	}
 }

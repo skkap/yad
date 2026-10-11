@@ -1266,6 +1266,27 @@ func (q *Queries) OpenSessionsOf(ctx context.Context, connection string) ([]Sess
 	return items, nil
 }
 
+const otherOpenSessionWithNativeID = `-- name: OtherOpenSessionWithNativeID :one
+SELECT EXISTS (SELECT 1 FROM sessions WHERE native_id = ?1 AND state = 'open'
+  AND NOT (connection = ?2 AND id = ?3))
+`
+
+type OtherOpenSessionWithNativeIDParams struct {
+	NativeID   sql.NullString
+	Connection string
+	ID         string
+}
+
+// Whether a session of this runner other than the one named holds this
+// native id and is open: a conversation by that id on disk is then that
+// session's, and an import never replaces it.
+func (q *Queries) OtherOpenSessionWithNativeID(ctx context.Context, arg OtherOpenSessionWithNativeIDParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, otherOpenSessionWithNativeID, arg.NativeID, arg.Connection, arg.ID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const outboxDepth = `-- name: OutboxDepth :one
 SELECT count(*) FROM outbox
 `
@@ -1477,6 +1498,23 @@ type RetireConnectionOutboxParams struct {
 
 func (q *Queries) RetireConnectionOutbox(ctx context.Context, arg RetireConnectionOutboxParams) error {
 	_, err := q.db.ExecContext(ctx, retireConnectionOutbox, arg.Retired, arg.Connection)
+	return err
+}
+
+const retireConnectionReleases = `-- name: RetireConnectionReleases :exec
+UPDATE releases SET connection = ?1 WHERE connection = ?2
+`
+
+type RetireConnectionReleasesParams struct {
+	Retired    string
+	Connection string
+}
+
+// A release is keyed like its session, so it goes with it: left under the
+// name, the new hub's session of the same id would be told the old one's
+// outcome (decision 0079, for the table decision 0081 added).
+func (q *Queries) RetireConnectionReleases(ctx context.Context, arg RetireConnectionReleasesParams) error {
+	_, err := q.db.ExecContext(ctx, retireConnectionReleases, arg.Retired, arg.Connection)
 	return err
 }
 

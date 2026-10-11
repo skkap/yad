@@ -12,7 +12,7 @@ import (
 )
 
 // seedAll is one connection's rows in every table keyed by it: a session
-// holding a WT_SLOT, a run in it, an event and a result owed.
+// holding a WT_SLOT, a run in it, an event, a result owed and a release.
 func seedAll(t *testing.T, s *Store, conn string) {
 	t.Helper()
 	ctx := context.Background()
@@ -31,13 +31,16 @@ func seedAll(t *testing.T, s *Store, conn string) {
 	if _, err := s.Slot(ctx, "/repos/a.git", conn, "s1"); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.RequestRelease(ctx, db.RequestReleaseParams{Connection: conn, SessionID: "s1", Now: 1}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // rowsUnder counts what each table keyed by connection holds under conn.
 func rowsUnder(t *testing.T, s *Store, conn string) map[string]int {
 	t.Helper()
 	out := map[string]int{}
-	for _, table := range []string{"sessions", "runs", "events", "outbox", "slots"} {
+	for _, table := range []string{"sessions", "runs", "events", "outbox", "slots", "releases"} {
 		var n int
 		// The table names are the constants above.
 		if err := s.DB.QueryRow("SELECT count(*) FROM "+table+" WHERE connection = ?", conn).Scan(&n); err != nil {

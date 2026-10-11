@@ -687,7 +687,7 @@ components:
           description: The runner the session was last released from.
           type: string
         runner_id:
-          description: The runner that claimed the session's first run, the only one that can continue it. Absent until then.
+          description: "The runner the session is on: the one that claimed its first run, or its first run since it was released, and the only one that can continue it. Absent until then, and while it is released."
           type: string
         session_id:
           description: The session id.

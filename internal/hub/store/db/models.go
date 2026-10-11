@@ -129,3 +129,9 @@ type SessionArchive struct {
 	UploadedAt int64
 	Released   int64
 }
+
+type SessionRelease struct {
+	SessionID  string
+	RunnerID   string
+	ReleasedAt int64
+}

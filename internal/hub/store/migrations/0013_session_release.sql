@@ -15,6 +15,16 @@ ALTER TABLE sessions ADD COLUMN release_error TEXT;
 ALTER TABLE sessions ADD COLUMN released_at INTEGER;
 ALTER TABLE sessions ADD COLUMN released_from TEXT REFERENCES runners (id);
 
+-- Every runner a session was ever released from. Each keeps the session's
+-- closed row and would refuse to open it again, so a run opening a released
+-- session goes to none of them, not only to the last.
+CREATE TABLE session_releases (
+    session_id  TEXT NOT NULL REFERENCES sessions (id),
+    runner_id   TEXT NOT NULL REFERENCES runners (id),
+    released_at INTEGER NOT NULL,
+    PRIMARY KEY (session_id, runner_id)
+);
+
 -- A session's archive: opaque bytes this hub stores and hands back, the
 -- conversation of a session whose runner released it. Uploaded by the runner
 -- the session is bound to while its release is asked for, and handed only to

@@ -439,7 +439,7 @@ func (r *Releases) build(ctx context.Context, row db.Release, sess db.Session) (
 		return nil, err
 	}
 	if limit := r.capOf(row.Connection); limit > 0 && size > limit {
-		os.Remove(file)
+		removeArchive(file, r.Log)
 		return &v1.ReleaseError{Code: v1.ReleaseTooLarge, Message: fmt.Sprintf("the session's archive is %d bytes, past the %d bytes this hub takes", size, limit),
 			NextAction: "continue the session on this runner, or raise the hub's archive limit and release it again"}, nil
 	}
@@ -447,7 +447,7 @@ func (r *Releases) build(ctx context.Context, row db.Release, sess db.Session) (
 		Archive: sql.NullString{String: file, Valid: true}, Sha256: sql.NullString{String: sha, Valid: true}, Bytes: sql.NullInt64{Int64: size, Valid: true},
 		Connection: row.Connection, SessionID: row.SessionID,
 	}); err != nil {
-		os.Remove(file)
+		removeArchive(file, r.Log)
 		return nil, err
 	}
 	r.Log.Info("the session's archive is built", "connection", row.Connection, "session", sess.ID, "bytes", size, "files", len(exp.Files))
@@ -558,7 +558,7 @@ func (r *Releases) released(ctx context.Context, row db.Release, sess db.Session
 			}
 		}
 	}
-	os.Remove(row.Archive.String)
+	removeArchive(row.Archive.String, r.Log)
 	r.Sessions.Wake()
 	r.wakeLoop(row.Connection)
 }
@@ -574,7 +574,7 @@ func (r *Releases) settle(ctx context.Context, row db.Release, why *v1.ReleaseEr
 		return
 	}
 	if row.Archive.Valid {
-		os.Remove(row.Archive.String)
+		removeArchive(row.Archive.String, r.Log)
 	}
 	r.Log.Warn("refused to release a session; it stays open here", "connection", row.Connection, "session", row.SessionID, "code", why.Code, "reason", why.Message)
 	r.wakeLoop(row.Connection)
@@ -591,6 +591,15 @@ func conversationOf(data string, lists account.Lists, harness, native, workdir s
 		c.Transcripts = account.TranscriptDir(data, harness)
 	}
 	return c
+}
+
+// removeArchive deletes a session archive this runner has no more use for. It
+// holds a whole conversation, so one that will not go is said, by its path:
+// nothing comes back to it once its release is settled.
+func removeArchive(path string, log *slog.Logger) {
+	if err := os.RemoveAll(path); err != nil {
+		log.Error("a session archive could not be deleted, and holds a whole conversation — remove it by hand", "archive", path, "err", err)
+	}
 }
 
 func boolInt(b bool) int64 {

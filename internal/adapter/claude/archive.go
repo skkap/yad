@@ -192,14 +192,32 @@ func (Adapter) Import(c adapter.Conversation, staged, from string) error {
 	}
 	// The companion first and the transcript last: a transcript in place is
 	// what makes the conversation one Claude resumes, so it never names a
-	// file that is not there yet.
+	// file that is not there yet. Each is made aside and renamed in, so an
+	// import cut short leaves nothing a retry trips over: a companion with no
+	// transcript beside it — find saw none — is a cut-short import's, and
+	// goes.
+	companion := filepath.Join(dir, c.Native)
+	if err := os.RemoveAll(companion); err != nil {
+		return err
+	}
 	if src := filepath.Join(staged, c.Native); dirExists(src) {
-		if err := copyTree(src, filepath.Join(dir, c.Native)); err != nil {
+		tmp := filepath.Join(dir, "."+c.Native+".importing")
+		if err := os.RemoveAll(tmp); err != nil {
+			return err
+		}
+		if err := copyTree(src, tmp); err != nil {
+			os.RemoveAll(tmp)
+			return err
+		}
+		if err := os.Rename(tmp, companion); err != nil {
+			os.RemoveAll(tmp)
 			return err
 		}
 	}
+	undo := func() { os.RemoveAll(companion) }
 	body, err := os.ReadFile(filepath.Join(staged, c.Native+".jsonl"))
 	if err != nil {
+		undo()
 		return err
 	}
 	if from != "" {
@@ -207,10 +225,13 @@ func (Adapter) Import(c adapter.Conversation, staged, from string) error {
 	}
 	tmp := filepath.Join(dir, "."+c.Native+".jsonl.importing")
 	if err := os.WriteFile(tmp, body, 0o600); err != nil {
+		os.Remove(tmp)
+		undo()
 		return err
 	}
 	if err := os.Rename(tmp, filepath.Join(dir, c.Native+".jsonl")); err != nil {
 		os.Remove(tmp)
+		undo()
 		return err
 	}
 	return nil

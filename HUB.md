@@ -763,8 +763,8 @@ whoever submitted it which setting refused it (decision
 **A released session's run only where it can be opened.** A run opening a
 session released from another runner carries `session.archive`, and goes only
 to a runner advertising `release` for the run's harness (§7) — any other would
-open the session with none of the conversation — and never to the runner it
-was released from, which closed it. Like a `fork_from`, it never lapses: hold
+open the session with none of the conversation — and never to a runner it
+was ever released from, each of which closed it and keeps it closed. Like a `fork_from`, it never lapses: hold
 it until such a runner can take it (§8).
 
 **Session rules** decide the rest (§8): a run in a session bound to another
@@ -1404,7 +1404,8 @@ the same, seen from the hub.
 Its later runs are offered to that runner alone — a session is resumable only
 where its transcript is — and **one at a time**: do not offer a run in a
 session while another run in it is offered or held. A runner refuses a second
-live run in a session.
+live run in a session. A release (below) is the one way a session leaves its
+runner: its transcript goes with it.
 
 **Closing.** A session closes by your word (`close_session`, where the runner
 advertises it), by its owner's (`yad sessions close` on the machine), when it
@@ -1531,7 +1532,7 @@ session's harness (§7); its owner may turn it off for your connection.
 - **The next run opens it.** Offer the session's next run as opening it —
   `session.new: true`, with the sources its first run named — carrying
   `session.archive: {sha256, bytes}`, to a runner advertising `release` for
-  its harness, and not to the runner it was released from (§4). That runner
+  its harness, and not to any runner it was ever released from (§4). That runner
   fetches the archive with `GET /sessions/{session}/archive`: answer it only
   to a runner a run of the session is offered to or that the session is bound
   to, with the bytes as you stored them and the same `Yad-Archive-Sha256`

@@ -57,7 +57,7 @@ const (
 
 // SessionRef names the session a run belongs to.
 type SessionRef struct {
-	ID   string      `json:"id" doc:"The session's id, chosen by the hub. A session lives on the runner that claimed its first run and is continued only there."`
+	ID   string      `json:"id" doc:"The session's id, chosen by the hub. A session lives on the runner that claimed its first run and is continued only there, until the hub releases it and a run opens it from its archive on another runner."`
 	New  bool        `json:"new" doc:"true for the run that opens the session, false for every later run. A runner refuses new true for a session id it already has, and new false for one it does not hold."`
 	Mode SessionMode `json:"mode,omitempty" enum:"per_run,live" doc:"per_run, the default: a fresh harness process for each run, resuming the session's conversation. live is reserved: offer it only to a runner advertising live_sessions, which none does yet."`
 	// ForkFrom opens a session whose conversation starts as a copy of
