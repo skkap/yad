@@ -38,7 +38,12 @@ What building it settled:
   A parked run comes back to the tree it left, branch and all, and one ended
   while parked — past its `max_wait`, or cancelled — is settled only after
   the transaction that checks it is still waiting has committed: a sync may
-  be resuming it at that moment, with a harness at work on the branch.
+  be resuming it at that moment, with a harness at work on the branch. By
+  then its result may have been delivered and the session's next run
+  claimed, so that settle keeps the branch when the store holds a run of the
+  session, asked under the cache's lock (`SettleUnless`): that run's
+  preparation takes the same lock, so it has either finished and is left
+  alone, or will find the release mark.
 - **Only the branch the hub named.** A session's own
   `yad/<connection>/<session>` is never let go of: no other session names it.
   Sessions naming no branch behave exactly as before, with no new fetch. The

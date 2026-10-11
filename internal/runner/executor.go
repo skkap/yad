@@ -1210,7 +1210,7 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 	// a harness at work on the branch, so it is let go of only once the
 	// transaction has said the run was still parked.
 	if also == nil {
-		e.settle(ctx, c)
+		e.settle(ctx, c, false)
 	}
 	now := time.Now().UnixMilli()
 	err = e.Store.Tx(ctx, func(q *db.Queries) error {
@@ -1242,7 +1242,7 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 		return err
 	}
 	if also != nil {
-		e.settle(ctx, c)
+		e.settle(ctx, c, true)
 	}
 	log.Info("run finished", "state", res.State, "last_seq", res.LastSeq)
 	e.report(c.Connection)
@@ -1255,7 +1255,11 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 // settle lets go of a branch the hub named, when the run's session left it
 // pushed and clean, so another session may check it out; the session's next
 // run takes it back (decision 0080). A failure leaves the branch where it was.
-func (e *Exec) settle(ctx context.Context, c Claim) {
+//
+// afterResult is a call once the result is recorded, when the reporter may
+// already have delivered it and the session's next run been claimed: then a
+// run held in the session, asked under the cache's lock, keeps the branch.
+func (e *Exec) settle(ctx context.Context, c Claim, afterResult bool) {
 	if e.Workdirs == nil {
 		return
 	}
@@ -1263,7 +1267,16 @@ func (e *Exec) settle(ctx context.Context, c Claim) {
 	if err != nil {
 		return
 	}
-	if err := e.Workdirs.Settle(ctx, sess.Workdir); err != nil {
+	var busy func(context.Context) bool
+	if afterResult {
+		busy = func(ctx context.Context) bool {
+			held, err := e.Store.HeldRunInSession(ctx, db.HeldRunInSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
+			// Unknown is busy: a branch kept is let go of at the next run's
+			// end, one detached under a harness loses its commits.
+			return err != nil || held != ""
+		}
+	}
+	if err := e.Workdirs.SettleUnless(ctx, sess.Workdir, busy); err != nil {
 		e.Log.Warn("the session's branch could not be let go of; a session naming it is refused until a later run of this one ends",
 			"connection", c.Connection, "session", c.Run.Session.ID, "err", err)
 	}

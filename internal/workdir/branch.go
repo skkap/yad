@@ -84,6 +84,15 @@ func (m *Manager) PushedAndClean(ctx context.Context, dir, branch string) (ok bo
 // one. It is called when a run ends, never when it parks: a parked run comes
 // back to the tree it left, branch and all.
 func (m *Manager) Settle(ctx context.Context, dir string) error {
+	return m.SettleUnless(ctx, dir, nil)
+}
+
+// SettleUnless is Settle for a caller that does not hold the session: busy
+// is asked under each cache's lock, just before a worktree is let go of, and
+// true keeps it as it is — a run of the session claimed meanwhile, whose
+// preparation takes the same lock and so has either finished, and is to be
+// left alone, or not started, and will find the release mark.
+func (m *Manager) SettleUnless(ctx context.Context, dir string, busy func(context.Context) bool) error {
 	m.init()
 	if dir == "" {
 		return nil
@@ -105,14 +114,14 @@ func (m *Manager) Settle(ctx context.Context, dir string) error {
 	}
 	var errs []error
 	for _, wt := range candidates {
-		if err := m.settle(ctx, repos, wt); err != nil {
+		if err := m.settle(ctx, repos, wt, busy); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", wt, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func (m *Manager) settle(ctx context.Context, repos, wt string) error {
+func (m *Manager) settle(ctx context.Context, repos, wt string, busy func(context.Context) bool) error {
 	if fi, err := os.Lstat(filepath.Join(wt, ".git")); err != nil || fi.IsDir() {
 		return nil
 	}
@@ -136,6 +145,9 @@ func (m *Manager) settle(ctx context.Context, repos, wt string) error {
 		return err
 	}
 	defer unlock()
+	if busy != nil && busy(ctx) {
+		return nil
+	}
 	head, err := m.git(ctx, wt, "symbolic-ref", "--quiet", "HEAD")
 	if exitCode(err) == 1 {
 		// Released already, or detached by the harness: either way not a

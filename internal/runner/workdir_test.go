@@ -17,6 +17,7 @@ import (
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/fake"
 	hubdb "github.com/skkap/yad/internal/hub/store/db"
+	"github.com/skkap/yad/internal/store/db"
 	"github.com/skkap/yad/internal/workdir"
 )
 
@@ -677,5 +678,41 @@ func TestEndingARunNoLongerWaitingLeavesItsBranch(t *testing.T) {
 	}
 	if b := branchIn(dir); b != "work" {
 		t.Errorf("a run being resumed was taken off its branch: on %q", b)
+	}
+}
+
+// A parked run ended from outside it is settled once its result is
+// recorded, when the reporter may already have delivered it and the
+// session's next run been claimed: that run keeps the branch. With none, the
+// branch is let go of as at any run's end.
+func TestASettleAfterTheResultLeavesTheBranchToTheSessionsNextRun(t *testing.T) {
+	for _, next := range []bool{true, false} {
+		t.Run(fmt.Sprintf("next run claimed %v", next), func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			root := t.TempDir()
+			bare := gitRepo(t, root, "#!/bin/sh\n")
+			l := e.loop(t, 1)
+			run := testRun("a", "s1")
+			run.Sources = []v1.Source{{Git: &v1.GitSource{URL: bare, Branch: "work"}}}
+			x := e.sourcedExec(root, fakeHarness(fake.Script{Outcome: adapter.Outcome{State: v1.RunSucceeded, NativeSessionID: "native-1"}}))
+			runOne(t, e, l, x, run)
+			dir := session(t, e, "s1").Workdir
+			// Unpushed at its end, so kept; pushed since.
+			gitIn(t, dir, "push", "--quiet", "origin", "work")
+			if next {
+				if err := e.store.CreateRun(ctx, db.CreateRunParams{Connection: "hub", ID: "b", SessionID: "s1", Harness: "claude", Model: "opus", Spec: "{}", CreatedAt: 1, UpdatedAt: 1}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			x.settle(ctx, Claim{Connection: "hub", Run: v1.Run{RunID: "a", Session: v1.SessionRef{ID: "s1"}}}, true)
+			want := ""
+			if next {
+				want = "work"
+			}
+			if b := branchIn(dir); b != want {
+				t.Errorf("on %q, want %q", b, want)
+			}
+		})
 	}
 }
