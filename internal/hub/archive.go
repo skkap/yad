@@ -60,6 +60,10 @@ func (h *Hub) registerArchives(api huma.API) {
 			"past the hub's archive_max_bytes, which the runner reports as archive_too_large and keeps the session.",
 		Security: security, Errors: []int{400, 401, 403, 404, 409, 413, 426},
 		MaxBodyBytes: h.archiveMax,
+		// huma gives a body five seconds; an archive is given what a
+		// runner gives its upload — a minute, and a second for each 256 KiB
+		// of the largest it may be — so a slow uplink is not cut off.
+		BodyReadTimeout: time.Minute + time.Duration(h.archiveMax/(256<<10))*time.Second,
 	}, h.putArchive)
 
 	protocolOp(api, huma.Operation{
