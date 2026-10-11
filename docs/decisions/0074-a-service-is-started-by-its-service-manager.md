@@ -45,6 +45,22 @@ fine. So start and restart refuse, leave the running daemon alone, and print
 the manager's own command (`launchctl kickstart [-k] …`,
 `systemctl --user start|restart …`) for the owner, who can tell.
 
+**Install and uninstall answer to the same rule** (DEV-176). Each decides
+from whether the manager holds the job: install boots out a loaded job
+before loading the new plist, uninstall unloads a loaded one before removing
+its file. launchd's install and uninstall used to read any failed
+`launchctl print` as "not loaded", so over SSH with no desktop session an
+uninstall could remove the plist from under a job still loaded, and an
+install could bootstrap a second time. Now only exit 113 is "not loaded".
+A manager that cannot be asked is an `UnansweredError`, and both commands
+refuse before anything changes. They print the manager's own command to ask
+it (`launchctl print …`, `systemctl --user status …`), uninstall also the
+one that unloads the job (`launchctl bootout …`,
+`systemctl --user disable --now …`), and the yad command to run again
+where the manager answers. systemd never had this mistake: with no user bus
+both stop at the first `systemctl --user show`, before the unit is touched.
+They now refuse in the same words.
+
 `--interval` is refused for a service, before anything is stopped: the unit
 runs the command it was installed with, and nothing typed here reaches it.
 

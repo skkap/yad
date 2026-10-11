@@ -101,7 +101,29 @@ type Manager interface {
 	// unit, as argv, for an error to offer when yad cannot run them itself.
 	StartCommand(profile string) []string
 	RestartCommand(profile string) []string
+	// StatusCommand asks the manager about the unit in its own words, and
+	// UnloadCommand stops the job and unloads it; both for an install or
+	// uninstall that refused because the manager could not be asked.
+	StatusCommand(profile string) []string
+	UnloadCommand(profile string) []string
 }
+
+// UnansweredError is a service manager that could not say whether it holds
+// a profile's job: no GUI domain over SSH, no user bus. It is never read as
+// "not loaded" — an uninstall would remove the unit file from under a job
+// still loaded, an install would load a second one beside it, and a start
+// would put a second runner beside the first (decisions 0074, DEV-176).
+type UnansweredError struct {
+	Manager string // "launchd", "the systemd user manager"
+	Name    string // the unit
+	Err     error
+}
+
+func (e *UnansweredError) Error() string {
+	return fmt.Sprintf("%s could not say whether it holds %s: %v", e.Manager, e.Name, e.Err)
+}
+
+func (e *UnansweredError) Unwrap() error { return e.Err }
 
 // Host is the machine a Manager acts on — the seams tests replace.
 type Host struct {

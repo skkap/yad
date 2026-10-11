@@ -43,10 +43,17 @@ func (s *Systemd) File(profile string) string {
 // the manager's own start-up environment; the installing shell's
 // XDG_CONFIG_HOME, and even what the manager hands its services
 // (environment.d, set-environment), can name a directory it never searches.
-func (s *Systemd) resolve(ctx context.Context) error {
+//
+// A manager that cannot be asked — no user bus — is an UnansweredError for
+// the profile's unit: install and uninstall stop here, before the unit is
+// touched, and say so as start does.
+func (s *Systemd) resolve(ctx context.Context, profile string) error {
 	out, err := s.systemctl(ctx, "show", "--property=UnitPath", "--value")
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return &UnansweredError{Manager: "the systemd user manager", Name: s.Name(profile), Err: err}
 	}
 	home := filepath.Clean(s.Host.Home) + string(filepath.Separator)
 	for _, dir := range strings.Fields(string(out)) {
@@ -168,7 +175,7 @@ func (s *Systemd) Install(ctx context.Context, sp Spec) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.resolve(ctx); err != nil {
+	if err := s.resolve(ctx, sp.Profile); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(sp.LogFile), 0o700); err != nil {
@@ -216,7 +223,10 @@ func (s *Systemd) lingerNotes(ctx context.Context) []string {
 func (s *Systemd) show(ctx context.Context, name string) (map[string]string, error) {
 	out, err := s.systemctl(ctx, "show", name, "--property=LoadState,ActiveState,SubState,MainPID,Result")
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, &UnansweredError{Manager: "the systemd user manager", Name: name, Err: err}
 	}
 	props := map[string]string{}
 	for _, line := range strings.Split(string(out), "\n") {
@@ -233,7 +243,7 @@ func (s *Systemd) Uninstall(ctx context.Context, profile string) error {
 	if err := RefuseRoot(s.Host); err != nil {
 		return err
 	}
-	if err := s.resolve(ctx); err != nil {
+	if err := s.resolve(ctx, profile); err != nil {
 		return err
 	}
 	name, file := s.Name(profile), s.File(profile)
@@ -287,6 +297,16 @@ func (s *Systemd) RestartCommand(profile string) []string {
 	return []string{"systemctl", "--user", "restart", s.Name(profile)}
 }
 
+func (s *Systemd) StatusCommand(profile string) []string {
+	return []string{"systemctl", "--user", "status", s.Name(profile)}
+}
+
+// UnloadCommand is disable --now: the unit is stopped — a drain — and no
+// longer started at login, leaving its file for an uninstall to remove.
+func (s *Systemd) UnloadCommand(profile string) []string {
+	return []string{"systemctl", "--user", "disable", "--now", s.Name(profile)}
+}
+
 // unitLog is the log the unit appends to, with Render's specifier escaping
 // still in it.
 var unitLog = regexp.MustCompile(`(?m)^StandardOutput=append:(.*)$`)
@@ -315,7 +335,7 @@ func (s *Systemd) Status(ctx context.Context, profile string) (Status, error) {
 	if err := RefuseRoot(s.Host); err != nil {
 		return Status{}, err
 	}
-	if err := s.resolve(ctx); err != nil {
+	if err := s.resolve(ctx, profile); err != nil {
 		// Every directory is looked in: which one the manager reads is what
 		// it cannot be asked, so a file earlier in the list may be a stale
 		// one it never loads. Files that disagree on their log say nothing

@@ -116,16 +116,24 @@ func (l *Launchd) Render(s Spec) ([]byte, error) {
 	return b.Bytes(), err
 }
 
-// loaded reports whether launchd holds the job. A failed print is read as "not
-// loaded" — launchctl has no distinct exit status for that — except when the
-// command was cancelled: an owner's Ctrl-C must not look like an absent job, or
-// uninstall would remove the plist from under a job still running.
+// loaded reports whether launchd holds the job, and its print when it does.
+// Only launchctl's answer for a job it does not hold is "not loaded". A
+// cancelled print — an owner's Ctrl-C — and one launchd did not answer are
+// errors: either taken for an absent job would have uninstall remove the
+// plist from under a job still loaded, and install bootstrap it a second
+// time (DEV-176).
 func (l *Launchd) loaded(ctx context.Context, profile string) (bool, []byte, error) {
 	out, err := l.Host.Run.Run(ctx, "launchctl", "print", l.target(profile))
-	if err != nil && ctx.Err() != nil {
+	switch {
+	case err == nil:
+		return true, out, nil
+	case ctx.Err() != nil:
 		return false, nil, ctx.Err()
+	case notFound(err):
+		return false, nil, nil
 	}
-	return err == nil, out, nil
+	return false, nil, &UnansweredError{Manager: "launchd", Name: l.Name(profile),
+		Err: fmt.Errorf("%w — launchd agents live in the owner's desktop session, and over SSH with nobody logged in to it there is no %s domain to ask", err, l.domain())}
 }
 
 // Install replaces any loaded job with the new plist. launchd reads a plist
@@ -139,13 +147,15 @@ func (l *Launchd) Install(ctx context.Context, s Spec) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Asked before anything is written: a launchd that cannot answer leaves
+	// the machine as it was.
+	ok, _, err := l.loaded(ctx, s.Profile)
+	if err != nil {
+		return nil, err
+	}
 	// launchd opens the log itself before starting the runner, and a missing
 	// directory is a job that never starts, with nothing logged anywhere.
 	if err := os.MkdirAll(filepath.Dir(s.LogFile), 0o700); err != nil {
-		return nil, err
-	}
-	ok, _, err := l.loaded(ctx, s.Profile)
-	if err != nil {
 		return nil, err
 	}
 	if ok {
@@ -270,6 +280,16 @@ func (l *Launchd) RestartCommand(profile string) []string {
 	return []string{"launchctl", "kickstart", "-k", l.target(profile)}
 }
 
+func (l *Launchd) StatusCommand(profile string) []string {
+	return []string{"launchctl", "print", l.target(profile)}
+}
+
+// UnloadCommand is bootout: launchd stops the job — a drain, as for a
+// restart — and forgets it, leaving the plist for an uninstall to remove.
+func (l *Launchd) UnloadCommand(profile string) []string {
+	return []string{"launchctl", "bootout", l.target(profile)}
+}
+
 // plistLog is the plist's StandardOutPath, XML-escaped as Render wrote it;
 // html's unescaping reads every entity encoding/xml writes.
 var plistLog = regexp.MustCompile(`<key>StandardOutPath</key>\s*<string>([^<]*)</string>`)
@@ -305,11 +325,11 @@ func notFound(err error) bool {
 // parsing; only the three lines it has carried for years are read, and a
 // change there shows as an unknown state, not a failure.
 //
-// Unlike install and uninstall, which may read any failed print as "not
-// loaded", Status tells the two apart: a start decides from it whether the
-// profile's runner is launchd's (decision 0074), and a job taken for absent
-// would be started a second time beside itself. A Status that failed still
-// carries what the plist says.
+// A launchd that cannot be asked is an error, as it is for install and
+// uninstall: a start decides from Status whether the profile's runner is
+// launchd's (decision 0074), and a job taken for absent would be started a
+// second time beside itself. A Status that failed still carries what the
+// plist says.
 func (l *Launchd) Status(ctx context.Context, profile string) (Status, error) {
 	if err := RefuseRoot(l.Host); err != nil {
 		return Status{}, err
@@ -322,15 +342,9 @@ func (l *Launchd) Status(ctx context.Context, profile string) (Status, error) {
 	if st.Installed {
 		st.LogFile = installedLog(st.File, plistLog, html.UnescapeString)
 	}
-	out, err := l.Host.Run.Run(ctx, "launchctl", "print", l.target(profile))
-	if err != nil {
-		if ctx.Err() != nil {
-			return st, ctx.Err()
-		}
-		if notFound(err) {
-			return st, nil
-		}
-		return st, fmt.Errorf("launchd could not say whether it holds %s: %w", st.Name, err)
+	ok, out, err := l.loaded(ctx, profile)
+	if err != nil || !ok {
+		return st, err
 	}
 	st.Loaded = true
 	st.Detail = "unknown"

@@ -473,7 +473,10 @@ func TestLaunchdInstall(t *testing.T) {
 
 func TestLaunchdBootstrapFailureNamesTheSession(t *testing.T) {
 	r := &fakeRunner{answer: func(call string, _ int) ([]byte, error) {
-		if strings.HasPrefix(call, "launchctl print") || strings.HasPrefix(call, "launchctl bootstrap") {
+		switch {
+		case strings.HasPrefix(call, "launchctl print"):
+			return nil, errors.New("exit status 113: Could not find service")
+		case strings.HasPrefix(call, "launchctl bootstrap"):
 			return nil, errors.New("exit status 125: Domain does not support specified action")
 		}
 		return nil, nil
