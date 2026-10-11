@@ -228,8 +228,9 @@ func census(table []Proc, leader int, helpers []string) ([]Leftover, bool) {
 			queue = append(queue, p.PID)
 		}
 	}
-	// A descendant that left its group with setsid is still the work's. The
-	// table is one moment's, so it is a tree, and in bounds the walk anyway.
+	// A descendant that left its group with setsid is still the work's. A
+	// table Linux's ps read over several moments can hold a cycle; in stops
+	// the walk at any pid it has already taken.
 	for len(queue) > 0 {
 		pid := queue[0]
 		queue = queue[1:]
