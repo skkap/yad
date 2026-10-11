@@ -83,6 +83,7 @@ func WriteRecord(dir string, r Record) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	shareLike(dir)
 	name := filepath.Join(dir, recordName(r.ConfigDir))
 	// A leading dot, so a reader passing over a write in progress skips it.
 	tmp, err := os.CreateTemp(dir, "."+recordName(r.ConfigDir)+".*")
@@ -102,6 +103,35 @@ func WriteRecord(dir string, r Record) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), name)
+}
+
+// shareLike opens the needs directory to whoever may write the directory
+// holding the binary: a group-writable bin directory shared by profiles of
+// several users lets each of them replace the binary, so each has to be able
+// to record what it needs beside it, whoever made the directory first. The
+// sticky bit keeps each user to their own records, as in /tmp. Best effort: a
+// directory another user made, and left narrower, fails the write that
+// follows, which says so.
+func shareLike(dir string) {
+	parent, err := os.Stat(filepath.Dir(dir))
+	if err != nil {
+		return
+	}
+	open := parent.Mode().Perm() & 0o022
+	if open == 0 {
+		return
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return
+	}
+	// Readable by all, as every record is, and writable by whoever may
+	// write beside the binary. Linux gives a new directory its maker's
+	// group, not its parent's, so the parent's is set too.
+	if fi.Mode().Perm()&open != open || fi.Mode()&os.ModeSticky == 0 {
+		os.Chmod(dir, 0o755|open|os.ModeSticky)
+	}
+	chownGroup(dir, parent)
 }
 
 // ReadRecord is the record dir holds for the profile at configDir, and whether

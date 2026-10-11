@@ -245,4 +245,32 @@ func TestARecordIsWrittenBesideTheRealBinary(t *testing.T) {
 	if err := WriteRecord(dir, Record{ConfigDir: "relative"}); err == nil {
 		t.Error("WriteRecord took a relative config directory")
 	}
+	if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm()&0o022 != 0 || fi.Mode()&os.ModeSticky != 0 {
+		t.Errorf("the needs directory beside a binary only its owner may replace is %v (%v), want it closed like its parent", fi.Mode(), err)
+	}
+}
+
+// A bin directory a group may write is one whose binary each member may
+// replace, so each has to be able to record beside it, whoever made the
+// needs directory first: the directory takes the parent's group write, and
+// the sticky bit keeps each user to their own records.
+func TestANeedsDirectoryIsWritableByWhoeverMayReplaceTheBinary(t *testing.T) {
+	bindir := t.TempDir()
+	if err := os.Chmod(bindir, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(bindir, NeedsDirName)
+	if err := WriteRecord(dir, Record{ConfigDir: profileDir(t), Profile: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm()&0o020 == 0 || fi.Mode()&os.ModeSticky == 0 {
+		t.Errorf("needs directory mode %v beside a group-writable bin directory, want group-writable and sticky", fi.Mode())
+	}
+	if fi.Mode().Perm()&0o002 != 0 {
+		t.Errorf("needs directory mode %v is world-writable, which its parent is not", fi.Mode())
+	}
 }

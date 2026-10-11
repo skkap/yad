@@ -31,7 +31,10 @@ What building it settled:
   connections that do (empty, never absent, for a hubless profile), and the
   yad that wrote it, when. It is written at start, in one rename, `0644`:
   nothing in it is secret, and an updater running as another user of the
-  binary has to read it.
+  binary has to read it. Beside a bin directory a group may write, the
+  needs directory takes that group and its write, with the sticky bit as
+  `/tmp` has it: each member may replace the binary, so each has to be able
+  to record beside it, whoever made the directory first.
 - **The record follows `config.toml`, not the process.** Once a minute the
   daemon looks at `config.toml` and writes again when its connections have
   changed or the record has gone missing. `yad connect` does not reach a

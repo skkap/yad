@@ -58,14 +58,17 @@ func readNeeds(t *testing.T, bin string, p config.Paths) (selfupdate.Record, boo
 // record goes missing — so a profile updating the binary can see it.
 func TestADaemonRecordsItsNeedsBesideItsBinary(t *testing.T) {
 	p, cfg, bin := needsProfile(t, "home")
+	// A `yad connect` lands after the daemon loaded config.toml and before
+	// it wrote its first record: the record is the file's, not the load's.
+	saveConnections(t, p, "home", "early")
 	var log bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	r := recordNeeds(ctx, p, cfg, bin, slog.New(slog.NewTextHandler(&log, nil)))
 
 	got, ok := readNeeds(t, bin, p)
-	if !ok || got.Profile != "work" || strings.Join(got.Protocols["1"], ",") != "home" || got.Written.IsZero() {
-		t.Fatalf("the record at start is %+v (there: %v), want profile work's home on v1", got, ok)
+	if !ok || got.Profile != "work" || strings.Join(got.Protocols["1"], ",") != "home,early" || got.Written.IsZero() {
+		t.Fatalf("the record at start is %+v (there: %v), want profile work's home and early on v1", got, ok)
 	}
 
 	saveConnections(t, p, "home", "zumino")

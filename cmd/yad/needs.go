@@ -47,10 +47,11 @@ type needsRecorder struct {
 // the runner: a record it cannot write is a warning in the log and a line in
 // `yad status`.
 func recordNeeds(ctx context.Context, p config.Paths, cfg config.Config, exe string, log *slog.Logger) *needsRecorder {
+	// No stamp yet, so the first refresh reads config.toml again and keeps
+	// the stat beside what it read: a `yad connect` that landed while the
+	// daemon was starting is in the first record. cfg is what the record
+	// says only if that read fails.
 	r := &needsRecorder{paths: p, every: needsEvery, log: log, protocols: connectionProtocols(cfg)}
-	if fi, err := os.Stat(p.ConfigFile()); err == nil {
-		r.stamp = fi
-	}
 	var err error
 	if r.configDir, err = filepath.Abs(p.Config); err != nil {
 		r.lost = fmt.Sprintf("the config directory %s has no absolute path: %v", p.Config, err)
