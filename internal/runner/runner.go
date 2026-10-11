@@ -107,7 +107,7 @@ func Serve(ctx context.Context, o Options) error {
 	defer st.Close()
 	// Before anything reads a row by its connection: a name `yad connect`
 	// gave to a new registration still holds what the earlier one left, and
-	// the new hub's ids would meet it (decision 0078).
+	// the new hub's ids would meet it (decision 0079).
 	unadopted := adoptRegistrations(ctx, st, o.Paths, o.Config.Connections, o.Log)
 	if o.Accounts == nil {
 		o.Accounts = NewAccounts(o.Paths.Data, account.ListsOf(o.Config))

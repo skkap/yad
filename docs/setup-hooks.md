@@ -29,7 +29,7 @@ say there was no hook.
 |---|---|
 | `WT_ROOT` | absolute path of the worktree, which is also the working directory |
 | `WT_MAIN` | absolute path of the runner's bare cache of the repository: every branch and the remote, but no working tree and no untracked files |
-| `WT_BRANCH` | the branch the run works on. Unless the hub names one, `yad/<connection>/<session>` — or `yad/<connection>.<n>/<session>` (n from 1) when an earlier hub connected under the same name used the same session id ([0078](decisions/0078-a-reused-connection-name-retires-the-earlier-registrations-rows.md)) |
+| `WT_BRANCH` | the branch the run works on. Unless the hub names one, `yad/<connection>/<session>` — or `yad/<connection>.<n>/<session>` (n from 1) when an earlier hub connected under the same name used the same session id ([0079](decisions/0079-a-reused-connection-name-retires-the-earlier-registrations-rows.md)) |
 | `WT_SLUG` | `WT_BRANCH` with every `/` replaced by `-` |
 | `WT_REPO` | the repository's name, taken from its URL |
 | `WT_SLOT` | a small integer from 1, unique among this repository's live worktrees on this runner. It is freed when the session's workdir is reclaimed, and reused |

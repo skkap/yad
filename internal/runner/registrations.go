@@ -12,7 +12,7 @@ import (
 
 // adoptRegistrations makes each configured connection's name the registration
 // config.toml says it is, moving whatever an earlier registration left under
-// the name to a retired name first (decision 0078). It runs once, at the
+// the name to a retired name first (decision 0079). It runs once, at the
 // daemon's start: a connection `yad connect` adds while a daemon runs is not
 // synced until the next one, so no loop can be writing under a name while it
 // is moved.

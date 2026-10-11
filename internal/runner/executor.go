@@ -1512,7 +1512,7 @@ func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native, forkOf string
 // freeWorkdir is the directory a session's first workdir goes in: named for
 // its connection and id, unless sessions of the same id were left under
 // earlier registrations of the connection's name, retired since (decision
-// 0078). Each of those took a workdir and a default git branch named for the
+// 0079). Each of those took a workdir and a default git branch named for the
 // same connection and id: the collector removes the workdir by its recorded
 // path, and the branch stays in the cache. So this one takes the path with a
 // mark no id's path name can carry, ~1, ~2 and so on, one past those, and

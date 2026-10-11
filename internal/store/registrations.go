@@ -26,7 +26,7 @@ type Retirement struct {
 }
 
 // AdoptRegistration makes the rows under conn the registration config.toml
-// names (decision 0078). registeredAt is the connection entry's registered_at:
+// names (decision 0079). registeredAt is the connection entry's registered_at:
 // when it is not the one recorded here, the name was given to a new
 // registration since — a different hub, or the same one after a disconnect —
 // and every row an earlier one left under the name is moved to

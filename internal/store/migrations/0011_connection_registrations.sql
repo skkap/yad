@@ -1,5 +1,5 @@
 -- Which registration the rows under a connection name belong to (decision
--- 0078). Everything here is keyed by (connection name, hub-chosen id), and a
+-- 0079). Everything here is keyed by (connection name, hub-chosen id), and a
 -- name comes free again once `yad disconnect` has ended what it left (0072):
 -- a different hub connected under it would meet the old hub's sessions and
 -- runs, refused as a closed session or colliding with a kept run, whenever it

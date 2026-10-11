@@ -80,7 +80,7 @@ hub. What the earlier one left is kept under a **retired name**,
 `<name>~<moment>`, which no connection can be given, so the new hub never
 meets the old one's sessions and runs. Registering again under a connection
 that still exists, to replace its credential, is the same registration.
-_See_: [0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md), [0078](docs/decisions/0078-a-reused-connection-name-retires-the-earlier-registrations-rows.md), `internal/config`, `internal/runner/disconnect.go`
+_See_: [0072](docs/decisions/0072-disconnect-retires-at-the-hub-then-tells-the-daemon.md), [0079](docs/decisions/0079-a-reused-connection-name-retires-the-earlier-registrations-rows.md), `internal/config`, `internal/runner/disconnect.go`
 
 **Registration token** — the one-time, short-lived secret a hub issues so that
 `yad connect` can register a runner. Exchanged once for a **runner credential**,

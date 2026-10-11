@@ -93,7 +93,7 @@ type Request struct {
 	// Retake is set when earlier sessions of the same id, under earlier
 	// registrations of the connection's name, took the plain default branch
 	// and workdir: their branches are still in the cache, so the default
-	// branch here carries the same mark the workdir does (decision 0078).
+	// branch here carries the same mark the workdir does (decision 0079).
 	// Empty for every other session.
 	Retake  string
 	Sources []v1.Source

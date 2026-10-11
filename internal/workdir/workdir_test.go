@@ -939,7 +939,7 @@ func TestUnnamedBranchesAreConnectionScoped(t *testing.T) {
 }
 
 // A session that reuses the id of one a retired registration of its
-// connection's name left (decision 0078) gets a branch of its own, not that
+// connection's name left (decision 0079) gets a branch of its own, not that
 // one's, which is still in the cache with its commits.
 func TestARetakenSessionDoesNotInheritTheEarlierOnesBranch(t *testing.T) {
 	f := newFixture(t)

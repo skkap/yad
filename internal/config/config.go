@@ -67,7 +67,7 @@ type Connection struct {
 	// milliseconds, and nothing changes it after: registering again with the
 	// same hub keeps it. The daemon compares it with the registration its
 	// state database holds rows for, and moves an earlier registration's rows
-	// under this name aside before the connection syncs (decision 0078).
+	// under this name aside before the connection syncs (decision 0079).
 	// Absent on an entry made before the field; such a one is adopted as is.
 	RegisteredAt int64 `toml:"registered_at,omitempty"`
 }

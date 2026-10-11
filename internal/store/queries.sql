@@ -448,7 +448,7 @@ UPDATE harness_silence SET until = sqlc.arg(now) WHERE until > sqlc.arg(now);
 -- name: ListHarnessSilence :many
 SELECT * FROM harness_silence ORDER BY harness, label;
 
--- The registration a connection name's rows belong to (decision 0078).
+-- The registration a connection name's rows belong to (decision 0079).
 -- name: ConnectionRegistration :one
 SELECT registered_at FROM connection_registrations WHERE connection = ?;
 
@@ -483,7 +483,7 @@ UPDATE slots SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(conn
 -- hub under a reused name can derive the directory an earlier registration's
 -- session recorded: one the collector will remove while it is unreclaimed,
 -- named like the git branches that session left in the caches (decision
--- 0078).
+-- 0079).
 -- How many sessions of this id the retired registrations of a name left
 -- (retired is '<name>~'), each of which took a workdir and a default branch
 -- named for the id. Counted by name rather than by matching a recorded path,
