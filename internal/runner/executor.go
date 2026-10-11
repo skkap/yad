@@ -623,15 +623,12 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			if stoppedEarly() {
 				return
 			}
-			class, msg := ClassPrepare, err.Error()
-			var r archiveRefusal
-			if errors.As(err, &r) {
-				class, msg = r.class, r.msg
-			} else {
-				log.Warn("the session's archive could not be opened", "err", err)
-				msg = e.localFailure("the session's archive could not be opened on this runner", err)
+			if r, ok := errors.AsType[archiveRefusal](err); ok {
+				fail(r.class, r.msg)
+				return
 			}
-			fail(class, msg)
+			log.Warn("the session's archive could not be opened", "err", err)
+			fail(ClassPrepare, e.localFailure("the session's archive could not be opened on this runner", err))
 			return
 		}
 		if imported != "" {
