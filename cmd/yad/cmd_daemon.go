@@ -166,6 +166,18 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	// A read that fails is not a reason not to start — the labels are still
 	// reported, free, which is what a runner with no limits would say.
 	noted := modelsNoted{}
+	monitor := runner.NewMonitor()
+	// The harnesses with a run held count in the runner-wide per-run
+	// features whether or not they are drivable now (DEV-169). A read that
+	// fails counts none, which is the document a runner with no run in hand
+	// sends: the strings then follow the drivable harnesses alone.
+	held := func() []string {
+		h, err := monitor.HeldHarnesses(runCtx)
+		if err != nil {
+			log.Warn("could not read which harnesses have runs held; the runner-wide features count the drivable harnesses alone", "err", err)
+		}
+		return h
+	}
 	build := func() v1.Capabilities {
 		now := lists.Lists()
 		accounts, silences, err := account.ReadAll(runCtx, g.paths, now, time.Now())
@@ -175,7 +187,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 		// This start ends every cool-down (decision 0077), and the first
 		// document is built before Serve has written that down.
 		accounts, silences = account.EndedAtStart(accounts, silences, started)
-		doc := capability.Build(runCtx, id, now.Apply(cfg), capability.State{Accounts: accounts, Silences: silences, Paths: g.paths})
+		doc := capability.Build(runCtx, id, now.Apply(cfg), capability.State{Accounts: accounts, Silences: silences, Paths: g.paths, Held: held()})
 		noted.note(log, capability.ModelsFailures())
 		return doc
 	}
@@ -205,10 +217,15 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 		defer mu.Unlock()
 		return doc
 	}
-	monitor := runner.NewMonitor()
 	// An account change rebuilds the document now rather than at the next
 	// tick, so a hub hears of the new account within one sync.
 	rebuild := make(chan struct{}, 1)
+	// A run ending counts the harnesses with runs held again now, so a
+	// harness that stopped being drivable while its run went on leaves the
+	// runner-wide features as soon as that run is over. Only the features
+	// are recomputed, from the reports already probed: a queue of short runs
+	// must not spawn every harness's --version once per run.
+	recount := make(chan struct{}, 1)
 	// Off unless config.toml turns it on (decision 0071). The path is read
 	// now, before a release can replace the file it names.
 	var updater *selfupdate.Updater
@@ -287,6 +304,12 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 				default:
 				}
 			},
+			RunEnded: func() {
+				select {
+				case recount <- struct{}{}:
+				default:
+				}
+			},
 		})
 	}()
 
@@ -294,6 +317,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	defer tick.Stop()
 	for {
 		var t time.Time
+		var next v1.Capabilities
 		select {
 		case err := <-served:
 			switch {
@@ -337,10 +361,13 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			}
 			return err
 		case t = <-tick.C:
+			next = build()
 		case <-rebuild:
-			t = time.Now()
+			t, next = time.Now(), build()
+		case <-recount:
+			t, next = time.Now(), current()
+			next.ProtocolFeatures = capability.Features(next.Harnesses, held()...)
 		}
-		next := build()
 		if fp := capability.Fingerprint(next); fp != last {
 			log.Info("capabilities changed", "from", last, "to", fp)
 			fmt.Fprintf(w, "%s capabilities changed %s → %s\n", t.Format(time.TimeOnly), last, fp)

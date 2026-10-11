@@ -489,13 +489,13 @@ type daemon struct {
 	once sync.Once
 }
 
-func (m *machine) daemon() *daemon {
+func (m *machine) daemon(args ...string) *daemon {
 	m.t.Helper()
 	m.t.Setenv("YAD_CONFIG_DIR", m.p.config)
 	m.t.Setenv("YAD_DATA_DIR", m.p.data)
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &daemon{stop: cancel, done: make(chan int, 1), out: &syncBuffer{}}
-	go func() { d.done <- run(ctx, []string{"daemon", "start", "--foreground"}, d.out, d.out) }()
+	go func() { d.done <- run(ctx, append([]string{"daemon", "start", "--foreground"}, args...), d.out, d.out) }()
 	m.t.Cleanup(func() { d.halt(m.t) })
 	return d
 }
