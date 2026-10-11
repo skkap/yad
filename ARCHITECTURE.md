@@ -136,6 +136,8 @@ Contract: [HUB.md §3](HUB.md#3-the-calls), one call at a time, and
 | `POST /runs/{run}/events` | a batch of events, idempotent by `(run, seq)`; answers `acked_through` |
 | `POST /runs/{run}/result` | the terminal state, idempotent; retried from the outbox until acknowledged |
 | `POST /runners/{runner}/deregister` | the credential dies; the hub marks held runs lost (a claim it has asked to cancel, cancelled — 0061), requeues its offers, and closes its sessions, ending the runs queued in them |
+| `PUT /sessions/{session}/archive` | a session's archive, as bytes, from the runner releasing it; idempotent by its sha256 (0080) |
+| `GET /sessions/{session}/archive` | the archive back, to the runner a run of the released session is offered to or bound to (0080) |
 
 Every request carries `Authorization: Bearer <runner credential>` (the
 registration token, for `register` only), `Yad-Protocol: 1` and
@@ -182,12 +184,15 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
     runs: [{ run_id, state, resumes_at?, reason? }],    // every run held
     closed_sessions: [{ session_id, reason, closed_at }],  // until answered
     logins: [{ login_id, harness?, account?, method?, state,
-               url?, user_code?, error?, updated_at }] }    // until answered
+               url?, user_code?, error?, updated_at }],     // until answered
+    released_sessions: [{ session_id, released_at,
+                          archive?: {sha256, bytes},
+                          error?: {code, message, next_action} }] }  // until answered
 ← { next_sync_ms, lease_ms,
     runs: [Run],                                  // never more than free capacity
     controls: [{ kind, run_id?, session_id?, text?,
-                 login_id?, harness?, account?, code?, token? }],
-    min_version? }
+                 login_id?, harness?, account?, code?, token?, discard_local? }],
+    min_version?, archive_max_bytes? }
 ```
 
 - **Account state**: `free`, `limited` (until `limited_until`) or `needs_login`
@@ -217,8 +222,8 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   `report_capabilities`, `update` (reserved, and ignored: a runner updates
   itself only when its owner turns it on —
   [0071](docs/decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)), the four of hub
-  login: `start_login`, `login_code`, `login_token`, `cancel_login`, and
-  `remove_account`.
+  login: `start_login`, `login_code`, `login_token`, `cancel_login`,
+  `remove_account`, and `release_session`.
 - **Controls are not acknowledged**, so a hub repeats `cancel` and `interrupt`
   in every response to a sync listing the run, until the run ends; the runner
   acts on the first. An interrupt counts once it reaches the harness: one a
@@ -284,6 +289,21 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   decides: health names only harnesses the runner can drive, and at most
   sixteen accounts of each), or the runner stops advertising `accounts`.
   An added account is the machine's, and every hub's runs rotate through it.
+- **Releasing a session** — [0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md).
+  A hub sends `release_session {session_id, discard_local?}` only to a runner
+  advertising `release` for the session's harness — a per-run feature, and
+  per hub: a connection with `release_sessions = false` is sent it nowhere —
+  and repeats it until the session is in the runner's `released_sessions`,
+  offering nothing in the session meanwhile. The runner waits for a run held
+  in it, refuses work its remote does not have unless `discard_local`, a path
+  source, and a session with no conversation; otherwise it uploads the
+  session archive with `PUT /sessions/{session}/archive` (bytes, sha256 in
+  `Yad-Archive-Sha256`, under the hub's `archive_max_bytes`), closes the
+  session as released once the hub answers 2xx, and reports it with the
+  archive's sha256 and size. The hub unbinds the session and offers its next
+  run as opening it, with `session.archive`, to another runner advertising
+  `release`, which fetches the archive with `GET`. Not a close reason: those
+  are closed for v1.
 - **Claim by listing.** A run offered in a sync response is claimed when the
   runner lists it in its next sync. An offered run that the next sync does not
   list was never received, and the hub offers it again. The runner takes the
@@ -324,7 +344,8 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   answered with `cancel`. A run the runner will not take is reported as a
   `failed` result with error class `refused`.
 - **Sessions stay put.** The first claim in a session binds it to that runner;
-  its later runs are offered to that runner alone, one at a time.
+  its later runs are offered to that runner alone, one at a time, until its
+  hub releases it (below).
 - **Lease.** Every sync renews the lease on every run it lists. A run whose lease
   lapses (default: four missed intervals) is **lost** on the hub's side — a
   claim the hub has asked to cancel, **cancelled** (0061). The
@@ -363,7 +384,7 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
 Contract: [HUB.md §4](HUB.md#4-runs), and [§9](HUB.md#9-grants) for grants.
 
 ```
-{ run_id, session: { id, new, mode: "per_run", fork_from? },
+{ run_id, session: { id, new, mode: "per_run", fork_from?, archive?: {sha256, bytes} },
   harness, model, effort?,
   brief: { context, instruction },
   sources: [{ git: { url, base, branch } } | { path }],
@@ -495,7 +516,7 @@ document says `path_sources: false`, which would refuse it
 whose fingerprint moved without the document it promised is treated as
 advertising neither, until the document it is asked for arrives.
 
-`steer`, `interrupt`, `effort` and `fork` are **per-run features**: the harness
+`steer`, `interrupt`, `effort`, `fork` and `release` are **per-run features**: the harness
 a run targets decides them, not the runner. A runner lists each harness's in
 that harness's report (`features`) and advertises `harness_features` to say
 so; a hub reading it gates a run, and a control on a run, on the list of the
@@ -566,7 +587,8 @@ Not part of the protocol, and never implemented by a hub that embeds it:
 | `GET /runners` | every runner this hub knows, newest sync first, each with the health its last sync carried — load, free capacity, disk, per-harness readiness with each account's state and windows, spool and outbox depth, recent errors |
 | `GET /runners/{runner}` | one runner, the same view |
 | `POST /runners/{runner}/drain` | a `drain` control, repeated until the runner says it is draining; 409 for a runner without the `drain` feature |
-| `GET /sessions/{session}` | the session: its runner, and `open`, `closing` or `closed` with the reason |
+| `GET /sessions/{session}` | the session: its runner, and `open`, `closing` or `closed` with the reason; `release` says `releasing` or `released`, beside the archive the hub holds and the last refusal |
+| `POST /sessions/{session}/release` | `{discard_local?}`: its runner hands the session back (0080), and its next run opens it on another runner from its archive; 409 for a session on no runner, closed or closing, or on a runner without `release` for its harness |
 | `POST /sessions/{session}/close` | a session no runner holds closes here, its unstarted runs cancelled; a held one gets `close_session` until its runner reports it closed; 409 for a runner without the `close_session` feature. A closing or closed session takes no new run |
 | `POST /runners/{runner}/logins` | a hub login for `{harness, account?, add?}`: by link, or by token with `token` — `requested` until the runner's next sync takes it; 409 for a runner without the `login` feature, and for an `add` to one without `accounts`. A newer login for the account replaces an older one |
 | `GET /runners/{runner}/logins/{login}` | the login's state, its `url` (and for Codex its `user_code`) while `waiting`, and the runner's `error` at an end; never its code or token |
@@ -928,6 +950,29 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   reclaim (`yad-teardown-done`), again after a cancelled one. A failure is a
   warning in the log and the reclaim goes on
   ([0080](docs/decisions/0080-reclaiming-a-workdir-runs-its-teardown-hook-first.md)).
+- **Releasing** — [0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md):
+  `runner.Releases`, one for every connection, built like the collector and
+  woken when a run ends. A `release_session` writes a `releases` row; once no
+  run is held in the session the worker checks it (`workdir.Manager.Local`
+  for each git worktree's uncommitted changes and commits no branch of
+  `origin` holds — read from the worktree, nothing fetched), has the
+  harness's `adapter.Releaser` list the conversation (`Export`; Claude's
+  `<native>.jsonl` and `<native>/`), and packs a gzip'd tar of it and a
+  manifest under `<data>/releases/`, 0600. It uploads it as the reporter
+  sends a result, with backoff, and on a 2xx settles the release and closes
+  the session as `released` in one transaction — reported in
+  `released_sessions`, never in `closed_sessions` — then deletes the
+  conversation (`Forget`), and the collector reclaims the workdir. A run
+  opening a released session (`session.archive`) creates the session with the
+  archive it opens from; the executor fetches it in `preparing`, checks its
+  size and sha256, unpacks it (plain files under `conversation/` only),
+  imports it (`Import`: the shared transcripts when the harness has accounts,
+  its default home otherwise, under the project directory of this workdir,
+  the companion directory's path rewritten but inside a thinking block) and
+  pins the native id, then prepares the sources with the branches the
+  manifest carries. A failure keeps the archive on the session for its next
+  run: `archive_rejected` for one it will not take, `prepare_failed` for a
+  fault here.
 - **Reclaiming** — [0011](docs/decisions/0011-hub-closes-sessions-runner-collects.md),
   [0035](docs/decisions/0035-a-runner-reports-every-close-in-its-sync.md):
   on `close_session`, on the owner's `yad sessions close`, on the idle TTL
@@ -1349,6 +1394,7 @@ name = "yashiki"
 url  = "https://ashikaga.tail.ts.net/yad/v1"
 cap  = 2   # at most this many runs held for this hub at once; absent = only capacity limits it
 manage_accounts = false   # this hub may not add or remove accounts; absent = it may — 0057. Read at start
+release_sessions = false  # this hub may not release sessions, nor send one another runner released; absent = it may — 0080
 registered_at = 1760227200000   # written by yad connect when it adds the entry, never by hand: which registration the state under this name belongs to — 0079
 
 [sessions]
@@ -1385,7 +1431,11 @@ Go generated by `sqlc` and committed. Tables: `sessions`, `runs`, `events`
 account's state, and its reset when limited), `harness_silence` (each home's
 run of silent starts and the end of its cool-down, label `''` for a harness's
 own login — 0077), `slots`, `connection_registrations` (the `registered_at`
-the rows under each connection name belong to — 0079); a session row keeps the sources its workdir was built from. Session and run ids are the hubs', so every one is keyed with
+the rows under each connection name belong to — 0079), `releases` (each
+release a hub asked for: its archive once built, its upload's retries, how it
+ended and whether the hub heard — 0080); a session row keeps the sources its
+workdir was built from, and for one opened from an archive the archive until
+its conversation is in place and the branches it carried. Session and run ids are the hubs', so every one is keyed with
 its connection: two hubs may pick the same id. A name `yad disconnect` freed
 may be given to another hub, so the daemon's start compares each connection's
 `registered_at` in `config.toml` with the one recorded, and moves an earlier
@@ -1424,6 +1474,13 @@ A login's `add_account` marks one that creates its account, and
 `account_removals` holds each removal asked for until neither the runner's
 capability document nor its health lists the account
 ([0057](docs/decisions/0057-a-hub-may-add-and-remove-accounts-unless-the-owner-says-no.md)).
+A session's `release_requested_at`, `release_error`, `released_at` and
+`released_from` say where its release is, and `session_archives` holds the
+archive a runner uploaded, as a blob, `released` once its release is
+reported: deleted once a run of the session is running or has succeeded on
+the runner that opened it, by the `sessions_forget_archive` trigger when the
+session closes, and after the archive TTL
+([0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md)).
 Both databases are opened with `secure_delete`, so freed bytes are zeroed
 rather than left in the file.
 
@@ -1495,6 +1552,9 @@ yad hub drain <runner>             the runner takes no new runs, finishes those 
                                    holds and exits
 yad hub close-session <session>    the session takes no new run; its runner deletes
                                    its workdir
+yad hub release-session [--discard-local] <session>
+                                   its runner hands it back (0080); waits for how
+                                   that went, and fails with the runner's reason
 yad hub login start <runner> <harness> [account] [--add] [--code -]
                                    log an account in on a runner by link: prints the
                                    link once the runner has it, reads the code on stdin
@@ -1647,6 +1707,12 @@ line here is a reviewed change.
   sessions — and `e2e_opencode_test.go` runs its own: a run through the
   runner and the hub, a steer the hub refuses from OpenCode's feature list,
   and an interrupt.
+  Two runner processes on one hub (`e2e_release_test.go`), each with a Claude
+  home of its own: a run learns a word and pushes, `yad hub release-session`
+  releases its session, and the next run lands on the other runner, which
+  opens it from its archive — the fake claude keeps its transcripts as
+  claude does, `projects/<workdir>/<id>.jsonl` — and answers with the word,
+  on the first runner's branch.
   `internal/workdir`'s tests use local bare repositories, and a loopback TLS
   server for a remote that asks for a password or never answers — and git's
   own `git-http-backend` behind one, answering only one credential, for a

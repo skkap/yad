@@ -196,7 +196,7 @@ func checks() []check {
 		run:     checkOfferedRunIsValid,
 	}, {
 		id:      "run/gated-features",
-		rule:    "Neither side uses what the other did not advertise: a run in a live session goes only to a runner advertising live_sessions, a run whose start_at is still ahead only to one advertising start_at, since any other runner starts it on arrival, a run carrying an effort only to one advertising effort for the run's harness, since any other runs the harness at its default, and a run opening a fork only to one advertising fork for it, since any other opens the session with none of the conversation it forks. For the harness: a runner advertising harness_features is answered by that harness's own list, and this one lists nothing for its only harness while advertising both runner-wide.",
+		rule:    "Neither side uses what the other did not advertise: a run in a live session goes only to a runner advertising live_sessions, a run whose start_at is still ahead only to one advertising start_at, since any other runner starts it on arrival, a run carrying an effort only to one advertising effort for the run's harness, since any other runs the harness at its default, a run opening a fork only to one advertising fork for it, since any other opens the session with none of the conversation it forks, and a run opening a session from a session archive only to one advertising release for it, since any other opens the session with none of the conversation released. For the harness: a runner advertising harness_features is answered by that harness's own list, and this one lists nothing for its only harness while advertising both runner-wide.",
 		section: hubControls,
 		needs:   heldRun,
 		run:     checkGatedRunsAreNotOffered,

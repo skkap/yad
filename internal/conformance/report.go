@@ -25,7 +25,7 @@ var unchecked = []struct {
 	sections: []section{hubControls},
 	why:      "nothing in the protocol asks a hub for a control: only a hub's own API can, and that is outside v1. A conformance runner can only wait for one it cannot cause.",
 }, {
-	rule:     "start_at, min_version, the feature gates on drain, steer, interrupt, close_session, start_at, effort and fork, and holding back every gated control and gated run while a fingerprint has moved and its document has not arrived.",
+	rule:     "start_at, min_version, the feature gates on drain, steer, interrupt, close_session, start_at, effort, fork and release, and holding back every gated control and gated run while a fingerprint has moved and its document has not arrived.",
 	sections: []section{hubControls, hubVersioning},
 	why:      "each needs a run or a control the protocol gives a runner no way to ask for. What is checked is the other half of the same rule: that a hub sends no control it should have gated.",
 }, {
@@ -36,6 +36,10 @@ var unchecked = []struct {
 	rule:     "Adding and removing accounts: start_login and login_token carrying add, and remove_account, only while the runner advertises accounts to this hub; remove_account repeated until neither the runner's capability document nor its health lists the account, or the runner stops advertising accounts.",
 	sections: []section{hubControls},
 	why:      "only a hub's own API adds or removes an account, which is outside v1, and this runner advertises no accounts feature to be sent either. What is checked is that neither is sent to it.",
+}, {
+	rule:     "Releasing a session: release_session repeated until the runner reports the session in released_sessions, the session's runs held back meanwhile; a report believed only from the runner the session is bound to; the archive taken with PUT only from that runner while a release is asked for, and handed out with GET only to a runner a run of the session is offered to or bound to; a released session's next run offered opening it, with session.archive, to another runner advertising release for its harness; the archive kept until a run opened from it is running, the session closes or the archive's own time is up.",
+	sections: []section{hubSessions},
+	why:      "only a hub's own API asks for a release, which is outside v1, and this runner advertises release runner-wide alone, with an empty list for its harness, so none is sent to it. What is checked is that neither release_session nor a run carrying session.archive reaches it.",
 }, {
 	rule:     "Sessions stay put: the first claim in a session binds it to that runner, its later runs are offered to that runner alone, one at a time, and session.new is true for the run that opens a session and false for every later one.",
 	sections: []section{hubSessions},

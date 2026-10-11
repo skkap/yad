@@ -101,6 +101,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawOffersLiveMode, check: "run/gated-features", want: Failed},
 		{flaw: flawOffersEffort, check: "run/gated-features", want: Failed},
 		{flaw: flawOffersFork, check: "run/gated-features", want: Failed},
+		{flaw: flawOffersArchive, check: "run/gated-features", want: Failed},
 		{flaw: flawUngatedControl, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawUngatedLogin, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawUngatedRemoval, check: "versioning/controls-are-gated", want: Failed},

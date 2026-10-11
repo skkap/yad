@@ -336,10 +336,10 @@ func checkEventsAfterTheRunEnds(ctx context.Context, s *session) error {
 }
 
 // checkGatedRunsAreNotOffered is the offer side of HUB.md's feature rule: the
-// four things in a run that only a runner advertising a feature may be
+// five things in a run that only a runner advertising a feature may be
 // given. This runner advertises start_at and live_sessions not at all, and
-// effort and fork only runner-wide, beside harness_features and an empty list
-// for its harness, so it must be offered none of them.
+// effort, fork and release only runner-wide, beside harness_features and an
+// empty list for its harness, so it must be offered none of them.
 func checkGatedRunsAreNotOffered(_ context.Context, s *session) error {
 	for _, run := range s.offers {
 		switch {
@@ -354,6 +354,9 @@ func checkGatedRunsAreNotOffered(_ context.Context, s *session) error {
 		case run.Session.ForkFrom != "":
 			return brokenf("the hub offered run %s opening session %s as a fork of %s, which goes only to a runner advertising fork for the run's harness — any other opens the session with none of the conversation it forks; this runner advertises harness_features, and its harness's list, the answer for its runs, has no fork",
 				run.RunID, run.Session.ID, run.Session.ForkFrom)
+		case run.Session.Archive != nil:
+			return brokenf("the hub offered run %s opening session %s from a session archive, which goes only to a runner advertising release for the run's harness — any other opens the session with none of the conversation released; this runner advertises harness_features, and its harness's list, the answer for its runs, has no release",
+				run.RunID, run.Session.ID)
 		}
 	}
 	return nil

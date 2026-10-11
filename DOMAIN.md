@@ -65,7 +65,9 @@ remove them unless the owner turned that off for its connection
 _See_: [0003](docs/decisions/0003-hub-is-a-role-runner-is-multi-homed.md), `internal/hub`
 
 **Connection** — one runner's standing registration with one hub: the hub URL,
-the runner credential, and the owner's caps for it. A runner has one connection
+the runner credential, and the owner's caps for it — what it may run, and
+whether it may manage accounts (`manage_accounts`) or release sessions
+(`release_sessions`). A runner has one connection
 per hub and any number of hubs.
 _Rules_: `yad disconnect` ends one in a fixed order: the hub retires the runner
 first — its held runs lost, its sessions there closed — then `config.toml` and
@@ -105,7 +107,7 @@ _Rules_: Every connected hub reads it, so the runner writes it without a path
 on the machine and without quoting what a harness or tool printed (DEV-67). A
 run's error goes only to the hub that sent the run, and may name a path
 ([0064](docs/decisions/0064-a-runs-error-may-name-a-path-on-the-runner.md)).
-A **per-run feature** — steer, interrupt, effort, fork — is the harness's:
+A **per-run feature** — steer, interrupt, effort, fork, release — is the harness's:
 each harness lists its own, and the runner-wide string says only what every
 harness this machine can drive, and every harness with a run held, supports
 ([0069](docs/decisions/0069-a-per-run-feature-is-its-harnesss.md)).
@@ -284,7 +286,8 @@ a first-class thing here: a hub must be able to say "continue the conversation
 you were having about ZUM-19" without knowing what a rollout file is.
 _Kinds_: per_run (a fresh harness process per run — the default) | live (one
 process kept across runs — reserved, not built)
-_Rules_: A session lives on one runner and is resumable only there. At most one
+_Rules_: A session lives on one runner and is resumable only there, until its
+hub **releases** it (below). At most one
 run is live in a session at a time. A session may move between accounts of its
 harness: the transcript is the whole of the harness's side of it, it lives once
 in a directory every account home links to, and a home that never created the
@@ -299,6 +302,11 @@ When its runner deregisters, the hub closes it on its own and ends the runs
 still queued in it: the session is never handed to another runner, since it is
 resumable only on the one that went. The runner closes it too, as closed by
 the owner, and tells no hub.
+A session its hub **releases** leaves its runner: the runner uploads the
+session's conversation as a **session archive** and closes the session as
+released, and the session's next run opens it on another runner from that
+archive, under the same id — continuing the conversation, with a workdir built
+again from its sources ([0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md)).
 A session may be opened as a **fork** of another on the same runner: its
 conversation starts as the harness's copy of that one's, and the two diverge —
 the one forked goes on untouched. A fork is a session like any other from its
@@ -307,7 +315,32 @@ _States_: open | closed (its hub or its owner closed it) | expired (the idle TTL
 or disk pressure did)
 _Avoid_: thread, conversation, chat — as names for this; Codex's "thread" is the
 native id underneath
-_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md), `internal/store`
+_See_: [0007](docs/decisions/0007-sessions-map-never-wrap.md), [0031](docs/decisions/0031-a-failed-resume-is-the-hubs-to-decide.md), [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md), [0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md), `internal/store`
+
+**Release** — a hub handing a session back from the runner that holds it, so
+that its next run can go to another: the runner builds the session archive
+once no run is held in the session, uploads it to the hub, closes the session
+as released and reclaims its workdir and conversation; the hub offers the
+session's next run as one opening it, with the archive, to another runner
+whose harness can open one.
+_Rules_: Asked for by a hub, never by the runner or its owner. On unless the
+owner turns it off for a connection (`release_sessions = false`), which also
+stops that hub sending the runner a session to open. Refused, and the session
+left as it was, when its workdir holds work its remote does not — changes not
+committed, commits not pushed — unless the hub says `discard_local`; when a
+source is a directory on the machine; and when no run has started its
+conversation. A release puts the whole conversation in the hub's hands and in
+the next runner's. Claude's sessions only, for now.
+_Avoid_: hand-off, migrate, move, transfer — and the release `yad upgrade`
+installs, a tagged build of this binary, which shares only the word
+_See_: [0080](docs/decisions/0080-a-hub-may-release-a-session-to-resume-on-another-runner.md), `internal/runner/release.go`, `internal/hub/archive.go`
+
+**Session archive** — what a release carries: a session's conversation, as
+its harness keeps it, and a manifest naming the harness, its version, the
+native id and each git source's branch. Opaque to a hub, which stores it and
+hands it back; read only by the runner that opens the session from it.
+_Avoid_: bundle, transcript, export — a transcript is the harness's own file,
+one part of what an archive holds
 
 **Run** — one turn executed against one session, by one harness, on one model:
 one prompt in, one terminal state out. The unit of work claimed, streamed and
@@ -472,7 +505,8 @@ and an optional wall-clock cap set per run.
   sees many runners and never the others' hubs.
 - A hub's own unit of work — a Zumino task, a yashiki thread — produces one or
   more **runs**. YAD never learns what produced a run.
-- A **session** belongs to one runner and one harness, holds one **workdir**, and
+- A **session** belongs to one runner at a time — another once its hub
+  releases it — and to one harness, holds one **workdir** on that runner, and
   has many **runs**; a run belongs to exactly one session.
 - A run uses one **account** at a time; a waiting run may resume on another
   account of the same harness.
@@ -515,8 +549,4 @@ and an optional wall-clock cap set per run.
 
 ## Open questions
 
-- **Release** — handing a session back to its hub so it can resume on another
-  runner (Anthropic's runners have it). Needs a transcript that moves; no consumer
-  asks for it yet. Not the *release* `yad upgrade` installs: that one is a tagged
-  build of this binary, and the two words only ever meet in this line.
 - **Live** sessions: when, and what idle cost a runner accepts.
