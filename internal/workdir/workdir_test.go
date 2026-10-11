@@ -65,6 +65,13 @@ func (f *fakeSlots) Slot(_ context.Context, repo, connection, session string) (i
 	return s, nil
 }
 
+func (f *fakeSlots) HeldSlot(_ context.Context, repo, connection, session string) (int64, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.slots[repo+"/"+connection+"/"+session]
+	return s, ok, nil
+}
+
 func (f *fakeSlots) ReleaseSlots(_ context.Context, connection, session string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
