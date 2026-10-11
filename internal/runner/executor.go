@@ -279,7 +279,7 @@ func (e *Exec) init() {
 			w := e.Config.Workdirs
 			e.Workdirs = &workdir.Manager{
 				Data: e.Data, Roots: w.EffectiveRoots(), PathSourcesOff: !w.AllowsPathSources(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
-				TeardownTimeout: w.TeardownTimeout.Duration, Slots: e.Store, Log: e.Log,
+				TeardownTimeout: w.TeardownTimeout.Duration, Slots: e.Store, Holders: e.Store, Log: e.Log,
 			}
 		}
 	})
@@ -1203,6 +1203,9 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 	if res.Error != nil {
 		reason = sql.NullString{String: res.Error.Message, Valid: true}
 	}
+	// Before the result: once the hub has it, the session's next run may
+	// come at once, and so may another session naming the same branch.
+	e.settle(ctx, c)
 	now := time.Now().UnixMilli()
 	err = e.Store.Tx(ctx, func(q *db.Queries) error {
 		if also != nil {
@@ -1238,6 +1241,23 @@ func (e *Exec) finishWith(ctx context.Context, c Claim, res v1.Result, also func
 		e.Ended()
 	}
 	return nil
+}
+
+// settle lets go of a branch the hub named, when the run's session left it
+// pushed and clean, so another session may check it out; the session's next
+// run takes it back (decision 0080). A failure leaves the branch where it was.
+func (e *Exec) settle(ctx context.Context, c Claim) {
+	if e.Workdirs == nil {
+		return
+	}
+	sess, err := e.Store.GetSession(ctx, db.GetSessionParams{Connection: c.Connection, ID: c.Run.Session.ID})
+	if err != nil {
+		return
+	}
+	if err := e.Workdirs.Settle(ctx, sess.Workdir); err != nil {
+		e.Log.Warn("the session's branch could not be let go of; a session naming it is refused until a later run of this one ends",
+			"connection", c.Connection, "session", c.Run.Session.ID, "err", err)
+	}
 }
 
 func (e *Exec) setState(ctx context.Context, c Claim, s v1.RunState) {

@@ -188,6 +188,10 @@ type Loop struct {
 	// counts it, so a harness that stopped being drivable during that build
 	// still counts while its run is held (DEV-169). Nil tells nobody.
 	HeldChanged func()
+	// Settle lets go of a branch a session reported lost here left pushed
+	// and clean, as a run that ends does (workdir.Manager.Settle). Nil
+	// keeps every branch.
+	Settle func(ctx context.Context, dir string) error
 
 	sentFingerprint string
 	wantDocument    bool
@@ -1195,9 +1199,28 @@ func (l *Loop) Recover(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		l.settle(ctx, r.SessionID)
 	}
 	l.recovered = true
 	return nil
+}
+
+// settle lets go of the branch of a session whose run was reported lost
+// (decision 0080). After the result is recorded rather than before, as
+// finishWith does it: nothing is offered before Recover returns, and a
+// failure here must not keep the lost run from being reported.
+func (l *Loop) settle(ctx context.Context, session string) {
+	if l.Settle == nil {
+		return
+	}
+	s, err := l.Store.GetSession(ctx, db.GetSessionParams{Connection: l.Connection, ID: session})
+	if err != nil {
+		return
+	}
+	if err := l.Settle(ctx, s.Workdir); err != nil {
+		l.Log.Warn("the session's branch could not be let go of; a session naming it is refused until a later run of this one ends",
+			"connection", l.Connection, "session", session, "err", err)
+	}
 }
 
 // floorOf is the latest moment a run is known to have still been going: the

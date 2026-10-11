@@ -132,7 +132,7 @@ func Serve(ctx context.Context, o Options) error {
 	w := o.Config.Workdirs
 	workdirs := &workdir.Manager{
 		Data: o.Paths.Data, Roots: w.EffectiveRoots(), PathSourcesOff: !w.AllowsPathSources(), GitTimeout: w.GitTimeout.Duration, SetupTimeout: w.SetupTimeout.Duration,
-		TeardownTimeout: w.TeardownTimeout.Duration, Slots: st, Log: o.Log,
+		TeardownTimeout: w.TeardownTimeout.Duration, Slots: st, Holders: st, Log: o.Log,
 	}
 	// Before any run is claimed or any workdir collected: it may move a bare
 	// cache out from under both.
@@ -221,7 +221,7 @@ func Serve(ctx context.Context, o Options) error {
 			ClaimAfter: r.Replayed(), Log: o.Log, Monitor: o.Monitor, Sessions: sessions,
 			RecentErrors: o.RecentErrors, Logins: logins,
 			ManageAccounts: manage[conn.Name], Paths: o.Paths, AccountsChanged: o.AccountsChanged,
-			HeldChanged: o.HeldChanged,
+			HeldChanged: o.HeldChanged, Settle: workdirs.Settle,
 		}
 		// A result the hub now has is a session's live run ended there,
 		// and the next turn in it can be offered at the next sync. One put
