@@ -74,10 +74,13 @@ recorded, and the collector reclaims it by that path. A new session in the
 same directory would have its files deleted along with the old one's. The
 retired session's branches stay in the bare caches after its workdir is
 gone, and a new session on the same branch would start from the old hub's
-commits. So a session whose derived path another session has recorded,
-reclaimed or not, takes that path with `~1` appended (or `~2`, and so on),
-and its default branch is `yad/<name>.<n>/<session>` with the same n. A later run of
-the session reads the mark back from the path it recorded. No session id's
+commits. So a session whose id the retired registrations of its name used n
+times, reclaimed or not, takes its path with `~<n>` appended, and its
+default branch is `yad/<name>.<n>/<session>`. The count is taken from the
+retired names, not by matching recorded paths, because a data directory
+reached through a symlink or moved since would be spelled differently. A
+path some row still records is skipped too. A later run of the session reads
+the mark back from the path it recorded. No session id's
 path name contains `~`, and no connection name contains `.`, so neither mark
 can be another session's own name. Every other session keeps the names it
 had.

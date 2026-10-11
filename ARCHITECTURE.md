@@ -846,9 +846,9 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   across its runs and never deleted by one —
   [0032](docs/decisions/0032-a-workdir-belongs-to-its-session.md). The session
   id is the hub's, so it is kept only when it is a plain lower-case name and
-  hashed otherwise; no hub-chosen id becomes a path. A session whose path a
-  session of a retired registration of the same connection name recorded
-  takes it with `~<n>` (`~1`, then `~2`, …), and its default branch below is
+  hashed otherwise; no hub-chosen id becomes a path. A session whose id the
+  retired registrations of its connection's name used n times takes its path
+  with `~<n>`, and its default branch below is
   `yad/<connection>.<n>/<session>` with the same n ([0078](docs/decisions/0078-a-reused-connection-name-retires-the-earlier-registrations-rows.md)). Git sources come from
   a bare cache per repository (`<data>/repos/<name>-<hash>.git`, fetched before
   every checkout) as a worktree on the run's branch — as it stands when it

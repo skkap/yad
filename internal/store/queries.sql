@@ -484,6 +484,14 @@ UPDATE slots SET connection = sqlc.arg(retired) WHERE connection = sqlc.arg(conn
 -- session recorded: one the collector will remove while it is unreclaimed,
 -- named like the git branches that session left in the caches (decision
 -- 0078).
+-- How many sessions of this id the retired registrations of a name left
+-- (retired is '<name>~'), each of which took a workdir and a default branch
+-- named for the id. Counted by name rather than by matching a recorded path,
+-- which a data directory spelled differently since would miss.
+-- name: RetiredSessionsWithID :one
+SELECT count(*) FROM sessions WHERE id = sqlc.arg(id)
+  AND substr(connection, 1, length(CAST(sqlc.arg(retired) AS TEXT))) = CAST(sqlc.arg(retired) AS TEXT);
+
 -- name: WorkdirTakenByAnother :one
 SELECT EXISTS (SELECT 1 FROM sessions WHERE workdir = sqlc.arg(workdir)
   AND NOT (connection = sqlc.arg(connection) AND id = sqlc.arg(id)));

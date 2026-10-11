@@ -1510,22 +1510,32 @@ func (e *Exec) workdir(ctx context.Context, c Claim) (dir, native, forkOf string
 }
 
 // freeWorkdir is the directory a session's first workdir goes in: named for
-// its connection and id, unless another session recorded that directory —
-// one with the same id under an earlier registration of the connection's
-// name, retired since (decision 0078). The collector removes that one's
-// workdir by its recorded path, and its git branches, named for the same
-// connection and id, are still in the caches: so this one takes the path
-// with a mark no id's path name can carry, ~1, ~2 and so on, and its
-// default branch takes the same mark (retakeOf).
+// its connection and id, unless sessions of the same id were left under
+// earlier registrations of the connection's name, retired since (decision
+// 0078). Each of those took a workdir and a default git branch named for the
+// same connection and id: the collector removes the workdir by its recorded
+// path, and the branch stays in the cache. So this one takes the path with a
+// mark no id's path name can carry, ~1, ~2 and so on, one past those, and
+// its default branch takes the same mark (retakeOf).
+//
+// The count comes from the names, not from matching recorded paths, which a
+// data directory spelled differently since — through a symlink, or moved —
+// would miss. A path some row still records is skipped as well.
 func (e *Exec) freeWorkdir(ctx context.Context, c Claim) (string, error) {
+	retired, err := e.Store.RetiredSessionsWithID(ctx, db.RetiredSessionsWithIDParams{ID: c.Run.Session.ID, Retired: c.Connection + store.RetiredSeparator})
+	if err != nil {
+		return "", err
+	}
 	base := filepath.Join(e.Data, "workdirs", c.Connection, pathName(c.Run.Session.ID))
-	dir := base
-	for n := 1; ; n++ {
+	for n := retired; ; n++ {
+		dir := base
+		if n > 0 {
+			dir = base + store.RetiredSeparator + strconv.FormatInt(n, 10)
+		}
 		taken, err := e.Store.WorkdirTakenByAnother(ctx, db.WorkdirTakenByAnotherParams{Workdir: dir, Connection: c.Connection, ID: c.Run.Session.ID})
 		if err != nil || !taken {
 			return dir, err
 		}
-		dir = base + store.RetiredSeparator + strconv.Itoa(n)
 	}
 }
 

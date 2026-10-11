@@ -221,6 +221,23 @@ func TestANewSessionDoesNotTakeARetiredSessionsWorkdir(t *testing.T) {
 		t.Errorf("a later run's workdir is %s (%v), want the recorded %s", again, err, third)
 	}
 
+	// The retired session recorded its path under another spelling of the
+	// data directory — a symlink, or a directory moved since. Its branch is
+	// in the cache all the same, so the mark is still taken.
+	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub~3", ID: "s4", Harness: "claude", Workdir: "/elsewhere/workdirs/hub/s4", CreatedAt: 7, LastUsedAt: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: "s4", Harness: "claude", CreatedAt: 8, LastUsedAt: 8}); err != nil {
+		t.Fatal(err)
+	}
+	moved, _, _, err := x.workdir(ctx, Claim{Connection: "hub", Run: testRun("r4", "s4")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(e.paths.Data, "workdirs", "hub", "s4~1"); moved != want {
+		t.Errorf("with the retired session's path spelled differently, s4 got %s, want %s", moved, want)
+	}
+
 	// A path nobody else holds is the session's as named.
 	if err := e.store.CreateSession(ctx, db.CreateSessionParams{Connection: "hub", ID: "s2", Harness: "claude", CreatedAt: 3, LastUsedAt: 3}); err != nil {
 		t.Fatal(err)

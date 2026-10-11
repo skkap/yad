@@ -90,11 +90,11 @@ type Request struct {
 	Dir        string
 	Connection string
 	Session    string
-	// Retake is set when an earlier session of the same id, under an earlier
-	// registration of the connection's name, took this session's plain
-	// workdir: its branch is still in the cache, so the default branch here
-	// carries the same mark the workdir does (decision 0078). Empty for
-	// every other session.
+	// Retake is set when earlier sessions of the same id, under earlier
+	// registrations of the connection's name, took the plain default branch
+	// and workdir: their branches are still in the cache, so the default
+	// branch here carries the same mark the workdir does (decision 0078).
+	// Empty for every other session.
 	Retake  string
 	Sources []v1.Source
 	// Emit puts a status or tool event into the run's stream. Never nil.

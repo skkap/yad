@@ -1355,6 +1355,32 @@ func (q *Queries) RetireConnectionSlots(ctx context.Context, arg RetireConnectio
 	return err
 }
 
+const retiredSessionsWithID = `-- name: RetiredSessionsWithID :one
+SELECT count(*) FROM sessions WHERE id = ?1
+  AND substr(connection, 1, length(CAST(?2 AS TEXT))) = CAST(?2 AS TEXT)
+`
+
+type RetiredSessionsWithIDParams struct {
+	ID      string
+	Retired string
+}
+
+// A new session's workdir is derived from its connection and id, so a new
+// hub under a reused name can derive the directory an earlier registration's
+// session recorded: one the collector will remove while it is unreclaimed,
+// named like the git branches that session left in the caches (decision
+// 0078).
+// How many sessions of this id the retired registrations of a name left
+// (retired is '<name>~'), each of which took a workdir and a default branch
+// named for the id. Counted by name rather than by matching a recorded path,
+// which a data directory spelled differently since would miss.
+func (q *Queries) RetiredSessionsWithID(ctx context.Context, arg RetiredSessionsWithIDParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, retiredSessionsWithID, arg.ID, arg.Retired)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const retryOutbox = `-- name: RetryOutbox :exec
 UPDATE outbox SET attempts = attempts + 1, next_attempt_at = ?, last_error = ? WHERE connection = ? AND run_id = ?
 `
@@ -2268,11 +2294,6 @@ type WorkdirTakenByAnotherParams struct {
 	ID         string
 }
 
-// A new session's workdir is derived from its connection and id, so a new
-// hub under a reused name can derive the directory an earlier registration's
-// session recorded: one the collector will remove while it is unreclaimed,
-// named like the git branches that session left in the caches (decision
-// 0078).
 func (q *Queries) WorkdirTakenByAnother(ctx context.Context, arg WorkdirTakenByAnotherParams) (bool, error) {
 	row := q.db.QueryRowContext(ctx, workdirTakenByAnother, arg.Workdir, arg.Connection, arg.ID)
 	var exists bool
