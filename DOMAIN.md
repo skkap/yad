@@ -502,7 +502,7 @@ and an optional wall-clock cap set per run.
   result event. Nor is a success proof that the work finished: the result
   counts what the run's tool work left running when its turn ended
   (`metrics.left_running`, [0080](docs/decisions/0080-a-run-reports-how-many-processes-its-tool-work-left-running.md)),
-  which the harness stops on its way out and yad does not.
+  which the harness, not yad, stops as it exits.
 - A lost run is reported, never silently retried. A run a previous process held
   is reported lost by the next start
   ([0030](docs/decisions/0030-a-restart-reports-lost-and-replays-first.md)). Continuing a **waiting** run

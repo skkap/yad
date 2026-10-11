@@ -47,9 +47,9 @@ through `supervise.Run`, bounded at 5 s; the leader is yad's unreaped child
 throughout, so its pid cannot have been reused, and a leader that exited
 around the listing makes the figure absent rather than 0.
 
-**What counts**: every live process in a process group led by a direct child
-of the harness, other than the harness's own group, and every descendant of
-one of those wherever it went (a `setsid` grandchild), minus
+**What counts**: every live process in a process group of its own started by
+a process in the harness's group, and every descendant of one of those
+wherever it went (a `setsid` grandchild), minus
 
 - **a shell only waiting on its command** (`sh`, `bash`, `zsh` and the like,
   with a live child counted): Claude runs a background command as
@@ -59,7 +59,12 @@ one of those wherever it went (a `setsid` grandchild), minus
 
 The harness's own group is left out: it holds the harness's helpers (Claude's
 stdio MCP servers, measured there), which cannot be told from tool work by
-name.
+name. A tool's group is found from any process in it, not from the leader
+alone, because the leader may be a launcher: npm's `codex` is a node script
+that runs the native binary as its child, in its own group, and a census
+keyed on the leader's children would read a measured 0 for every launched
+Codex. The price is a helper in that group that starts a process in a group
+of its own — an MCP server that does is counted.
 
 **yad does not stop the survivors.** Each harness measured stops them itself
 as it exits. Stopping, or keeping, work a run left behind is a separate
@@ -114,6 +119,9 @@ works from the harness's pid.
   server would report one on every run — and nothing the ticket asks for.
   Dropped; a harness that someday runs tool commands in its own group is not
   measured, and this record is where to look.
+- **Tool groups led by a direct child of the leader** (the first cut, and
+  what the measurements show for a native binary). Review found the launcher
+  case above: a measured 0 for work that was left running.
 - **Counting every process, wrapper shells included.** A Claude background
   command would count 2 for one `sleep`, and every hub would learn to halve
   it.

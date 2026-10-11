@@ -1067,9 +1067,11 @@ before it stopped — floors, not ends anybody saw.
 | `left_running` | processes the run's tool work still had running when a turn ended on the harness's own answer; **absent when not measured**, `0` when measured with none |
 
 **`left_running` is the one that can make a success hollow.** A harness's
-turn ends, and whatever its agent started in the background — a test suite,
-a dev server — is stopped as the harness exits. The final text may still say
-"tests are running, will report". A `succeeded` run with `left_running` above
+turn ends, and what its agent started in the background — a test suite, a
+dev server — is stopped as the harness exits, all but a process its shell
+backgrounded and abandoned, which outlives it uncounted. The final text may
+still say "tests are running, will report". A `succeeded` run with
+`left_running` above
 `0` deserves a warning, not trust: the work it describes may never have
 finished. The runner names what it found just before the result, in a
 `status` event labelled `left_running` whose text lists each process by its
@@ -1079,9 +1081,10 @@ arguments, environment or pid.
 Absent and `0` are different answers. Absent is a run none of whose turns was
 measured: every one was cancelled, interrupted or stopped by a watchdog, or
 the runner could not read its process table. Show absent as unknown, never
-as none. What the runner cannot see is not counted: a process whose shell
-backgrounded it (`nohup … &`) and then exited has already left the harness's
-process tree, and it outlives the turn
+as none, and `0` as nothing seen, not as proof that nothing survived. What
+the runner cannot see is not counted: a process whose shell backgrounded it
+(`nohup … &`) and then exited has already left the harness's process tree,
+and it outlives the turn
 ([0080](docs/decisions/0080-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
 
 `left_running` arrived within v1 as an optional field, like

@@ -51,6 +51,13 @@ func censusChild(mode string) {
 		return c
 	}
 	switch mode {
+	case "launcher":
+		// A launcher in front of the harness, as npm's codex is: the harness
+		// is its child, in its group, and starts the tools.
+		c := exec.Command(os.Args[0])
+		c.Env = append(os.Environ(), "SUPERVISE_CENSUS_CHILD=harness")
+		c.Stdout = os.Stdout
+		c.Run()
 	case "harness":
 		// A tool command in a session of its own, as Claude Code starts one.
 		tool := start("sleep", true)
@@ -87,8 +94,14 @@ func censusChild(mode string) {
 }
 
 func TestCensusCountsToolWorkAndNotHelpers(t *testing.T) {
+	for _, mode := range []string{"harness", "launcher"} {
+		t.Run(mode, func(t *testing.T) { testCensus(t, mode) })
+	}
+}
+
+func testCensus(t *testing.T, mode string) {
 	p, err := Start(context.Background(), Spec{Path: os.Args[0],
-		Env: []string{"SUPERVISE_CENSUS_CHILD=harness", "GORACE=atexit_sleep_ms=0"}})
+		Env: []string{"SUPERVISE_CENSUS_CHILD=" + mode, "GORACE=atexit_sleep_ms=0"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,10 +200,17 @@ func TestCensusRules(t *testing.T) {
 		{"a short name is not a helper it begins", []Proc{harness,
 			{PID: 200, PPID: h, PGID: 200, Name: "codex"},
 		}, []string{"codex-code-mode-host"}, []string{"codex"}, true},
-		{"a group led by a grandchild is not the harness's", []Proc{harness,
-			{PID: 200, PPID: h, PGID: h, Name: "node"},
-			{PID: 201, PPID: 200, PGID: 201, Name: "esbuild"},
-		}, nil, nil, true},
+		{"a launcher's harness starts the tools", []Proc{
+			{PID: h, PPID: 1, PGID: h, Name: "node"},
+			{PID: 150, PPID: h, PGID: h, Name: "codex"},
+			{PID: 200, PPID: 150, PGID: 200, Name: "codex-code-mode-"},
+			{PID: 201, PPID: 150, PGID: 201, Name: "sleep"},
+		}, []string{"codex-code-mode-host"}, []string{"sleep"}, true},
+		{"a group started outside the harness's group is not its own", []Proc{harness,
+			{PID: 200, PPID: h, PGID: 200, Name: "zsh"},
+			{PID: 300, PPID: 1, PGID: 300, Name: "node"},
+			{PID: 301, PPID: 300, PGID: 301, Name: "esbuild"},
+		}, nil, []string{"zsh"}, true},
 		{"a process elsewhere is not counted", []Proc{harness,
 			{PID: 300, PPID: 1, PGID: 300, Name: "sleep"},
 		}, nil, nil, true},

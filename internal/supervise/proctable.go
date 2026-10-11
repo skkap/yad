@@ -167,11 +167,18 @@ var shells = []string{"sh", "bash", "zsh", "dash", "ksh", "mksh", "fish", "tcsh"
 var ErrNotMeasured = errors.New("the census could not be taken")
 
 // Census lists what the leader's tool work still has running: every live
-// process in a group led by a direct child of the leader, other than the
-// leader's own group, and every descendant of one of those wherever it
-// went — minus helpers, the processes the harness itself keeps beside its
-// tools, named as ps names them, and minus a shell that is only waiting on
-// a command beneath it.
+// process in a group of its own started by a process in the leader's group,
+// and every descendant of one of those wherever it went — minus helpers,
+// the processes the harness itself keeps beside its tools, named as ps names
+// them, and minus a shell that is only waiting on a command beneath it.
+//
+// The leader's group is the harness's: the leader, and whatever it started
+// without a group of its own. That is the harness itself when the leader is
+// a launcher — npm's codex is a node script that runs the native codex as
+// its child, in its group — so a tool's group is found from any of them,
+// not from the leader alone, or a launched harness would read a measured 0.
+// The price is a helper in that group which starts a process in a group of
+// its own: an MCP server that does is counted.
 //
 // It is taken while the leader is alive, before its input is closed, because
 // a harness stops its own tool processes on the way out and a leader that
@@ -214,9 +221,15 @@ func census(table []Proc, leader int, helpers []string) ([]Leftover, bool) {
 	if self, ok := byPID[leader]; !ok || self.Zombie {
 		return nil, false
 	}
+	own := map[int]bool{} // the harness's own processes
+	for _, p := range table {
+		if p.PGID == leader {
+			own[p.PID] = true
+		}
+	}
 	tools := map[int]bool{}
 	for _, p := range table {
-		if p.PPID == leader && p.PGID == p.PID && p.PID != leader {
+		if own[p.PPID] && p.PGID == p.PID && p.PGID != leader {
 			tools[p.PID] = true
 		}
 	}

@@ -834,7 +834,9 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   never reach it; the harness stops it as it exits. So each adapter, after
   the harness's own end of the turn and before its input closes, takes a
   census (`supervise.Process.Census`, one `ps`): every live process in a
-  group led by a direct child of the harness and their descendants, less a
+  group of its own started from the harness's group (which a launcher such
+  as npm's node `codex` shares with the native binary it runs) and their
+  descendants, less a
   shell only waiting on its command and the harness's named helpers (Codex's
   `codex-code-mode-host`). The harness's own group holds its MCP servers and
   is left out. Names are the kernel's (`ucomm` on macOS, `comm` on Linux),
