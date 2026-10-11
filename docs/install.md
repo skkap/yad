@@ -155,7 +155,31 @@ yad service uninstall [--profile name]   # stops it and removes the unit; safe t
 The service runs `yad daemon start --foreground` as you, never as root, and
 restarts it after a crash. It uses the PATH your login shell had when you ran
 `install`, so run `install` again after changing PATH, upgrading or moving the
-binary; a re-install replaces the unit. Stopping the service drains the
+binary; a re-install replaces the unit. It takes no other variable of your
+shell's. What your runs need beyond PATH goes in config.toml's `[env]`, which
+yad gives every harness, hook and probe it starts, and reads when the daemon
+starts — so restart it after an edit:
+
+```toml
+[env]
+DOCKER_HOST         = "unix:///Users/me/.colima/default/docker.sock"  # Docker on colima, for tools that read no docker context
+BASH_MAX_TIMEOUT_MS = "1800000"                                      # let Claude run a command in the foreground for 30 minutes
+```
+
+Values are strings, taken as written — no `$HOME` or `~` is expanded. `yad
+doctor` names what `[env]` declares, says why config.toml does not load if it
+does not, and warns when docker's context points at a socket other than
+`/var/run/docker.sock` and `DOCKER_HOST` is not declared. It is not for
+secrets: a harness can print its environment into a run's events. Names that
+would be removed or beaten anyway are refused with the way round —
+`CLAUDE_CODE_*`, the variables that choose a harness's login, `IS_SANDBOX`,
+`PATH`, `HOME`, `WT_*`
+([0080](decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md)).
+A Claude setting can also go in the `env` block of `~/.claude/settings.json`,
+which every Claude account's home shares; that is the only route for a
+`CLAUDE_CODE_*` one. On Claude Code 2.1.296 a variable set there reached a
+`claude -p` Bash call, and Claude reads `BASH_MAX_TIMEOUT_MS` from it for
+itself. Stopping the service drains the
 runner — no new runs, the ones it holds finish for up to `[drain] wait`
 (default 30m), then are cancelled — and the unit's stop timeout is derived
 from that wait when you install, so run `install` again after changing it. On Linux a user unit stops when you log

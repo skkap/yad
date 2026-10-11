@@ -129,6 +129,18 @@ installs itself.
 _Rules_: Long-lived credentials behind host tools belong to the machine and never
 travel in the protocol.
 
+**Owner environment** — config.toml's `[env]`: variables the owner gives every
+child yad starts — a harness turn, a setup or teardown hook, the docker probe, a
+login check — on top of the runner's own scrubbed environment. What the machine
+needs (`DOCKER_HOST` for colima) and what every harness should get
+(`BASH_MAX_TIMEOUT_MS`). Strings, taken as written, read when the runner starts.
+_Avoid_: run env — it reaches more than runs; using it for a secret — that is a
+**grant**
+_Rules_: It may not set what the scrub removes or what chooses a harness's
+credential, nor `IS_SANDBOX`, `PATH`, `HOME` or `WT_*`; a grant may not name
+what it declares. No hub sets it or learns its values.
+_See_: [0080](docs/decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md)
+
 **Present** — the runner found a binary for a harness or a host tool: the file
 its `YAD_<ID>_PATH` override names, or the one on `PATH`. For a harness it is
 the binary every run starts. For a host tool it is the binary that was probed,
@@ -374,7 +386,8 @@ grant is for the work, never for the harness's own login: it may not name a
 variable that chooses whose credential a harness uses or which home it logs in
 from (`ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and the rest of
 `protocol/v1/grant.go`'s list), because that would move the run off its
-**account**.
+**account**; nor a variable the **owner environment** declares, which it would
+replace for that run alone.
 _See_: [0009](docs/decisions/0009-machine-owns-credentials-hubs-grant-per-run.md),
 [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md),
 [0040](docs/decisions/0040-a-grant-may-not-move-a-run-off-its-account.md),

@@ -49,7 +49,10 @@ The environment also carries the git settings that stop git from prompting
 (`GIT_TERMINAL_PROMPT=0` and the askpass variables cleared), because nobody is
 there to answer. `PATH` puts the runner's `git`, `gh` and `docker` first, so a
 `docker compose up` in the hook reaches the same Docker that `yad doctor`
-reported.
+reported. Whatever the runner's owner declared in config.toml's `[env]` — a
+`DOCKER_HOST` for a Docker on colima, say — is there too, as it is for the
+harness ([install.md](install.md#run-it-as-a-service)), so a hook needs no
+override of its own for the machine it runs on.
 
 Give every variable a fallback, so the hook can still be run by hand:
 

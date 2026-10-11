@@ -736,10 +736,17 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   is refused by, but for the harness home variables, which are the harness's
   own login when it has no accounts —
   [0060](docs/decisions/0060-the-owners-own-account-variables-are-removed-from-every-run.md)),
-  and a stderr tail kept at 2 KiB. A run's grants and its account's home and
-  token are added after the scrub, which is why a grant may not name
+  and a stderr tail kept at 2 KiB. The owner's `[env]` from config.toml is
+  laid on the scrubbed environment (`supervise.Environ`), set once per process
+  before its first child, so the docker probe and a login check see what a
+  run will
+  ([0080](docs/decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md));
+  `supervise.OwnerRefusal` refuses at load every name the scrub removes or a
+  grant may not carry for choosing a credential, and `IS_SANDBOX`, `PATH`,
+  `HOME` and `WT_*`. A run's grants and its account's home and
+  token are added after that, which is why a grant may not name
   `ANTHROPIC_API_KEY` or any other variable that chooses the harness's
-  credential (0040). The check that decides whether an account can take a run
+  credential (0040), nor one `[env]` declares (0080). The check that decides whether an account can take a run
   (`account.LoggedIn`) gets the environment the run gets, or it answers about a
   different credential (DEV-26; the rule, and `OwnLogin`'s one deliberate
   difference, are on `Spec.KeepEnv`). git and setup hooks start
@@ -794,8 +801,8 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   `timed_out`, with the error class `inactivity_timeout`, `harness_silent` or
   `wall_clock_timeout`, whatever the stopped harness said last; the error
   quotes the end of the harness's stderr (`adapter.StderrTail`: five lines, a
-  KiB, every value yad put in its environment and every file grant's content
-  replaced), and a
+  KiB, every value yad put in its environment — `[env]`'s too — and every
+  file grant's content replaced), and a
   `harness_silent` one the harness check to run by hand.
 - **A home whose runs go silent is not ready for a while.** After each turn
   the executor keeps a count per home in `harness_silence`: a turn that
@@ -1332,6 +1339,10 @@ teardown_timeout = "2m"              # a .worktree/teardown past this is stopped
 
 [update]
 auto = true   # check for a newer release every 6 h, install it, re-exec at an idle moment — 0071; absent = never
+
+[env]   # given to every child yad starts, after the scrub; strings, taken as written, read at start — 0080
+DOCKER_HOST         = "unix:///Users/me/.colima/default/docker.sock"
+BASH_MAX_TIMEOUT_MS = "1800000"   # Claude's Bash cap; not for secrets — those are grants
 ```
 
 ### `state.db`
@@ -1674,6 +1685,13 @@ line here is a reviewed change.
   Filtering names never protected the machine: the brief could ask the harness
   for the same secret, and it auto-approves. The service API never returns a
   grant.
+- config.toml's `[env]` is the owner's, never a hub's: no protocol field
+  reaches it, a grant under a name it declares refuses the run, and which
+  names it declares is not published. Its values stay on the machine as far
+  as yad goes — doctor, the daemon's log and `yad config apply` give names
+  alone, and a run's quoted stderr masks them — but a harness can print its
+  environment into a run's events, so it is not for secrets
+  ([0080](docs/decisions/0080-the-owner-declares-an-environment-for-everything-yad-starts.md)).
 - Three secret kinds, never interchangeable: registration token, runner
   credential, admin token. The protocol accepts only the first two, the service
   API only the third.
