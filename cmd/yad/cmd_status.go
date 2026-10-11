@@ -101,6 +101,11 @@ func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 	if s.Update != nil {
 		printUpdate(w, *s.Update, now)
 	}
+	// Whether or not this profile updates itself: another profile on the
+	// same binary may, and would not know what this one's hubs need.
+	if s.NeedsUnrecorded != "" {
+		fmt.Fprintf(w, "this profile's protocol needs are not recorded beside the binary it runs — another profile that updates it would not see them: %s\n", cleanLine(s.NeedsUnrecorded))
+	}
 
 	fmt.Fprintln(w)
 	if len(s.Connections) == 0 {

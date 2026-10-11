@@ -234,6 +234,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	// now, before a release can replace the file it names.
 	var updater *selfupdate.Updater
 	exe, _ := os.Executable()
+	needs := recordNeeds(runCtx, g.paths, cfg, exe, log)
 	if cfg.Update.Auto {
 		updater = newUpdater(g, cfg, exe, drain, monitor, log)
 		go updater.Run(runCtx)
@@ -249,6 +250,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 			Status: func(ctx context.Context) control.Status {
 				st := statusOf(ctx, g.paths, cfg, current(), started, monitor, recent)
 				st.Update = updateStatus(updater)
+				st.NeedsUnrecorded = needs.Unrecorded()
 				return st
 			},
 			Stop: gracefulStop(log, drain),

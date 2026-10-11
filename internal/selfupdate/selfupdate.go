@@ -16,9 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"math/rand/v2"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -81,8 +79,12 @@ type Options struct {
 	// Installed is this build's version, buildinfo.Version.
 	Installed string
 	// Needs is every protocol major a connection syncs over, with the
-	// connections that do. A release must speak each one.
+	// connections that do. A release must speak each one — and each one
+	// every other profile running Target records beside it (NeedsDir).
 	Needs map[string][]string
+	// ConfigDir is this profile's config directory, absolute: its own
+	// record beside Target is read as its own needs, not another profile's.
+	ConfigDir string
 	// Ask runs a downloaded binary's `yad version --json` and reads what it
 	// says (ParseAbout).
 	Ask func(ctx context.Context, path string) (buildinfo.About, error)
@@ -149,6 +151,10 @@ type Updater struct {
 
 	mu sync.Mutex
 	st Status
+	// refused is what the release in st.Refused said of itself, so the next
+	// check can judge it again without downloading it: what refused it may
+	// be another profile's need, and that profile may let it go.
+	refused refusal
 }
 
 // New returns an updater ready to Run.
@@ -234,9 +240,18 @@ func (u *Updater) jitter(d time.Duration) time.Duration {
 }
 
 // refusal is a release this runner will not take. It is kept apart from a
-// failure: a failure is tried again at the next check, and a refusal is not,
-// since the same release would be refused the same way.
-type refusal struct{ reason string }
+// failure: a failure is tried again at the next check, and a refusal is not
+// downloaded again, since the same bytes say the same thing. A release that
+// lacks a protocol major is judged again at each check against what is
+// needed then; one that misnames itself never is.
+type refusal struct {
+	reason string
+	tag    string
+	// speaks is the protocol majors the release named; final is a release
+	// refused for what it is, whatever is needed.
+	speaks []string
+	final  bool
+}
 
 func (r refusal) Error() string { return r.reason }
 
@@ -272,22 +287,45 @@ func (u *Updater) Check(ctx context.Context) bool {
 		u.checked(tag, nil)
 		return false
 	}
-	u.mu.Lock()
-	refused := u.st.Refused != nil && u.st.Refused.Tag == tag
-	u.mu.Unlock()
-	if refused {
-		// Downloaded once and refused: the same bytes would be refused
-		// again, so the check spends one request and not a download.
-		u.checked(tag, nil)
+	// Read before the download: a record that cannot be read stops the
+	// check with nothing fetched.
+	needs, err := u.needs()
+	if err != nil {
+		u.failed(err)
 		return false
+	}
+	u.mu.Lock()
+	prior := u.refused
+	u.mu.Unlock()
+	if prior.tag == tag {
+		// Downloaded once and refused: the same bytes say the same thing,
+		// so the check spends one request and not a download — unless what
+		// refused them is no longer needed.
+		if prior.final {
+			u.checked(tag, nil)
+			return false
+		}
+		if no, ok := u.dropped(tag, needs, prior.speaks); ok {
+			u.mu.Lock()
+			u.refused = no
+			if u.st.Refused != nil {
+				u.st.Refused.Reason = no.reason
+			}
+			u.mu.Unlock()
+			u.checked(tag, nil)
+			return false
+		}
 	}
 	res, err := upgrade.Apply(ctx, upgrade.Options{
 		Source: u.o.Source, Target: u.o.Target, GOOS: u.o.GOOS, GOARCH: u.o.GOARCH,
-		Tag: tag, Repo: u.o.Repo, Yad: u.o.Yad, Vet: u.vet(tag),
+		Tag: tag, Repo: u.o.Repo, Yad: u.o.Yad, Vet: u.vet(tag, needs),
 	})
 	var no refusal
 	switch {
 	case errors.As(err, &no):
+		u.mu.Lock()
+		u.refused = no
+		u.mu.Unlock()
 		u.checked(tag, &Refused{Tag: tag, Reason: no.reason, At: u.o.Clock.Now()})
 		u.o.Log.Warn("self-update refused a newer release; this runner keeps its binary", "release", tag, "installed", u.o.Installed, "reason", no.reason)
 		return false
@@ -298,7 +336,7 @@ func (u *Updater) Check(ctx context.Context) bool {
 	now := u.o.Clock.Now()
 	u.mu.Lock()
 	u.st.LastCheck, u.st.LastError, u.st.Latest = now, "", tag
-	u.st.Refused, u.st.NextCheck = nil, time.Time{}
+	u.st.Refused, u.st.NextCheck, u.refused = nil, time.Time{}, refusal{}
 	u.st.Pending = &Pending{Tag: tag, Since: now, By: now.Add(u.o.IdleWait)}
 	u.mu.Unlock()
 	u.o.Log.Info("self-update installed a newer release; the runner becomes it at the first idle moment, or drains for it once the wait is up",
@@ -327,7 +365,7 @@ func (u *Updater) failed(err error) {
 // vet asks the downloaded binary what it is before it replaces this one. The
 // binary has passed its checksum by now, so what it says is the release's
 // own word.
-func (u *Updater) vet(tag string) func(ctx context.Context, staged string) error {
+func (u *Updater) vet(tag string, needs map[string]*need) func(ctx context.Context, staged string) error {
 	return func(ctx context.Context, staged string) error {
 		about, err := u.o.Ask(ctx, staged)
 		if err != nil {
@@ -336,20 +374,38 @@ func (u *Updater) vet(tag string) func(ctx context.Context, staged string) error
 			return fmt.Errorf("release %s's binary would not say what it is: %w — nothing was replaced", tag, err)
 		}
 		if upgrade.Compare(u.o.Installed, about.Version) != upgrade.Behind {
-			return refusal{fmt.Sprintf("release %s's binary calls itself %q, which is not newer than this build (%s) — the release is mislabelled, and taking it would only fetch it again at every check", tag, about.Version, u.o.Installed)}
+			return refusal{tag: tag, final: true, reason: fmt.Sprintf("release %s's binary calls itself %q, which is not newer than this build (%s) — the release is mislabelled, and taking it would only fetch it again at every check", tag, about.Version, u.o.Installed)}
 		}
-		var gone []string
-		for _, major := range slices.Sorted(maps.Keys(u.o.Needs)) {
-			if !slices.Contains(about.Protocols, major) {
-				gone = append(gone, fmt.Sprintf("v%s, which %s %s", major, strings.Join(u.o.Needs[major], ", "), syncsOver(len(u.o.Needs[major]))))
-			}
-		}
-		if len(gone) > 0 {
-			return refusal{fmt.Sprintf("release %s no longer speaks protocol %s — it speaks %s. The runner keeps %s; `%s` installs it anyway once every hub speaks what it does",
-				tag, strings.Join(gone, "; nor "), protocols(about.Protocols), u.o.Installed, upgrade.Command(u.o.Repo, u.o.Yad, "--tag", tag))}
+		if no, ok := u.dropped(tag, needs, about.Protocols); ok {
+			return no
 		}
 		return nil
 	}
+}
+
+// needs is what a release must speak now: this runner's connections, and
+// every live profile's that runs the same binary (decision 0078).
+func (u *Updater) needs() (map[string]*need, error) {
+	dir, err := NeedsDir(u.o.Target)
+	if err != nil {
+		return nil, err
+	}
+	recs, err := records(dir)
+	if err != nil {
+		return nil, err
+	}
+	return gather(u.o.Needs, u.o.ConfigDir, recs), nil
+}
+
+// dropped is the refusal of a release speaking speaks, when it leaves out a
+// major something needs.
+func (u *Updater) dropped(tag string, needs map[string]*need, speaks []string) (refusal, bool) {
+	gone := missing(needs, speaks)
+	if len(gone) == 0 {
+		return refusal{}, false
+	}
+	return refusal{tag: tag, speaks: speaks, reason: fmt.Sprintf("release %s no longer speaks protocol %s — it speaks %s. The runner keeps %s; `%s` installs it anyway once every hub speaks what it does",
+		tag, strings.Join(gone, "; nor "), protocols(speaks), u.o.Installed, upgrade.Command(u.o.Repo, u.o.Yad, "--tag", tag))}, true
 }
 
 func syncsOver(n int) string {

@@ -166,6 +166,10 @@ type Status struct {
 	// Update is where self-update stands (decision 0071): nil when
 	// config.toml leaves it off, and from a daemon older than it.
 	Update *Update `json:"update,omitempty"`
+	// NeedsUnrecorded is why this profile's needs record is not beside the
+	// binary it runs (decision 0078), so another profile updating that
+	// binary would not see what this one's hubs need; empty when it is.
+	NeedsUnrecorded string `json:"needs_unrecorded,omitempty"`
 }
 
 // Update is the runner's self-update. The version this process runs is
