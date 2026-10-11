@@ -106,7 +106,8 @@ var security = "/usr/bin/security"
 // did would run whatever it named with the Keychain's item names.
 var SecurityForTests string
 
-// securityProgram is the program a delete runs and prints.
+// One answer for the delete that runs and the one printed for the owner, so
+// a test's fake is never what one does and the other names.
 func securityProgram() string {
 	if SecurityForTests != "" {
 		return SecurityForTests
