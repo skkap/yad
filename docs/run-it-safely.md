@@ -619,6 +619,38 @@ What turning it on trusts, spelled out:
   version --json`, with `HOME` and nothing else of the runner's environment,
   to ask which protocol versions it speaks.
 
+## Work a run leaves behind
+
+A harness's turn can end with work it started still running: a test suite
+sent to the background, a dev server, a watcher. Each harness runs its tool
+commands in a process group of its own, out of reach of the signals yad
+sends the harness, so it is the harness that stops them as it exits — and a
+harness release could stop doing so. The run's result counts them
+(`metrics.left_running`) and its events name them, either way.
+
+To have yad stop that work itself, the moment the turn ends, set:
+
+```toml
+[supervise]
+stop_left_running = true
+```
+
+Off is the default. On, yad sends each counted process's group SIGTERM, gives
+it 5 seconds, then SIGKILL, and the run's `left_running` event says what it
+stopped. It signals only a group a fresh look at the process table shows
+still holding the work it counted, and never its own, the harness's, or one
+holding a helper of the harness, so a process group that has since been
+given to something else on the machine is not touched
+([0086](decisions/0086-the-owner-may-have-yad-stop-what-a-turn-left-running.md)).
+The cost is work a run meant to keep: a dev server one run starts for the
+next stops with the turn that started it.
+
+What it cannot reach: a process started with `nohup … &` whose shell then
+exited. It belongs to init from that moment, nothing ties it to the run, and
+it outlives the turn whatever this says — neither counted nor stopped. If a
+run must not leave anything behind at all, give the runner a machine of its
+own (above) and restart it, or its VM, when that matters.
+
 ## A checklist, if you want one
 
 - [ ] A machine, VM or container you would let an unknown repository run code on
@@ -635,6 +667,8 @@ What turning it on trusts, spelled out:
       the machine at all
 - [ ] `[update] auto` decided: on to follow releases by itself, off to
       upgrade by hand
+- [ ] `[supervise] stop_left_running` decided: on to stop what a turn left
+      running as it ends, off to leave that to the harness
 - [ ] `yad service install` run as that user, after PATH is what you want it
 - [ ] On Linux, lingering decided one way or the other
 
@@ -646,4 +680,5 @@ What turning it on trusts, spelled out:
 - [0028 — a runner is a per-user service, with the owner's login PATH frozen into it](decisions/0028-a-runner-is-a-per-user-service-with-its-login-path.md)
 - [0033 — sources reach only what the owner allows](decisions/0033-sources-reach-only-what-the-owner-allows.md)
 - [0071 — a runner updates itself when its owner turns it on](decisions/0071-a-runner-updates-itself-when-its-owner-turns-it-on.md)
+- [0086 — the owner may have yad stop what a turn left running](decisions/0086-the-owner-may-have-yad-stop-what-a-turn-left-running.md)
 - `ARCHITECTURE.md §8` is the same ground in one page, for someone reading the code.
