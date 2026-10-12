@@ -367,6 +367,40 @@ func TestANullIDErrorWithSeveralOrNoneOutstanding(t *testing.T) {
 	}
 }
 
+// An answer the core cannot use — a session opened with no id, a request
+// refused where no retry applies, a fork answered with the session it was
+// to leave alone — fails the run naming the agent's version command, which
+// runs as printed.
+func TestAnAnswerTheCoreCannotUseNamesTheAgentsVersion(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		edit    func(*adapter.Spec)
+		class   string
+		says    string
+		doctor  bool // the message names yad doctor after the version
+	}{
+		{"new-no-session", nil, adapter.ClassHarness, "answered session/new without a session", false},
+		{"new-refused", nil, adapter.ClassHarness, "refused session/new: Invalid params: mcpServers", true},
+		{"fork-same-session", func(s *adapter.Spec) { s.ForkFrom = "s0" }, adapter.ClassSessionMismatch, "answered session/fork with session s0", false},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			_, o := play(t, tc.fixture, tc.edit)
+			if o.State != v1.RunFailed || o.Error.Class != tc.class || !strings.Contains(o.Error.Message, tc.says) {
+				t.Fatalf("outcome %s %+v", o.State, o.Error)
+			}
+			if tc.doctor {
+				checkNext(t, o.Error.Message, testAgent.ID)
+				return
+			}
+			parts := strings.Split(o.Error.Message, "`")
+			if len(parts) != 3 {
+				t.Fatalf("want one command set apart in backticks in %q", o.Error.Message)
+			}
+			shellwordtest.Check(t, parts[1], testAgent.ID, "--version")
+		})
+	}
+}
+
 // checkNext runs the two commands a null-id failure's next action names
 // through a real sh: the agent's version, then yad doctor.
 func checkNext(t *testing.T, msg, id string) {

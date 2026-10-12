@@ -10,6 +10,9 @@ the stable one. `schema_test.go` hashes the core's surface of it against
 `agent/` holds conversations written by hand for what no recorded agent
 shows: an agent speaking protocol version 2, one that resumes and forks
 nothing, and one whose turn stops at the model's output limit with a
-subagent's updates and a filesystem request on the same pipe, and errors
-answered with a null id (`*-null-id`). OpenCode's
+subagent's updates and a filesystem request on the same pipe, errors
+answered with a null id (`*-null-id`), and answers the core cannot use: a
+session opened with no id (`new-no-session`), a session/new refused
+(`new-refused`) and a fork answered with the session it was to fork
+(`fork-same-session`). OpenCode's
 recorded runs are `internal/adapter/opencode/testdata`.
