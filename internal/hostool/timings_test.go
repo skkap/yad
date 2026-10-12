@@ -1,13 +1,11 @@
 package hostool
 
 import (
-	"io/fs"
 	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/skkap/yad/internal/seamtest"
 )
 
 // answerBudget is what every probe in this package may take unless a test
@@ -46,45 +44,13 @@ func TestTheShippedProbeTimeoutsAreFiveSeconds(t *testing.T) {
 // The seams exist so a test can wait longer than a shipped runner would, and a
 // shipped runner that waited that long would hold every capability probe on a
 // hung tool for as long. The check is the source: any shipped file of the
-// module that assigns one of them. internal/harness declares its own
-// VersionTimeoutForTests, and this walks the whole module by name, so its
-// shipped files are covered here too.
+// module that writes one of them, this package's own included.
+// internal/harness declares its own VersionTimeoutForTests, and this walks the
+// whole module by name, so its shipped files are covered here too.
 func TestOnlyTestsReachTheProbeTimeouts(t *testing.T) {
 	for _, name := range []string{"VersionTimeoutForTests", "StatusTimeoutForTests"} {
-		assertSeamIsNeverAssignedOutsideTests(t, name)
-	}
-}
-
-// assertSeamIsNeverAssignedOutsideTests fails when any shipped file of the
-// module assigns name or takes its address. Reading it is what the probe does;
-// writing it is what only a test may do, and the file that declares it is not
-// exempt — a setter beside the declaration is exactly where someone would write
-// one. Matching the identifier is a backstop, not a proof: a value reached some
-// other way is beyond what reading the source can see.
-func assertSeamIsNeverAssignedOutsideTests(t *testing.T, name string) {
-	t.Helper()
-	written := regexp.MustCompile(`&\s*` + name + `\b|\b` + name + `\s*(?:[-+*/%|&^]|<<|>>)?=[^=]`)
-	const root = "../.."
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		switch {
-		case err != nil:
-			return err
-		case d.IsDir() && (d.Name() == ".git" || d.Name() == "testdata"):
-			return fs.SkipDir
-		case d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go"):
-			return nil
+		for _, at := range seamtest.Writes(t, "../..", name) {
+			t.Errorf("%s writes %s; only a test may change it", at, name)
 		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if loc := written.FindIndex(raw); loc != nil {
-			line := 1 + strings.Count(string(raw[:loc[0]]), "\n")
-			t.Errorf("%s:%d assigns %s; only a test may change it", path, line, name)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
