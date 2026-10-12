@@ -277,6 +277,9 @@ func TestScrubRemovesAccountVariables(t *testing.T) {
 		// Not on the list: moves no account, or only behind a switch that is.
 		{"ANTHROPIC_MODEL", false}, {"ANTHROPIC_BEDROCK_BASE_URL", false}, {"MY_OPENAI_API_KEY", false},
 		{"AWS_SECRET_ACCESS_KEY", false}, {"OPENAI_ORG_ID", false}, {"PATH", false},
+		// Refused as grants, and kept from the owner: the owner's login name
+		// is the one Claude's Keychain login is filed under (decision 0085).
+		{"USER", false}, {"LOGNAME", false},
 	} {
 		got := Scrub([]string{tc.name + "=v"}, nil)
 		if removed := len(got) == 0; removed != tc.removed {

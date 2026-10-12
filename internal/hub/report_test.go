@@ -333,7 +333,7 @@ func eventsAfter(runID string) db.EventsAfterParams {
 }
 
 // The hub checks grant names at the door, so a run carrying one that would
-// break it, or move it off the account the runner picks (0040), is never
+// break it — USER and LOGNAME among them (0085) — or move it off the account the runner picks (0040), is never
 // queued and no runner is ever offered it — and a run
 // carrying the names decision 0024 refused is queued like any other (0038).
 func TestGrantNamesAreCheckedBeforeQueueing(t *testing.T) {
@@ -346,6 +346,8 @@ func TestGrantNamesAreCheckedBeforeQueueing(t *testing.T) {
 		{"the path, lower case", v1.Grant{Name: "path", Value: "/tmp", As: v1.GrantFile}, "PATH"},
 		{"a key that would move the run off its account", v1.Grant{Name: "ANTHROPIC_API_KEY", Value: "sk-hub", As: v1.GrantEnv}, "0040"},
 		{"a hub's own base url", v1.Grant{Name: "ANTHROPIC_BASE_URL", Value: "https://hub", As: v1.GrantEnv}, "0040"},
+		{"a login name that would hide the account's Keychain login", v1.Grant{Name: "USER", Value: "builder", As: v1.GrantEnv}, "USER"},
+		{"the login name by POSIX's spelling", v1.Grant{Name: "LOGNAME", Value: "builder", As: v1.GrantFile}, "LOGNAME"},
 		{"a database url", v1.Grant{Name: "DATABASE_URL", Value: "postgres://", As: v1.GrantEnv}, ""},
 		{"a cloud deploy credential", v1.Grant{Name: "AWS_SECRET_ACCESS_KEY", Value: "k", As: v1.GrantFile}, ""},
 	} {

@@ -281,6 +281,7 @@ func TestGrantNames(t *testing.T) {
 		// Near the deny list, and outside it: a prefix is a prefix, not a
 		// substring, and the two names are matched whole.
 		{"PATHX", ""}, {"MY_PATH", ""}, {"HOMEBREW_TOKEN", ""}, {"LDAP_PASSWORD", ""},
+		{"USERNAME", ""}, {"DB_USER", ""}, {"USER_TOKEN", ""}, {"LOGNAME_X", ""},
 		{"LD", ""}, {"DYLDX", ""},
 		// The account names are matched whole too: a project's own key under
 		// another name is exactly what the refusal asks a hub to send.
@@ -308,6 +309,12 @@ func TestGrantNames(t *testing.T) {
 		{"HOME", "HOME"}, {"home", "HOME"}, {"hOmE", "HOME"},
 		{"LD_PRELOAD", "LD_"}, {"ld_preload", "LD_"}, {"Ld_Library_Path", "LD_"}, {"LD_", "LD_"},
 		{"DYLD_INSERT_LIBRARIES", "DYLD_"}, {"dyld_insert_libraries", "DYLD_"},
+		// The login name: Claude on macOS files a home's Keychain login under
+		// $USER, so a run carrying another looks for its account's login
+		// under a name it was never filed under (0085). LOGNAME is the same
+		// name by POSIX's spelling. Both carry the way round them.
+		{"USER", "USER"}, {"user", "USER"}, {"User", "Keychain"}, {"USER", "under another name"},
+		{"LOGNAME", "LOGNAME"}, {"logname", "LOGNAME"}, {"LOGNAME", "under another name"},
 
 		// The variables that choose whose credential a harness uses, or which
 		// home it logs in from. A hub's grant lands after the owner's copy was
