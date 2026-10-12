@@ -1,6 +1,6 @@
 ---
 date: 2026-10-11
-status: amended on 2026-10-12 (DEV-180) — what a file grant holds is masked from the quoted stderr too, not only its path
+status: amended on 2026-10-12 (DEV-180) — what a file grant holds is masked from the quoted stderr too, not only its path; amended on 2026-10-12 (DEV-192) — a harness's own error messages a run's error quotes are masked the same way
 ---
 
 # A harness silent from its start is stopped after two minutes, and a watchdog's error quotes its stderr
@@ -143,6 +143,27 @@ anything else it is handed: the harness reads the file, as before.
 The one other line of stderr a run's error quotes, Claude's warning that it
 ignores an effort it does not know, was not masked at all, of the environment
 either. It is now masked the same way (`adapter.Mask`), with both.
+
+## Amendment: a harness's own error messages are masked too (DEV-192)
+
+stderr was not the only harness text a run's error quotes. Every adapter
+also quotes the harness's error messages when it refuses something: an ACP
+agent's JSON-RPC error on any request the core sends, and the prompt's;
+Codex's refusal of a request or of a steer, and its failed turn's error with
+its `additionalDetails`; Claude's failed result, its text or the errors it
+lists. Only an ACP error answered with a null id was masked (DEV-184). A
+harness that could not use a credential may quote it back in any of them.
+
+**Every harness-supplied message a run's error quotes goes through
+`adapter.Mask` with the environment the harness was started with and the
+run's file grants**, under the rules above. So does the error event a refused
+steer becomes. The ACP core masks an agent's error once, as it reads it: its
+message, and every string in its data, which an agent's `Classify` reads and
+may quote (OpenCode names the provider from there). Every refusal built from
+it carries the masked words. Only the harness's words are masked, never the
+whole message: what yad writes around them is a next action that must run as
+printed, and a value that happens to equal a word of it would break it.
+Events are not masked. They are the harness's output, as before.
 
 ## Considered options
 

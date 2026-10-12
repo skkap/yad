@@ -548,7 +548,14 @@ type ended struct {
 	stderr      string // its last words, as adapter.StderrTail quotes them
 	asked       string // the thread id the run resumed, if it resumed one
 	check       string // the login check for the owner, in the run's account home
+	// env and secrets are what Codex was started with and what the run's
+	// file grants hold: what mask takes out of Codex's words.
+	env, secrets []string
 }
+
+// mask is Codex's own words as a run's error may quote them (adapter.Mask):
+// a turn that failed on a credential may quote it back (DEV-192).
+func (e ended) mask(s string) string { return adapter.Mask(s, e.env, e.secrets) }
 
 // outcome decides how the run ended. Only the turn's own completion decides
 // it (as decision 0021 has it for Claude): an app-server that exits 0 before
@@ -613,7 +620,7 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 	if te == nil {
 		te = &turnError{}
 	}
-	msg := te.text()
+	msg := e.mask(te.text())
 	switch te.kind() {
 	case "contextWindowExceeded":
 		return fail(adapter.ClassPromptTooLong, msg)
@@ -622,7 +629,7 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 		return fail(adapter.ClassUsageLimit, msg)
 	}
 	if t.done.Status != "failed" {
-		return fail(adapter.ClassHarness, fmt.Sprintf("codex ended the turn %q, which is not a way a turn ends — %s", t.done.Status, msg))
+		return fail(adapter.ClassHarness, fmt.Sprintf("codex ended the turn %q, which is not a way a turn ends — %s", e.mask(t.done.Status), msg))
 	}
 	return fail(adapter.ClassHarness, msg)
 }

@@ -31,6 +31,8 @@ func TestMain(m *testing.M) {
 
 var testAgent = Agent{ID: "agent", Name: "Agent", Args: []string{"acp"}, LoginCheck: []string{"login", "status"}}
 
+// play runs a turn against the fake playing testdata/agent/<name>.jsonl, or
+// the conversation at name when it is an absolute path.
 func play(t *testing.T, name string, edit func(*adapter.Spec)) ([]v1.Event, adapter.Outcome) {
 	t.Helper()
 	return playAs(t, testAgent, name, edit)
@@ -39,9 +41,12 @@ func play(t *testing.T, name string, edit func(*adapter.Spec)) ([]v1.Event, adap
 // playAs is play with another agent in testAgent's place.
 func playAs(t *testing.T, agent Agent, name string, edit func(*adapter.Spec)) ([]v1.Event, adapter.Outcome) {
 	t.Helper()
-	fixture, err := filepath.Abs(filepath.Join("testdata", "agent", name+".jsonl"))
-	if err != nil {
-		t.Fatal(err)
+	fixture := name
+	if !filepath.IsAbs(name) {
+		var err error
+		if fixture, err = filepath.Abs(filepath.Join("testdata", "agent", name+".jsonl")); err != nil {
+			t.Fatal(err)
+		}
 	}
 	log := filepath.Join(t.TempDir(), "log.jsonl")
 	lastLog = log
