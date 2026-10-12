@@ -21,10 +21,13 @@ import (
 )
 
 // Writes is where any shipped Go file under root writes the package variable
-// name, as file:line. A shipped file is any .go file but a _test.go one, in any
-// directory the go tool would build from: one starting with "." or "_", a
-// testdata directory and a nested module are not this module's code — and a
-// main checkout carries whole other branches under .claude/worktrees.
+// name, as file:line. A shipped file is any .go file but a _test.go one, under
+// root but outside .git and outside any directory holding its own go.mod. The
+// go tool leaves testdata and "." and "_" directories out of ./..., and still
+// builds any of them a shipped package imports, so they are read. A nested
+// module is another module, compiled in only if go.mod requires it — and a
+// main checkout carries whole other branches under .claude/worktrees, each a
+// module of its own.
 //
 // A write is an assignment of any kind — alone, in a tuple, with an operator,
 // by := — a range key or value, a var declared with a value, ++ or --, or the
@@ -52,7 +55,13 @@ func Writes(t testing.TB, root, name string) []string {
 			return err
 		}
 		if d.IsDir() {
-			if path != root && notThisModule(path, d.Name()) {
+			if path == root {
+				return nil
+			}
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
 				return fs.SkipDir
 			}
 			return nil
@@ -97,14 +106,4 @@ func Writes(t testing.TB, root, name string) []string {
 		t.Fatal(err)
 	}
 	return found
-}
-
-// notThisModule is whether the go tool leaves the directory out of the module
-// rooted above it.
-func notThisModule(path, base string) bool {
-	if base == "testdata" || strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") {
-		return true
-	}
-	_, err := os.Stat(filepath.Join(path, "go.mod"))
-	return err == nil
 }

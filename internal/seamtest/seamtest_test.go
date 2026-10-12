@@ -60,31 +60,37 @@ func TestWritesSeesAWriteOutsideAFunction(t *testing.T) {
 	}
 }
 
-// The walk reads what the module ships and nothing else: a test file sets the
-// seam on purpose, and a directory the go tool leaves out is not this module's
-// code. A main checkout holds whole worktrees under .claude, each with every
-// test seam in it.
+// The walk reads everything this module could compile into yad: a test file
+// sets the seam on purpose, and a nested module is another module — a main
+// checkout holds whole worktrees under .claude, each with every test seam in
+// it. A directory ./... leaves out is still read, because a shipped package can
+// import it all the same.
 func TestWritesReadsOnlyShippedFiles(t *testing.T) {
 	write := body(`pkg.XForTests = 1`)
 	for _, tc := range []struct {
 		path string
+		mod  string // a directory given a go.mod of its own
 		want int
 	}{
-		{"p.go", 1},
-		{"internal/deep/p.go", 1},
-		{"cmd/yad/main.go", 1},
-		{"p_test.go", 0},
-		{"internal/deep/p_test.go", 0},
-		{"testdata/p.go", 0},
-		{"internal/deep/testdata/p.go", 0},
-		{".claude/worktrees/other/p.go", 0},
-		{"_scratch/p.go", 0},
-		{"nested/p.go", 0},
-		{"p.txt", 0},
+		{"p.go", "", 1},
+		{"internal/deep/p.go", "", 1},
+		{"cmd/yad/main.go", "", 1},
+		{"testdata/p.go", "", 1},
+		{"internal/deep/testdata/p.go", "", 1},
+		{"_scratch/p.go", "", 1},
+		{"internal/.hidden/p.go", "", 1},
+		{".claude/p.go", "", 1},
+		{"p_test.go", "", 0},
+		{"internal/deep/p_test.go", "", 0},
+		{"p.txt", "", 0},
+		{".git/p.go", "", 0},
+		{"nested/p.go", "nested", 0},
+		{"nested/deep/p.go", "nested", 0},
+		{".claude/worktrees/other/internal/p.go", ".claude/worktrees/other", 0},
 	} {
 		files := map[string]string{tc.path: write}
-		if tc.path == "nested/p.go" {
-			files["nested/go.mod"] = "module example.com/nested\n"
+		if tc.mod != "" {
+			files[tc.mod+"/go.mod"] = "module example.com/nested\n"
 		}
 		if got := Writes(t, tree(t, files), "XForTests"); len(got) != tc.want {
 			t.Errorf("a write in %s: found %d %q, want %d", tc.path, len(got), got, tc.want)
@@ -92,18 +98,15 @@ func TestWritesReadsOnlyShippedFiles(t *testing.T) {
 	}
 }
 
-// The root itself is walked whatever it is called: a test's temporary
-// directory, or a checkout someone cloned into a directory starting with a dot.
-func TestWritesWalksARootTheGoToolWouldSkip(t *testing.T) {
-	root := filepath.Join(t.TempDir(), ".checkout")
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "p.go"), []byte(body(`XForTests = 1`)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := Writes(t, root, "XForTests"); len(got) != 1 {
-		t.Errorf("found %d writes %q, want 1", len(got), got)
+// The root holds a go.mod of its own, and is walked: it is the module.
+func TestWritesWalksTheRootModule(t *testing.T) {
+	root := tree(t, map[string]string{
+		"go.mod":          "module example.com/m\n",
+		"p.go":            body(`XForTests = 1`),
+		"internal/q/q.go": body(`XForTests = 2`),
+	})
+	if got := Writes(t, root, "XForTests"); len(got) != 2 {
+		t.Errorf("found %d writes %q, want 2", len(got), got)
 	}
 }
 
