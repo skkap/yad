@@ -384,7 +384,11 @@ func (t *turn) handle(l jsonrpc.Line) {
 		// Masked once, here, as its stderr is: every refusal quotes the
 		// agent's words into the run's error, which goes to a hub, and an
 		// agent that could not use a credential may quote it back (DEV-192).
-		l.Msg.Error.Message = adapter.Mask(l.Msg.Error.Message, t.env, t.spec.Secrets)
+		// Its data too, which an agent's Classify reads and may quote —
+		// OpenCode names the provider from there.
+		mask := func(s string) string { return adapter.Mask(s, t.env, t.spec.Secrets) }
+		l.Msg.Error.Message = mask(l.Msg.Error.Message)
+		l.Msg.Error.Data = maskData(l.Msg.Error.Data, mask)
 	}
 	switch {
 	case l.Err != nil:
@@ -405,6 +409,44 @@ func (t *turn) handle(l jsonrpc.Line) {
 	default:
 		t.notified(l.Msg)
 	}
+}
+
+// maskData is an error's data with every string in it masked, keys included,
+// and its numbers as written. Data that is not JSON is masked as text: a
+// Classify can only quote it as such.
+func maskData(data json.RawMessage, mask func(string) string) json.RawMessage {
+	if len(data) == 0 {
+		return data
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+	var v any
+	if d.Decode(&v) != nil {
+		return json.RawMessage(mask(string(data)))
+	}
+	var walk func(any) any
+	walk = func(v any) any {
+		switch v := v.(type) {
+		case string:
+			return mask(v)
+		case []any:
+			for i := range v {
+				v[i] = walk(v[i])
+			}
+		case map[string]any:
+			out := make(map[string]any, len(v))
+			for k, x := range v {
+				out[mask(k)] = walk(x)
+			}
+			return out
+		}
+		return v
+	}
+	out, err := json.Marshal(walk(v))
+	if err != nil {
+		return json.RawMessage(mask(string(data)))
+	}
+	return out
 }
 
 // unmatched reads an error the agent answered with a null id: JSON-RPC's

@@ -149,18 +149,21 @@ either. It is now masked the same way (`adapter.Mask`), with both.
 stderr was not the only harness text a run's error quotes. Every adapter
 also quotes the harness's error messages when it refuses something: an ACP
 agent's JSON-RPC error on any request the core sends, and the prompt's;
-Codex's refusal of a request and its failed turn's error, with its
-`additionalDetails`; Claude's failed result, its text or the errors it lists.
-Only an ACP error answered with a null id was masked (DEV-184). A harness
-that could not use a credential may quote it back in any of them.
+Codex's refusal of a request or of a steer, and its failed turn's error with
+its `additionalDetails`; Claude's failed result, its text or the errors it
+lists. Only an ACP error answered with a null id was masked (DEV-184). A
+harness that could not use a credential may quote it back in any of them.
 
 **Every harness-supplied message a run's error quotes goes through
 `adapter.Mask` with the environment the harness was started with and the
-run's file grants**, under the rules above. The ACP core masks an agent's
-error once, as it reads it, so every refusal it builds from it carries the
-masked words. What an agent's `Classify` quotes from the error's data, as
-OpenCode names the provider from there, is masked as well. Events are not
-masked: they are the harness's output, as before.
+run's file grants**, under the rules above. So does the error event a refused
+steer becomes. The ACP core masks an agent's error once, as it reads it: its
+message, and every string in its data, which an agent's `Classify` reads and
+may quote (OpenCode names the provider from there). Every refusal built from
+it carries the masked words. Only the harness's words are masked, never the
+whole message: what yad writes around them is a next action that must run as
+printed, and a value that happens to equal a word of it would break it.
+Events are not masked. They are the harness's output, as before.
 
 ## Considered options
 

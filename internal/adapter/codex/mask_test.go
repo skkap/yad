@@ -85,6 +85,32 @@ func TestCodexsErrorIsMaskedInTheRunsError(t *testing.T) {
 	}
 }
 
+// A steer Codex refuses is reported in Codex's words, which the runner
+// quotes in an error event to the hub: masked as a refused request is.
+func TestARefusedSteerIsMasked(t *testing.T) {
+	h := &harness{
+		fixture: rewrite(t, "steer", `{"id":4,"result":{"turnId":"01a0e90c-0ace-7330-b7dd-221cdf9ae385"}}`, `{"error":{"code":-32600,"message":"`+said+`"},"id":4}`),
+		env:     map[string]string{"YAD_TEST_TOKEN": envToken},
+	}
+	spec := h.spec(t)
+	spec.Secrets = []string{grantContent}
+	var steerErr error
+	drive(t, context.Background(), spec, func(tr adapter.Turn, e v1.Event) bool {
+		if e.Kind != v1.EventToolCall {
+			return false
+		}
+		steerErr = tr.Steer("Also: end your final reply with the word STEERED.")
+		return true
+	})
+	if steerErr == nil {
+		t.Fatal("the refused steer was taken")
+	}
+	if want := "codex refused the steer: " + masked; !strings.Contains(steerErr.Error(), want) ||
+		strings.Contains(steerErr.Error(), envToken) || strings.Contains(steerErr.Error(), grantContent) {
+		t.Errorf("steer error %q, want it to carry %q and neither secret", steerErr, want)
+	}
+}
+
 // answerBefore writes a copy of a fixture that ends just before the line with
 // this prefix, with answer in its place.
 func answerBefore(t *testing.T, name, prefix, answer string) string {

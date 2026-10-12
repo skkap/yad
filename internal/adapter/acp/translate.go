@@ -302,9 +302,10 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 			f.Message = fmt.Sprintf("%s failed the turn: %s", t.agent.Name, t.promptErr.Message)
 		}
 		o.Limit, o.AuthRejected = f.Limit, f.AuthRejected
-		// The error's message is masked already; what Classify quotes from
-		// its data — OpenCode names the provider from there — is not.
-		return fail(f.Class, e.mask(f.Message))
+		// Not masked again: the error's message and data were masked as
+		// they were read, and the rest of what Classify writes is yad's own
+		// — a next action that must run as printed.
+		return fail(f.Class, f.Message)
 	case t.done == nil && (e.interrupted || e.cancelled):
 		o.State = v1.RunCancelled
 		return o

@@ -87,41 +87,67 @@ func TestAnAgentsRefusalIsMaskedInTheRunsError(t *testing.T) {
 }
 
 // What an agent's Classify quotes from the error's data, as OpenCode names
-// the provider from there, is masked as its message is; so is a stop reason
-// no ACP v1 turn ends with.
-func TestWhatAnOutcomeQuotesOfTheAgentIsMasked(t *testing.T) {
+// the provider from there, is masked as its message is — and what Classify
+// writes itself is not: a next action that names a word an env value happens
+// to equal must still run as printed.
+func TestWhatClassifyQuotesOfTheErrorIsMasked(t *testing.T) {
+	const next = " — run `opencode auth login`"
 	agent := testAgent
 	agent.Classify = func(e *jsonrpc.RPCError, _ adapter.Spec) Failure {
 		var d struct {
 			ProviderID string `json:"providerID"`
 		}
 		json.Unmarshal(e.Data, &d)
-		return Failure{Message: "the credential for " + d.ProviderID + " was refused: " + e.Message}
+		return Failure{Message: "the credential for " + d.ProviderID + " was refused: " + e.Message + next}
 	}
-	end := ended{env: []string{"YAD_TEST_TOKEN=" + envToken}, secrets: []string{grantContent}}
-	for _, tc := range []struct {
-		name string
-		set  func(*translator)
-		want string
-	}{
-		{"classified", func(tr *translator) {
-			tr.agent = agent
-			tr.promptErr = &jsonrpc.RPCError{Code: jsonrpc.CodeInternal, Message: said, Data: json.RawMessage(`{"providerID":"` + grantContent + `"}`)}
-		}, "the credential for " + adapter.Redacted + " was refused: " + masked},
-		{"a stop reason", func(tr *translator) {
-			tr.done = &promptResult{StopReason: "stopped on " + envToken}
-		}, `Agent ended the turn "stopped on ` + adapter.Redacted + `"`},
+	var events []v1.Event
+	tu := &turn{
+		agent: agent, wait: map[int64]string{3: "session/prompt"}, finished: make(chan struct{}),
+		in:   newInput(nopWriter{}, agent.Name),
+		env:  []string{"YAD_TEST_TOKEN=" + envToken, "YAD_TEST_WORD=opencode"},
+		spec: adapter.Spec{Secrets: []string{grantContent}},
+	}
+	defer tu.in.Close()
+	tu.tr = newTranslator(func(e v1.Event) { events = append(events, e) }, agent, tu.spec)
+	tu.handle(jsonrpc.Line{Msg: &jsonrpc.Message{
+		ID:    json.RawMessage("3"),
+		Error: &jsonrpc.RPCError{Code: jsonrpc.CodeInternal, Message: said, Data: json.RawMessage(`{"providerID":"` + grantContent + `"}`)},
+	}})
+	o := tu.tr.outcome(ended{env: tu.env, secrets: tu.spec.Secrets})
+	want := "the credential for " + adapter.Redacted + " was refused: " + masked + next
+	if o.Error == nil || o.Error.Message != want {
+		t.Fatalf("outcome %s %+v, want the error %q", o.State, o.Error, want)
+	}
+	noSecret(t, o.Error.Message, events)
+}
+
+// A stop reason no ACP v1 turn ends with is the agent's word, and masked as
+// its errors are.
+func TestAnUnknownStopReasonIsMasked(t *testing.T) {
+	var events []v1.Event
+	tr := newTranslator(func(e v1.Event) { events = append(events, e) }, testAgent, adapter.Spec{})
+	tr.done = &promptResult{StopReason: "stopped on " + envToken + " and " + grantContent}
+	o := tr.outcome(ended{env: []string{"YAD_TEST_TOKEN=" + envToken}, secrets: []string{grantContent}})
+	if want := `Agent ended the turn "stopped on ` + adapter.Redacted + ` and ` + adapter.Redacted + `"`; o.Error == nil || !strings.Contains(o.Error.Message, want) {
+		t.Fatalf("outcome %s %+v, want the error to carry %q", o.State, o.Error, want)
+	}
+	noSecret(t, o.Error.Message, events)
+}
+
+// An error's data is masked string by string, keys too, its numbers kept as
+// written; data that is not JSON is masked as text.
+func TestMaskData(t *testing.T) {
+	mask := func(s string) string { return strings.ReplaceAll(s, grantContent, adapter.Redacted) }
+	for _, tc := range []struct{ in, want string }{
+		{``, ``},
+		{`null`, `null`},
+		{`{"a":["x ` + grantContent + `",1.50,true],"` + grantContent + `":{"n":12345678901234567890}}`,
+			`{"[redacted]":{"n":12345678901234567890},"a":["x [redacted]",1.50,true]}`},
+		{`not json ` + grantContent, `not json [redacted]`},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var events []v1.Event
-			tr := newTranslator(func(e v1.Event) { events = append(events, e) }, testAgent, adapter.Spec{})
-			tc.set(tr)
-			o := tr.outcome(end)
-			if o.Error == nil || !strings.Contains(o.Error.Message, tc.want) {
-				t.Fatalf("outcome %s %+v, want the error to carry %q", o.State, o.Error, tc.want)
-			}
-			noSecret(t, o.Error.Message, events)
-		})
+		if got := string(maskData(json.RawMessage(tc.in), mask)); got != tc.want {
+			t.Errorf("maskData(%s) = %s, want %s", tc.in, got, tc.want)
+		}
 	}
 }
 

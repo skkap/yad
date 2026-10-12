@@ -242,7 +242,9 @@ func (t *turn) Steer(text string) error {
 	case errors.Is(err, context.DeadlineExceeded):
 		return errors.New("codex did not take the steer in time — it may still arrive; watch for it in the answer before sending it again")
 	}
-	return fmt.Errorf("codex refused the steer: %w", err)
+	// Codex's words, masked as refused masks them: the runner quotes them
+	// in an error event, which goes to a hub (DEV-192).
+	return errors.New("codex refused the steer: " + adapter.Mask(err.Error(), t.spec.Env, t.spec.Secrets))
 }
 
 // Interrupt asks Codex to end the turn with turn/interrupt. The session stays
