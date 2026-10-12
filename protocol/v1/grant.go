@@ -220,12 +220,12 @@ func (g Grant) Validate() error {
 	}
 	for name, why := range deniedGrantNames {
 		if strings.EqualFold(g.Name, name) {
-			return fmt.Errorf("grant name %s is refused: %s %s — send the value under another name", g.Name, name, why)
+			return fmt.Errorf("grant name %s is refused: %s %s — send the value under another name and have the brief say which", g.Name, name, why)
 		}
 	}
 	for _, d := range deniedGrantPrefixes {
 		if len(g.Name) >= len(d.prefix) && strings.EqualFold(g.Name[:len(d.prefix)], d.prefix) {
-			return fmt.Errorf("grant name %s is refused: %s* is denied because %s — send the value under another name", g.Name, d.prefix, d.why)
+			return fmt.Errorf("grant name %s is refused: %s* is denied because %s — send the value under another name and have the brief say which", g.Name, d.prefix, d.why)
 		}
 	}
 	if entry, why, ok := accountVariable(g.Name); ok {

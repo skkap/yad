@@ -257,8 +257,9 @@ func TestRunValidate(t *testing.T) {
 }
 
 // Any valid environment variable name is a grant name (decision 0038), except
-// four that would break the run and the ones that would move it off its
-// account (0040), each refused whatever its case.
+// the names that would break the run (USER and LOGNAME among them, 0085) and
+// the ones that would move it off its account (0040), each refused whatever
+// its case.
 func TestGrantNames(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -313,8 +314,8 @@ func TestGrantNames(t *testing.T) {
 		// $USER, so a run carrying another looks for its account's login
 		// under a name it was never filed under (0085). LOGNAME is the same
 		// name by POSIX's spelling. Both carry the way round them.
-		{"USER", "USER"}, {"user", "USER"}, {"User", "Keychain"}, {"USER", "under another name"},
-		{"LOGNAME", "LOGNAME"}, {"logname", "LOGNAME"}, {"LOGNAME", "under another name"},
+		{"USER", "USER"}, {"user", "USER"}, {"User", "Keychain"}, {"USER", "have the brief say which"},
+		{"LOGNAME", "LOGNAME"}, {"logname", "LOGNAME"}, {"LOGNAME", "have the brief say which"}, {"PATH", "have the brief say which"}, {"LD_PRELOAD", "have the brief say which"},
 
 		// The variables that choose whose credential a harness uses, or which
 		// home it logs in from. A hub's grant lands after the owner's copy was

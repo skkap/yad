@@ -292,7 +292,7 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	want := map[string]string{
 		"codex": "not one this runner can drive", "unknown-session": "does not hold session",
 		"reused-session": "already has a session", "live": "live sessions", "no-model": "model is required",
-		"loader": "LD_", "lower-home": "HOME", "login-name": "send the value under another name",
+		"loader": "LD_", "lower-home": "HOME", "login-name": "and have the brief say which",
 	}
 	for id, msg := range want {
 		r, ok := h.results[id]
