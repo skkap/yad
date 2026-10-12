@@ -247,7 +247,14 @@ type ended struct {
 	stderr      string // its last words, as adapter.StderrTail quotes them
 	asked       string // the session the run resumed, if it resumed one
 	check       string // the agent's login check, for the owner
+	// env and secrets are what the agent was started with and what the
+	// run's file grants hold: what mask takes out of the agent's words.
+	env, secrets []string
 }
+
+// mask is the agent's own words as a run's error may quote them
+// (adapter.Mask).
+func (e ended) mask(s string) string { return adapter.Mask(s, e.env, e.secrets) }
 
 // outcome decides how the run ended. Only the prompt's answer decides it: an
 // agent that exits 0 before answering has not succeeded.
@@ -295,7 +302,9 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 			f.Message = fmt.Sprintf("%s failed the turn: %s", t.agent.Name, t.promptErr.Message)
 		}
 		o.Limit, o.AuthRejected = f.Limit, f.AuthRejected
-		return fail(f.Class, f.Message)
+		// The error's message is masked already; what Classify quotes from
+		// its data — OpenCode names the provider from there — is not.
+		return fail(f.Class, e.mask(f.Message))
 	case t.done == nil && (e.interrupted || e.cancelled):
 		o.State = v1.RunCancelled
 		return o
@@ -322,7 +331,7 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 	case "refusal":
 		return fail(adapter.ClassHarness, "the model refused to continue the turn, and "+t.agent.Name+" leaves this prompt out of the session from here")
 	}
-	return fail(adapter.ClassHarness, fmt.Sprintf("%s ended the turn %q, which is not a way ACP v1 ends one", t.agent.Name, t.done.StopReason))
+	return fail(adapter.ClassHarness, fmt.Sprintf("%s ended the turn %q, which is not a way ACP v1 ends one", t.agent.Name, e.mask(t.done.StopReason)))
 }
 
 func exitDetail(e ended) string {

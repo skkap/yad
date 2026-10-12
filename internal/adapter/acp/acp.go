@@ -198,7 +198,7 @@ type turn struct {
 	spec  adapter.Spec
 	// env is what the agent was started with — Spec.Env as the agent's
 	// Prepare left it, OpenCode's server password included — whose values
-	// its stderr is quoted without (adapter.StderrTail).
+	// its stderr and its error messages are quoted without (adapter.Mask).
 	env    []string
 	answer string // the owner's answer to a permission request
 	// asked is the session the run resumes; "" for a new one. forkFrom is
@@ -347,6 +347,8 @@ loop:
 		stderr:      adapter.StderrTail(stderr, t.env, t.spec.Secrets, len(stderr) >= supervise.StderrTail),
 		asked:       t.asked,
 		check:       t.spec.HarnessCheck(t.agent.ID, t.agent.LoginCheck...),
+		env:         t.env,
+		secrets:     t.spec.Secrets,
 	}
 	t.mu.Unlock()
 	t.outcome = t.tr.outcome(e)
@@ -378,6 +380,12 @@ func (t *turn) timedOut() {
 }
 
 func (t *turn) handle(l jsonrpc.Line) {
+	if l.Msg != nil && l.Msg.Error != nil {
+		// Masked once, here, as its stderr is: every refusal quotes the
+		// agent's words into the run's error, which goes to a hub, and an
+		// agent that could not use a credential may quote it back (DEV-192).
+		l.Msg.Error.Message = adapter.Mask(l.Msg.Error.Message, t.env, t.spec.Secrets)
+	}
 	switch {
 	case l.Err != nil:
 		t.tr.text.Flush()
@@ -406,10 +414,10 @@ func (t *turn) handle(l jsonrpc.Line) {
 // runner's inactivity watchdog. With one request outstanding it is that
 // one's; with several, the turn fails without guessing which; with none,
 // there is nothing it can end. The agent's words are logged either way,
-// masked as its stderr is: an agent that could not read a request may quote
-// it back, and a run's error goes to a hub.
+// masked by handle: an agent that could not read a request may quote it
+// back.
 func (t *turn) unmatched(e *jsonrpc.RPCError) {
-	said := adapter.Mask(e.Message, t.env, t.spec.Secrets)
+	said := e.Message
 	t.tr.text.Flush()
 	t.tr.emitErr(adapter.ClassStream, fmt.Sprintf("%s answered with an error tied to no request (id null, code %d): %s", t.agent.Name, e.Code, said))
 	next := fmt.Sprintf("check `%s` against the release this yad was built for (`%s`)", shellword.Command(t.agent.ID, "--version"), t.spec.YadCommand("doctor"))
