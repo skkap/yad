@@ -20,7 +20,7 @@ harness's default home. A definite "no" is an `error` on the harness — it is
 not drivable, no hub offers it a run, and the error names the harness's own
 login command, run as the runner's user. A check that cannot answer is a
 warning and changes nothing: an unanswered question is not a "no" (0039,
-DEV-26). `yad doctor` shows the harness as `needs login` rather than `broken`.
+YAD-26). `yad doctor` shows the harness as `needs login` rather than `broken`.
 
 **Once a minute at most.** The daemon re-probes every 15 seconds; the answer is
 kept for a minute per binary, so a person who just logged in sees it within a
@@ -29,7 +29,7 @@ minute and an idle runner starts one short process a minute per harness.
 **The command leaves the machine without a path.** The error travels to every
 hub, so it names the harness by its name, not the path detection resolved, and
 a runner whose environment moves the harness's home (`CLAUDE_CONFIG_DIR`,
-`CODEX_HOME`) shows that variable with a placeholder value (DEV-67).
+`CODEX_HOME`) shows that variable with a placeholder value (YAD-67).
 
 **Claude's JSON decides, whatever the exit status.** Measured on claude
 2.1.281: a home with no login answers `{"loggedIn": false}` and exits 1. The

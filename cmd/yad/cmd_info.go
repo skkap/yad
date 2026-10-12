@@ -127,7 +127,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 	}
 	for _, d := range found {
 		// In full, because the column above is truncated and what a harness
-		// error carries now is the next action (DEV-60) — the footer below
+		// error carries now is the next action (YAD-60) — the footer below
 		// tells the owner to fix the errors above, so they have to be readable.
 		switch {
 		case locked[d.ID]:
@@ -215,7 +215,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 }
 
 // daemonModelsFailures is each login the profile's daemon could not ask for
-// its models, and why (DEV-146). The daemon's, not this command's own: its ask
+// its models, and why (YAD-146). The daemon's, not this command's own: its ask
 // is the one behind the models_source a hub shows, from the environment and
 // the binary the daemon resolved, and asking again here would start every
 // login's harness for seconds each to learn something the daemon already
@@ -294,7 +294,7 @@ func envNotes(cfg config.Config, p config.Paths, getenv func(string) string) []s
 var keychainLogin = account.KeychainLogin
 
 // keychainLocked is each harness whose default login check said "not logged
-// in" from an SSH session on a Mac (DEV-170). macOS keeps the login keychain
+// in" from an SSH session on a Mac (YAD-170). macOS keeps the login keychain
 // locked to a session that did not log in at the console, so Claude cannot
 // read its login there and answers as if it had none: a verdict about this
 // session, not about the machine or the runner service. Only the default
@@ -319,7 +319,7 @@ func keychainLocked(found []harness.Detected, getenv func(string) string) map[st
 // one, as DefaultLogins does for a harness with none. Its runs never use the
 // default home, so only its accounts say whether it can take one, and health
 // already calls such a harness not ready; doctor calling it ready is how a
-// hub login that ended without taking went unseen on the machine (DEV-138).
+// hub login that ended without taking went unseen on the machine (YAD-138).
 // A limited account still counts: it comes back on its own at its reset.
 func accountLogins(found []harness.Detected, accounts []account.Account, p config.Paths) {
 	for i, d := range found {

@@ -56,7 +56,7 @@ func keepHookEnv(h hookEnv) error {
 		err = writeAside(filepath.Join(h.gitDir, hookEnvFile), b)
 	}
 	if err != nil {
-		// Not quoted: it names a path under the owner's home (DEV-67).
+		// Not quoted: it names a path under the owner's home (YAD-67).
 		return &Error{Class: ClassSetupFailed, Msg: "the worktree's hook variables could not be recorded in its git directory — check free disk space on the runner"}
 	}
 	return nil

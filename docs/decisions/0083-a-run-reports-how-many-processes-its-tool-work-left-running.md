@@ -11,7 +11,7 @@ test suite, a dev server started with `&` or Claude Code's
 with a final text that may say "tests are running, will report". In
 JapanLaw #1 (ZUM-100) a manager trusted two such builder runs and caught it
 only by reading transcripts. A hub had no way to tell a hollow success from a
-real one. DEV-186.
+real one. YAD-186.
 
 ## Decision
 

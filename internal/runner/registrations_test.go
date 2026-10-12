@@ -91,7 +91,7 @@ func retiredNames(t *testing.T, s *store.Store) []string {
 // under it may pick the ids the first one used — a hub with sequential ids
 // does on its first run. Its run is accepted, and the first hub's rows stay
 // under a retired name. A restart without a new registration moves nothing
-// (DEV-166, decision 0079).
+// (YAD-166, decision 0079).
 func TestANameReusedForAnotherHubStartsClean(t *testing.T) {
 	noTools(t)
 	first, second := newEnv(t), newEnv(t)

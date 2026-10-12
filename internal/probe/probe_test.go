@@ -120,7 +120,7 @@ func file(t *testing.T, dir string, mode os.FileMode) string {
 //
 // Found through the override, the program is the variable — the binary that
 // was probed, not PATH's — so each message says it has to be set where the
-// command is pasted (DEV-108).
+// command is pasted (YAD-108).
 func TestCommandsRunAsPrinted(t *testing.T) {
 	args := []string{"--version", "a b'c"}
 	for _, tc := range []struct {

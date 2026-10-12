@@ -17,7 +17,7 @@ import (
 
 // The daemon rebuilds its document every interval and asks a failed login
 // again every few minutes, so a reason is logged when it appears or changes
-// and its clearing once — never on every rebuild (DEV-146). The reason rides
+// and its clearing once — never on every rebuild (YAD-146). The reason rides
 // as an attribute: a hub's health hears the message alone.
 func TestModelsFailuresAreLoggedOncePerChange(t *testing.T) {
 	var buf bytes.Buffer

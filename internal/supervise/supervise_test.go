@@ -255,8 +255,8 @@ func TestOwnerLayerPrecedence(t *testing.T) {
 // Every variable a grant may not carry because it moves a run off its account
 // is removed from the owner's environment too, from the same list
 // (v1.AccountVariable), since the owner's copy ranks above the account's login
-// just as a hub's would (DEV-62). internal/account holds the whole list to
-// this; these are the names DEV-73 found Scrub missing, and the neighbours
+// just as a hub's would (YAD-62). internal/account holds the whole list to
+// this; these are the names YAD-73 found Scrub missing, and the neighbours
 // that must survive.
 func TestScrubRemovesAccountVariables(t *testing.T) {
 	for _, tc := range []struct {
@@ -302,7 +302,7 @@ func TestAccountVariablesNamesOnly(t *testing.T) {
 
 // Spec.KeepEnv is set nowhere but this package's tests. Wiring it to the
 // owner's configuration is the day API-key billing can sit beside accounts,
-// and the rules for that day are written on the field (DEV-62); this makes
+// and the rules for that day are written on the field (YAD-62); this makes
 // sure whoever wires it reads them.
 func TestKeepEnvIsNotWired(t *testing.T) {
 	root, err := filepath.Abs("../..")

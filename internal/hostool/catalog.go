@@ -24,7 +24,7 @@ type Tool struct {
 // Catalog is every host tool YAD probes, in display order.
 //
 // Three, and deliberately only three (decided 2026-09-19, Zumino yad/dev
-// DEV-31): git, gh and docker are what a run needs from the machine itself
+// YAD-31): git, gh and docker are what a run needs from the machine itself
 // before it can do anything — clone a source, open a pull request, run a
 // container. A run that wants anything else installs it in its own workdir. A
 // fourth entry here would cost every runner two more spawns every probe

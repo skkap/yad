@@ -10,7 +10,7 @@ import (
 )
 
 // Every tool result says whether it failed, from Claude's own is_error and
-// never from the output (DEV-125). Recorded: a command that exited 3, one that
+// never from the output (YAD-125). Recorded: a command that exited 3, one that
 // succeeded and a Read of no file (2.1.280); two calls the permission mode
 // refused (2.1.276, permission-denied.jsonl lines 25 and 71); a Read that
 // succeeded, whose result carries no is_error at all, which the Messages API

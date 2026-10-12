@@ -153,7 +153,7 @@ const stuckAfter = 20 * time.Second
 // A turn is failed for standing still, not for taking long: every event, and
 // every line the fake claude logs, counts as movement. A bound on the whole
 // turn is a budget a loaded machine overruns; a 32 MiB line took one past
-// twenty seconds while it was still moving (DEV-140).
+// twenty seconds while it was still moving (YAD-140).
 func drive(t *testing.T, ctx context.Context, spec adapter.Spec, act func(adapter.Turn, v1.Event) bool) ([]v1.Event, adapter.Outcome, adapter.Turn) {
 	t.Helper()
 	tr, err := Adapter{}.Start(ctx, spec)
@@ -460,7 +460,7 @@ func TestPlainTurn(t *testing.T) {
 	}
 }
 
-// The context file is gone by the time the turn says it is over (DEV-92). A
+// The context file is gone by the time the turn says it is over (YAD-92). A
 // runner stopping after its last turn exits once that turn is waited for, and
 // anything still to be cleaned up then is left behind in the shared temp
 // directory with the brief's context in it. The removal is made slow so that
@@ -959,7 +959,7 @@ func TestTerminateEndsADeafClaude(t *testing.T) {
 		go func() {
 			// Terminated once the fake has read the interrupt, not a fixed
 			// while after sending it: on a loaded machine the SIGTERM used
-			// to land first, and the log held no interrupt (DEV-92).
+			// to land first, and the log held no interrupt (YAD-92).
 			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 				if b, _ := os.ReadFile(h.log); strings.Contains(string(b), "control_request") {
 					break
@@ -1134,7 +1134,7 @@ func TestStartRefuses(t *testing.T) {
 			s.Settings = map[string]string{"permission_mode": "--dangerously-skip-permissions"}
 		}, "config.toml"},
 		// The exec error names the binary under the owner's home; the run's
-		// error goes to a hub, so the path travels only as the cause (DEV-67).
+		// error goes to a hub, so the path travels only as the cause (YAD-67).
 		{"a binary that will not exec", func(s *adapter.Spec) { s.Binary = "/Users/someone/bin/claude" }, "would not start"},
 	}
 	for _, c := range cases {

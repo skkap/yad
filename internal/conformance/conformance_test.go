@@ -151,7 +151,7 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		// A hub that sends no cancel for a run it does not hold fails for
 		// that once. The rules that read a missing cancel as a run still
 		// held say they cannot tell, or judge by what else they see, rather
-		// than blame the lease for it (DEV-110).
+		// than blame the lease for it (YAD-110).
 		{flaw: flawNoCancel, check: "sync/unlisted-offer-taken-back", want: Skipped},
 		{flaw: flawNoCancel, check: "lease/lapse", leaseWait: time.Minute, want: Passed},
 		{flaw: flawNoCancel, check: "lease/offer-lapse", leaseWait: time.Minute, third: true, want: Skipped},

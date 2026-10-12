@@ -99,7 +99,7 @@ func TestVersionWarning(t *testing.T) {
 }
 
 // `opencode models` is the model list, and nothing on it that is not shaped
-// provider/model is reported (DEV-67). The list recorded in a home with no
+// provider/model is reported (YAD-67). The list recorded in a home with no
 // login is OpenCode Zen's free models.
 func TestListModels(t *testing.T) {
 	recorded, err := filepath.Abs(filepath.Join(fixtures, "list-models.txt"))

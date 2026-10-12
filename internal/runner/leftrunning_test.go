@@ -19,7 +19,7 @@ import (
 
 // A result tells a run whose tool work was measured and found nothing apart
 // from one that was not measured at all, and names what was found in a
-// status event the result's last_seq covers (DEV-186).
+// status event the result's last_seq covers (YAD-186).
 func TestLeftRunningIsReportedApartFromNotMeasured(t *testing.T) {
 	sleep := supervise.Leftover{PID: 4242, Name: "sleep", Age: 4 * time.Second}
 	node := supervise.Leftover{PID: 4343, Name: "node", Age: 3*time.Minute + 10*time.Second}

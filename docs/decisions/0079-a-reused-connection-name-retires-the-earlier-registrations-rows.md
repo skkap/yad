@@ -11,7 +11,7 @@ left, so `yad connect` can give it to a different hub. The old hub's ended
 rows stayed under the name. A new hub that picked an id the old one had used
 had its run refused as one in a closed session, or met a kept run row with
 the same id. `yad hub`'s ids are random, so it would rarely happen there. A
-hub with sequential ids would meet it on its first run (DEV-166). A runner
+hub with sequential ids would meet it on its first run (YAD-166). A runner
 reconnected under its default name, which is taken from the hub's host, is
 the likely way in, and the refusal names nothing the owner did.
 
@@ -20,7 +20,7 @@ the likely way in, and the refusal names nothing the owner did.
 The maintainer's (2026-10-12): **the earlier registration's rows are moved
 to a retired name, `<name>~<unix ms>`.** They are kept, not deleted. The
 name is not re-keyed with a generation, and reusing it is not refused. The
-agent working DEV-166 decided the details below.
+agent working YAD-166 decided the details below.
 
 **How a new registration is told from the same one.** `yad connect` writes
 `registered_at`, in unix milliseconds, on a connection entry it adds to

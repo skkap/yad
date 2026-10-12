@@ -69,7 +69,7 @@ func (e *env) deregister(t *testing.T, runnerID string) {
 // another carries on: its loop stops, its run in hand is cancelled and — the
 // hub having recorded it lost at the deregister — nothing about it is sent
 // again; its session closes once the run has ended, is reported to nobody,
-// and its workdir is reclaimed (DEV-81). Asking again finds it already gone.
+// and its workdir is reclaimed (YAD-81). Asking again finds it already gone.
 func TestRemovingAConnectionStopsItAloneWhileAnotherCarriesOn(t *testing.T) {
 	e := newEnv(t)
 	l := e.loop(t, 2)
@@ -159,7 +159,7 @@ func TestRemovingAConnectionStopsItAloneWhileAnotherCarriesOn(t *testing.T) {
 
 // A connection whose loop had already stopped on a fault — its credential
 // refused while config.toml still listed it — is removed like any other: what
-// it left is ended, and the fault it recorded no longer counts (DEV-81 review
+// it left is ended, and the fault it recorded no longer counts (YAD-81 review
 // round 3: the removal used to wait for a retirement nothing would make).
 func TestRemovingAConnectionThatHadStoppedOnAFault(t *testing.T) {
 	e := newEnv(t)

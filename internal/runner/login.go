@@ -543,7 +543,7 @@ var errRemoved = errors.New("removed")
 // row reads free (account.Load). So the needs_login the missing home meant is
 // written down before the home is made, and release, on a login that ended any
 // way but succeeded, has the account's state written from the harness's own
-// check before the hold goes (DEV-138) — in every login's one way out,
+// check before the hold goes (YAD-138) — in every login's one way out,
 // whichever method drove it and however it ended, a daemon stopping included.
 func (m *Logins) claim(l *hubLogin) (home string, release func(), err error) {
 	if l.ref.Label == "" {
@@ -642,7 +642,7 @@ func (m *Logins) accountRemoved(r account.Ref) {
 
 // connectionRemoved ends every login a removed connection's hub started, as
 // its cancel_login would, and forgets each once it has let go of the
-// account's home (DEV-182). That hub can send no login_code or cancel_login
+// account's home (YAD-182). That hub can send no login_code or cancel_login
 // again, and no sync will carry an end to it: left alone, a link login keeps
 // its process in the home until its code wait runs out, and its end stays
 // owed for the life of the process, holding a self-update's drain and one of
@@ -716,7 +716,7 @@ func (m *Logins) byLink(ctx context.Context, l *hubLogin, bin string) {
 	// login being made (decision 0054). It goes once the new login is
 	// confirmed (check).
 	//
-	// And no browser (DEV-133). Over pipes claude still opens the machine's
+	// And no browser (YAD-133). Over pipes claude still opens the machine's
 	// browser before it prints the link, and a browser here that is signed
 	// in to claude.ai finishes the login through its own callback — as
 	// whoever is signed in there, with no code at all. A hub login is signed
@@ -816,7 +816,7 @@ const noBrowser = "BROWSER=true"
 // success; but the home may now hold a login all the same — made by something
 // on this machine, as whoever it was signed in as. Saying only that the login
 // failed would leave the owner believing the account is still logged out
-// while it takes runs on an account they did not choose (DEV-133).
+// while it takes runs on an account they did not choose (YAD-133).
 func (m *Logins) signedInWithoutCode(ctx context.Context, l *hubLogin, bin, home string, log *slog.Logger) {
 	h := l.ref.Harness
 	in, err := account.OwnLogin(ctx, h, bin, home)

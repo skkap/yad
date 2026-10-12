@@ -11,7 +11,7 @@ Postgres or compose stack a run started stayed up after its worktree and slot
 were gone, holding ports, memory and named volumes. The next session given
 that slot derived the same ports and collided with the orphan. After
 Zumino's first outsourcing night on Ashikaga (JapanLaw #1), ten Postgres
-stacks and their volumes were removed by hand (DEV-187).
+stacks and their volumes were removed by hand (YAD-187).
 
 ## Decision
 
@@ -74,7 +74,7 @@ its closes, so a long teardown does not delay a run past its hub's
 **Hold the slot after a failed teardown**, so its ports are not reused while
 the stack might still be up. It would leak a slot for every broken teardown,
 for ever, with no owner action that frees it, and the acceptance criteria
-for DEV-187 ask for the workdir to go regardless. Deferred until Ashikaga
+for YAD-187 ask for the workdir to go regardless. Deferred until Ashikaga
 shows orphan stacks surviving a failed teardown.
 
 **Report the outcome to the hub** in `closed_sessions`. It would need a new

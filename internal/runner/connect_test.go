@@ -93,7 +93,7 @@ func TestConnectRoundTrip(t *testing.T) {
 
 // A name a removed connection's leftovers are still stored under is refused
 // before the token is spent: the store keys everything by that name, and a
-// new hub under it would be sent the old one's events (DEV-81 review).
+// new hub under it would be sent the old one's events (YAD-81 review).
 func TestConnectRefusesANameWithLeftovers(t *testing.T) {
 	noTools(t)
 	e := newEnv(t)
@@ -154,7 +154,7 @@ func TestNameFromURL(t *testing.T) {
 	}
 }
 
-// DEV-31's acceptance criterion, end to end: a host tool that never answers
+// YAD-31's acceptance criterion, end to end: a host tool that never answers
 // must not keep a runner off a hub. The probe times out, what it found is in
 // the document the hub stores, and registration succeeds anyway.
 //

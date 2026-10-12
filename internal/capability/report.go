@@ -42,7 +42,7 @@ import (
 // takes no steer — takes nothing from those it does. A harness with a run
 // held counts even once it stops being drivable — OpenCode's binary gone
 // mid-upgrade — since that run can still be sent a control; once its last
-// run ends it counts by Drivable's rule alone again (DEV-169). The strings
+// run ends it counts by Drivable's rule alone again (YAD-169). The strings
 // come from the reports they are sent beside, so a change to either moves the
 // one fingerprint and a hub re-reads both. With no harness to drive and none
 // held, none is listed: there is no run for one to apply to, and a hub reading
@@ -176,7 +176,7 @@ type State struct {
 	// login's are read from here, an account's from its own Account.
 	Silences account.Silences
 	// Paths is the profile. The document reaches every hub, so its commands
-	// are built with RemoteCommand and name no path (DEV-67).
+	// are built with RemoteCommand and name no path (YAD-67).
 	Paths config.Paths
 }
 

@@ -6,7 +6,7 @@
 -- anywhere above a query truncates that query's text and every later one:
 -- `SELECT *` arrives at its parser as `SELECharness` and generation fails
 -- naming queries nobody touched. The repo's prose uses an em dash; here it
--- costs an afternoon. (Confirmed by adding one and removing it again, DEV-27.)
+-- costs an afternoon. (Confirmed by adding one and removing it again, YAD-27.)
 
 -- name: CreateSession :exec
 INSERT INTO sessions (connection, id, harness, account, workdir, created_at, last_used_at, fork_from, archive)
@@ -235,7 +235,7 @@ WHERE excluded.updated_at >= account_windows.updated_at;
 -- name: ListAccounts :many
 SELECT * FROM accounts WHERE harness = ? ORDER BY label;
 
--- The state an account is in, without disturbing limited_until: DEV-27 owns
+-- The state an account is in, without disturbing limited_until: YAD-27 owns
 -- the limit, this owns free and needs_login.
 -- name: SetAccountState :exec
 INSERT INTO accounts (harness, label, state, updated_at) VALUES (?, ?, ?, ?)
@@ -396,7 +396,7 @@ WHERE instr(body, sqlc.arg(old)) > 0 OR instr(last_error, sqlc.arg(old)) > 0;
 -- name: RenameSlotsRepo :exec
 UPDATE OR IGNORE slots SET repo = sqlc.arg(new_repo) WHERE repo = sqlc.arg(old_repo);
 
--- A removed connection's leftovers (DEV-81): every connection this store still
+-- A removed connection's leftovers (YAD-81): every connection this store still
 -- holds something of that a connection's own loop would otherwise settle -- an
 -- open session, a close its hub has not heard of, a run held, a result or an
 -- event owed. The collector ends those of a connection config.toml no longer

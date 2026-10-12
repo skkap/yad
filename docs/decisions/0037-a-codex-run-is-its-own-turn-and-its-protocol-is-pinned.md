@@ -6,7 +6,7 @@ date: 2026-09-19
 # A Codex run is its own turn, ended by turn/completed, against a pinned protocol
 
 What `codex app-server` 0.147.0 does over stdio, recorded while the adapter was
-built (DEV-20, DEV-21, DEV-22), and what the adapter does about it. The contract
+built (YAD-20, YAD-21, YAD-22), and what the adapter does about it. The contract
 it gives the executor is the Claude adapter's
 ([0021](0021-claude-runs-end-at-the-last-result.md),
 [0031](0031-a-failed-resume-is-the-hubs-to-decide.md)): events from the

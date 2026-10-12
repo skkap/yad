@@ -27,7 +27,7 @@ import (
 // that leaves the machine — a hub's answer to a runner. A command read on the
 // machine that printed it is Command, which also carries the directories the
 // profile resolved to; those are paths under the owner's home, and none of
-// them may travel (DEV-67).
+// them may travel (YAD-67).
 func (p Paths) YadCommand(args ...string) string {
 	argv := []string{"yad"}
 	profile := p.Profile
@@ -129,7 +129,7 @@ func (p Paths) Command(args ...string) string {
 
 // RemoteCommand is Command for a reader somewhere else — a run's error, read
 // at a hub by whoever then walks to the machine. The directories are paths
-// under the owner's home and may not travel (DEV-67), but a command without
+// under the owner's home and may not travel (YAD-67), but a command without
 // them is pasted into a shell that resolves the default and reads another,
 // empty profile. So each variable Resolve was given is kept, its value a
 // placeholder naming it: the reader sees that it is needed and what to put.

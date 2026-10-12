@@ -41,7 +41,7 @@ const maxCredentials = 1 << 20
 // tokenLogin is a token account's token as Claude holds it in memory when it
 // is handed CLAUDE_CODE_OAUTH_TOKEN: no refresh token, no expiry, inference
 // only. Written in the home, it is the same login for a claude the run
-// starts, which Claude Code never hands the variable to (DEV-172).
+// starts, which Claude Code never hands the variable to (YAD-172).
 type tokenLogin struct {
 	AccessToken      string   `json:"accessToken"`
 	RefreshToken     *string  `json:"refreshToken"`

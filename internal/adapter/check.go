@@ -17,7 +17,7 @@ func (s Spec) YadCommand(args ...string) string {
 // Without the home variable the check reads the owner's own default home and
 // answers about a different login entirely — worse than no suggestion, since
 // it looks like it worked. The home itself is not printed: it is a path under
-// the owner's home, and a run's error goes to a hub (DEV-67). It stays a
+// the owner's home, and a run's error goes to a hub (YAD-67). It stays a
 // placeholder, and the sentence names the yad command that shows it.
 //
 // The harness is named, not its resolved path, for the same reason; a runner

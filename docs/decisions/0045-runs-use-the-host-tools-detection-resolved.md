@@ -12,7 +12,7 @@ present and usable. Nothing that ran used the choice. yad's own git
 from `PATH`. The override exists for a daemon whose `PATH` lacks the tool
 ([0044](0044-an-override-that-names-nothing-lets-path-decide.md)). On such a
 daemon a hub routed git-source work to a runner whose workdir preparation then
-could not find git (DEV-107).
+could not find git (YAD-107).
 
 ## Decision
 

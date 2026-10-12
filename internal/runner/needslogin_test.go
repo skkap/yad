@@ -139,7 +139,7 @@ func TestAFailedTurnWithNoLoginMarksTheAccountNeedsLogin(t *testing.T) {
 		// provider refusing the credential is what parks it (decision 0054).
 		{"a refused credential behind a login check that says yes", true, adapter.ClassHarness, v1.AccountFree, v1.AccountNeedsLogin, true},
 		// A usage limit says why it failed. Reading it as a login problem
-		// would hide DEV-27's state behind this one.
+		// would hide YAD-27's state behind this one.
 		{"a usage limit is not a login problem", false, adapter.ClassUsageLimit, v1.AccountFree, v1.AccountFree, false},
 		{"a prompt that does not fit", false, adapter.ClassPromptTooLong, v1.AccountFree, v1.AccountFree, false},
 	} {
@@ -175,7 +175,7 @@ func TestAFailedTurnWithNoLoginMarksTheAccountNeedsLogin(t *testing.T) {
 
 // An account already in needs-login is never given a run, so no run can take
 // it back out of that state. The way back is the owner's: `yad account add`
-// runs the harness's login again and re-checks. Remote completion is DEV-57.
+// runs the harness's login again and re-checks. Remote completion is YAD-57.
 func TestNeedsLoginIsOnlyClearedByLoggingInAgain(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

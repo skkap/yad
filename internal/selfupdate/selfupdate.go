@@ -47,7 +47,7 @@ const (
 	// included. A check runs on the daemon's own context, which never ends
 	// while the runner runs, so without it a release server — or a proxy in
 	// front of it — that stops answering partway through stops every later
-	// check with it (DEV-181). Twenty minutes is a 20 MB binary arriving at
+	// check with it (YAD-181). Twenty minutes is a 20 MB binary arriving at
 	// under 20 KB/s, slower than any link a runner keeps a hub session over,
 	// and still a small part of the six hours between checks.
 	CheckTimeout = 20 * time.Minute

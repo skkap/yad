@@ -44,7 +44,7 @@ func resetModels(t *testing.T) {
 
 // A harness that cannot say which models it offers leaves a reason, in yad's
 // words and with what to do, for the daemon's log and `yad doctor` — and the
-// document says only that the list is the catalog's (DEV-146). Nothing the
+// document says only that the list is the catalog's (YAD-146). Nothing the
 // harness printed is in the reason: each stand-in says "someone", as a path
 // under an owner's home would.
 func TestModelsFailureSaysWhy(t *testing.T) {

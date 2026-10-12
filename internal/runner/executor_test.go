@@ -200,7 +200,7 @@ func TestWatchdogs(t *testing.T) {
 			// Events keep coming, so only the wall clock can stop it.
 			fakeHarness(fake.Script{Events: manyEvents(1000), Delay: 5 * time.Millisecond}), ClassWallClock, nil, nil},
 		{"interrupt ignored", func(r *v1.Run) { r.InactivityMS = 30 }, 0, 0, deafHarness{}, ClassInactivity, nil, nil},
-		// DEV-170: a harness wedged before its first word is stopped at the
+		// YAD-170: a harness wedged before its first word is stopped at the
 		// first-output timeout, not left to the inactivity timeout's half hour.
 		{"silent from its start", func(r *v1.Run) {}, 0, 30 * time.Millisecond,
 			fakeHarness(fake.Script{Hang: true}), ClassHarnessSilent,
@@ -397,7 +397,7 @@ func (a startErr) Start(context.Context, adapter.Spec) (adapter.Turn, error) {
 // directory under its data or an account home that cannot be made — reaches
 // the hub that sent the run with its cause when the cause is the operating
 // system's: the path, under the owner's home, and the errno (decision 0064,
-// reversing what DEV-67 hid). Any other cause stays in the log the message
+// reversing what YAD-67 hid). Any other cause stays in the log the message
 // sends the owner to, since it could carry what a child printed. A start
 // error whose next action is the hub's travels as it is, or the hub could not
 // tell its own input was the problem.
@@ -882,7 +882,7 @@ var grantLocks = []struct {
 
 // The sweep at the start of Serve goes through destroyGrants, so a directory
 // whose write bit is gone no longer keeps a secret on disk from one start to
-// the next — before DEV-76 it failed there exactly as the run's own cleanup
+// the next — before YAD-76 it failed there exactly as the run's own cleanup
 // had. When nothing gets through, the line says so, naming no grant: an
 // fs.PathError from the removal names the file it could not unlink.
 func TestTheSweepDestroysLeftGrants(t *testing.T) {
@@ -934,7 +934,7 @@ func TestTheSweepDestroysLeftGrants(t *testing.T) {
 
 // The cleanup at the end of every run goes through destroyGrants too. The
 // lock is taken inside the run, while it still holds its grant file, which is
-// how a harness that chmods its surroundings leaves it; before DEV-76 the
+// how a harness that chmods its surroundings leaves it; before YAD-76 the
 // secret outlived the run, and the sweep at the next start failed on it the
 // same way.
 func TestARunsCleanupDestroysItsGrants(t *testing.T) {

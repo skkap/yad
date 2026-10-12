@@ -26,7 +26,7 @@ import (
 )
 
 // A harness's models are asked of the harness, for each login a run may use
-// (DEV-50): Claude's list_models control request and Codex's model/list,
+// (YAD-50): Claude's list_models control request and Codex's model/list,
 // neither of which runs a turn or spends a token. Asking starts the harness,
 // so an answer is kept, a slow harness is not waited on past a bound, and one
 // that cannot answer is reported from the catalog and said to be.
@@ -79,7 +79,7 @@ type ModelsFailure struct {
 	// Account is the account's label, or "" for the harness's own login.
 	Account string
 	// Reason is yad's words with the next action; never what the harness
-	// printed, which may carry a path or a credential (DEV-60, DEV-67).
+	// printed, which may carry a path or a credential (YAD-60, YAD-67).
 	Reason string
 	Since  time.Time
 }
@@ -233,7 +233,7 @@ func addModels(ctx context.Context, found []harness.Detected, cfg config.Config,
 // answered for this login, and its failed says why the last ask was not.
 func modelsOf(ctx context.Context, d harness.Detected, home string) modelsAnswer {
 	// The environment of a run on this login, and only that: the answer is
-	// about the credential the run would use (DEV-62, and the rule
+	// about the credential the run would use (YAD-62, and the rule
 	// supervise.Spec states for what a run keeps).
 	env := account.Env(d.ID, home)
 	key := modelsKey(d, env)
@@ -290,7 +290,7 @@ var modelsRequest = map[string]string{"claude": "list_models", "codex": "model/l
 // modelsReason is why an ask got no answer, with what to do about it, built
 // from what kind of failure err is and never from its text: the owner reads
 // it in the daemon's log and in `yad doctor`, and what a harness printed is
-// not for either (DEV-146). home is the login's, "" for the harness's own;
+// not for either (YAD-146). home is the login's, "" for the harness's own;
 // timedOut is the ask cut off at modelsTimeout, whatever the harness was doing
 // when it was.
 func modelsReason(d harness.Detected, home string, err error, timedOut bool) string {

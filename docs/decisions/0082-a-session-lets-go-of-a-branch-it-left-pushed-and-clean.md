@@ -16,7 +16,7 @@ another connection's session, against
 Outsourcing makes it the normal case: one run builds a branch, another verifies
 or merges it, and sessions stay open for days (the idle TTL is 14 days).
 JapanLaw #1's integrator had to work around branches "left checked out in
-worktrees". DEV-189.
+worktrees". YAD-189.
 
 ## Decision
 
@@ -88,7 +88,7 @@ What building it settled:
   follow the same rule. HUB.md still advises a fork to name the same
   repository on a branch of its own.
 - **`PushedAndClean`** is the exported check, for a session handed to another
-  runner (DEV-43) to reuse.
+  runner (YAD-43) to reuse.
 
 ## Consequences
 

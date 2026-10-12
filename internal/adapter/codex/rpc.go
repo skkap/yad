@@ -7,7 +7,7 @@ import (
 	"github.com/skkap/yad/internal/adapter/jsonrpc"
 )
 
-// The JSON-RPC 2.0 client for `codex app-server --listen stdio://` (DEV-20)
+// The JSON-RPC 2.0 client for `codex app-server --listen stdio://` (YAD-20)
 // is the one ACP uses too (internal/adapter/jsonrpc); these names keep the
 // adapter reading as it did before the two shared it.
 type (

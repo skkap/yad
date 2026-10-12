@@ -35,7 +35,7 @@ const (
 	// "nourl" printing no link, "hang" never exiting after the code,
 	// "browser" as claude 2.1.282 on a machine whose browser is signed in to
 	// claude.ai — signed in by that browser, no code, unless $BROWSER opens
-	// nothing (DEV-133) — and "signedin" signing in that way whatever
+	// nothing (YAD-133) — and "signedin" signing in that way whatever
 	// $BROWSER says.
 	fakeLoginMode = "RUNNER_TEST_LOGIN"
 )
@@ -225,7 +225,7 @@ func TestAHubLogsAListedAccountInByLink(t *testing.T) {
 }
 
 // A hub login is signed in by the person at the hub, never by a browser on the
-// runner's machine (DEV-133): the harness is handed one that opens nothing, so
+// runner's machine (YAD-133): the harness is handed one that opens nothing, so
 // on a machine whose browser is signed in to claude.ai the login still waits
 // for the code, and takes that one.
 func TestAHubLinkLoginOpensNoBrowserOnTheMachine(t *testing.T) {
@@ -293,7 +293,7 @@ func TestAWrongCodeFailsTheLogin(t *testing.T) {
 // never comes expires, and one still running after its code fails — each with
 // its process gone. Only the deadline under test is short. With all three
 // short, a spawn slowed by a loaded machine let the link deadline fire before
-// the one under test (DEV-141); the other two are the rig's, and an answer
+// the one under test (YAD-141); the other two are the rig's, and an answer
 // that took as long as one of them came from the wrong deadline.
 func TestALinkLoginEndsAtItsDeadlines(t *testing.T) {
 	const short = 500 * time.Millisecond
@@ -696,7 +696,7 @@ func TestANewLoginWaitsForTheOldOneToLetGoOfTheHome(t *testing.T) {
 // A hub login makes the account's home before its harness can write there, and
 // an account with a home and no row reads free (account.Load). A login that
 // ended any way but succeeded therefore left an account listed by hand, never
-// logged in, free — ready in health, offered runs, failing each (DEV-138). How
+// logged in, free — ready in health, offered runs, failing each (YAD-138). How
 // the login ends must not decide the account's state: the harness's own check
 // does, as it does for one that took. Health is read after a sweep of the
 // login probe, which moves nothing to needs_login and so cannot hide the

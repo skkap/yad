@@ -24,7 +24,7 @@ const DefaultBaseURL = "https://github.com"
 // under a second; a minute leaves room for a slow proxy in front of it, and
 // still ends a `yad upgrade` at a terminal, or a runner's self-update, that
 // would otherwise wait for good on a server that took the request and never
-// answered (DEV-181). A download that keeps arriving, however slowly, is
+// answered (YAD-181). A download that keeps arriving, however slowly, is
 // never cut short by it.
 const DefaultStall = time.Minute
 

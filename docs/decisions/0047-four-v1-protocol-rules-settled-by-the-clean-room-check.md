@@ -4,14 +4,14 @@ date: 2026-09-22
 
 # Four v1 protocol rules settled by the clean-room check
 
-DEV-110 had a fresh agent write a hub from HUB.md and the OpenAPI document
+YAD-110 had a fresh agent write a hub from HUB.md and the OpenAPI document
 alone, and read where it had to guess. Most of its questions `yad hub` already
 answered and HUB.md now says so. Four it did not: HUB.md carried each as a
-marked open point, and each became a ticket — DEV-115 to DEV-118. The owner
+marked open point, and each became a ticket — YAD-115 to YAD-118. The owner
 decided all four on 2026-09-22. They are recorded together because they are
 one kind of thing: a rule a hub has to know and could not read anywhere.
 
-## Which sync fields a hub may refuse a sync over (DEV-117)
+## Which sync fields a hub may refuse a sync over (YAD-117)
 
 **Decision.** `health.load`, `disk_free_bytes`, `spool_depth` and
 `outbox_depth` are optional in `protocol/v1` — `omitempty`, and out of the
@@ -42,7 +42,7 @@ proportion to a dashboard. Keeping them required and saying in HUB.md that a
 hub should tolerate their absence — a sentence against the document, when the
 document is what hubs generate their validators from.
 
-## Whether v1 may add a value to an enum (DEV-116)
+## Whether v1 may add a value to an enum (YAD-116)
 
 **Decision.** Every enum the document declares — event kind, held run state,
 result state, session close reason, control kind, and the rest — is closed for
@@ -75,7 +75,7 @@ runner still could not tell an older strict hub from a tolerant one. Declaring
 them closed with no way to grow — the feature route costs nothing until it is
 used, and new controls already take it.
 
-## How long the runner a run was offered to may report its result (DEV-115)
+## How long the runner a run was offered to may report its result (YAD-115)
 
 **Decision.** A result from the runner a run is offered to is accepted while
 the offer is open: from the answer that offered it until a sync takes the
@@ -104,7 +104,7 @@ moment, so whether a late refusal lands would depend on queue order. A grace
 period after the offer is taken back — a second timing every hub would have to
 choose and no runner can learn.
 
-## `session.new` for a session whose first run never bound it (DEV-118)
+## `session.new` for a session whose first run never bound it (YAD-118)
 
 **Decision.** The hub decides `session.new` when it offers a run: `true` while
 no claim has bound the session, `false` after. `yad hub` no longer sends the

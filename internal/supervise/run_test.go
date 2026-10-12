@@ -27,11 +27,11 @@ func runChild(ctx context.Context, t *testing.T, mode string) Capture {
 	return c
 }
 
-// TimedOut is a fact about the leader, not a guess (DEV-70). Before, Run
+// TimedOut is a fact about the leader, not a guess (YAD-70). Before, Run
 // decided it in the select that waits for EOF, the leader's exit or ctx. A
 // child that closes stdout and then hangs settles that select on EOF before the
 // deadline exists, so its timeout came back as an ordinary kill every time —
-// the reliable reproduction, and the half of DEV-69's subtests that went red.
+// the reliable reproduction, and the half of YAD-69's subtests that went red.
 // A child that hangs holding stdout leaves all three ready once the deadline's
 // kill lands and Go picks at random; that only loses when Run is descheduled at
 // the wrong moment, rare on an idle machine and not rare in CI, so it runs many

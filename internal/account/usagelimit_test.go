@@ -68,7 +68,7 @@ func TestStateOfDerivesLimitedFromItsReset(t *testing.T) {
 
 // The row where the stored column and the truth disagree: state says limited,
 // the reset has passed. Load, Report and the health report must all say free,
-// because that pair is what DEV-28 decides whether to claim from and what a
+// because that pair is what YAD-28 decides whether to claim from and what a
 // hub renders. A hub shown "limited until a time in the past" would be reading
 // a contradiction.
 func TestAnExpiredLimitReadsFreeEverywhere(t *testing.T) {
@@ -148,7 +148,7 @@ func TestALiveLimitReadsLimitedEverywhere(t *testing.T) {
 // Load judges a limit against the moment it is given and nothing else, and
 // Report does not judge it again. The moments are decades from the wall in
 // both directions, so a wall-clock read anywhere on the way flips the answer
-// rather than agreeing with it by luck (DEV-85).
+// rather than agreeing with it by luck (YAD-85).
 func TestALimitIsJudgedAgainstTheMomentLoadIsGiven(t *testing.T) {
 	const decades = 30 * 365 * 24 * time.Hour
 	for _, c := range []struct {

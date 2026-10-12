@@ -7,20 +7,20 @@ date: 2026-09-29
 
 Answers the question [0040](0040-a-grant-may-not-move-a-run-off-its-account.md)
 left open: whether the owner may put a run on a credential of their own by
-setting it in the runner's environment. DEV-62.
+setting it in the runner's environment. YAD-62.
 
 0040 stopped a **hub** from moving a run off its account: a grant may not name
 a variable that chooses whose credential a harness uses. The **owner's**
 environment could still do it. `supervise.Scrub` removed `ANTHROPIC_API_KEY`
 and every `CLAUDE_CODE_*` from each child and let the rest of 0040's list
 through — `ANTHROPIC_PROFILE`, `ANTHROPIC_CONFIG_DIR`, the federation pair,
-`ANTHROPIC_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` and others (DEV-73).
+`ANTHROPIC_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` and others (YAD-73).
 Any of them set on the machine ranks above the login in the account's home,
 so the account layer told the same lie 0040 was written against: events naming
 an account the tokens did not come from, limits that never fire, failover with
 nothing to fail over, health calling the account free for ever.
 
-DEV-26 found the same failure by another door. Its login check ran
+YAD-26 found the same failure by another door. Its login check ran
 `claude auth status` with an unscrubbed environment while the run's child was
 scrubbed, so the check could answer "logged in" on an `ANTHROPIC_API_KEY` the
 run never saw, and leave a useless account marked free.
@@ -28,7 +28,7 @@ run never saw, and leave a useless account marked free.
 ## Decision
 
 The owner decided (2026-09-29) that `Scrub` removes the list and `yad doctor`
-warns. The rest was settled while building it, in DEV-62, and is recorded on
+warns. The rest was settled while building it, in YAD-62, and is recorded on
 the ticket.
 
 - **`Scrub` removes every variable 0040's list names**, from the list itself.
@@ -100,4 +100,4 @@ signature is additive and stays; the list behind it may grow.
 **Remove the home variables too, for symmetry with the grant list.** That
 would silently move a no-account runner whose owner set `CODEX_HOME` onto
 `~/.codex`, while `codex.DefaultHome` and every command yad prints named the
-owner's home (DEV-67).
+owner's home (YAD-67).

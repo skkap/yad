@@ -33,7 +33,7 @@ func TestTheV1EnumsAreClosed(t *testing.T) {
 		{ClosedSession{}, "Reason", "hub", []string{"closed", "closed_by_owner", "expired", "disk_pressure"}},
 		{AccountReport{}, "State", "hub", []string{"free", "limited", "needs_login"}},
 		{HarnessReport{}, "Kind", "hub", []string{"first-class", "recognised"}},
-		// Came with its field (DEV-50): a hub built before it has no
+		// Came with its field (YAD-50): a hub built before it has no
 		// models_source to validate.
 		{HarnessReport{}, "ModelsSource", "hub", []string{"harness", "catalog"}},
 		// The four login kinds came after v1 shipped, gated on the "login"

@@ -127,7 +127,7 @@ func TestCheckLineBlamesTheUnreadableSide(t *testing.T) {
 
 // The restart advice names a profile, so the command it offers has to act on
 // that profile. It is one command: a restart of a service goes through its
-// service manager (DEV-173), so `yad service install` — which would bootstrap
+// service manager (YAD-173), so `yad service install` — which would bootstrap
 // a unit for a profile nobody meant to run as a service (0028) — is not
 // offered at all.
 func TestRestartAdviceCarriesTheProfile(t *testing.T) {

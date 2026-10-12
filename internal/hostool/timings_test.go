@@ -14,7 +14,7 @@ import (
 // assesses a new executable on its first run — a tenth of a second on an idle
 // machine, and past the shipped five seconds with the race-instrumented suite
 // around it, which is how a probe meant to read a canned answer read a timeout
-// instead (DEV-100). A probe that really hangs where the test meant it to
+// instead (YAD-100). A probe that really hangs where the test meant it to
 // answer still fails its test, only later.
 const answerBudget = 30 * time.Second
 

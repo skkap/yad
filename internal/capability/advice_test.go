@@ -16,7 +16,7 @@ import (
 // probed. Found through YAD_<ID>_PATH, the plain name would run PATH's copy —
 // or nothing, on the daemon the override exists for — so the command names
 // the variable, never its value: a path under the owner's home may not leave
-// the machine (DEV-67, DEV-108). Found on PATH, the plain name is right.
+// the machine (YAD-67, YAD-108). Found on PATH, the plain name is right.
 func TestAdviceRunsTheBinaryThatWasProbed(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

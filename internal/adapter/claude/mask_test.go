@@ -12,7 +12,7 @@ import (
 
 // Claude's words in a failed result — its result text, or the errors it
 // lists — are masked of the run's environment and file grants before a run's
-// error quotes them, as its stderr is (DEV-192): the error goes to a hub, and
+// error quotes them, as its stderr is (YAD-192): the error goes to a hub, and
 // a Claude whose login was refused may quote what it was refused.
 func TestAFailedResultIsMaskedInTheRunsError(t *testing.T) {
 	const envToken, grantContent = "tok-env-0123456789abcdef", "grant-file-content-42"

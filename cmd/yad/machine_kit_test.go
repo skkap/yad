@@ -13,7 +13,7 @@ import (
 
 // machines/guest/runner.sh is the step of `yad-machine up` that brings a built
 // machine's config.toml onto its spec's and restarts the runner only when it
-// must (DEV-136). It runs here as it does in the VM, against this test binary
+// must (YAD-136). It runs here as it does in the VM, against this test binary
 // as yad, with systemctl a stub and `yad service install` recorded rather
 // than done: what it proves is the script's decisions, not systemd's.
 type kitMachine struct {

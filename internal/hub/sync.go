@@ -35,7 +35,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 			"send the same runner id in the path and the body")
 	}
 	// The document names its runner too, and is stored as this one's: a
-	// third id to disagree with is refused for the same reason (DEV-120).
+	// third id to disagree with is refused for the same reason (YAD-120).
 	if req.Capabilities != nil && req.Capabilities.RunnerID != in.Runner {
 		return nil, Fail(http.StatusBadRequest, v1.CodeInvalid,
 			fmt.Sprintf("the capability document's runner_id %q does not match the path's %q", req.Capabilities.RunnerID, in.Runner),
@@ -189,7 +189,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		// The hub asked for this end, so the run is cancelled now rather than
 		// lost when its lease lapses (decision 0061). The runner deleted the
 		// session such a claim opened, so a session that claim bound goes
-		// back to unbound, and its next run opens it (DEV-143). Before the
+		// back to unbound, and its next run opens it (YAD-143). Before the
 		// closes below: a close the runner reports for it is believed from
 		// the runner it was offered to.
 		withdrawn, err := cancelWithdrawn(ctx, q, runner.ID, req.Runs,
@@ -373,7 +373,7 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 // nothing but a run it is executing — full capacity, or its session's live
 // run — which is when the answer asks it back after quickInterval (decision
 // 0063). A run submitted to an idle runner is not helped and cannot be: the
-// answer that would have to change was sent before the run existed (DEV-49).
+// answer that would have to change was sent before the run existed (YAD-49).
 //
 // Only a run it would be offered counts, so an idle fleet and a run nobody
 // here can take change nothing. And only one that a run it is executing would
@@ -697,7 +697,7 @@ func cancelWithdrawn(ctx context.Context, q *db.Queries, runnerID string, held [
 // unbindLateClaim unbinds the session a claim bound when the runner lists
 // that claim after the hub gave it up — its lease lapsed while the runner was
 // silent, so the run ended lost, or cancelled when a cancel had been asked
-// for — because the answer that acknowledged it was lost (DEV-148). A runner
+// for — because the answer that acknowledged it was lost (YAD-148). A runner
 // lists a claim as claimed until an answer acknowledges it, and this hub will
 // never send one: every answer to it now is a cancel. So the runner withdraws
 // the claim, and deletes the session it opened, at whichever answer it hears
@@ -708,7 +708,7 @@ func cancelWithdrawn(ctx context.Context, q *db.Queries, runnerID string, held [
 // Only a claim listed as claimed: a run that started lists preparing or
 // later, and its runner stops it and keeps its session. Only the claim that
 // bound the session, and never a session with a close asked for or made:
-// UnbindWithdrawnSession's rules, for DEV-143's reasons. And not a run with a
+// UnbindWithdrawnSession's rules, for YAD-143's reasons. And not a run with a
 // start moment: its runner holds an acknowledged claim as claimed until the
 // moment, so listing one says nothing about a lost answer, and a runner that
 // kept the session would refuse the next run sent as opening it.
@@ -729,7 +729,7 @@ func unbindLateClaim(ctx context.Context, q *db.Queries, run db.Run, held v1.Hel
 // unbindWithdrawn unbinds a session whose binding claim the runner withdrew,
 // by UnbindWithdrawnSession's rules. The runner deleted the session before
 // any turn ran there, so a fork of it waiting to open has nothing to copy and
-// ends now (DEV-151), rather than waiting for a run to bind the session again
+// ends now (YAD-151), rather than waiting for a run to bind the session again
 // — one that may never come, and whose conversation would not be the one the
 // fork was asked of.
 func unbindWithdrawn(ctx context.Context, q *db.Queries, session, runID, runnerID string, now time.Time) error {

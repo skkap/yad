@@ -61,7 +61,7 @@ const (
 // give it: a short one for the probe it means to hang, so the case waits as
 // little as it can, and a long one for every probe it means to answer — a
 // script spawned beside a whole race-instrumented suite has taken over five
-// seconds to print its version (DEV-100), and a probe cut off then reports a
+// seconds to print its version (YAD-100), and a probe cut off then reports a
 // timeout where the test injected something else. A gh that hangs on its login
 // needs both at once: its `--version` must answer, and only its `auth status`
 // may hang. The shipped values stay where they are: they are how long a

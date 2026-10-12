@@ -12,7 +12,7 @@ import (
 // A service manager that could not say whether it holds the profile's job
 // is a refusal, as for a start (decision 0074): install and uninstall each
 // decide from that answer, so the owner is given the manager's own command
-// to ask it, and the yad command to run again where it answers (DEV-176).
+// to ask it, and the yad command to run again where it answers (YAD-176).
 func TestServiceInstallAndUninstallRefuseAManagerThatCannotBeAsked(t *testing.T) {
 	cause := errors.New("exit status 112: Could not find domain for port identifier")
 	for _, tc := range []struct {

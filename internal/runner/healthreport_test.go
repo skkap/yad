@@ -34,7 +34,7 @@ func recordsAt(base time.Time, recs ...logfile.Record) func() []logfile.Record {
 
 // The hazard this field is: recent_errors is error text sent to every hub, and
 // HarnessReport.Error had to be cleaned of quoted child output after it
-// shipped (DEV-60) while Warnings still carries it (DEV-67). A log record's
+// shipped (YAD-60) while Warnings still carries it (YAD-67). A log record's
 // attrs are where an exec error's wrapped text, the owner's home directory and
 // a proxy URL with a password in it end up. None of it goes on the wire.
 func TestHealthErrorsCarryTheMessageAndNeverTheAttrs(t *testing.T) {
@@ -409,7 +409,7 @@ func TestAnAccountInsideTheCapIsNotMoved(t *testing.T) {
 	// account free, Soonest picks the first by the owner's order alone and
 	// nothing past the cap is limited, so the order below holds for reasons
 	// that have nothing to do with the guard - which is how this test once
-	// passed with none of its limits taking (DEV-85).
+	// passed with none of its limits taking (YAD-85).
 	for _, a := range hh.Accounts {
 		if a.Label != labels[0] && a.State != v1.AccountLimited {
 			t.Fatalf("setup did not take: %q reads %q, want limited", a.Label, a.State)
@@ -425,7 +425,7 @@ func TestAnAccountInsideTheCapIsNotMoved(t *testing.T) {
 // A limit is judged on the loop's clock, wherever the wall clock is. Every
 // runner test dates limits from the fake clock, and a limit read against the
 // wall instead reads long past or far off, so the test that set it up passes
-// while proving something else (DEV-85). The clock is put decades away in
+// while proving something else (YAD-85). The clock is put decades away in
 // both directions so that no reading of the wall can agree with it by luck:
 // behind the wall, a live limit would read expired; ahead of it, an expired
 // one would read live.

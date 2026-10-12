@@ -4,7 +4,7 @@ date: 2026-09-29
 
 # An enum a hub sends is written as x-extensible-enum, so the breaking check lets it grow
 
-`make check-breaking` (DEV-34) compares both OpenAPI documents with the last
+`make check-breaking` (YAD-34) compares both OpenAPI documents with the last
 release, and since v0.1.0 (2026-09-28) it has something to compare with. It
 would fail on the way this protocol is meant to grow. A new control kind is a
 value added to an enum in the sync *response*. oasdiff rates that
@@ -14,7 +14,7 @@ advertised it in `protocol_features`
 ([0047](0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md),
 ARCHITECTURE.md §2 Versioning). Four login kinds and `remove_account` have
 come in that way since v1 shipped. Each one would have failed the gate
-(DEV-87).
+(YAD-87).
 
 ## Decision
 
@@ -90,7 +90,7 @@ regenerate, and after that they are looser, never stricter.
 **An oasdiff ignore file** (`--err-ignore`) downgrading
 `response-property-enum-value-added`. It works per rule, not per field, so it
 would also let hubapi's run state grow unchecked, and nobody revisits an ignore
-file. DEV-34 rejected it and DEV-87's acceptance rules it out.
+file. YAD-34 rejected it and YAD-87's acceptance rules it out.
 
 **Arguing it in each pull request.** This is free today, but it depends on
 every future author reaching the right conclusion while a check is red and
@@ -110,4 +110,4 @@ strictness.
 
 **Only `Control.kind`**, the one that actually grows. `Grant.as` and
 `SessionRef.mode` are gated on the same terms. A rule by name would fail the
-first gated grant delivery, the same way DEV-87 found the control kind.
+first gated grant delivery, the same way YAD-87 found the control kind.

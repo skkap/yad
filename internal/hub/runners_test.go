@@ -93,7 +93,7 @@ func TestRunnersShowTheHealthEachRunnerLastSent(t *testing.T) {
 	if a := claude.Accounts[1]; a.State != v1.AccountLimited || a.LimitedUntil == nil || len(a.Windows) != 0 {
 		t.Errorf("work = %+v", a)
 	}
-	// The case DEV-26 settled: no accounts is a state, not a gap.
+	// The case YAD-26 settled: no accounts is a state, not a gap.
 	if !codex.Ready || len(codex.Accounts) != 0 {
 		t.Errorf("codex = %+v, want ready with no accounts", codex)
 	}

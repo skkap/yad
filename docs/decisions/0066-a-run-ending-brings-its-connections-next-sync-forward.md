@@ -10,7 +10,7 @@ shortens that wait to 3 s by asking such a runner back sooner
 ([0063](0063-a-hub-holding-work-for-a-runner-asks-it-back-in-3-s.md)); any
 other hub leaves it at its interval, 15 s by default. The runner is the one
 that knows the moment a run ends, so it closes the gap for every hub, whatever
-the hub answers (DEV-145).
+the hub answers (YAD-145).
 
 **When a run a connection's loop started gives its capacity back, or that
 connection's reporter has handled a result — the hub has it, never will, or
@@ -22,7 +22,7 @@ changes.
 - **One signal, per connection.** The wake is a one-slot channel on the loop,
   emptied as each sync begins: every run that ends before that sync reads the
   free capacity and the store is answered by it — a wake that lands in between
-  is let go (DEV-157) — so ten runs ending together are one early sync, and
+  is let go (YAD-157) — so ten runs ending together are one early sync, and
   another connection's loop is not woken for a run it does not hold.
 - **Not before the result is in.** A hub learns a run ended from its result,
   not from a sync: until then the sync lists the run as running, so the
@@ -33,7 +33,7 @@ changes.
   back. So a delivery that fails wakes the loop as well.
 - **Not before the capacity is back.** The executor writes a run's result,
   then gives its capacity back, and the reporter may deliver the result in
-  between — on a loaded machine it does (DEV-156). A sync then lists the run
+  between — on a loaded machine it does (YAD-156). A sync then lists the run
   as ended but offers no capacity for the next turn, so the hub hands it to
   nobody and the early sync is spent. A wake while a run the loop started has
   ended in the store with its capacity still out is let go too; the release's

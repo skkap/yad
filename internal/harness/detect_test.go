@@ -117,7 +117,7 @@ func TestLookup(t *testing.T) {
 // Leader fate is what these two tests prove, and no absolute duration proves it
 // on a loaded machine: spawning a shell here took over a second under the full
 // suite, which is what made the old budgets red in a tree nobody had touched
-// ("took 1.385s, want under 1s", DEV-56). Nor does the outcome separate the two
+// ("took 1.385s, want under 1s", YAD-56). Nor does the outcome separate the two
 // — a probe held by a detached child answers the same in the end, once its
 // deadline closes the pipe underneath it. What separates them is which side of
 // the deadline the answer came from: the leader's, or the deadline's. So every
@@ -264,7 +264,7 @@ func TestProbeOutcomeFollowsTheLeader(t *testing.T) {
 		{name: "exits 0, detached child holds stdout", body: detached + "echo 'codex-cli 1.0'\n",
 			wantVersion: "1.0"},
 		// The status and the stderr these two used to be asserted on are the
-		// leak DEV-60 closed; what the report says now is the command and the
+		// leak YAD-60 closed; what the report says now is the command and the
 		// next action, and the check below proves the child's words are gone.
 		{name: "exits 3", body: "echo oops >&2\nexit 3\n",
 			wantErr: "`\"$YAD_CODEX_PATH\" --version` exited with an error"},
@@ -367,7 +367,7 @@ func waitForPIDs(t *testing.T, path string) {
 // word of the machine it is on. supervise.Start wraps a start failure as
 // `start <path>: fork/exec <path>: permission denied`, and that path is under
 // the owner's home the moment an override names a file there that lost its
-// execute bit — the ordinary way this happens (DEV-60). HOME is the test's own,
+// execute bit — the ordinary way this happens (YAD-60). HOME is the test's own,
 // so the assertion holds wherever the suite runs; the real one is checked too,
 // since a leak of that is the thing being prevented.
 func TestStartFailureNamesNoPath(t *testing.T) {
@@ -388,7 +388,7 @@ func TestStartFailureNamesNoPath(t *testing.T) {
 			wantAction: "unset it and let PATH decide"},
 		// An override naming nothing at all never reaches a start: PATH
 		// decides then, and TestAnOverrideMeansTheSameForHarnessesAndHostTools
-		// in internal/capability holds it to the host tools' rule (DEV-68).
+		// in internal/capability holds it to the host tools' rule (YAD-68).
 		// Found on PATH, so it must be executable to be found at all; what it
 		// cannot do is exec, because the interpreter it names is not there.
 		{name: "on PATH, naming an interpreter that is gone", body: "#!/nonexistent/interpreter\n",
@@ -475,7 +475,7 @@ func TestHarnessOutputIsNeverQuotedInTheReport(t *testing.T) {
 // the child its own kill produced. Whether it timed out is supervise.Run's to
 // say, and supervise.TestRunTimedOutIsTheLeadersFate proves it says so every
 // time; this is the same pair of children seen through the harness report,
-// which is where DEV-69 found them going red.
+// which is where YAD-69 found them going red.
 func TestATimedOutProbeIsNeverReportedAsAnExit(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		// Closing stdout is what makes this deterministic — a wrapper that

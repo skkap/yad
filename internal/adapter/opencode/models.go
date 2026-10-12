@@ -21,7 +21,7 @@ const PinnedVersion = "1.18.33"
 
 // VersionWarning is the capability document's warning for an OpenCode that
 // is not the pinned release, or "" for the pinned one. It never quotes what
-// OpenCode printed beyond the version detection already reports (DEV-67).
+// OpenCode printed beyond the version detection already reports (YAD-67).
 func VersionWarning(version string) string {
 	if version == PinnedVersion || version == "" {
 		return ""
@@ -37,7 +37,7 @@ var modelsArgs = []string{"models"}
 
 // modelName is the shape of what `opencode models` prints: provider/model.
 // Anything else on its output is not a model and is not reported, since the
-// capability document reaches every hub (DEV-67).
+// capability document reaches every hub (YAD-67).
 var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:/@+-]*$`)
 
 // modelsOutputCap bounds what the list may print: a few hundred names for a

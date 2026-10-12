@@ -75,7 +75,7 @@ func HarnessFeatures(id string) []string {
 // present, or whose probe failed, takes nothing from the rest — and while a
 // run on it is held, drivable or not: a hub reading only the runner-wide
 // strings may send that run a control, and the adapter driving it is what
-// answers (DEV-169). A drivable harness's list is read from its report, so the
+// answers (YAD-169). A drivable harness's list is read from its report, so the
 // runner-wide string and the lists in one document cannot disagree; a held
 // one that is not drivable is its adapter's, which is what the run reaches.
 func everyCounted(reports []v1.HarnessReport, held []string, feature string) bool {

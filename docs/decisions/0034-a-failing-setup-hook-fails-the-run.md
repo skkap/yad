@@ -6,7 +6,7 @@ date: 2026-09-19
 
 A repository's `.worktree/setup` is what makes a fresh checkout runnable —
 dependencies, `.env` files, a database on the worktree's own ports. YAD runs
-it as `gpiwt` does (DEV-17), with `WT_ROOT`, `WT_MAIN`, `WT_BRANCH`, `WT_SLUG`,
+it as `gpiwt` does (YAD-17), with `WT_ROOT`, `WT_MAIN`, `WT_BRANCH`, `WT_SLUG`,
 `WT_REPO` and `WT_SLOT`, and had to decide what a failure means.
 
 **A hook that fails fails the run** in `preparing`, with error class
@@ -41,7 +41,7 @@ main checkout do not exist on a runner.
 **Slots.** `WT_SLOT` is the smallest free positive integer among one
 repository's live worktrees on this runner, kept by the session for as long as
 it keeps its worktree, stored in the runner's `slots` table, and freed when the
-workdir is reclaimed (`workdir.Manager.Reclaim`, which DEV-18 calls). Slot 0 is
+workdir is reclaimed (`workdir.Manager.Reclaim`, which YAD-18 calls). Slot 0 is
 a main checkout's in the `gpiwt` contract, so a runner starts at 1.
 
 ## Considered options

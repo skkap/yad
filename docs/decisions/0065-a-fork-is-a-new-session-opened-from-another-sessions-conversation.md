@@ -11,7 +11,7 @@ Claude Code's `--resume <id> --fork-session`, Codex's `thread/fork` over the
 app-server — and decision 0007 says the harness's transcript is the
 conversation and YAD maps sessions rather than wrapping them. So a fork is
 the harness's, and the protocol only has to say which conversation to copy.
-DEV-48.
+YAD-48.
 
 ## Decision
 
@@ -78,7 +78,7 @@ to the forked session's runner, and a runner that goes away — deregistered or
 silent past abandon-after — closes the unbound forks of its sessions with its
 own, since no other runner could ever open them.
 
-**Nor does a fork wait on a source that can no longer be forked** (DEV-151,
+**Nor does a fork wait on a source that can no longer be forked** (YAD-151,
 decided 2026-09-29 by the manager of that night's run, owner asleep; cheap to
 reverse). A source bound at submit can later be unbound — the claim that bound
 it withdrawn, and the session deleted with it on the runner (decision 0061) —
@@ -120,7 +120,7 @@ and the run may never come.
   is the same shape in its schema and its hash covers it.
 
 **A fork's context needs the injection — measured on Codex 0.157.1**
-(DEV-150, 2026-09-29), by 0050's method on a resume. The requests went to
+(YAD-150, 2026-09-29), by 0050's method on a resume. The requests went to
 `codex app-server` directly, in a throwaway `CODEX_HOME`, on `gpt-5.6-luna`.
 A thread was started with no `developerInstructions` and told `Say hello.`
 It was then forked with `developerInstructions` `The codeword is BLUE. If

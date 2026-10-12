@@ -69,7 +69,7 @@ func TestAnUnboundForkClosesWithItsSessionsRunner(t *testing.T) {
 // A fork waiting to open ends when the session it forks closes, or is asked
 // to close, however that happens: the runner refuses to fork a session it has
 // closed or is closing, and the fork can go to no other runner, so it would
-// otherwise be offered to be refused or wait for ever (DEV-151). It ends
+// otherwise be offered to be refused or wait for ever (YAD-151). It ends
 // failed, with nothing to copy, and its session closes. A fork a claim has
 // already bound has its own conversation, and stays open.
 func TestAForkWaitingToOpenEndsWhenItsSourceCloses(t *testing.T) {
@@ -128,7 +128,7 @@ func TestAForkWaitingToOpenEndsWhenItsSourceCloses(t *testing.T) {
 // has a conversation of its own — until that claim is withdrawn and the hub
 // unbinds it. Then it has none, and its source can no longer be forked, so it
 // closes and the run waiting in it ends rather than being offered to a runner
-// that would refuse it (DEV-151).
+// that would refuse it (YAD-151).
 func TestAForkUnboundAfterItsSourceClosesEnds(t *testing.T) {
 	f := newFixture(t)
 	cred := f.register(t, "r1")

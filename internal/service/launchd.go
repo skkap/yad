@@ -121,7 +121,7 @@ func (l *Launchd) Render(s Spec) ([]byte, error) {
 // cancelled print — an owner's Ctrl-C — and one launchd did not answer are
 // errors: either taken for an absent job would have uninstall remove the
 // plist from under a job still loaded, and install bootstrap it a second
-// time (DEV-176).
+// time (YAD-176).
 func (l *Launchd) loaded(ctx context.Context, profile string) (bool, []byte, error) {
 	out, err := l.Host.Run.Run(ctx, "launchctl", "print", l.target(profile))
 	switch {

@@ -276,12 +276,12 @@ func (h *tappedHub) reported(id string) (v1.SessionCloseReason, bool) {
 }
 
 // The owner closes a session its first run opened while that run is still
-// only claimed (DEV-99). The close waits on the claim, and the claim is then
+// only claimed (YAD-99). The close waits on the claim, and the claim is then
 // withdrawn: by the hub's cancel, by draining, by the loop stopping, or by the
 // next process finding it unstarted. However it goes, the owner's close
 // stands: the session closes rather than vanishing, and the next sync reports
 // it. yad hub believes that report from the runner the run was offered to,
-// though no claim ever bound the session there (DEV-103): it closes the
+// though no claim ever bound the session there (YAD-103): it closes the
 // session, bound to this runner, and fails the run with what to do instead,
 // rather than dropping the report and offering the run again for good.
 func TestAClosePendingOnAWithdrawnClaimStands(t *testing.T) {

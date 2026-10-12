@@ -52,7 +52,7 @@ docs=(protocol/v1/openapi.yaml protocol/hubapi/openapi.yaml)
 # release is unusual:
 #   - Tag v0.3.0 on a strict ancestor of v0.2.0, and every tag contains HEAD.
 #     An ancestry rule then finds nothing, and the gate goes inert on the one
-#     run that must not be vacuous (DEV-90).
+#     run that must not be vacuous (YAD-90).
 #   - "Newest tag not on HEAD" would hold a v0.1.1 patch on a side branch
 #     against v0.2.0, and fail it on everything 0.2.0 added.
 #   - The same rule would hold a bisect that lands on the v0.1.0 commit against

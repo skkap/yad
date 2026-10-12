@@ -214,7 +214,7 @@ func TestRecord(t *testing.T) {
 
 // TestRecordModels keeps what model/list answers for the recording login, as
 // testdata/codex-<version>/list-models.jsonl. It starts no thread and spends
-// no token (DEV-50):
+// no token (YAD-50):
 //
 //	YAD_REAL_HARNESS=1 go test -tags realharness -run TestRecordModels -v ./internal/adapter/codex/
 func TestRecordModels(t *testing.T) {

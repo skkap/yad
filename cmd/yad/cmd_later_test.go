@@ -33,7 +33,7 @@ func TestUnbuiltCommandsSayWhereTheWorkIs(t *testing.T) {
 			if code != 1 {
 				t.Fatalf("exit %d: %s", code, errs)
 			}
-			for _, stale := range []string{"epic", "DEV-28", "arrives"} {
+			for _, stale := range []string{"epic", "YAD-28", "arrives"} {
 				if strings.Contains(errs, stale) {
 					t.Errorf("the refusal still points at finished work (%q): %s", stale, errs)
 				}

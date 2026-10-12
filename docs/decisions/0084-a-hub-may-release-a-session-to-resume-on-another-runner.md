@@ -10,7 +10,7 @@ conversation and the workdir are on that machine's disk. Zumino's outsourcing
 keeps a manager session open across days of wake-ups, and JapanLaw #1
 (ZUM-100) found what that costs — a runner that drains, dies or is replaced
 strands the session, and every move means starting the conversation over
-(DEV-43). Anthropic's own runners can hand an idle session back to be picked
+(YAD-43). Anthropic's own runners can hand an idle session back to be picked
 up elsewhere.
 
 ## Decision
@@ -20,7 +20,7 @@ The owner's, on 2026-10-11:
 - **Measure first, then build it for Claude alone.** Phase 0 measured a
   Claude conversation copied to another home and resumed from another
   workdir (below); it works, so phase 1 builds release end to end for Claude.
-  Codex waits on DEV-58, the second-subscription question 0013 left open;
+  Codex waits on YAD-58, the second-subscription question 0013 left open;
   OpenCode until its export and import are measured.
 - **On by default; the owner can turn it off per connection.** A connection's
   `release_sessions = false` in `config.toml` does it, as `manage_accounts`
@@ -36,7 +36,7 @@ The owner's, on 2026-10-11:
   gone without a word. The refusal names what is there; a hub sends a run
   that commits and pushes first. yad never pushes on its own.
 
-The agent working DEV-43 decided the rest:
+The agent working YAD-43 decided the rest:
 
 - **Words.** The verb is *release* — DOMAIN.md's open question, settled. What
   travels is the **session archive**: never "bundle" or "transcript" in the
@@ -142,7 +142,7 @@ the same reason.
 
 - **A second subscription.** Both homes ran on the owner's one login. Whether
   the provider takes a conversation started on one subscription under another
-  is DEV-58's, as it is for account failover (0013); a transcript carries
+  is YAD-58's, as it is for account failover (0013); a transcript carries
   signed thinking blocks, which makes that question sharper for a release.
 - **Version skew.** The manifest records the releasing runner's Claude
   version; nothing refuses a different one on the next runner yet.

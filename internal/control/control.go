@@ -161,7 +161,7 @@ type Status struct {
 	// time the daemon asked it for its models, which `yad doctor` shows
 	// beside the harness. It is here and not in the capability document: a
 	// hub is told the list is the catalog's, and why is the owner's to read
-	// (DEV-146). Nil from a daemon older than it.
+	// (YAD-146). Nil from a daemon older than it.
 	ModelsFailures []ModelsFailure `json:"models_failures,omitempty"`
 	// Update is where self-update stands (decision 0071): nil when
 	// config.toml leaves it off, and from a daemon older than it.

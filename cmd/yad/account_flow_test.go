@@ -416,7 +416,7 @@ func TestAccountAddTakesATokenFromStdin(t *testing.T) {
 // A Keychain that will not let go of the login Claude keeps for an account's
 // home stops a token being stored there (decision 0076), and the refusal is
 // the way out: the deletes to run by hand, then the same `yad account add …
-// --token -` again, each running as printed (DEV-183).
+// --token -` again, each running as printed (YAD-183).
 func TestAKeychainRefusalWhileStoringATokenSaysHowToStoreItAgain(t *testing.T) {
 	p := accountHarness(t, claudeE2E)
 	interactive = func() bool { return false }

@@ -83,7 +83,7 @@ func noneIn(m map[string]int) bool {
 
 // A name given to a new registration has the earlier one's rows moved to a
 // retired name, every table together, and the new hub may then use the ids
-// the old one did (DEV-166).
+// the old one did (YAD-166).
 func TestANewRegistrationRetiresTheEarlierOnesRows(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()

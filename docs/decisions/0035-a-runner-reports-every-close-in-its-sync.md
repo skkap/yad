@@ -6,7 +6,7 @@ date: 2026-09-19
 
 Decision [0011](0011-hub-closes-sessions-runner-collects.md) says a session's
 workdir is reclaimed on the hub's `close_session`, after the owner's idle TTL,
-and under disk pressure. DEV-18 builds it, and settles four things 0011 left
+and under disk pressure. YAD-18 builds it, and settles four things 0011 left
 open: when a session counts as in use, how its hub hears, what disk pressure
 measures, and what the owner can do by hand.
 

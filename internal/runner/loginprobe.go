@@ -29,7 +29,7 @@ import (
 // `codex login status` read a file in the home they are pointed at and print a
 // line. No token, no model, no network of YAD's.
 //
-// One rule, from DEV-26 and unchanged here: a check that could not answer
+// One rule, from YAD-26 and unchanged here: a check that could not answer
 // leaves the account's state exactly as it is. `codex login status` exits 1
 // both for "not logged in" and for "could not read this home's config", so an
 // error is an unanswered question, and an unanswered question is not a "yes"

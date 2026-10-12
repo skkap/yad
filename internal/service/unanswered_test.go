@@ -12,7 +12,7 @@ import (
 // answering — over SSH with no desktop session, there is no GUI domain to
 // ask. Install and uninstall then change nothing: an uninstall that took it
 // for an absent job would remove the plist from under a job still loaded,
-// and an install would bootstrap a second time beside it (DEV-176).
+// and an install would bootstrap a second time beside it (YAD-176).
 func TestLaunchdThatCannotBeAskedChangesNothing(t *testing.T) {
 	unanswered := func(call string, _ int) ([]byte, error) {
 		if strings.HasPrefix(call, "launchctl print") {

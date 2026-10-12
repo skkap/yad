@@ -183,7 +183,7 @@ func findHook(root, rel string) (string, string) {
 
 // writeMarker's error is not quoted, nor findHook's: both name a path in the
 // worktree, under the owner's home, and the run's error and status events go
-// to a hub (DEV-67).
+// to a hub (YAD-67).
 func writeMarker(path string) error {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		return &Error{Class: ClassSetupFailed, Msg: "the worktree's setup could not be marked done in its git directory — check free disk space on the runner"}

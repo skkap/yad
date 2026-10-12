@@ -151,7 +151,7 @@ func TestModelsAreAskedOfEveryLogin(t *testing.T) {
 	}
 
 	// Each ask ran in the environment a run on that login gets: the
-	// account's home and, for a token account, its token (DEV-62).
+	// account's home and, for a token account, its token (YAD-62).
 	for _, w := range a.asked {
 		if w.home == gone {
 			t.Errorf("the account that needs login was asked")

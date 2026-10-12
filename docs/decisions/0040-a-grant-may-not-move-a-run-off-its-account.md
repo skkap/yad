@@ -90,7 +90,7 @@ for every grant).
   the brief tells the harness about. A run that should use another login needs
   the owner to add that login as an account with `yad account add`.
 - **The owner is not bound by this.** It limits what a hub can do. Whether an
-  owner may configure API-key billing on the machine was DEV-62's question,
+  owner may configure API-key billing on the machine was YAD-62's question,
   answered by [0060](0060-the-owners-own-account-variables-are-removed-from-every-run.md):
   the owner's own copies are removed from every run too.
 
@@ -103,7 +103,7 @@ field, **and a grant may not move a run off its account**.
 ## What was not measured, and why it does not matter
 
 How the installed Claude CLI ranks an `ANTHROPIC_API_KEY` against the OAuth
-login in `CLAUDE_CONFIG_DIR` was not measured. DEV-73 asked for it, since it
+login in `CLAUDE_CONFIG_DIR` was not measured. YAD-73 asked for it, since it
 decides whether the conflict is real in practice. The refusal is correct either
 way. If the key wins, the run leaves its account. If the login wins, the grant
 does nothing a run needs, and refusing it costs a rename. The same holds for

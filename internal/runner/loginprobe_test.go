@@ -22,7 +22,7 @@ func probeFor(t *testing.T, e *env, cfg config.Config, mode ...string) *LoginPro
 	return &LoginProbe{Store: e.store, Accounts: accountsOf(e.paths.Data, cfg), Binary: x.Binary, Log: slog.New(slog.DiscardHandler)}
 }
 
-// The trap DEV-26 left and this task closes: an account marked needs-login is
+// The trap YAD-26 left and this task closes: an account marked needs-login is
 // never given a run, so no run can ever find it working again. An owner who
 // runs the harness's own login by hand gets the account back without
 // `yad account add` — and without the runner having to be restarted.
@@ -68,7 +68,7 @@ func TestANeedsLoginAccountReturnsToServiceOnceTheOwnerLogsIn(t *testing.T) {
 	}
 }
 
-// The rule DEV-26 established, which holds here too: a check that could not
+// The rule YAD-26 established, which holds here too: a check that could not
 // answer leaves the account exactly as it is. `codex login status` exits 1
 // both for "not logged in" and for "could not read this home's config", so an
 // error is an unanswered question — and an unanswered question is not a yes.

@@ -1,6 +1,6 @@
 // Package jsonrpc is the JSON-RPC 2.0 client both line-delimited harness
-// protocols share: Codex's app-server (DEV-20) and the Agent Client Protocol
-// (DEV-44). One JSON object per line in each direction; nothing here requires
+// protocols share: Codex's app-server (YAD-20) and the Agent Client Protocol
+// (YAD-44). One JSON object per line in each direction; nothing here requires
 // the "jsonrpc" member on what the other side sends, because Codex omits it.
 //
 // It is deliberately two halves. Conn writes: requests with ids,

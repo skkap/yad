@@ -8,9 +8,9 @@
 -- account. It is not the whole answer on its own — internal/account.Load reads
 -- a missing harness home as needs_login, since a directory that does not exist
 -- cannot hold a login. That override applies to 'free' only: a 'limited' row
--- keeps its state and its reset, which is DEV-27's to own.
+-- keeps its state and its reset, which is YAD-27's to own.
 --
--- limited_until stays where it is and stays DEV-27's to write; nothing here
+-- limited_until stays where it is and stays YAD-27's to write; nothing here
 -- sets 'limited'.
 ALTER TABLE accounts ADD COLUMN state TEXT NOT NULL DEFAULT 'free'
     CHECK (state IN ('free', 'limited', 'needs_login'));

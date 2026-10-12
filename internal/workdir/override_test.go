@@ -14,7 +14,7 @@ import (
 // YAD_GIT_PATH is for a runner whose PATH has no git, and the capability
 // document advertises the git it names. So that is the git a git source is
 // prepared with, and the one the setup hook finds by name — even though the
-// file is not called git (DEV-107, 0045).
+// file is not called git (YAD-107, 0045).
 func TestAGitOnlyTheOverrideNamesPreparesTheWorkdir(t *testing.T) {
 	f := newFixture(t)
 	hook := "#!/bin/sh\ngit --version > \"$WT_ROOT/hook-git\"\n"

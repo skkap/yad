@@ -25,8 +25,8 @@ var echoOff = func(r io.Reader) (restore func(), isTerm bool, err error) {
 // code `hub login start` reads. Piped in, it is read as piped says, as it always was.
 // Typed at a terminal it is one line, asked for, kept off the screen, and
 // ended by Enter — a person never sends the end of input a pipe does, so a
-// read to the end looked hung (DEV-171), and a code read with echo on was on
-// the screen (DEV-177). Ctrl-C ends it either way: main turns SIGINT into
+// read to the end looked hung (YAD-171), and a code read with echo on was on
+// the screen (YAD-177). Ctrl-C ends it either way: main turns SIGINT into
 // ctx's end, which a blocked read would never see.
 //
 // what names the secret in the prompt; it is never the secret itself.

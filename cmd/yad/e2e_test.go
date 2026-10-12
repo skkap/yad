@@ -49,7 +49,7 @@ import (
 // Both sides clamp a configured interval up to five seconds in production — the
 // hub so a lease outlasts the runner's backoff, the runner so no hub can spin
 // the machine — and at that floor these tests spend their time asleep: 201 s of
-// a 315 s suite (DEV-63). A sync every 50 ms is still one round trip per claim,
+// a 315 s suite (YAD-63). A sync every 50 ms is still one round trip per claim,
 // cancel and drain, which is what they are testing.
 const testSyncInterval = 50 * time.Millisecond
 
@@ -59,7 +59,7 @@ const probeBudget = 30 * time.Second
 
 func TestMain(m *testing.M) {
 	// A start and a restart ask the service manager whether the profile is
-	// its service (DEV-173). No test reaches launchctl or systemctl — the
+	// its service (YAD-173). No test reaches launchctl or systemctl — the
 	// owner's own runner may be a unit on this machine — so unless a test
 	// installs a fake, there is no service manager at all; children too.
 	serviceManager = func() (service.Manager, service.Host, error) {
@@ -72,7 +72,7 @@ func TestMain(m *testing.M) {
 	// probe, and the fake claude and codex are this binary re-executed under
 	// -race: at the shipped five seconds a loaded machine can cut one off, and
 	// a harness reported as not answering is one the runner refuses work for
-	// (DEV-100). A child re-executed as yad probes too, so this comes first.
+	// (YAD-100). A child re-executed as yad probes too, so this comes first.
 	harness.VersionTimeoutForTests = probeBudget
 	// The fakes play a run whatever they are started for, so the document's
 	// model probe would start one per login and per rebuild: they are not

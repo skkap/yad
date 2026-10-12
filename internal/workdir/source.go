@@ -66,7 +66,7 @@ func parseRemote(raw string, reach reachFunc) (remote, error) {
 		u, err := url.Parse(raw)
 		if err != nil {
 			// Not url.Parse's error: it quotes the URL whole, and an
-			// invalid port is quoted from beside the password (DEV-91).
+			// invalid port is quoted from beside the password (YAD-91).
 			return remote{}, fmt.Errorf("git.url %s is not a URL — check it for a character that needs escaping or a port that is not a number", shown)
 		}
 		switch strings.ToLower(u.Scheme) {
@@ -374,7 +374,7 @@ func plain(field, s, shown string) error {
 // shownURL is a hub-sent git URL as a refusal, an event or a run's error may
 // print it. It goes back only to the hub that sent it, which already holds it
 // — but a URL is where people put a token, and a token is never transmitted
-// (decision 0064, as DEV-91 for a hub's own URL). A URL loses its userinfo,
+// (decision 0064, as YAD-91 for a hub's own URL). A URL loses its userinfo,
 // query and fragment to config.RedactURL; an scp-like user@host:path loses its
 // user the same way; anything else holding an @ is not printed at all. A
 // source with nothing to take out — a path, most URLs — comes back as given.

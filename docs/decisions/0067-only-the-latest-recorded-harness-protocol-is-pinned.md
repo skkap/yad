@@ -7,17 +7,17 @@ date: 2026-09-29
 [0037](0037-a-codex-run-is-its-own-turn-and-its-protocol-is-pinned.md) pins
 the Codex app-server protocol "per recorded version", and two were pinned side
 by side: 0.147.0, which the adapter was built against, and 0.157.1, recorded
-when forks arrived (DEV-128, DEV-48). Keeping the older one had a price the
+when forks arrived (YAD-128, YAD-48). Keeping the older one had a price the
 moment the newer one was worth using. Codex 0.157.1 answers every
 `thread/resume` with a deprecation notice asking for `excludeTurns: true`;
 0.147.0 refuses that field (`thread/resume.excludeTurns requires
-experimentalApi capability`, measured for DEV-139). Using it would have meant a
+experimentalApi capability`, measured for YAD-139). Using it would have meant a
 branch per version in the adapter, or asking 0.147.0 for its experimental
 surface — for a release no machine yad knows of still runs.
 
 ## Decision
 
-The owner's call (DEV-153): yad supports the latest harness release it has
+The owner's call (YAD-153): yad supports the latest harness release it has
 recorded, not the ones before it.
 
 - **One pin per harness.** `internal/adapter/codex/schema.go` holds one
@@ -35,7 +35,7 @@ recorded, not the ones before it.
   one this yad was built against (codex 0.157.1) …`.
 - **A request may use what the pinned release takes**, with no branch for a
   release before it. That is what lets `thread/resume` send `excludeTurns`
-  (DEV-139).
+  (YAD-139).
 - **Measurements stay dated.** Decision records and comments that say what
   0.147.0 did (0013, 0049, 0050, `codex.go`, `login.go`) keep saying so: they
   are what was measured on which release, not a claim that it is supported.

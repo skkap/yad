@@ -229,7 +229,7 @@ func (c *Collector) Run(ctx context.Context) {
 //
 // The look, the close and the request are one transaction. Apart, a claim
 // withdrawn between the close finding a run held and the request being
-// written would take the session with it (DEV-99): the request would land on
+// written would take the session with it (YAD-99): the request would land on
 // nothing, and the owner would be told "closing" of a close no sync ever
 // reports.
 func (c *Collector) Close(ctx context.Context, connection, id string, reason v1.SessionCloseReason) (CloseResult, error) {

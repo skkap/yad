@@ -128,7 +128,7 @@ func eventStatuses(t *testing.T, e *env, id string) []string {
 // run. The account is parked until its reset, the run moves to a free one,
 // and it continues the same session there — the native id goes to the second
 // turn, so the harness resumes the conversation rather than starting a new
-// one (decision 0013, measured in DEV-24).
+// one (decision 0013, measured in YAD-24).
 func TestAUsageLimitMovesTheRunToAnotherAccountInTheSameSession(t *testing.T) {
 	e := newEnv(t)
 	for _, label := range []string{"work", "personal"} {
@@ -442,7 +442,7 @@ func stopRun(t *testing.T, e *env, kind v1.ControlKind, id string) {
 // cancel ladder has nothing to climb. The hub's cancel still ends it, and so
 // does an interrupt, which ends a run whose harness is not up as a cancel
 // does — the executor, which the interrupt used to go to, does not hold a
-// parked run, and dropped it on every sync (DEV-113).
+// parked run, and dropped it on every sync (YAD-113).
 func TestCancellingAWaitingRunEndsIt(t *testing.T) {
 	for _, kind := range []v1.ControlKind{v1.ControlCancel, v1.ControlInterrupt} {
 		t.Run(string(kind), func(t *testing.T) { cancellingAWaitingRunEndsIt(t, kind) })
@@ -859,7 +859,7 @@ func TestACancelledRunStillReportsWhatTheAccountBeforeItSpent(t *testing.T) {
 	started(t, l, x)
 	// The second turn itself, not the account the run moved to: the account is
 	// recorded before that turn is started, and a cancel landing in between
-	// ends the run before the turn this test is about (DEV-92).
+	// ends the run before the turn this test is about (YAD-92).
 	eventually(t, "the second account's turn has started", func() bool {
 		return len(ad.Turns()) == 2
 	})

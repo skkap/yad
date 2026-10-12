@@ -55,7 +55,7 @@ type Accounts struct {
 	// doomed are removed accounts whose home the owner asked to delete while
 	// a run was still on it: the last release deletes it. Memory only, so
 	// each doomed home also carries the removal marker on disk, which is
-	// what the next start finishes it by if this daemon dies first (DEV-160).
+	// what the next start finishes it by if this daemon dies first (YAD-160).
 	doomed map[account.Ref]bool
 	// paths are the profile's directories, once Serve has given them: the
 	// start sweep reads config.toml through them (finishAtStart).
@@ -250,7 +250,7 @@ func (a *Accounts) onRemoved(fn func(account.Ref)) {
 // after it, because the login takes minutes and a run on the removed account
 // could end in the middle of it and delete the home the owner is logging in.
 // The removal marker goes too, under the same lock, or a daemon dying during
-// the login would have its next start delete that home (DEV-160).
+// the login would have its next start delete that home (YAD-160).
 func (a *Accounts) Keep(r account.Ref) error {
 	if err := checkRef(r); err != nil {
 		return err
@@ -311,7 +311,7 @@ func (a *Accounts) usePaths(p config.Paths) {
 
 // finishRemovals completes every removal that stopped half-way: a home set
 // aside and not deleted, a home marked for removal that a daemon died holding
-// for a run or could not set aside (DEV-160), and on macOS the Keychain login
+// for a run or could not set aside (YAD-160), and on macOS the Keychain login
 // that goes with each (decision 0070). Nothing else comes back to one. Its
 // label is out of config.toml, so no report names the account and a hub that
 // asked for the removal has stopped asking; the owner's own `yad account
@@ -642,7 +642,7 @@ func (a *Accounts) beforeLoginMakesHome(r account.Ref) {
 }
 
 // loginNotTaken writes the state of an account a hub login ended on without
-// taking, once its process has stopped (DEV-138). Only ever towards
+// taking, once its process has stopped (YAD-138). Only ever towards
 // needs_login: a login that did not take is no reason to call an account
 // free, and a yes from the check means the login it had before is still
 // there, so its row stands — a limit keeps its reset, and a token account

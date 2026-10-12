@@ -13,7 +13,7 @@ OpenCode 1.18.33) starts a tool command in a process group of its own, so
 yad's group kill never reaches that work, and what ends it is the harness's
 own exit — if the harness stops it at all. Whether yad should stop it itself,
 and whether to reach the `nohup … &` work the census cannot see, was left to
-a ticket of its own. DEV-194.
+a ticket of its own. YAD-194.
 
 ## Decision
 

@@ -14,7 +14,7 @@ import (
 // A removal whose home waits for a run, or whose set-aside failed, is held
 // only in the daemon's memory — the doomed flag — once config.toml has
 // dropped the label. The marker the removal writes in the home first is what
-// survives the daemon dying (DEV-160, decision 0070): the next start deletes
+// survives the daemon dying (YAD-160, decision 0070): the next start deletes
 // every home that carries it and that config.toml no longer lists, and none
 // that does not carry it.
 

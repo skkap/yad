@@ -261,7 +261,7 @@ var ErrNotFirstClass = errors.New("no adapter for this harness — it is recogni
 // of these, so its caller can say what went wrong in its own words, with the
 // next action, without reading the error's text — which would be the adapter's
 // wording today and a harness's the day someone wraps what it printed
-// (DEV-146). A ListModels error wrapping none of them is a harness that ended
+// (YAD-146). A ListModels error wrapping none of them is a harness that ended
 // or broke off before it answered; one that ran out of its context wraps the
 // context's error.
 var (

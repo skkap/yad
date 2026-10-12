@@ -19,7 +19,7 @@ import (
 
 // A Claude run whose last tool call left a sleep running ends succeeded with
 // left_running = 1 and a status event naming sleep, through the whole path to
-// yad hub, and nothing in its argv or environment reaches the hub (DEV-186's
+// yad hub, and nothing in its argv or environment reaches the hub (YAD-186's
 // acceptance). The sleep is in a session of its own, as Claude Code starts
 // every Bash command, so the runner's group kill never reaches it. With the
 // owner's [supervise] stop_left_running the runner stops it as the turn

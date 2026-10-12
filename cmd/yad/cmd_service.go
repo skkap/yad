@@ -131,7 +131,7 @@ func serviceInstall(ctx context.Context, m service.Manager, h service.Host, path
 // holds the profile's job into a refusal that names the manager's own
 // commands, as a start does (decision 0074). Install and uninstall both
 // decide from that answer — replace a loaded job or load a first one, unload
-// it or only remove the file — and neither guess is safe (DEV-176). Any other
+// it or only remove the file — and neither guess is safe (YAD-176). Any other
 // error is returned as it is.
 func refusedUnanswered(err error, m service.Manager, paths config.Paths, sub string) error {
 	var unanswered *service.UnansweredError

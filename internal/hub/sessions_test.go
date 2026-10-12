@@ -156,7 +156,7 @@ func TestCloseAnUnboundSession(t *testing.T) {
 // A runner whose claim in a new session was withdrawn before any sync listed
 // it — a cancel, a drain, a stop or a restart — never bound the session, and
 // may still report closing it: its owner's close waited on that claim
-// (DEV-103). That report is believed from the runner the session's run was
+// (YAD-103). That report is believed from the runner the session's run was
 // last offered to, and from no other: the session closes, bound to that
 // runner, and the run in it ends saying what to do instead, where before the
 // report was dropped and the run offered again only to be refused.
@@ -234,7 +234,7 @@ func TestAWithdrawnClaimsCloseIsBelievedFromItsRunnerAlone(t *testing.T) {
 }
 
 // A run waiting in a session whose close this hub has asked for is held back
-// until the runner reports the close, and then ends with it (DEV-120). The
+// until the runner reports the close, and then ends with it (YAD-120). The
 // runner acts on close_session before the offers in the same answer, so an
 // offer beside the control would be refused as session_closed: a failed run
 // where the close meant a cancelled one.

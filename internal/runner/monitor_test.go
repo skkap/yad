@@ -99,7 +99,7 @@ func TestMonitorIdle(t *testing.T) {
 }
 
 // HeldHarnesses is what the capability document counts beside the drivable
-// harnesses (DEV-169): the harness of every run held, waiting ones included,
+// harnesses (YAD-169): the harness of every run held, waiting ones included,
 // each once — and nothing of a run that has ended, or before a store is open.
 func TestMonitorHeldHarnesses(t *testing.T) {
 	ctx := context.Background()

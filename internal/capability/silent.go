@@ -21,7 +21,7 @@ import (
 //
 // command builds the yad commands the warnings give: the profile's own for
 // `yad doctor`, and for the document, which reaches every hub, one that names
-// no path (DEV-67).
+// no path (YAD-67).
 func SilentHomes(found []harness.Detected, cfg config.Config, accounts []account.Account, silences account.Silences, now time.Time, command func(args ...string) string) map[string]bool {
 	var notReady map[string]bool
 	mark := func(id string) {
@@ -49,7 +49,7 @@ func SilentHomes(found []harness.Detected, cfg config.Config, accounts []account
 			// Only for a harness that can have accounts: the advice is
 			// refused as printed for one that cannot.
 			if account.HomeVar(d.ID) != "" {
-				w += ". The one cause known is another " + d.ID + " running from the same home (DEV-170); an account is a home nobody else uses: `" +
+				w += ". The one cause known is another " + d.ID + " running from the same home (YAD-170); an account is a home nobody else uses: `" +
 					command("account", "add", d.ID, "<label>") + "`"
 			}
 			found[i].Warnings = append(found[i].Warnings, w)

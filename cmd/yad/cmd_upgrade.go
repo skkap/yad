@@ -137,7 +137,7 @@ func restartNote(p config.Paths, pid int, running bool, err error) string {
 
 // restartAdvice is what to type to put a running runner on the new binary.
 // One command whether or not the profile runs as a service: a restart of a
-// service is started again by its service manager (DEV-173). It has to act on
+// service is started again by its service manager (YAD-173). It has to act on
 // the profile the message names, and on its directories: printed bare beside
 // "profile work", it would act on default.
 func restartAdvice(p config.Paths) string {

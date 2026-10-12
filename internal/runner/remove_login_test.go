@@ -36,7 +36,7 @@ func (r *loginRig) waitFor(ok func() bool) {
 
 // A hub login is its hub's alone: once `yad disconnect` has retired the
 // runner there, no login_code or cancel_login can reach it, and no sync will
-// carry its end (DEV-182). The removal ends it as a cancel would, and forgets
+// carry its end (YAD-182). The removal ends it as a cancel would, and forgets
 // it once it has let go of the home. Left alone, a link login kept the
 // harness's process in the account's home until its code wait ran out, kept
 // the runner from idling — a self-update waited on it — and its end stayed

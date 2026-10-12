@@ -49,7 +49,7 @@ type Account struct {
 	// or anything replaying a moment) would be silently overruled by the
 	// wall - a limit dated from the fake clock read as long past, the account
 	// reported free, and the test that set it up green while proving the
-	// opposite (DEV-85).
+	// opposite (YAD-85).
 	State        v1.AccountState
 	LimitedUntil *time.Time
 	// Windows is every usage window this harness has told the runner about
@@ -140,7 +140,7 @@ func RefillAt(now time.Time, sets ...[]v1.AccountWindow) time.Time {
 // too, on accounts with windows on record.
 //
 // The number is short on purpose, and the instinct to lengthen it is wrong.
-// The two costs are not symmetric, and failover (DEV-28) made them less
+// The two costs are not symmetric, and failover (YAD-28) made them less
 // symmetric rather than more - which is worth stating, because the reasoning
 // this replaces was anchored on a cost that failover removed. It read: a run
 // routed to a still-limited account fails the hub's work after about three
@@ -186,14 +186,14 @@ func (a Account) Report() v1.AccountReport {
 	//
 	// The state is Load's, not re-derived here: Load decided it against the
 	// moment its caller named, and reading the wall clock again here is what
-	// once let a limit dated from a test's clock report free (DEV-85).
+	// once let a limit dated from a test's clock report free (YAD-85).
 	state := a.State
 	if state == "" {
 		state = v1.AccountFree
 	}
 	r := v1.AccountReport{Label: a.Label, State: state, Windows: a.Windows, SilentUntil: a.SilentUntil}
 	// A reset in the past beside state: free is the disagreement a hub would
-	// act on, and DEV-28 decides whether to claim from exactly this pair. The
+	// act on, and YAD-28 decides whether to claim from exactly this pair. The
 	// window that caused the limit keeps its reset in Windows, so nothing a
 	// hub needs is lost by dropping it here.
 	if state == v1.AccountLimited {
@@ -203,7 +203,7 @@ func (a Account) Report() v1.AccountReport {
 }
 
 // homeVar is the environment variable each harness reads its home from.
-// Verified per-home on macOS (DEV-24) and on Linux (DEV-26). The isolation is
+// Verified per-home on macOS (YAD-24) and on Linux (YAD-26). The isolation is
 // a property of the path either way, but where the login lives is not: on
 // Linux Claude's is a plain file inside the home, and on macOS it is a
 // Keychain item named after the home's path, which outlives the directory
@@ -228,7 +228,7 @@ var storageVar = map[string]string{
 
 // transcriptDir is the directory inside a harness home that holds its
 // transcripts, and which YAD replaces with a link to the one shared directory
-// so any account can resume any session (decision 0013, measured in DEV-24).
+// so any account can resume any session (decision 0013, measured in YAD-24).
 var transcriptDir = map[string]string{
 	"claude": "projects",
 	"codex":  "sessions",
@@ -516,7 +516,7 @@ var beforeReplace func(path string)
 // The shared transcripts are reached through a symlink, and RemoveAll deletes
 // the link rather than following it, so every other account keeps every
 // session. Codex leaves sqlite -shm and -wal sidecars beside its databases
-// (~1.8 MB per home before any work, DEV-24); RemoveAll takes them with the
+// (~1.8 MB per home before any work, YAD-24); RemoveAll takes them with the
 // rest, which is why the home is a directory to delete and not a file to
 // unlink.
 //
@@ -603,7 +603,7 @@ func RemoveSetAside(data, harness, label string) error {
 // Keychain that would not let go of its login (decision 0070), a disk error,
 // a process that died — and a home still at its path carrying the removal
 // marker, whose removal was waiting on a run or could not set it aside when
-// the daemon died (DEV-160). The daemon finishes each at start, since nothing
+// the daemon died (YAD-160). The daemon finishes each at start, since nothing
 // else would: the label is out of config.toml, so no report names it and no
 // hub asks about it again.
 //
@@ -801,7 +801,7 @@ func Load(ctx context.Context, q *db.Queries, data string, lists Lists, now time
 			// harness.
 			//
 			// Only free is downgraded. A limited account is already unusable
-			// and its reset time is DEV-27's to keep; overwriting it here
+			// and its reset time is YAD-27's to keep; overwriting it here
 			// would lose when it comes back.
 			if a.State == v1.AccountFree {
 				if _, err := os.Stat(a.Home); errors.Is(err, os.ErrNotExist) {

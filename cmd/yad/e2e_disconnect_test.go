@@ -22,7 +22,7 @@ import (
 	"github.com/skkap/yad/internal/store/db"
 )
 
-// `yad disconnect` end to end (DEV-81, decision 0072): the hub first, then
+// `yad disconnect` end to end (YAD-81, decision 0072): the hub first, then
 // config.toml and the credential, then the daemon — told live, or ending
 // what is left at its next start.
 
@@ -161,7 +161,7 @@ func TestE2EDisconnectWithTheDaemonRunning(t *testing.T) {
 
 // With no daemon: nothing in the state database is touched — the CLI never
 // writes it (decision 0043) — and the next start ends what the connection
-// left, reclaiming its workdir (DEV-74).
+// left, reclaiming its workdir (YAD-74).
 func TestE2EDisconnectWithNoDaemon(t *testing.T) {
 	m := newMachine(t, claudeE2E)
 	d := m.daemon()

@@ -192,7 +192,7 @@ func TestGitHubDownloadReportsAFailingServer(t *testing.T) {
 // A server that takes the request and stops sending — before its headers, or
 // partway through a download — ends the request after the stall with an
 // error that says what to do, rather than holding `yad upgrade` until Ctrl-C
-// and a self-update for good (DEV-181).
+// and a self-update for good (YAD-181).
 func TestGitHubGivesUpOnAServerThatStopsSending(t *testing.T) {
 	const tag = "v0.4.0"
 	prefix := "/" + DefaultRepo + "/releases/"

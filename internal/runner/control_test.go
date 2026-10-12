@@ -46,7 +46,7 @@ func started(t *testing.T, l *Loop, x *Exec) {
 // running is started, and then waits until run id's harness is up. A control
 // meant for the turn must not be sent before this: the runner marks a run
 // running only once its interrupt can reach the turn, and one that arrives
-// earlier ends the run before the harness is spawned (DEV-92).
+// earlier ends the run before the harness is spawned (YAD-92).
 func running(t *testing.T, e *env, l *Loop, x *Exec, id string) {
 	t.Helper()
 	started(t, l, x)
@@ -235,7 +235,7 @@ func (h *alsoSays) arm(cs ...v1.Control) {
 	h.extra = cs
 }
 
-// DEV-113: a control in the very answer that acknowledges a claim reaches
+// YAD-113: a control in the very answer that acknowledges a claim reaches
 // the run. The run is not the executor's until that answer has been read, so
 // a control handed to the executor first found nothing and was dropped, and
 // the run started as if the hub had said nothing — a fast one finishing
@@ -321,7 +321,7 @@ func TestSteerInTheAnswerThatAcknowledgesTheClaim(t *testing.T) {
 // hub's repeat of the interrupt does not reach it a second time. That harness
 // is held by the test, not by a clock, until the interrupt and its repeat
 // have both been acted on: one that could finish first would test nothing,
-// and under load a scripted duration did finish first (DEV-147).
+// and under load a scripted duration did finish first (YAD-147).
 func TestInterruptEndsTheTurn(t *testing.T) {
 	release := make(chan struct{})
 	for _, tc := range []struct {
@@ -561,7 +561,7 @@ func (h *losesAnswer) arm() {
 	h.armed = true
 }
 
-// DEV-114: the hub claims a run, the answer saying so is lost, and the hub
+// YAD-114: the hub claims a run, the answer saying so is lost, and the hub
 // is asked to cancel the run it counts as claimed. The runner hears the
 // cancel before any acknowledgement, so it withdraws the claim and owes no
 // result (decision 0019). The hub asked for this ending, so it records the

@@ -68,7 +68,7 @@ func TestAnAccountHomeSharesTheMachinesConfig(t *testing.T) {
 }
 
 // The machine's plugins reach every account, as its settings — which enable
-// them by name — already do (DEV-174). Claude makes an empty plugins/ of its
+// them by name — already do (YAD-174). Claude makes an empty plugins/ of its
 // own in a home that has none, so an account that ran before plugins were
 // shared has one; that empty default becomes the link at its next run, and a
 // plugins/ holding anything else is the owner's for that account and stays.

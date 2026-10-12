@@ -157,7 +157,7 @@ func Login(ctx context.Context, harness, binary, home string, in io.Reader, out,
 	// proxy the login needs to reach its server is one — so this does too.
 	cmd.Env = append(supervise.Environ(nil), LoginEnv(harness, home)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, errw
-	// Codex refuses to start outside a directory it trusts (DEV-24), and the
+	// Codex refuses to start outside a directory it trusts (YAD-24), and the
 	// home is one it made itself, so the login runs there rather than in
 	// whatever directory the owner happened to type the command in.
 	cmd.Dir = home

@@ -109,7 +109,7 @@ Report what is **material**, not merely true.
   `bypassPermissions`, and YAD builds no sandbox or policy engine (0015). The
   permission mode is owner configuration, never a protocol field.
 - **Pull only.** Runners sync every 10–60 s at the hub's direction, and a run can
-  start up to one interval after submit (0005; DEV-53 is the known follow-up).
+  start up to one interval after submit (0005; YAD-53 is the known follow-up).
 - **The registration token may be typed in argv** (0020); nothing else may.
 - **The owner trusts the hubs it connects** (0038). Hub-supplied grant names and
   folder sources are not filtered for safety. That is by design, not a gap to

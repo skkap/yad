@@ -16,7 +16,7 @@ import (
 
 // A turn whose last tool call left a sleep running ends with that sleep
 // counted, by the kernel's name for it alone: what a hub sees as
-// left_running = 1 (DEV-186). The sleeper is in a session of its own, as
+// left_running = 1 (YAD-186). The sleeper is in a session of its own, as
 // Claude Code puts every Bash command, so only the census before input
 // closes can see it as this turn's. With the owner's stop_left_running the
 // census also stops it, before the turn ends, and says so; without, it is

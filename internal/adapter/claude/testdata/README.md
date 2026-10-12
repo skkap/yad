@@ -24,7 +24,7 @@ Under `claude-2.1.280/`:
 |---|---|
 | `tool-outcomes` | a Bash command that exits 3, one that succeeds, and a `Read` of no file: each result's `is_error` as Claude reports it |
 
-Under `claude-2.1.284/`, recorded for forks (DEV-48, decision 0065):
+Under `claude-2.1.284/`, recorded for forks (YAD-48, decision 0065):
 
 | Fixture | The turn |
 |---|---|
@@ -32,7 +32,7 @@ Under `claude-2.1.284/`, recorded for forks (DEV-48, decision 0065):
 | `fork-missing` | the same flags naming a session that does not exist: `No conversation found` for the forked id, under the new one |
 
 Under `claude-2.1.284/`, recorded by `TestRecordModels` and spending nothing —
-no user message is sent, so no turn runs (DEV-50):
+no user message is sent, so no turn runs (YAD-50):
 
 | Fixture | What Claude said |
 |---|---|
@@ -43,7 +43,7 @@ mismatched session are not recordable on demand; the tests derive them from
 these files (`derive` in `claude_test.go`).
 
 Derived the same way, and written into the version directory rather than made
-at test time because the acceptance criteria name them (DEV-27):
+at test time because the acceptance criteria name them (YAD-27):
 
 | Fixture | The turn |
 |---|---|
@@ -60,7 +60,7 @@ observed is `status: "rejected"`: see the next section for why it could not be.
 
 Two fixtures under `claude-2.1.278/` are recorded against a local HTTP server
 that authors claude's answers instead of the API (`instrumentServer` in
-`record_test.go`, from the DEV-24 instrument). They reach no model, spend no
+`record_test.go`, from the YAD-24 instrument). They reach no model, spend no
 token and need no login:
 
 | Fixture | The turn |

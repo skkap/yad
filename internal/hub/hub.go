@@ -53,7 +53,7 @@ const (
 
 // QuickSyncInterval is what a sync is answered with while a queued run waits
 // for that runner and nothing but a run it is executing (waitsForThisRunner).
-// 3 s is the owner's choice (DEV-53, 2026-09-29): a turn in an interactive
+// 3 s is the owner's choice (YAD-53, 2026-09-29): a turn in an interactive
 // session then starts about 3 s after the one before it ends rather than up to
 // 15 s, and a runner asked back that often for the length of a long run costs
 // the hub five syncs where it had one — for that runner, only while the run
@@ -77,7 +77,7 @@ const DefaultAbandonAfter = 24 * time.Hour
 // SyncFloorForTests replaces MinSyncInterval in the clamp while it is positive,
 // so a test that is both sides of the protocol can run it in milliseconds
 // instead of waiting five seconds for every sync — at the shipped floor the
-// end-to-end tests spend their time asleep, 201 s of a 315 s suite (DEV-63).
+// end-to-end tests spend their time asleep, 201 s of a 315 s suite (YAD-63).
 // It is deliberately not an Options field and not reachable from the protocol:
 // timings are the hub's (ARCHITECTURE.md §2), and a runner must never be able
 // to lower them. Nothing outside a test may set it: TestOnlyTestsReachTheSyncFloor
@@ -89,7 +89,7 @@ var SyncFloorForTests time.Duration
 // LeaseForTests replaces the lease a hub names while it is positive, so a test
 // can watch a lease lapse without spending a minute doing it — the conformance
 // suite's lease rule is checked by waiting one out, against a hub over HTTP,
-// with no clock in common (DEV-33).
+// with no clock in common (YAD-33).
 //
 // Deliberately a replacement and not a floor like the seam above: the lease is
 // max(four intervals, minLease) and the interval is bounded below by five
@@ -403,7 +403,7 @@ func Config() huma.Config {
 //
 // It is exported only because huma skips unexported fields, and an embedded
 // field takes its type's name: embedded as protocolHeader, it silently
-// declared nothing (DEV-93). TestProtocolHeaderIsDeclaredWhereEnforced holds
+// declared nothing (YAD-93). TestProtocolHeaderIsDeclaredWhereEnforced holds
 // the declaration and the enforcement to each other.
 type ProtocolHeader struct {
 	Protocol string `header:"Yad-Protocol" required:"true" enum:"1" doc:"The protocol major version."`

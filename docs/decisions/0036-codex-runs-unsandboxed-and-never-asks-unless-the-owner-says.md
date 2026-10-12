@@ -7,7 +7,7 @@ date: 2026-09-19
 Decision [0015](0015-owner-environment-is-the-trust-boundary.md) makes the
 owner's machine the boundary and leaves each harness's own guardrails to the
 owner. For Claude that became `bypassPermissions` when `config.toml` sets no
-`permission_mode`. DEV-21 settles the same for Codex, whose guardrails are two
+`permission_mode`. YAD-21 settles the same for Codex, whose guardrails are two
 settings — an approval policy and a sandbox mode — sent with `thread/start`
 and `thread/resume`.
 

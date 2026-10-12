@@ -48,7 +48,7 @@ case "$*" in
 esac
 `
 
-// One rule for what an override means, whatever it overrides (DEV-68). A hub
+// One rule for what an override means, whatever it overrides (YAD-68). A hub
 // reads harnesses and host tools out of the same document and cannot know the
 // rule differs by kind, so for every harness and every host tool each case
 // must come out the same — present, error and warnings — once the entry's own

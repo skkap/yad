@@ -47,7 +47,7 @@ func Command(argv ...string) string {
 //
 // It is for a value that must not be printed but is known to the reader: a
 // binary a YAD_<ID>_PATH override names is under its owner's home, and a
-// message that leaves the machine may not carry that path (DEV-67, DEV-108).
+// message that leaves the machine may not carry that path (YAD-67, YAD-108).
 // Double quotes and not single, because the expansion is the point; inside
 // them the expanded value is not split or globbed. The name is the caller's
 // constant, never a value from outside, so one that is not a variable name

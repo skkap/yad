@@ -140,7 +140,7 @@ func cmdHubServe(ctx context.Context, g global, args []string, w io.Writer) erro
 // hubAnswerCommand builds the yad commands a hub's answers name, run by its
 // operator against the database it serves. Read by a runner's owner on another
 // machine: the profile is a name, but a --db is a path under this operator's
-// home, and stays a placeholder rather than travel (DEV-67). The placeholder
+// home, and stays a placeholder rather than travel (YAD-67). The placeholder
 // goes in whenever the database is not where a bare shell would look: named
 // with --db, or the profile's own under a YAD_DATA_DIR or XDG_DATA_HOME the
 // command cannot carry.

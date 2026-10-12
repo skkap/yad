@@ -222,7 +222,7 @@ func (m *Monitor) Snapshot(ctx context.Context) (Snapshot, error) {
 // HeldHarnesses is the harness of every run the runner holds — claimed,
 // preparing, running or waiting — each once, sorted: the harnesses the
 // capability document counts in its runner-wide per-run features whether or
-// not they are drivable now (capability.Features, DEV-169). None while no
+// not they are drivable now (capability.Features, YAD-169). None while no
 // store is open: before Serve has set up, or after it has returned.
 func (m *Monitor) HeldHarnesses(ctx context.Context) ([]string, error) {
 	if m == nil {

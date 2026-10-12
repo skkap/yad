@@ -8,7 +8,7 @@ date: 2026-09-19
 A run's sources come from a hub, and a hub is untrusted input
 ([0015](0015-owner-environment-is-the-trust-boundary.md)). A git URL, a base,
 a branch and a path are strings someone else chose, and each ends up in git's
-argv or names a directory on the owner's machine. DEV-16 made them real: the
+argv or names a directory on the owner's machine. YAD-16 made them real: the
 runner fetches git sources into a bare cache per repository and runs path
 sources in place.
 

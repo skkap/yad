@@ -35,7 +35,7 @@ import (
 // while a hub that is quiet now finds its turn waiting for it when its work
 // arrives. Units left over because a harness's cap gave it none are not that:
 // the hub may have had nothing else to offer, so the connection still waits
-// for that harness and keeps its turn at it (DEV-106). One that was given room
+// for that harness and keeps its turn at it (YAD-106). One that was given room
 // for a harness and used the sync on other work passes on that harness until
 // its cap next fills. A unit a turn holds back is not reserved, so it waits at
 // most until that connection's next sync, an interval away.
@@ -418,7 +418,7 @@ func (r *Reservation) Take(h string) (release func(), ok bool) {
 // that fill's deal started with, so the extra unit of an uneven division is
 // the next connection's in the next fill. Only then: a cursor that moved with
 // every unit taken re-dealt the fill under the syncs still to come, and with
-// three hubs over four units the third was dealt nothing (DEV-78).
+// three hubs over four units the third was dealt nothing (YAD-78).
 //
 // A harness's fill also ends every pass on it: the connections that spent
 // their turn on other work are dealt in again, so a hub whose queue changes

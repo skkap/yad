@@ -110,7 +110,7 @@ func TestSchemaHashCoversTheSurface(t *testing.T) {
 			cr["oneOf"] = kept
 		}},
 		// A codex without the hub login's methods is one yad doctor warns
-		// about, before a hub's login finds out (DEV-135).
+		// about, before a hub's login finds out (YAD-135).
 		{name: "the login's completion removed", moves: true, change: func(doc map[string]any) {
 			sn := top(doc)["ServerNotification"].(map[string]any)
 			var kept []any
@@ -275,7 +275,7 @@ func TestFailedSchemaCheckIsRetried(t *testing.T) {
 // The warning reaches the capability document, which every connected hub
 // reads, so however the check fails it says so in the runner's words: never
 // what codex printed, never the path it was started from, never the temp
-// directory it wrote into (DEV-67). Each case fails the check a different way,
+// directory it wrote into (YAD-67). Each case fails the check a different way,
 // and the leaks list what the raw error would have carried.
 func TestSchemaWarningQuotesNothingItWasTold(t *testing.T) {
 	const secret = "https://user:hunter2@proxy.internal/"

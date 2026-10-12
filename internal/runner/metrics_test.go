@@ -255,7 +255,7 @@ func TestAnUnreadableSpentLeavesNoHalfDecodedNumbers(t *testing.T) {
 }
 
 // A run that moves accounts in process and is lost before it ever parks
-// (DEV-86). What it cost is written as each turn ends and each move is made,
+// (YAD-86). What it cost is written as each turn ends and each move is made,
 // not only by a park, so the restart that reports it lost still has every
 // finished turn's usage and every move to report. It used to report zeros:
 // the park was the only writer, and this run never parked.

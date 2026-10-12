@@ -263,7 +263,7 @@ func TestTheContextJoinsTheOwnersInlineConfig(t *testing.T) {
 
 // The same holds for inline configuration declared in config.toml's [env]
 // rather than the runner's environment: the run's value is built on the
-// owner's, not written over it (DEV-188).
+// owner's, not written over it (YAD-188).
 func TestTheContextJoinsInlineConfigFromTheOwnersEnv(t *testing.T) {
 	t.Setenv(envConfig, "")
 	os.Unsetenv(envConfig)

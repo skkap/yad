@@ -260,7 +260,7 @@ func TestAbandonedLoginLeavesTheHomeWithoutOne(t *testing.T) {
 
 // Two homes, one login: the harness reads the home it is given, which is what
 // per-account isolation rests on. Verified against the real claude on macOS
-// (DEV-24) and on Linux (DEV-26); this holds the wiring that depends on it.
+// (YAD-24) and on Linux (YAD-26); this holds the wiring that depends on it.
 func TestOneHomesLoginDoesNotReachAnother(t *testing.T) {
 	bin := self(t, "claude")
 	data := t.TempDir()
@@ -506,7 +506,7 @@ func TestTheSuggestedCommandIsReadBackByARealShell(t *testing.T) {
 }
 
 // A login check asks about the account in the environment its runs get
-// (supervise.Spec.KeepEnv states the invariant, DEV-62). A key, profile or
+// (supervise.Spec.KeepEnv states the invariant, YAD-62). A key, profile or
 // federation rule the owner exported ranks above the home, and the run never
 // sees one — Scrub removes it — so a check that did see it would call an
 // account with no login of its own logged in, and every run placed on it

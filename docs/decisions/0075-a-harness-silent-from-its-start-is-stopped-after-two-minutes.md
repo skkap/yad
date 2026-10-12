@@ -1,6 +1,6 @@
 ---
 date: 2026-10-11
-status: amended on 2026-10-12 (DEV-180) — what a file grant holds is masked from the quoted stderr too, not only its path; amended on 2026-10-12 (DEV-192) — a harness's own error messages a run's error quotes are masked the same way
+status: amended on 2026-10-12 (YAD-180) — what a file grant holds is masked from the quoted stderr too, not only its path; amended on 2026-10-12 (YAD-192) — a harness's own error messages a run's error quotes are masked the same way
 ---
 
 # A harness silent from its start is stopped after two minutes, and a watchdog's error quotes its stderr
@@ -12,11 +12,11 @@ outside yad: native Claude hung right after loading its settings when it ran
 from the owner's shared `~/.claude`, where another `claude` ran in the
 background. yad gave no sign of any of it. The only watchdog that could have
 fired was the inactivity timeout, 30 minutes by default, and when it fires its
-error says nothing of what the harness was doing. DEV-170.
+error says nothing of what the harness was doing. YAD-170.
 
 ## Decision
 
-The maintainer was away. The agent working DEV-170 decided this, and the
+The maintainer was away. The agent working YAD-170 decided this, and the
 reasoning is on the ticket and the pull request for the maintainer to review.
 
 **A new watchdog, before the first event.** Until a turn's harness produces
@@ -89,7 +89,7 @@ run's error carry a harness's last stderr line and said that child text was
   child, and the likeliest to come back, since a harness whose login is refused
   may quote the token it was refused. Values shorter than 8 bytes are left,
   because blanking every "1" would wreck the text and hide no credential.
-  *(Amended below, DEV-180: a file grant's content is masked too.)*
+  *(Amended below, YAD-180: a file grant's content is masked too.)*
 - When the supervisor's 2 KiB tail is full, its first line may begin part-way
   through, and a credential cut at its start would no longer match. That line
   is dropped, as `internal/workdir` already does for git's stderr.
@@ -118,9 +118,9 @@ to catch a harness that cannot answer. Every check that would have caught this
 hang means running the model, which spends a token and needs the network, and
 the suite may do neither. A cheap proxy, such as another `claude` process
 running from the same home, is not reliable enough to decide readiness. That
-work is DEV-175.
+work is YAD-175.
 
-## Amendment: a file grant's content is masked too (DEV-180)
+## Amendment: a file grant's content is masked too (YAD-180)
 
 The masking above covered what was in the harness's environment, and a grant
 delivered as a file puts only its path there. Its content, the credential
@@ -144,14 +144,14 @@ The one other line of stderr a run's error quotes, Claude's warning that it
 ignores an effort it does not know, was not masked at all, of the environment
 either. It is now masked the same way (`adapter.Mask`), with both.
 
-## Amendment: a harness's own error messages are masked too (DEV-192)
+## Amendment: a harness's own error messages are masked too (YAD-192)
 
 stderr was not the only harness text a run's error quotes. Every adapter
 also quotes the harness's error messages when it refuses something: an ACP
 agent's JSON-RPC error on any request the core sends, and the prompt's;
 Codex's refusal of a request or of a steer, and its failed turn's error with
 its `additionalDetails`; Claude's failed result, its text or the errors it
-lists. Only an ACP error answered with a null id was masked (DEV-184). A
+lists. Only an ACP error answered with a null id was masked (YAD-184). A
 harness that could not use a credential may quote it back in any of them.
 
 **Every harness-supplied message a run's error quotes goes through
@@ -177,7 +177,7 @@ would also mean a hook in `supervise` for each adapter, where the executor
 already sees every event.
 
 **Report `harness_silent` as an event and leave the run running.** The run
-would still sit until the inactivity timeout, which is what DEV-170 is about.
+would still sit until the inactivity timeout, which is what YAD-170 is about.
 Nothing has happened yet that stopping would lose.
 
 **Let a hub set the first-output timeout.** That would add a protocol field for

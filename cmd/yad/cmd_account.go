@@ -144,13 +144,13 @@ func accountAdd(ctx context.Context, g global, args []string, w, stderr io.Write
 	// One that did not answer — a timeout, a lock held with no socket to
 	// reach — may still hold the label as doomed and delete the home when
 	// its last run ends, which a login of minutes gives every chance to
-	// happen (DEV-167).
+	// happen (YAD-167).
 	if err != nil && !errors.Is(err, control.ErrNotRunning) {
 		return fmt.Errorf("%s account %q was not added: the running daemon did not say it keeps this label's home, which a removal still waiting on a run would delete in the middle of the login (%w) — once `%s` answers, run `%s` again", id, label, err, g.paths.Command("status"), again)
 	}
 	// The daemon takes the removal marker off with the pending deletion;
 	// with none running, nothing else would, and its next start would delete
-	// the home this login is about to use (DEV-160).
+	// the home this login is about to use (YAD-160).
 	if err := account.Reclaim(ctx, g.paths, id, label); err != nil {
 		return fmt.Errorf("%s account %q was not added: %w — then run `%s` again", id, label, err, again)
 	}
@@ -172,7 +172,7 @@ func accountAdd(ctx context.Context, g global, args []string, w, stderr io.Write
 	if useToken {
 		err := account.SetToken(home, tok)
 		// The Keychain is the owner's to unlock, and once it is, nothing is
-		// left half-done: the same command stores the token (DEV-183).
+		// left half-done: the same command stores the token (YAD-183).
 		if _, ok := errors.AsType[*account.KeychainError](err); ok {
 			return fmt.Errorf("%s account %q was not added: %w, and then run `%s` again", id, label, err, again)
 		}
@@ -458,7 +458,7 @@ func accountRemove(ctx context.Context, g global, args []string, w io.Writer) er
 	// whatever stops this removal half-way — this command killed, a daemon
 	// that dies holding the home for a run, a rename that fails — leaves a
 	// home the daemon's next start deletes rather than one it takes for an
-	// add in progress (DEV-160). Marked whether or not the file lists the
+	// add in progress (YAD-160). Marked whether or not the file lists the
 	// label: the owner asked for this home to go.
 	if _, err := account.Unlist(ctx, g.paths, id, label, func(bool) bool { return true }); err != nil {
 		return fmt.Errorf("%s account %q was not removed: %w — run `%s` again once that is fixed", id, label, err, again)

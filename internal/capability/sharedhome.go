@@ -24,7 +24,7 @@ import (
 )
 
 // Another Claude in the home a run uses is a warning, never a reason a
-// harness cannot take a run (decision 0077). DEV-170's runs hung before their
+// harness cannot take a run (decision 0077). YAD-170's runs hung before their
 // first word in a home where a `claude --bg` daemon ran, and so far that is
 // one machine: a proxy for a cause nobody has pinned down is not enough to
 // refuse work on, and it is enough to tell the owner where to look.
@@ -131,7 +131,7 @@ func SharedHomes(ctx context.Context, found []harness.Detected, cfg config.Confi
 			if len(s.pids) == 0 {
 				continue
 			}
-			found[i].Warnings = append(found[i].Warnings, fmt.Sprintf("%s run%s from the home this runner's Claude runs use%s — runs there have been seen to hang before their first word and end harness_silent (DEV-170). If they do, give yad an account, a home nobody else uses: `%s`",
+			found[i].Warnings = append(found[i].Warnings, fmt.Sprintf("%s run%s from the home this runner's Claude runs use%s — runs there have been seen to hang before their first word and end harness_silent (YAD-170). If they do, give yad an account, a home nobody else uses: `%s`",
 				others(s, detail), plural(len(s.pids), "s", ""), daemonNote(s), command("account", "add", d.ID, "<label>")))
 			continue
 		}
@@ -144,7 +144,7 @@ func SharedHomes(ctx context.Context, found []harness.Detected, cfg config.Confi
 			if len(s.pids) == 0 {
 				continue
 			}
-			found[i].Warnings = append(found[i].Warnings, fmt.Sprintf("account %q: %s run%s from its home%s — runs there have been seen to hang before their first word and end harness_silent (DEV-170); an account's home is for yad's runs alone — quit them, or give them a home of their own",
+			found[i].Warnings = append(found[i].Warnings, fmt.Sprintf("account %q: %s run%s from its home%s — runs there have been seen to hang before their first word and end harness_silent (YAD-170); an account's home is for yad's runs alone — quit them, or give them a home of their own",
 				a.Label, others(s, detail), plural(len(s.pids), "s", ""), daemonNote(s)))
 		}
 	}

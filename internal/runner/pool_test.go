@@ -246,9 +246,9 @@ func TestTurnsGoRoundTheRing(t *testing.T) {
 	}
 }
 
-// TestOneFillDealsEveryConnectionItsShare is DEV-78: a fill is dealt from
+// TestOneFillDealsEveryConnectionItsShare is YAD-78: a fill is dealt from
 // where it started, whatever order the connections sync in, so the hub that
-// syncs last in an uneven division is not left with nothing. DEV-29's cases
+// syncs last in an uneven division is not left with nothing. YAD-29's cases
 // divided evenly and could not see it; these do not.
 func TestOneFillDealsEveryConnectionItsShare(t *testing.T) {
 	for _, tc := range []struct {
@@ -304,7 +304,7 @@ func TestAPassedConnectionKeepsWhatItHolds(t *testing.T) {
 	}
 }
 
-// TestTheRemainderGoesRoundTheRing is what DEV-29 guaranteed and a fixed deal
+// TestTheRemainderGoesRoundTheRing is what YAD-29 guaranteed and a fixed deal
 // must keep: when the capacity does not divide evenly, the extra unit moves
 // on once a fill completes, so no hub is always the one short.
 func TestTheRemainderGoesRoundTheRing(t *testing.T) {
@@ -475,7 +475,7 @@ func TestTwoSyncsInFlightNeverPromiseOneUnitOfACap(t *testing.T) {
 	}
 }
 
-// TestAHubCappedOutOfItsHarnessKeepsItsTurn is DEV-106 as it was filed. One
+// TestAHubCappedOutOfItsHarnessKeepsItsTurn is YAD-106 as it was filed. One
 // hub holds the whole Claude cap, taken while the other had nothing queued.
 // The other's work arrives: it is offered total capacity and no Claude, so its
 // hub offers nothing and the units go back unused. That is not a hub with no
@@ -507,7 +507,7 @@ func TestAHubCappedOutOfItsHarnessKeepsItsTurn(t *testing.T) {
 	}
 }
 
-// TestAHarnessCapGoesRoundTheHubs is DEV-106: a harness's cap is dealt round
+// TestAHarnessCapGoesRoundTheHubs is YAD-106: a harness's cap is dealt round
 // the hubs the way the whole pool is, and a hub its cap gave nothing to is
 // still waiting for it rather than taken for one with no work.
 //

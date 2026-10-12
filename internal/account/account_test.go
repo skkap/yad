@@ -56,7 +56,7 @@ func TestEnsureBuildsTheHomeAndItsTranscriptLink(t *testing.T) {
 }
 
 // Every account home reaches the same transcripts, which is what lets a
-// session move between accounts (decision 0013, measured in DEV-24).
+// session move between accounts (decision 0013, measured in YAD-24).
 func TestEveryHomeSeesTheSameTranscripts(t *testing.T) {
 	data := t.TempDir()
 	a, err := Ensure(data, "claude", "personal")
@@ -104,7 +104,7 @@ func TestRemoveKeepsTheSharedTranscripts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(shared, "rollout.jsonl"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// What codex leaves behind: sqlite and its sidecars (DEV-24).
+	// What codex leaves behind: sqlite and its sidecars (YAD-24).
 	for _, f := range []string{"state_5.sqlite", "state_5.sqlite-shm", "state_5.sqlite-wal"} {
 		if err := os.WriteFile(filepath.Join(home, f), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
@@ -156,7 +156,7 @@ func TestHomeVariablesAreNotGrantable(t *testing.T) {
 }
 
 // The names a hub may not grant and the names removed from the owner's own
-// environment are one list, protocol/v1's (DEV-62), and the only names on it
+// environment are one list, protocol/v1's (YAD-62), and the only names on it
 // that reach a child from the owner are the harness home variables — the
 // harness's own login when it has no accounts, overridden by an account's
 // home when it has one. The list is read back from the Grant.Name doc, which

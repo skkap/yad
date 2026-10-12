@@ -255,7 +255,7 @@ func (g *earlyRig) delivered(t *testing.T, ids ...string) {
 // the hub's interval again.
 //
 // The result reaches the hub before the capacity comes back, the order a
-// loaded machine can put them in (DEV-156): the executor writes the one, then
+// loaded machine can put them in (YAD-156): the executor writes the one, then
 // gives the other, and the reporter can deliver in between. A sync then would
 // offer no capacity, and the hub would hand a2 to nobody.
 func TestARunEndingBringsTheNextSyncForward(t *testing.T) {
@@ -472,7 +472,7 @@ func (s syncHook) Sync(ctx context.Context, runnerID string, req v1.SyncRequest)
 // that sync has emptied the loop's wake: its result already with the hub, the
 // release is all that is left of its end. Back before the sync reads the free
 // capacity, the sync offers it, and the release's wake has nothing new to
-// bring forward (DEV-157). Back after, the sync offered none, and the wake
+// bring forward (YAD-157). Back after, the sync offered none, and the wake
 // brings the next one forward as ever.
 func TestAReleaseDuringAnIntervalSync(t *testing.T) {
 	for _, tc := range []struct {

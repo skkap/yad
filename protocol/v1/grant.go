@@ -173,7 +173,7 @@ var accountGrantPrefixes = []struct{ prefix, why string }{
 // Exported because the list has two readers. Grant.Validate refuses these
 // names from a hub; the runner's supervise.Scrub removes them from the
 // owner's own environment, which ranks above the account the same way, and
-// `yad doctor` names any it finds there (DEV-62). protocol/v1 imports nothing
+// `yad doctor` names any it finds there (YAD-62). protocol/v1 imports nothing
 // of ours (ARCHITECTURE.md §1), so the list cannot move below it, and a copy
 // in the runner is the drift this function exists to prevent. For a Go hub it
 // answers what Validate already enforces. The answer may change as names are

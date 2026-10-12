@@ -33,7 +33,7 @@ var sharedConfig = map[string][]string{
 // itself in a home that has none, and the files it puts in them when there
 // is nothing to record. An account that ran before such a directory was
 // shared has the harness's empty one where the link belongs; holding nothing
-// but these, recording nothing, it is replaced by the link (DEV-174).
+// but these, recording nothing, it is replaced by the link (YAD-174).
 // Anything else in it is the account's own, as a real skills/ is.
 var madeEmpty = map[string]map[string][]string{
 	"claude": {"plugins": {"installed_plugins.json", "known_marketplaces.json"}},

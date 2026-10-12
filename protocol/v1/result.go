@@ -84,7 +84,7 @@ type Metrics struct {
 	// The cost is expected to be one cache-cold turn. That is an inference
 	// and not a measurement: prompt caches are documented as isolated per
 	// account, no cross-account resume has been measured, and decision 0013
-	// tracks the gap as DEV-58. The count is worth having either way — it
+	// tracks the gap as YAD-58. The count is worth having either way — it
 	// is how many times the run changed accounts — but a hub pricing it
 	// should know the price is not yet observed.
 	AccountSwitches int `json:"account_switches" doc:"How many turns of this run started on a different account than the turn before them. Counted by what a move costs rather than by what caused it, so a run resumed onto a different account after waiting counts the same as one a failover moved. A run parked five times and resumed on the same account each time reports 0; a run that goes A to B and back to A reports 2. The cost is expected to be one cache-cold turn, because prompt caches are documented as isolated per account -- but no cross-account resume has been measured, so that price is inferred rather than observed."`

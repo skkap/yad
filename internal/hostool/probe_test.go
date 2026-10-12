@@ -168,7 +168,7 @@ func TestDetectReportsAbsentTools(t *testing.T) {
 	}
 }
 
-// The catalog is the three tools DEV-31 settled on and no more: a fourth would
+// The catalog is the three tools YAD-31 settled on and no more: a fourth would
 // cost every runner two spawns an interval and every hub a field to learn.
 func TestCatalogIsTheThree(t *testing.T) {
 	var ids []string
@@ -495,7 +495,7 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 	// given: what a loaded machine does to the spawn of a fresh script, done on
 	// purpose. The version is still read, because only the probe that hangs is
 	// bounded tightly — one bound over both is what made the case above red
-	// under the full suite (DEV-100).
+	// under the full suite (YAD-100).
 	slowVersion := func(banner string) func(string) string {
 		return func(hang string) string {
 			return "case \"$1\" in\n  --version) /bin/sleep 1; echo '" + banner + "' ;;\n  *) " + hang + " ;;\nesac\n"
@@ -530,7 +530,7 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 			// Timed from the moment the fake began to hang, not from the
 			// start of the probe: the spawns before it are the machine's, and
 			// on a loaded one they alone have taken longer than this bound
-			// (DEV-100). Three seconds of slack for the kill and the reap, and
+			// (YAD-100). Three seconds of slack for the kill and the reap, and
 			// still under the shipped five, so a probe that bounded its hang
 			// with the other seam, or with the shipped value, is caught here
 			// rather than passing a bound wide enough for anything. A fake
@@ -568,7 +568,7 @@ func TestHangingProbeIsBoundedAndReported(t *testing.T) {
 func TestBrokenBinaryIsReported(t *testing.T) {
 	dir := t.TempDir()
 	// A file without its execute bit: installed, and not runnable. A directory
-	// used to stand in for one, and is now an override naming nothing (DEV-68).
+	// used to stand in for one, and is now an override naming nothing (YAD-68).
 	bin := filepath.Join(dir, "git")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'git version 2.51.0'\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -579,7 +579,7 @@ func TestBrokenBinaryIsReported(t *testing.T) {
 		t.Fatalf("git = %+v, want it present and broken", d)
 	}
 	// supervise.Start wraps this as `start <path>: fork/exec <path>: ...`, and
-	// on a Mac that path is under /Users/<name>. DEV-31 says the owner's name
+	// on a Mac that path is under /Users/<name>. YAD-31 says the owner's name
 	// never travels, and HostTools' own comment says never a path.
 	for _, leak := range []string{dir, "fork/exec", "/Users/"} {
 		if strings.Contains(d.Error, leak) {
@@ -587,7 +587,7 @@ func TestBrokenBinaryIsReported(t *testing.T) {
 		}
 	}
 	// The override is what to fix: it names a file, and nothing more has
-	// been proved about it (DEV-68 aligned this with the harnesses).
+	// been proved about it (YAD-68 aligned this with the harnesses).
 	if !strings.Contains(d.Error, "YAD_GIT_PATH") || !strings.Contains(d.Error, "point it at an executable git") {
 		t.Errorf("Error = %q, want the override and the next action", d.Error)
 	}
@@ -672,7 +672,7 @@ func TestGHFromProse(t *testing.T) {
 // the child its own kill produced. Whether it timed out is supervise.Run's to
 // say, and supervise.TestRunTimedOutIsTheLeadersFate proves it says so every
 // time; this is the same pair of children seen through the host-tool report,
-// which is where DEV-69 found them going red.
+// which is where YAD-69 found them going red.
 func TestATimedOutProbeIsNeverReportedAsAnExit(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		// PATH is empty inside isolate, so sleep is named in full.

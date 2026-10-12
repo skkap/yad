@@ -14,7 +14,7 @@ import (
 	"github.com/skkap/yad/internal/supervise"
 )
 
-// Claude's model list, asked for rather than assumed (DEV-50). The
+// Claude's model list, asked for rather than assumed (YAD-50). The
 // list_models control request is answered from Claude's own model options —
 // the login's plan, the settings cascade, the provider — and no user message
 // is sent, so no turn runs and no token is spent. Measured on 2.1.283 against
@@ -58,7 +58,7 @@ const maxModels = 64
 // modelName is what a model Claude lists looks like: opus, claude-opus-4-8,
 // sonnet[1m]. The charset is the guarantee that nothing else Claude says — a
 // description, a path, a URL — reaches the capability document every
-// connected hub reads (DEV-67).
+// connected hub reads (YAD-67).
 var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}(\[[A-Za-z0-9]{1,16}\])?$`)
 
 // ListModels asks the claude at bin for the models it offers the login env
@@ -66,7 +66,7 @@ var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}(\[[A-Za-z0
 // lists but will not run on this login. ctx bounds the whole of it.
 //
 // env is the one a run on that login gets (account.Env), so the answer is
-// about the credential the run would use (DEV-62: the rule supervise.Spec states for what a run keeps).
+// about the credential the run would use (YAD-62: the rule supervise.Spec states for what a run keeps).
 // The error is yad's own words and never Claude's.
 func ListModels(ctx context.Context, bin, dir string, env []string) ([]string, error) {
 	return listModels(ctx, bin, dir, env, nil)
@@ -110,7 +110,7 @@ func listModels(ctx context.Context, bin, dir string, env []string, raw io.Write
 	// A write that fails is a Claude already gone, and one gone a moment
 	// later is found by the reader instead; which of the two comes first is
 	// the OS's choice. The reader decides both, from the end of Claude's
-	// output, so a Claude that died says the same thing either way (DEV-149)
+	// output, so a Claude that died says the same thing either way (YAD-149)
 	// — and one that closed its input yet lives on is given up on with ctx.
 	_, _ = p.Stdin().Write(append(req, '\n'))
 	select {

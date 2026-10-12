@@ -204,7 +204,7 @@ func TestDoctorSaysWhyNothingIsDrivable(t *testing.T) {
 
 // Over SSH on a Mac the login keychain is locked, so Claude's own login check
 // says "not logged in" whatever is there: doctor says it cannot tell, and
-// why, rather than "needs login" and a login that would not help (DEV-170).
+// why, rather than "needs login" and a login that would not help (YAD-170).
 // Off SSH the same answer is still "needs login".
 func TestDoctorOverSSHDoesNotCallAKeychainLoginMissing(t *testing.T) {
 	was := keychainLogin
@@ -334,7 +334,7 @@ func TestSessionsOnAFreshProfile(t *testing.T) {
 }
 
 // The table's error column is cut to fit, so the message that carries the next
-// action (DEV-60) is printed in full underneath — the footer tells the owner to
+// action (YAD-60) is printed in full underneath — the footer tells the owner to
 // fix the errors above, and half a sentence is not a fix. The cut itself lands
 // on a rune boundary: both messages carry an em dash, and for `claude` the old
 // byte slice put it across byte 39, printing a replacement character in the

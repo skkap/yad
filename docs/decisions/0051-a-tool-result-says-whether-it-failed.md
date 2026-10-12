@@ -9,7 +9,7 @@ was cut. Both harnesses know whether a call failed, and yad dropped it: a hub
 that wanted to show a failed call as failed — Zumino's Logs tab, ZUM-88 — had
 to recognise each harness's wording in the output (Claude's `Exit code N`,
 Codex's `[exit N]` tail yad itself appends), which breaks the day either
-changes it (DEV-125).
+changes it (YAD-125).
 
 ## Decision
 
