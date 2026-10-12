@@ -332,7 +332,7 @@ type turn struct {
 
 	// left is the census settle took, read by the reader once the stream
 	// has ended; both run on the reader's goroutine.
-	left *[]supervise.Leftover
+	left *adapter.Left
 
 	q *adapter.Queue
 
@@ -572,8 +572,10 @@ loop:
 	e.effortRefused = adapter.Mask(e.effortRefused, t.env, t.secrets)
 	t.mu.Unlock()
 	t.outcome = tr.outcome(e)
-	t.outcome.LeftRunning = t.left
 	t.q.Close()
+	// After the events end, so no watchdog is reading them while a stop of
+	// what the turn left finishes (decision 0086).
+	t.outcome.LeftRunning = t.left.Wait()
 	close(t.done)
 }
 

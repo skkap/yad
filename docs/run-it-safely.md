@@ -635,6 +635,7 @@ To have yad stop that work itself, the moment the turn ends, set:
 stop_left_running = true
 ```
 
+and run `yad daemon restart`: the daemon reads `config.toml` when it starts.
 Off is the default. On, yad sends each counted process's group SIGTERM, gives
 it 5 seconds, then SIGKILL, and the run's `left_running` event says what it
 stopped. It signals only a group a fresh look at the process table shows

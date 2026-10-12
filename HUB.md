@@ -1113,7 +1113,7 @@ command's name and how long it had run (`sleep (running 4s)`) — never its
 arguments, environment or pid. A runner whose owner has it stop that work as
 the turn ends (`[supervise] stop_left_running`, off by default) ends the text
 by saying what it did — `; yad stopped it`, `; yad stopped them`, `; yad
-could not stop them`, `; yad stopped 2 of them and could not stop 1` — and
+did not stop them`, `; yad stopped 2 of them and did not stop 1` — and
 `left_running` still counts what the turn left, so the warning stands either
 way: work that was stopped did not finish either
 ([0086](docs/decisions/0086-the-owner-may-have-yad-stop-what-a-turn-left-running.md)).

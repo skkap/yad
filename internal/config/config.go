@@ -128,7 +128,7 @@ type SuperviseConfig struct {
 	// SIGTERM, a grace, then SIGKILL, instead of leaving them to the harness
 	// (decision 0086). Work started with `nohup … &` is beyond it, as it is
 	// beyond the count. Off unless set: a dev server a run meant to leave up
-	// dies with its turn when it is on. No hub can set it.
+	// dies with its turn when it is on. No hub can set it. Read at start.
 	StopLeftRunning bool `toml:"stop_left_running"`
 }
 

@@ -870,8 +870,11 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   ([0083](docs/decisions/0083-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
   With `[supervise] stop_left_running` on (off by default), the census is
   followed at once by `supervise.Process.StopLeftovers`, the ladder's last
-  steps over the counted work's groups: SIGTERM, up to `TermGrace` (5 s)
-  rereading the table every 100 ms, SIGKILL to what still holds counted work.
+  steps over the counted work's groups: SIGTERM before the harness's input
+  closes, then, beside the harness's exit, up to `TermGrace` (5 s) rereading
+  the table every 100 ms and SIGKILL to what still holds counted work. The
+  adapter waits for it after the turn's events end (`adapter.Left.Wait`), so
+  no watchdog is reading them meanwhile.
   A group is signalled only when a table read just before the signal shows a
   counted process alive in it — the same pid, started within 2 s of when the
   census reckoned — and never when it is pgid 0 or 1, the daemon's own, the

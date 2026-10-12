@@ -59,6 +59,15 @@ rereading the process table every 100 ms, then SIGKILL to the groups that
 still hold counted work, and a second to see them gone. There is no interrupt
 to send: the work is not the harness, and has no protocol.
 
+SIGTERM goes out before the adapter closes the harness's input, so it
+reaches the work before the harness starts stopping its tools itself and
+"yad stopped it" means yad's signal. The rest of the ladder runs in the
+background beside the harness's own exit, and the adapter waits for it only
+after the turn's events have ended (`adapter.Left.Wait`). The run's
+inactivity and wall-clock watchdogs read those events and stop with them, so
+the seconds a stop takes cannot turn a turn that answered in time into a
+`timed_out` one — which they could if the stop held the turn open first.
+
 **Which groups — the safety rule.** A group is signalled only when a process
 table read just before that signal shows it holding a live process the
 census counted: the same pid, with a start time (read off `ps`'s elapsed
@@ -91,8 +100,8 @@ reaped it yet is stopped, and is not killed again.
 turn left, whoever stopped it after — so it reads the same with the switch on
 or off and a hub's warning on a hollow success still fires. The `left_running`
 status event ends, with the switch on, by saying what yad did: `…: sleep
-(running 4s); yad stopped it`, `yad stopped them`, `yad could not stop
-them`, `yad stopped 2 of them and could not stop 1`. No protocol field: the
+(running 4s); yad stopped it`, `yad stopped them`, `yad did not stop
+them`, `yad stopped 2 of them and did not stop 1`. No protocol field: the
 event's text is free and already the place a hub shows the names, and a
 `left_running_stopped` count would be a new public field for something only
 the owner's configuration decides. The runner's log marks each pid `stopped`
@@ -136,9 +145,13 @@ orphan of every run, which is a second job the supervisor does not have.
 ## Consequences
 
 - Off by default, so nothing changes for a runner whose owner does nothing.
-- On, a turn that left work running ends up to 5 s later while the work
-  handles SIGTERM, plus a second when one needs SIGKILL; one `ps` every
-  100 ms meanwhile, and only when the census found something.
+- On, a turn that left work running can report its result up to 5 s later
+  while the work handles SIGTERM, plus a second when one needs SIGKILL — less
+  when the harness takes as long to exit, as Claude does — and never past a
+  watchdog; one `ps` every 100 ms meanwhile, and only when the census found
+  something.
+- Read when the daemon starts, like the rest of `config.toml` but accounts
+  (0059): turning it on or off takes `yad daemon restart`.
 - On, work the harness would have kept past the turn — Codex's background
   terminal, Claude's `run_in_background` — is stopped at the turn's end
   rather than at the harness's exit a moment later. A run that needs a

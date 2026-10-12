@@ -151,9 +151,9 @@ func TestLeftRunningTextSaysWhetherYadStoppedThem(t *testing.T) {
 		{"off, whatever a leftover says", []supervise.Leftover{stopped(sleep)}, false, one},
 		{"it", []supervise.Leftover{stopped(sleep)}, true, one + "; yad stopped it"},
 		{"them", []supervise.Leftover{stopped(sleep), stopped(node)}, true, two + "; yad stopped them"},
-		{"not it", []supervise.Leftover{sleep}, true, one + "; yad could not stop it"},
-		{"not them", []supervise.Leftover{sleep, node}, true, two + "; yad could not stop them"},
-		{"some", []supervise.Leftover{stopped(sleep), node}, true, two + "; yad stopped 1 of them and could not stop 1"},
+		{"not it", []supervise.Leftover{sleep}, true, one + "; yad did not stop it"},
+		{"not them", []supervise.Leftover{sleep, node}, true, two + "; yad did not stop them"},
+		{"some", []supervise.Leftover{stopped(sleep), node}, true, two + "; yad stopped 1 of them and did not stop 1"},
 	} {
 		if got := leftRunningText(tc.left, tc.stop); got != tc.want {
 			t.Errorf("%s: text = %q; want %q", tc.name, got, tc.want)

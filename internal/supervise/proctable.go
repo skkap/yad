@@ -153,13 +153,14 @@ type Leftover struct {
 	PID  int
 	Name string
 	Age  time.Duration
-	// PGID and Start are what StopLeftovers knows it by: its group, and when
-	// it started as the census reckoned it, to tell it from a later process
-	// given the same pid.
-	PGID  int
+	// Start is when it started as the census reckoned it, which tells it
+	// from a later process given the same pid. StopLeftovers finds its group
+	// in a table read when it signals, not in the census's: a process may
+	// have moved to a group of its own since.
 	Start time.Time
 	// Stopped is set by StopLeftovers: yad signalled its group and it was no
-	// longer running after.
+	// longer running after. One that went on its own, or whose group yad
+	// would not signal, is not.
 	Stopped bool
 }
 
@@ -275,7 +276,7 @@ func census(table []Proc, read time.Time, leader int, helpers []string) ([]Lefto
 		if p.Zombie || helper(p.Name, helpers) || waiting[pid] && slices.Contains(shells, p.Name) {
 			continue
 		}
-		left = append(left, Leftover{PID: pid, Name: p.Name, Age: p.Age, PGID: p.PGID, Start: read.Add(-p.Age)})
+		left = append(left, Leftover{PID: pid, Name: p.Name, Age: p.Age, Start: read.Add(-p.Age)})
 	}
 	slices.SortFunc(left, func(a, b Leftover) int { return a.PID - b.PID })
 	return left, true

@@ -42,9 +42,10 @@ func leftRunningText(left []supervise.Leftover, stop bool) string {
 }
 
 // stoppedText says how many of left yad stopped. One it did not was still
-// running after the ladder, or shared a group with the harness or a helper
-// of its, which yad never signals — or the process table could not be read
-// to tell its group from another's.
+// running after the ladder, shared a group with the harness or a helper of
+// its, which yad never signals, or went on its own before yad signalled it
+// — or the process table could not be read to tell its group from
+// another's. "Did not", not "could not": several of those are yad's choice.
 func stoppedText(left []supervise.Leftover) string {
 	n := 0
 	for _, l := range left {
@@ -58,11 +59,11 @@ func stoppedText(left []supervise.Leftover) string {
 	case n == len(left):
 		return "yad stopped them"
 	case n == 0 && len(left) == 1:
-		return "yad could not stop it"
+		return "yad did not stop it"
 	case n == 0:
-		return "yad could not stop them"
+		return "yad did not stop them"
 	default:
-		return fmt.Sprintf("yad stopped %d of them and could not stop %d", n, len(left)-n)
+		return fmt.Sprintf("yad stopped %d of them and did not stop %d", n, len(left)-n)
 	}
 }
 

@@ -27,9 +27,14 @@ const (
 
 // StopLeftovers stops what a census of this process counted, by the ladder's
 // signals — SIGTERM to each group, grace to go, then SIGKILL to the groups
-// still holding counted work — and returns left with Stopped set on each one
-// that was no longer running after (decision 0086). It is the owner's choice
+// still holding counted work (decision 0086). It is the owner's choice
 // ([supervise] stop_left_running); off, nothing calls it.
+//
+// SIGTERM is sent before it returns, so it reaches the work before the
+// caller closes the harness's input and the harness starts stopping its
+// tools itself. The rest of the ladder runs in the background, beside the
+// harness's own exit rather than after it; Stopping.Wait returns left with
+// Stopped set on each one yad signalled that was no longer running after.
 //
 // It signals a group only when a process table read just before that signal
 // shows it holding a live process the census counted: the same pid, started
@@ -45,11 +50,12 @@ const (
 // It is called where the census is taken, the harness still alive and its
 // input open, so the work is the harness's descendants still. A table that
 // cannot be read stops nothing more: nothing is signalled on a guess.
-func (p *Process) StopLeftovers(ctx context.Context, left []Leftover, grace time.Duration, helpers ...string) []Leftover {
-	out := make([]Leftover, len(left))
-	copy(out, left)
+func (p *Process) StopLeftovers(ctx context.Context, left []Leftover, grace time.Duration, helpers ...string) *Stopping {
+	s := &Stopping{done: make(chan struct{}), left: make([]Leftover, len(left))}
+	copy(s.left, left)
 	if len(left) == 0 {
-		return out
+		close(s.done)
+		return s
 	}
 	// A cleanup bounded by grace and killSettle, which a cancel of the turn
 	// must not cut short half-way: the groups it signalled deserve the KILL.
@@ -65,39 +71,59 @@ func (p *Process) StopLeftovers(ctx context.Context, left []Leftover, grace time
 			}
 		}
 	}
-	table, err := procs(ctx)
-	read := time.Now()
-	if err != nil {
-		return out
-	}
 	// Only what was signalled is waited for, and killed: a counted process
 	// whose group yad may not signal would hold the stop for the whole grace
 	// for nothing, and one that SIGTERM never reached gets no SIGKILL first.
 	signalledOnly := func() []Leftover {
-		var s []Leftover
+		var w []Leftover
 		for _, l := range left {
 			if signalled[l.PID] {
-				s = append(s, l)
+				w = append(w, l)
 			}
 		}
+		return w
+	}
+	table, err := procs(ctx)
+	read := time.Now()
+	if err != nil {
+		close(s.done)
 		return s
 	}
 	signal(left, table, read, syscall.SIGTERM)
-	if table, read, err = waitGone(ctx, signalledOnly(), table, read, grace); err != nil {
-		return out
-	}
-	if len(running(table, read, signalledOnly())) > 0 {
-		signal(signalledOnly(), table, read, syscall.SIGKILL)
-		if table, read, err = waitGone(ctx, signalledOnly(), table, read, killSettle); err != nil {
-			return out
+	go func() {
+		defer close(s.done)
+		table, read, err := waitGone(ctx, signalledOnly(), table, read, grace)
+		if err != nil {
+			return
 		}
-	}
-	alive := running(table, read, left)
-	for i, l := range out {
-		_, still := alive[l.PID]
-		out[i].Stopped = signalled[l.PID] && !still
-	}
-	return out
+		if len(running(table, read, signalledOnly())) > 0 {
+			signal(signalledOnly(), table, read, syscall.SIGKILL)
+			if table, read, err = waitGone(ctx, signalledOnly(), table, read, killSettle); err != nil {
+				return
+			}
+		}
+		alive := running(table, read, left)
+		for i, l := range s.left {
+			_, still := alive[l.PID]
+			s.left[i].Stopped = signalled[l.PID] && !still
+		}
+	}()
+	return s
+}
+
+// Stopping is a StopLeftovers whose SIGTERM has been sent and whose ladder
+// may still be running.
+type Stopping struct {
+	done chan struct{}
+	left []Leftover
+}
+
+// Wait blocks until the ladder is over — at most the grace, killSettle and
+// the reads between — and returns the leftovers, each saying whether yad
+// stopped it.
+func (s *Stopping) Wait() []Leftover {
+	<-s.done
+	return s.left
 }
 
 // waitGone rereads the table until no counted process is running in it or

@@ -24,7 +24,7 @@ func TestStopLeftoversStopsWhatTheCensusCounted(t *testing.T) {
 	if len(left) != len(counted) {
 		t.Fatalf("census counted %d; the child started %d", len(left), len(counted))
 	}
-	got := p.StopLeftovers(context.Background(), left, 5*time.Second)
+	got := p.StopLeftovers(context.Background(), left, 5*time.Second).Wait()
 	for _, l := range got {
 		if !l.Stopped {
 			t.Errorf("%s[%d] is not said to be stopped", l.Name, l.PID)
@@ -57,7 +57,7 @@ func TestStopLeftoversKillsWhatIgnoresTerm(t *testing.T) {
 	}
 	const grace = 300 * time.Millisecond
 	began := time.Now()
-	got := p.StopLeftovers(context.Background(), left, grace)
+	got := p.StopLeftovers(context.Background(), left, grace).Wait()
 	if took := time.Since(began); took < grace {
 		t.Errorf("stopped in %s, inside the %s grace: SIGTERM cannot have ended a process that ignores it", took, grace)
 	}
@@ -73,6 +73,29 @@ func TestStopLeftoversKillsWhatIgnoresTerm(t *testing.T) {
 	}
 }
 
+// A turn cancelled while its leftovers are being stopped does not cut the
+// ladder short: what ignored SIGTERM still gets SIGKILL.
+func TestStopLeftoversOutlastsACancelledTurn(t *testing.T) {
+	p, _, _ := startCensusChild(t, "deaf-harness")
+	left, err := p.Census(context.Background())
+	if err != nil || len(left) != 1 {
+		t.Fatalf("census = %+v, %v; want the one deaf tool", left, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stopping := p.StopLeftovers(ctx, left, 300*time.Millisecond)
+	cancel()
+	if got := stopping.Wait(); !got[0].Stopped {
+		t.Errorf("%+v is not said to be stopped after the turn was cancelled", got[0])
+	}
+	table, err := procs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running(table, time.Now(), left)) > 0 {
+		t.Error("the deaf tool survived a cancelled turn's stop")
+	}
+}
+
 // A table that cannot be read signals nothing: a group is told from one
 // reused by another process only by what a table shows in it.
 func TestStopLeftoversWithoutATableSignalsNothing(t *testing.T) {
@@ -80,8 +103,8 @@ func TestStopLeftoversWithoutATableSignalsNothing(t *testing.T) {
 	old := procs
 	t.Cleanup(func() { procs = old })
 	procs = func(context.Context) ([]Proc, error) { return nil, errors.New("no ps") }
-	left := []Leftover{{PID: stand.Pid(), PGID: stand.Pid(), Name: "sleep", Start: time.Now()}}
-	got := harness.StopLeftovers(context.Background(), left, 50*time.Millisecond)
+	left := []Leftover{{PID: stand.Pid(), Name: "sleep", Start: time.Now()}}
+	got := harness.StopLeftovers(context.Background(), left, 50*time.Millisecond).Wait()
 	if got[0].Stopped {
 		t.Error("said to be stopped with no table read")
 	}
@@ -103,7 +126,7 @@ func TestStopLeftoversLeavesARefusedGroupAtOnce(t *testing.T) {
 		return []Proc{{PID: pid, PPID: harness.Pid(), PGID: self, Age: time.Since(start).Truncate(time.Second), Name: "sleep"}}, nil
 	}
 	began := time.Now()
-	got := harness.StopLeftovers(context.Background(), []Leftover{{PID: pid, PGID: self, Name: "sleep", Start: start}}, 5*time.Second)
+	got := harness.StopLeftovers(context.Background(), []Leftover{{PID: pid, Name: "sleep", Start: start}}, 5*time.Second).Wait()
 	if took := time.Since(began); took > time.Second {
 		t.Errorf("took %s over work it would not signal", took)
 	}
@@ -116,7 +139,7 @@ func TestStopTargetsRules(t *testing.T) {
 	const h, self = 100, 50
 	read := time.Now()
 	harness := Proc{PID: h, PPID: 1, PGID: h, Age: time.Minute, Name: "2.1.296"}
-	sleep := Leftover{PID: 200, PGID: 200, Name: "sleep", Start: read.Add(-10 * time.Second)}
+	sleep := Leftover{PID: 200, Name: "sleep", Start: read.Add(-10 * time.Second)}
 	work := Proc{PID: 200, PPID: h, PGID: 200, Age: 10 * time.Second, Name: "sleep"}
 	with := func(p Proc, f func(*Proc)) Proc { f(&p); return p }
 	for _, tc := range []struct {
@@ -147,7 +170,7 @@ func TestStopTargetsRules(t *testing.T) {
 		{"it moved to a group of its own", []Proc{harness, with(work, func(p *Proc) { p.PGID = 300 })},
 			[]Leftover{sleep}, nil, []int{300}},
 		{"two counted in one group", []Proc{harness, work, {PID: 201, PPID: 200, PGID: 200, Age: 10 * time.Second, Name: "node"}},
-			[]Leftover{sleep, {PID: 201, PGID: 200, Name: "node", Start: read.Add(-10 * time.Second)}}, nil, []int{200}},
+			[]Leftover{sleep, {PID: 201, Name: "node", Start: read.Add(-10 * time.Second)}}, nil, []int{200}},
 		{"a process nobody counted is no reason", []Proc{harness, {PID: 400, PPID: 1, PGID: 400, Age: 10 * time.Second, Name: "sleep"}},
 			[]Leftover{sleep}, nil, nil},
 	} {

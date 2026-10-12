@@ -172,11 +172,11 @@ type turn struct {
 
 	// Owned by run's goroutine until done is closed.
 	tr       *translator
-	wait     map[int64]string      // requests run has sent, by id, still unanswered
-	deadline time.Time             // when the oldest of them is late
-	late     string                // its method
-	askedFor bool                  // the rate limits have been asked for once
-	left     *[]supervise.Leftover // the census completed took
+	wait     map[int64]string // requests run has sent, by id, still unanswered
+	deadline time.Time        // when the oldest of them is late
+	late     string           // its method
+	askedFor bool             // the rate limits have been asked for once
+	left     *adapter.Left    // the census completed took
 
 	mu          sync.Mutex
 	thread      string
@@ -335,8 +335,10 @@ loop:
 	}
 	t.mu.Unlock()
 	t.outcome = t.tr.outcome(e)
-	t.outcome.LeftRunning = t.left
 	t.q.Close()
+	// After the events end, so no watchdog is reading them while a stop of
+	// what the turn left finishes (decision 0086).
+	t.outcome.LeftRunning = t.left.Wait()
 	close(t.done)
 }
 
