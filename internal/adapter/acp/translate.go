@@ -10,6 +10,7 @@ import (
 
 	"github.com/skkap/yad/internal/adapter"
 	"github.com/skkap/yad/internal/adapter/jsonrpc"
+	"github.com/skkap/yad/internal/shellword"
 )
 
 // The shapes read from the agent, as far as the core reads them. Unknown
@@ -235,7 +236,7 @@ func (t *translator) failed(e *jsonrpc.RPCError) {
 }
 
 func (t *translator) mismatchMessage() string {
-	return fmt.Sprintf("%s answered session/fork with session %s, the one to fork, rather than a new session — the fork did not take and the turn was not started; report this with `%s --version` as a yad bug", t.agent.Name, t.mismatch, t.agent.ID)
+	return fmt.Sprintf("%s answered session/fork with session %s, the one to fork, rather than a new session — the fork did not take and the turn was not started; report this with `%s` as a yad bug", t.agent.Name, t.mismatch, shellword.Command(t.agent.ID, "--version"))
 }
 
 // ended is how the turn stopped, as the process side saw it.

@@ -33,6 +33,12 @@ var testAgent = Agent{ID: "agent", Name: "Agent", Args: []string{"acp"}, LoginCh
 
 func play(t *testing.T, name string, edit func(*adapter.Spec)) ([]v1.Event, adapter.Outcome) {
 	t.Helper()
+	return playAs(t, testAgent, name, edit)
+}
+
+// playAs is play with another agent in testAgent's place.
+func playAs(t *testing.T, agent Agent, name string, edit func(*adapter.Spec)) ([]v1.Event, adapter.Outcome) {
+	t.Helper()
 	fixture, err := filepath.Abs(filepath.Join("testdata", "agent", name+".jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +55,7 @@ func play(t *testing.T, name string, edit func(*adapter.Spec)) ([]v1.Event, adap
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	tr, err := Start(ctx, testAgent, spec)
+	tr, err := Start(ctx, agent, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,6 +368,59 @@ func TestANullIDErrorWithSeveralOrNoneOutstanding(t *testing.T) {
 				if strings.Contains(tu.tr.fault.Message, method) {
 					t.Errorf("the error guesses %s: %q", method, tu.tr.fault.Message)
 				}
+			}
+		})
+	}
+}
+
+// An answer the core cannot use — a session opened with no id, a request
+// refused where no retry applies, a fork answered with the session it was
+// to leave alone — fails the run naming the agent's version command, which
+// runs as printed — whatever the agent's id holds, though every id in the
+// catalog is a plain word today.
+//
+// sh's stub for a program is a shell function, and a function takes only a
+// plain name, so an id that needs quoting is checked behind one: the line
+// runs as the stub's arguments, where sh splits, expands and unquotes its
+// words as it does in the program's place.
+func TestAnAnswerTheCoreCannotUseNamesTheAgentsVersion(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		edit    func(*adapter.Spec)
+		class   string
+		says    string
+		doctor  bool // the message names yad doctor after the version
+	}{
+		{"new-no-session", nil, adapter.ClassHarness, "answered session/new without a session", false},
+		{"new-refused", nil, adapter.ClassHarness, "refused session/new: Invalid params: mcpServers", true},
+		{"fork-same-session", func(s *adapter.Spec) { s.ForkFrom = "s0" }, adapter.ClassSessionMismatch, "answered session/fork with session s0", false},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			for _, id := range append([]string{testAgent.ID}, shellwordtest.Hostile...) {
+				t.Run(id, func(t *testing.T) {
+					agent := testAgent
+					agent.ID = id
+					_, o := playAs(t, agent, tc.fixture, tc.edit)
+					if o.State != v1.RunFailed || o.Error.Class != tc.class || !strings.Contains(o.Error.Message, tc.says) {
+						t.Fatalf("outcome %s %+v", o.State, o.Error)
+					}
+					cmds := shellwordtest.Commands(o.Error.Message, "")
+					want := 1
+					if tc.doctor {
+						want = 2
+					}
+					if len(cmds) != want {
+						t.Fatalf("want %d commands set apart in backticks in %q, got %q", want, o.Error.Message, cmds)
+					}
+					if id == testAgent.ID {
+						shellwordtest.Check(t, cmds[0], id, "--version")
+					} else {
+						shellwordtest.Check(t, "stub "+cmds[0], "stub", id, "--version")
+					}
+					if tc.doctor {
+						shellwordtest.Check(t, cmds[1], "yad", "doctor")
+					}
+				})
 			}
 		})
 	}

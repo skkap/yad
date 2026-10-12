@@ -1,0 +1,4 @@
+{">":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"fork":{}}}}}
+{">":{"jsonrpc":"2.0","id":2,"method":"session/fork","params":{}}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s0"}}
