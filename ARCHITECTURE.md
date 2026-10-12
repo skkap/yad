@@ -230,8 +230,9 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   harness not reading its input refused is an error from the adapter, which
   marks nothing, and the next repeat sends it again (DEV-179). The exception
   is one that reaches Codex before its turn has an id: it counts at once and
-  is sent when the id arrives, and a refusal then is not retried (DEV-185). A `steer` is sent once — twice, the harness would read it
-  twice. An interrupt that reaches a run before its harness is up ends it as a
+  is sent when the id arrives; refused then, the adapter sends it itself once
+  Codex reads its input again, unless the turn has ended first (DEV-185). A
+  `steer` is sent once — twice, the harness would read it twice. An interrupt that reaches a run before its harness is up ends it as a
   cancel does, with nothing spawned —
   [0025](docs/decisions/0025-a-cancel-is-repeated-and-an-answer-that-landed-stands.md).
   That includes the answer that acknowledges the claim: a control there rides
