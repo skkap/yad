@@ -19,7 +19,7 @@ import (
 // variable name is accepted. Decision 0024's secret-shaped suffix rule and its
 // namespace reservations are gone with that reasoning.
 //
-// Two lists remain, and neither is a security control. The four in
+// Two lists remain, and neither is a security control. The names in
 // deniedGrantNames and deniedGrantPrefixes would break the run rather than
 // attack it, and they are refused so that a hub's mistake cannot unset PATH and
 // make every run on the machine fail in a way nobody can trace back. The names
@@ -48,9 +48,9 @@ var grantNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // "path" and leaves PATH alone. It is refused anyway because this list catches
 // a hub's mistake, and the mistake it catches is a hub author's — one who
 // expects Windows, where the environment folds case and "Path" is PATH. The
-// over-refusal costs nothing real, since no legitimate grant is named "path"
-// or "home", and it leaves no question of a name in the wrong case slipping
-// past a list meant to be exhaustive.
+// over-refusal costs a rename at most — a grant named "user" is refused too —
+// and it leaves no question of a name in the wrong case slipping past a list
+// meant to be exhaustive.
 //
 // The filesystem's own case folding is a different problem, and it is handled
 // where it actually bites: two file grants whose names differ only by case
@@ -58,6 +58,17 @@ var grantNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var deniedGrantNames = map[string]string{
 	"PATH": "chooses which executable every command runs, so a run carrying it may not find its harness at all",
 	"HOME": "moves every tool's configuration and credentials, the harness's own among them",
+	// Claude on macOS files a home's login in the Keychain under the account
+	// attribute $USER (decision 0070), and yad finds and removes that item
+	// under the runner's own USER (account.keychainAccount), which Scrub
+	// leaves alone. A grant lands after both and wins, so a run would look
+	// for its account's login under the hub's name and fail to authenticate
+	// although the account is logged in (decision 0085). LOGNAME is the same
+	// login name by POSIX's spelling, and which of the two a tool reads is
+	// the tool's choice: refused beside USER so that a harness reading the
+	// other one tomorrow is refused before anyone thinks to add it.
+	"USER":    "names the login Claude files its macOS Keychain item under, and yad looks that login up under the runner's own, so a run carrying another would not find its account's login",
+	"LOGNAME": "is USER by POSIX's name, and a tool that reads it in place of USER would file or look up a login under the hub's name rather than the runner's owner's",
 }
 
 var deniedGrantPrefixes = []struct{ prefix, why string }{
@@ -209,12 +220,12 @@ func (g Grant) Validate() error {
 	}
 	for name, why := range deniedGrantNames {
 		if strings.EqualFold(g.Name, name) {
-			return fmt.Errorf("grant name %s is refused: %s %s — send the value under another name", g.Name, name, why)
+			return fmt.Errorf("grant name %s is refused: %s %s — send the value under another name and have the brief say which", g.Name, name, why)
 		}
 	}
 	for _, d := range deniedGrantPrefixes {
 		if len(g.Name) >= len(d.prefix) && strings.EqualFold(g.Name[:len(d.prefix)], d.prefix) {
-			return fmt.Errorf("grant name %s is refused: %s* is denied because %s — send the value under another name", g.Name, d.prefix, d.why)
+			return fmt.Errorf("grant name %s is refused: %s* is denied because %s — send the value under another name and have the brief say which", g.Name, d.prefix, d.why)
 		}
 	}
 	if entry, why, ok := accountVariable(g.Name); ok {

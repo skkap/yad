@@ -271,6 +271,10 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	loader.Grants = []v1.Grant{{Name: "LD_PRELOAD", Value: "/evil.so", As: v1.GrantEnv}}
 	lowerHome := testRun("lower-home", "s-lh")
 	lowerHome.Grants = []v1.Grant{{Name: "ZUMINO_TOKEN", Value: "t", As: v1.GrantEnv}, {Name: "home", Value: "/tmp", As: v1.GrantFile}}
+	// A login name other than the owner's would have Claude look for the
+	// account's Keychain login under it (decision 0085).
+	login := testRun("login-name", "s-user")
+	login.Grants = []v1.Grant{{Name: "USER", Value: "builder", As: v1.GrantEnv}}
 	// Names decision 0024 refused and 0038 accepts: this is the run that is
 	// claimed and started, grants and all.
 	ok := testRun("ok", "s-ok")
@@ -279,7 +283,7 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 		{Name: "AWS_SECRET_ACCESS_KEY", Value: "k", As: v1.GrantFile},
 		{Name: "http_proxy", Value: "http://p", As: v1.GrantEnv},
 	}
-	h := &scriptedHub{offer: []v1.Run{codex, unknown, reused, live, noModel, loader, lowerHome, ok, testRun("over", "s-over")}}
+	h := &scriptedHub{offer: []v1.Run{codex, unknown, reused, live, noModel, loader, lowerHome, login, ok, testRun("over", "s-over")}}
 	doc := drivableDoc("r", 1)
 	l := &Loop{Connection: "hub", RunnerID: "r", Hub: h, Store: e.store, Pool: NewPool(doc.Capacity),
 		Capabilities: func() v1.Capabilities { return doc }, Executor: e.exec, Clock: e.clock}
@@ -288,7 +292,7 @@ func TestRefusesWhatItCannotRun(t *testing.T) {
 	want := map[string]string{
 		"codex": "not one this runner can drive", "unknown-session": "does not hold session",
 		"reused-session": "already has a session", "live": "live sessions", "no-model": "model is required",
-		"loader": "LD_", "lower-home": "HOME",
+		"loader": "LD_", "lower-home": "HOME", "login-name": "and have the brief say which",
 	}
 	for id, msg := range want {
 		r, ok := h.results[id]
