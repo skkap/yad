@@ -402,13 +402,13 @@ string and never an enum; the runner passes it through unchecked and the
 harness refuses a level it does not take
 ([0049](docs/decisions/0049-a-runs-effort-is-the-harnesss-word.md)).
 A grant's `name` is any valid environment variable name except `PATH`, `HOME`,
-`LD_*` and `DYLD_*`, and except the variables that choose a harness's
+`USER`, `LOGNAME`, `LD_*` and `DYLD_*`, and except the variables that choose a harness's
 credential or home (`ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and
 the rest of `accountGrantNames` in `protocol/v1/grant.go`), all in any case; no
 two grants share a name, and no two `file` grants have names differing only by
 case — one file on a case-folding filesystem. The schema cannot say any of
 that, so both sides check it and a run breaking it is refused whole
-(`Run.Validate`, decisions 0038 and 0040).
+(`Run.Validate`, decisions 0038, 0040 and 0085).
 
 ### Run states
 
@@ -1754,9 +1754,12 @@ line here is a reviewed change.
   the checkout the harness works in, though a run whose `path` source is the
   owner's home directory has the data directory somewhere beneath it. A grant's
   name is any valid environment variable name
-  (`[A-Za-z_][A-Za-z0-9_]*`, which is also a plain file name) except four that
-  would break the run rather than attack it: `PATH`, `HOME`, `LD_*` and
-  `DYLD_*`, matched whatever their case — and the variables that choose whose
+  (`[A-Za-z_][A-Za-z0-9_]*`, which is also a plain file name) except those
+  that would break the run rather than attack it: `PATH`, `HOME`, `LD_*`,
+  `DYLD_*`, and `USER` and `LOGNAME`, the login name Claude files a home's
+  macOS Keychain login under
+  ([0085](docs/decisions/0085-a-grant-may-not-rename-the-login.md)), matched
+  whatever their case — and the variables that choose whose
   credential a harness uses or which home it logs in from
   (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
   `ANTHROPIC_PROFILE`, the federation pair, `ANTHROPIC_CONFIG_DIR`,

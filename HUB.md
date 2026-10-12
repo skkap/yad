@@ -614,6 +614,11 @@ and not your input. Here is all of it:
   variable name, and also the filename a file grant is written to.
 - no grant may be named `PATH` or `HOME`, or begin `LD_` or `DYLD_`: those
   would redirect the harness or its loader.
+- no grant may be named `USER` or `LOGNAME`, the login name: Claude on macOS
+  files an account's login in the Keychain under it, so a run carrying another
+  one fails to authenticate although its account is logged in
+  ([0085](docs/decisions/0085-a-grant-may-not-rename-the-login.md)). Send the
+  value under another name and have the brief say which.
 - no grant may name a variable that chooses whose credential a harness uses or
   which home it logs in from, because the run would then spend a credential its
   account knows nothing about while its events still named the account

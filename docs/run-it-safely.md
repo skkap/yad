@@ -107,12 +107,15 @@ wanted any of this could simply ask the harness for it.
 
 - **Grant names.** A grant may be named anything a shell accepts as an
   environment variable (`[A-Za-z_][A-Za-z0-9_]*`), except `PATH`, `HOME`, and
-  the loader variables `LD_*` and `DYLD_*`, refused whatever their case
-  (`protocol/v1/grant.go`). The reason is in the code next to the list: these
-  four would break the run rather than attack it. Each has its own — `PATH`
-  chooses which executable every command runs, `HOME` moves every tool's
-  configuration, and the loader variables load code into every process a run
-  starts — and the one 0038 gives for keeping the list at all is that a hub's
+  the loader variables `LD_*` and `DYLD_*`, and the login name `USER` and
+  `LOGNAME`, refused whatever their case (`protocol/v1/grant.go`). The reason
+  is in the code next to the list: these would break the run rather than
+  attack it. Each has its own — `PATH` chooses which executable every command
+  runs, `HOME` moves every tool's configuration, the loader variables load
+  code into every process a run starts, and Claude on macOS files an
+  account's Keychain login under your `USER`, so a run carrying another one
+  could not find its login
+  ([0085](decisions/0085-a-grant-may-not-rename-the-login.md)) — and the one 0038 gives for keeping the list at all is that a hub's
   mistake must not unset `PATH` and make every run fail in a way nobody can
   trace back.
   0024's secret-shaped suffix rule and its reserved namespaces are gone.

@@ -424,12 +424,14 @@ grant is for the work, never for the harness's own login: it may not name a
 variable that chooses whose credential a harness uses or which home it logs in
 from (`ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and the rest of
 `protocol/v1/grant.go`'s list), because that would move the run off its
-**account**; nor a variable the **owner environment** declares, which it would
-replace for that run alone.
+**account**; nor the login name, `USER` or `LOGNAME`, which names the Keychain
+item Claude keeps an account's login in on macOS; nor a variable the **owner
+environment** declares, which it would replace for that run alone.
 _See_: [0009](docs/decisions/0009-machine-owns-credentials-hubs-grant-per-run.md),
 [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md),
 [0040](docs/decisions/0040-a-grant-may-not-move-a-run-off-its-account.md),
-[0041](docs/decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md)
+[0041](docs/decisions/0041-a-hub-holds-a-grant-only-while-its-run-can-use-it.md),
+[0085](docs/decisions/0085-a-grant-may-not-rename-the-login.md)
 
 ### The lifecycle
 
