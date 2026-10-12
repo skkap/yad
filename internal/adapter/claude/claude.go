@@ -123,6 +123,7 @@ func (a Adapter) Start(ctx context.Context, spec adapter.Spec) (adapter.Turn, er
 		check:     spec.HarnessCheck("claude", "-p", "hello"),
 		env:       spec.Env,
 		secrets:   spec.Secrets,
+		stopLeft:  spec.StopLeftRunning,
 		frames:    make(chan []byte, 16),
 		written:   1,
 		q:         adapter.NewQueue(),
@@ -308,6 +309,9 @@ type turn struct {
 	// run's file grants hold, whose values its stderr is quoted without
 	// (adapter.StderrTail).
 	env, secrets []string
+	// stopLeft is the owner's [supervise] stop_left_running: settle stops
+	// what its census counts (decision 0086).
+	stopLeft bool
 	// effort is the run's effort; effortRefused, Claude's own words refusing
 	// it, once they are seen; working, that Claude has begun the turn's work,
 	// after which nothing is gained by stopping it early.
@@ -455,7 +459,7 @@ func (t *turn) settle(queued int) {
 	measure := complete && !t.interrupted
 	t.mu.Unlock()
 	if measure {
-		t.left = adapter.Census(t.ctx, t.p)
+		t.left = adapter.Census(t.ctx, t.p, t.stopLeft)
 	}
 	close(t.frames)
 	close(t.final)

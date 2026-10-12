@@ -114,7 +114,8 @@ type SessionsConfig struct {
 	DiskFloor ByteSize `toml:"disk_floor"`
 }
 
-// SuperviseConfig holds the owner's watchdog defaults; a run may lower them.
+// SuperviseConfig holds the owner's watchdog defaults, which a run may lower,
+// and what yad does with the processes a run's turn leaves behind.
 type SuperviseConfig struct {
 	Inactivity Duration `toml:"inactivity"`
 	// FirstOutput is how long a run's harness may go from its start to its
@@ -122,6 +123,13 @@ type SuperviseConfig struct {
 	// "0s" is the default, as for inactivity; a value at or above the
 	// inactivity timeout leaves that timeout alone to decide.
 	FirstOutput Duration `toml:"first_output"`
+	// StopLeftRunning has yad stop what a turn's tool work still has running
+	// when the turn ends — the processes metrics.left_running counts — with
+	// SIGTERM, a grace, then SIGKILL, instead of leaving them to the harness
+	// (decision 0086). Work started with `nohup … &` is beyond it, as it is
+	// beyond the count. Off unless set: a dev server a run meant to leave up
+	// dies with its turn when it is on. No hub can set it.
+	StopLeftRunning bool `toml:"stop_left_running"`
 }
 
 // DrainConfig governs the runner's way down (decision 0029).

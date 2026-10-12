@@ -127,9 +127,43 @@ func TestLeftRunningTextNamesTwentyAndCountsTheRest(t *testing.T) {
 	for i := range 25 {
 		left = append(left, supervise.Leftover{PID: 1000 + i, Name: fmt.Sprintf("w%d", i), Age: time.Second})
 	}
-	got := leftRunningText(left)
+	got := leftRunningText(left, false)
 	if !strings.HasPrefix(got, "25 processes ") || !strings.Contains(got, "w19 (running 1s), and 5 more") || strings.Contains(got, "w20") {
 		t.Errorf("text = %q", got)
+	}
+}
+
+// With the owner's stop_left_running the event ends by saying what yad
+// stopped; without, it says nothing of stopping (decision 0086).
+func TestLeftRunningTextSaysWhetherYadStoppedThem(t *testing.T) {
+	sleep := supervise.Leftover{PID: 4242, Name: "sleep", Age: 4 * time.Second}
+	node := supervise.Leftover{PID: 4343, Name: "node", Age: time.Second}
+	stopped := func(l supervise.Leftover) supervise.Leftover { l.Stopped = true; return l }
+	const one = "1 process the run's tool work started was still running when the turn ended: sleep (running 4s)"
+	const two = "2 processes the run's tool work started were still running when the turn ended: sleep (running 4s), node (running 1s)"
+	for _, tc := range []struct {
+		name string
+		left []supervise.Leftover
+		stop bool
+		want string
+	}{
+		{"off", []supervise.Leftover{sleep}, false, one},
+		{"off, whatever a leftover says", []supervise.Leftover{stopped(sleep)}, false, one},
+		{"it", []supervise.Leftover{stopped(sleep)}, true, one + "; yad stopped it"},
+		{"them", []supervise.Leftover{stopped(sleep), stopped(node)}, true, two + "; yad stopped them"},
+		{"not it", []supervise.Leftover{sleep}, true, one + "; yad could not stop it"},
+		{"not them", []supervise.Leftover{sleep, node}, true, two + "; yad could not stop them"},
+		{"some", []supervise.Leftover{stopped(sleep), node}, true, two + "; yad stopped 1 of them and could not stop 1"},
+	} {
+		if got := leftRunningText(tc.left, tc.stop); got != tc.want {
+			t.Errorf("%s: text = %q; want %q", tc.name, got, tc.want)
+		}
+	}
+	if got := leftRunningLog([]supervise.Leftover{stopped(sleep), node}, true); got != "sleep[4242 stopped] node[4343 not stopped]" {
+		t.Errorf("log = %q", got)
+	}
+	if got := leftRunningLog([]supervise.Leftover{sleep}, false); got != "sleep[4242]" {
+		t.Errorf("log, off = %q", got)
 	}
 }
 

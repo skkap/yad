@@ -640,7 +640,7 @@ func (t *turn) completed() {
 	measure := !t.interrupted
 	t.mu.Unlock()
 	if measure {
-		t.left = adapter.Census(t.ctx, t.p, codeModeHost)
+		t.left = adapter.Census(t.ctx, t.p, t.spec.StopLeftRunning, codeModeHost)
 	}
 	if d := t.tr.done; d != nil && d.Error.kind() == "usageLimitExceeded" && t.tr.limits == nil && !t.askedFor {
 		t.askedFor = true

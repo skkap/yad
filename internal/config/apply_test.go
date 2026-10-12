@@ -225,6 +225,33 @@ func TestApplyCarriesTheSelfUpdateOptIn(t *testing.T) {
 	}
 }
 
+// Stopping what a turn left running is off unless the owner says so, and a
+// work machine's spec says so like any other setting (decision 0086).
+func TestApplyCarriesStopLeftRunning(t *testing.T) {
+	p := testPaths(t)
+	writeConfig(t, p, "capacity = 2\n")
+	if c, err := Load(p); err != nil || c.Supervise.StopLeftRunning {
+		t.Fatalf("supervise.stop_left_running = %v, %v with the setting absent; want off", c.Supervise.StopLeftRunning, err)
+	}
+	on, err := Apply(context.Background(), p, specFile(t, "capacity = 2\n[supervise]\nstop_left_running = true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(on.Changes) != 1 || on.Changes[0].String() != "supervise.stop_left_running = true (was false)" {
+		t.Errorf("changes %v, want supervise.stop_left_running turned on", on.Changes)
+	}
+	if c, err := Load(p); err != nil || !c.Supervise.StopLeftRunning {
+		t.Fatalf("supervise.stop_left_running = %v, %v after a spec that turns it on", c.Supervise.StopLeftRunning, err)
+	}
+	off, err := Apply(context.Background(), p, specFile(t, "capacity = 2\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(off.Changes) != 1 || off.Changes[0].String() != "supervise.stop_left_running = false (was true)" {
+		t.Errorf("changes %v, want supervise.stop_left_running back to its default", off.Changes)
+	}
+}
+
 // A machine's first up has no config.toml: Apply writes the spec's, private.
 func TestApplyWritesTheSpecWhereThereIsNoFile(t *testing.T) {
 	p := testPaths(t)

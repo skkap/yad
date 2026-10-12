@@ -531,7 +531,7 @@ func (t *turn) respond(method string, m *jsonrpc.Message) {
 			measure := !t.interrupted
 			t.mu.Unlock()
 			if measure {
-				t.left = adapter.Census(t.ctx, t.p)
+				t.left = adapter.Census(t.ctx, t.p, t.spec.StopLeftRunning)
 			}
 		}
 		t.stop()
