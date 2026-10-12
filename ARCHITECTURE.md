@@ -1458,7 +1458,10 @@ may be given to another hub, so the daemon's start compares each connection's
 registration's rows to a retired name, `<name>~<unix ms>`, in one transaction
 before that connection syncs
 ([0079](docs/decisions/0079-a-reused-connection-name-retires-the-earlier-registrations-rows.md)). The schema version is `PRAGMA
-user_version`; migrations are embedded and run on open. What a migration needs
+user_version`; migrations are embedded and run on open, and the daemon opens
+it once its lock is held and before it builds its first capability document
+(`runner.Migrate`), because that build reads it read-only and a read-only
+open refuses a schema behind the binary's (YAD-196). What a migration needs
 Go for, it leaves in `start_sweeps` by name, and the daemon's start does it and
 deletes the row in one transaction — the credential a source URL carried
 before [0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md)

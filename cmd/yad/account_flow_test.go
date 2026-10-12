@@ -116,10 +116,15 @@ func noStateDB(t *testing.T, p config.Paths) {
 // daemon is its only writer; the CLI reads it read-only (store.OpenProfile) or
 // asks the daemon over the control socket. `yad hub` opens a database of its
 // own through a package of its own, which is why the import path is what is
-// matched and not the package's name.
+// matched and not the package's name. The daemon reaches the database through
+// the runner package — runner.Migrate before its first document (YAD-196),
+// runner.Serve after — and only from runForeground, the process that holds
+// the profile's lock.
 func TestNoCLIPathOpensTheStateDatabaseForWriting(t *testing.T) {
 	const runnerStore = "github.com/skkap/yad/internal/store"
-	writers := []string{"Open", "OpenSQLite"}
+	const runnerPkg = "github.com/skkap/yad/internal/runner"
+	writers := map[string][]string{runnerStore: {"Open", "OpenSQLite"}, runnerPkg: {"Migrate", "Serve"}}
+	daemonOnly := map[string]bool{runnerPkg: true}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -133,28 +138,43 @@ func TestNoCLIPathOpensTheStateDatabaseForWriting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		local := ""
+		local := map[string]string{} // the name this file gives each package, to its import path
 		for _, imp := range f.Imports {
-			if path, _ := strconv.Unquote(imp.Path.Value); path == runnerStore {
-				local = "store"
-				if imp.Name != nil {
-					local = imp.Name.Name
-				}
+			path, _ := strconv.Unquote(imp.Path.Value)
+			if _, ok := writers[path]; !ok {
+				continue
 			}
+			name := filepath.Base(path)
+			if imp.Name != nil {
+				name = imp.Name.Name
+			}
+			local[name] = path
 		}
-		if local == "" {
+		if len(local) == 0 {
 			continue
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok {
+		for _, decl := range f.Decls {
+			fn, _ := decl.(*ast.FuncDecl)
+			ast.Inspect(decl, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				id, ok := sel.X.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				path, ok := local[id.Name]
+				if !ok || !slices.Contains(writers[path], sel.Sel.Name) {
+					return true
+				}
+				if daemonOnly[path] && fn != nil && fn.Recv == nil && fn.Name.Name == "runForeground" {
+					return true
+				}
+				t.Errorf("%s: %s.%s opens the runner's state database read-write outside the daemon — ask the daemon over the control socket, or read with store.OpenProfile", fset.Position(sel.Pos()), id.Name, sel.Sel.Name)
 				return true
-			}
-			if id, ok := sel.X.(*ast.Ident); ok && id.Name == local && slices.Contains(writers, sel.Sel.Name) {
-				t.Errorf("%s: %s.%s opens the runner's state database read-write from the CLI — ask the daemon over the control socket, or read with store.OpenProfile", fset.Position(sel.Pos()), local, sel.Sel.Name)
-			}
-			return true
-		})
+			})
+		}
 	}
 }
 
