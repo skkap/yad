@@ -184,7 +184,11 @@ type turn struct {
 	starting    bool // turn/start has been sent
 	over        bool // the turn takes no more input
 	interrupted bool
-	begun       chan struct{} // closed once the turn has an id, or will never have one
+	// owed is a turn/interrupt deferred to the turn's id that Codex's full
+	// input refused when the id came. Interrupt has already said it was
+	// delivered, so the adapter sends it once the input has room (DEV-185).
+	owed  bool
+	begun chan struct{} // closed once the turn has an id, or will never have one
 
 	finished chan struct{} // closed once the turn is over and input is closed
 	eof      chan struct{} // closed once the app-server's output has ended
@@ -254,8 +258,10 @@ func (t *turn) Steer(text string) error {
 // The turn is marked interrupted only once turn/interrupt is queued, or
 // deferred to the turn's id: one Codex's full input refused returns the
 // error and is sent again when the hub repeats it, as the runner expects
-// (internal/runner, control). A deferred one that begin cannot queue has
-// nobody left to tell (DEV-185).
+// (internal/runner, control). A deferred one has already counted, so the
+// hub will not repeat it; if Codex's input is full when the id arrives, the
+// adapter itself sends it once the input has room, unless the turn has
+// ended by then (DEV-185).
 func (t *turn) Interrupt() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -316,6 +322,8 @@ loop:
 				break loop
 			}
 			t.handle(l)
+		case <-t.in.room:
+			t.retryInterrupt()
 		}
 	}
 	t.p.Stdout().Close()
@@ -573,8 +581,20 @@ func (t *turn) begin(id string) {
 	}
 	t.turnID = id
 	close(t.begun)
-	if t.interrupted {
-		t.sendInterrupt()
+	if t.interrupted && t.sendInterrupt() != nil {
+		t.owed = true
+	}
+}
+
+// retryInterrupt sends an owed turn/interrupt, on the conversation's
+// goroutine, when the input has room again. Only while the turn runs: once
+// it has completed or input has closed, there is nothing left to interrupt,
+// and owed is already false. Refused again, it stays owed for the next room.
+func (t *turn) retryInterrupt() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.owed && !t.over && t.sendInterrupt() == nil {
+		t.owed = false
 	}
 }
 
@@ -638,6 +658,9 @@ func (t *turn) warning(params json.RawMessage) {
 func (t *turn) completed() {
 	t.mu.Lock()
 	measure := !t.interrupted
+	// The turn is over; a usage limit's question may keep input open a
+	// moment longer, but nothing is left to interrupt.
+	t.owed = false
 	t.mu.Unlock()
 	if measure {
 		t.left = adapter.Census(t.ctx, t.p, codeModeHost)
@@ -719,6 +742,7 @@ func (t *turn) stop() {
 		return
 	}
 	t.over = true
+	t.owed = false
 	if t.turnID == "" {
 		close(t.begun)
 	}
@@ -760,15 +784,30 @@ type input struct {
 	mu     sync.Mutex
 	ch     chan []byte
 	closed bool
+	// refused is set when a write found the queue full, and cleared when the
+	// writer next takes a line off it, which signals room. The writer never
+	// blocks on room and never takes the turn's lock, so whatever waits on
+	// room cannot hold the writer up.
+	refused bool
+	room    chan struct{}
 }
 
 var errInputClosed = errors.New("the turn is over and codex takes no more input")
 
 func newInput(w io.WriteCloser) *input {
-	in := &input{ch: make(chan []byte, 64)}
+	in := &input{ch: make(chan []byte, 64), room: make(chan struct{}, 1)}
 	go func() {
 		failed := false
 		for b := range in.ch {
+			in.mu.Lock()
+			if in.refused {
+				in.refused = false
+				select {
+				case in.room <- struct{}{}:
+				default: // one signal waiting is as good as two
+				}
+			}
+			in.mu.Unlock()
 			if failed {
 				continue // drain, so writers never block
 			}
@@ -792,6 +831,7 @@ func (in *input) Write(b []byte) (int, error) {
 	case in.ch <- bytes.Clone(b):
 		return len(b), nil
 	default:
+		in.refused = true
 		return 0, errors.New("codex is not reading its input")
 	}
 }
