@@ -90,6 +90,28 @@ func TestStopLeftoversWithoutATableSignalsNothing(t *testing.T) {
 	}
 }
 
+// Work in a group yad may not signal — here the daemon's own — is left
+// alone, said not to be stopped, and does not hold the stop for the grace.
+func TestStopLeftoversLeavesARefusedGroupAtOnce(t *testing.T) {
+	harness := spawn(t, "sleep")
+	self := syscall.Getpgrp()
+	const pid = 1 << 30 // no process: a signal sent to it would say so
+	start := time.Now().Add(-10 * time.Second)
+	old := procs
+	t.Cleanup(func() { procs = old })
+	procs = func(context.Context) ([]Proc, error) {
+		return []Proc{{PID: pid, PPID: harness.Pid(), PGID: self, Age: time.Since(start).Truncate(time.Second), Name: "sleep"}}, nil
+	}
+	began := time.Now()
+	got := harness.StopLeftovers(context.Background(), []Leftover{{PID: pid, PGID: self, Name: "sleep", Start: start}}, 5*time.Second)
+	if took := time.Since(began); took > time.Second {
+		t.Errorf("took %s over work it would not signal", took)
+	}
+	if got[0].Stopped {
+		t.Error("work in the daemon's own group is said to be stopped")
+	}
+}
+
 func TestStopTargetsRules(t *testing.T) {
 	const h, self = 100, 50
 	read := time.Now()

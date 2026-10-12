@@ -20,7 +20,7 @@ const startSlack = 2 * time.Second
 // waits for what it signalled to go; killSettle how long it waits after
 // SIGKILL, which takes effect at once but is seen only once the process is
 // gone from the table or a zombie in it.
-var (
+const (
 	stopPoll   = 100 * time.Millisecond
 	killSettle = time.Second
 )
@@ -56,8 +56,8 @@ func (p *Process) StopLeftovers(ctx context.Context, left []Leftover, grace time
 	ctx = context.WithoutCancel(ctx)
 	self := syscall.Getpgrp()
 	signalled := map[int]bool{} // counted pids whose group was signalled
-	signal := func(table []Proc, read time.Time, sig syscall.Signal) {
-		for g, pids := range stopTargets(table, read, left, p.Pid(), self, helpers) {
+	signal := func(work []Leftover, table []Proc, read time.Time, sig syscall.Signal) {
+		for g, pids := range stopTargets(table, read, work, p.Pid(), self, helpers) {
 			if syscall.Kill(-g, sig) == nil {
 				for _, pid := range pids {
 					signalled[pid] = true
@@ -70,13 +70,25 @@ func (p *Process) StopLeftovers(ctx context.Context, left []Leftover, grace time
 	if err != nil {
 		return out
 	}
-	signal(table, read, syscall.SIGTERM)
-	if table, read, err = waitGone(ctx, left, table, read, grace); err != nil {
+	// Only what was signalled is waited for, and killed: a counted process
+	// whose group yad may not signal would hold the stop for the whole grace
+	// for nothing, and one that SIGTERM never reached gets no SIGKILL first.
+	signalledOnly := func() []Leftover {
+		var s []Leftover
+		for _, l := range left {
+			if signalled[l.PID] {
+				s = append(s, l)
+			}
+		}
+		return s
+	}
+	signal(left, table, read, syscall.SIGTERM)
+	if table, read, err = waitGone(ctx, signalledOnly(), table, read, grace); err != nil {
 		return out
 	}
-	if len(running(table, read, left)) > 0 {
-		signal(table, read, syscall.SIGKILL)
-		if table, read, err = waitGone(ctx, left, table, read, killSettle); err != nil {
+	if len(running(table, read, signalledOnly())) > 0 {
+		signal(signalledOnly(), table, read, syscall.SIGKILL)
+		if table, read, err = waitGone(ctx, signalledOnly(), table, read, killSettle); err != nil {
 			return out
 		}
 	}
