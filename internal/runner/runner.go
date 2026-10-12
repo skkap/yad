@@ -239,6 +239,22 @@ func Serve(ctx context.Context, o Options) error {
 	return sv.run(ctx)
 }
 
+// Migrate brings the profile's state database up to this binary's schema,
+// creating it when there is none, and closes it again. It is the daemon's,
+// for once it holds the profile's lock and before it builds its first
+// capability document. That build reads the database read-only, as the CLI
+// does, and a read-only open refuses a schema behind this binary's: every
+// upgrade that adds a migration leaves one until something migrates it, and
+// the first document then reported every account free (YAD-196). Serve opens
+// the database again a moment later and finds nothing left to apply.
+func Migrate(ctx context.Context, p config.Paths) error {
+	st, err := store.Open(ctx, p.StateDB())
+	if err != nil {
+		return err
+	}
+	return st.Close()
+}
+
 // sweepGrants deletes the grant files an earlier run left behind. They are
 // 0600 files holding the secrets a hub sent, and the cleanup that removes them
 // when a run ends is a deferred call in the run's goroutine: a SIGKILL, a power

@@ -161,6 +161,21 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 		runner.OnSignals(runCtx, sigs, drain, stop, log)
 	}()
 
+	// Migrated here, before the first document reads the account states,
+	// and not only where runner.Serve opens the store: a database an upgrade
+	// left behind this schema is refused by the read-only read the document
+	// makes, and the first document reported every account free (YAD-196).
+	// This process holds the profile's lock, so it is still the database's
+	// one writer (decision 0043). Serve opens it again rather than being
+	// handed this open: the store's lifetime stays Serve's, and the second
+	// open costs a version check. A database that will not open — one newer
+	// than this yad, after a downgrade — is the same fault Serve would stop
+	// on a moment later, so the daemon stops here, before it says it started.
+	if err := runner.Migrate(runCtx, g.paths); err != nil {
+		log.Error("daemon exiting: the state database would not open", "err", err)
+		return err
+	}
+
 	// The one copy of the owner's account lists every part of the runner
 	// reads, and the one `yad account add` and `remove` reload through the
 	// control socket (decision 0043). The rest of cfg is fixed until restart.
@@ -169,8 +184,10 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	// Account states come from the state database, read-only and closed
 	// again: the runner's own store is opened inside runner.Serve, and a
 	// document built before it exists must still name the owner's accounts.
-	// A read that fails is not a reason not to start — the labels are still
-	// reported, free, which is what a runner with no limits would say.
+	// The database is at this schema by now (runner.Migrate above), so a
+	// read that fails is a fault of its own, and not a reason not to start —
+	// the labels are still reported, free, which is what a runner with no
+	// limits would say.
 	noted := modelsNoted{}
 	monitor := runner.NewMonitor()
 	// The harnesses with a run held count in the runner-wide per-run
