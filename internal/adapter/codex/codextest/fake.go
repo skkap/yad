@@ -47,7 +47,10 @@ import (
 // opens; "stalled" stops reading its input at the gate and asks
 // StalledRequests approvals, then reads again once the gate opens and ends
 // the turn interrupted if a turn/interrupt follows within CODEX_TEST_WAIT,
-// as recorded if none does.
+// as recorded if none does; "stalled-start" asks them as soon as turn/start
+// arrives instead, holds the turn's id until the gate opens, plays on to
+// turn/completed still not reading, and reads again only once
+// CODEX_TEST_DRAIN exists, ending the turn as "stalled" does.
 //
 // The rest serve the end-to-end tests in cmd/yad, which drive the whole runner
 // and need the fake to behave as codex does across runs, not only within one:
@@ -262,6 +265,14 @@ play:
 				json.Unmarshal(ours.Msg.Params, &p)
 				recordedThread = p.ThreadID
 			}
+			if got.Method == "turn/start" && mode == "stalled-start" {
+				var p struct {
+					ThreadID string `json:"threadId"`
+				}
+				json.Unmarshal(got.Params, &p)
+				ask(out, p.ThreadID, "")
+				waitFor(os.Getenv("CODEX_TEST_GATE"))
+			}
 			continue
 		}
 		var theirs struct {
@@ -315,8 +326,14 @@ play:
 		if strings.HasPrefix(line, `{"method":"turn/completed"`) {
 			out.Flush()
 			await := func() (json.RawMessage, bool) { return awaitGate(in, &early, mode == "deaf") }
-			if mode == "stalled" {
+			switch mode {
+			case "stalled":
 				await = func() (json.RawMessage, bool) { return stall(out, in, line) }
+			case "stalled-start":
+				await = func() (json.RawMessage, bool) {
+					waitFor(os.Getenv("CODEX_TEST_DRAIN"))
+					return interruptWithin(in)
+				}
 			}
 			if id, ok := await(); ok {
 				out.WriteString(`{"id":` + string(id) + `,"result":{}}` + "\n")
@@ -408,19 +425,37 @@ func stall(out *bufio.Writer, in <-chan clientMsg, completed string) (json.RawMe
 		} `json:"params"`
 	}
 	json.Unmarshal([]byte(completed), &c)
-	params, _ := json.Marshal(map[string]any{"threadId": c.Params.ThreadID, "turnId": c.Params.Turn.ID, "itemId": "stalled", "command": "true"})
+	ask(out, c.Params.ThreadID, c.Params.Turn.ID)
+	waitFor(os.Getenv("CODEX_TEST_GATE"))
+	return interruptWithin(in)
+}
+
+// ask writes StalledRequests approval requests naming the thread and turn,
+// with nothing read in between.
+func ask(out *bufio.Writer, thread, turn string) {
+	params, _ := json.Marshal(map[string]any{"threadId": thread, "turnId": turn, "itemId": "stalled", "command": "true"})
 	for i := range StalledRequests {
 		out.WriteString(`{"id":` + strconv.Itoa(1000+i) + `,"method":"item/commandExecution/requestApproval","params":` + string(params) + "}\n")
 	}
 	out.Flush()
+}
+
+// waitFor waits, reading nothing, until the file exists; a test that never
+// makes it has failed, and the fake does not outlive it by much.
+func waitFor(file string) {
 	for deadline := time.Now().Add(time.Minute); ; time.Sleep(10 * time.Millisecond) {
-		if _, err := os.Stat(os.Getenv("CODEX_TEST_GATE")); err == nil {
-			break
+		if _, err := os.Stat(file); err == nil {
+			return
 		}
 		if time.Now().After(deadline) {
 			os.Exit(1)
 		}
 	}
+}
+
+// interruptWithin reads the input again and returns the id of a
+// turn/interrupt that arrives within CODEX_TEST_WAIT.
+func interruptWithin(in <-chan clientMsg) (json.RawMessage, bool) {
 	wait := 10 * time.Second
 	if d, err := time.ParseDuration(os.Getenv("CODEX_TEST_WAIT")); err == nil {
 		wait = d
