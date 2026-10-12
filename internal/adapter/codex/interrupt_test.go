@@ -130,7 +130,8 @@ func stalledTurn(t *testing.T) (tr *turn, drained func(), methods func() []strin
 	return tr, drained, methods
 }
 
-// first closes writing when the first write begins.
+// first says when the writer is holding a line Codex has not read: only then
+// does a full queue stay full, so a refusal in the test is not a race.
 type first struct {
 	io.WriteCloser
 	once    sync.Once
