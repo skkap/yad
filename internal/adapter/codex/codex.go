@@ -332,6 +332,8 @@ loop:
 		stderr:      adapter.StderrTail(stderr, t.spec.Env, t.spec.Secrets, len(stderr) >= supervise.StderrTail),
 		asked:       t.asked,
 		check:       t.spec.HarnessCheck("codex", "login", "status"),
+		env:         t.spec.Env,
+		secrets:     t.spec.Secrets,
 	}
 	t.mu.Unlock()
 	t.outcome = t.tr.outcome(e)
@@ -544,20 +546,23 @@ func setting(spec adapter.Spec, key, def string) string {
 	return def
 }
 
-// refused ends the run on a request Codex answered with an error.
+// refused ends the run on a request Codex answered with an error. Its words
+// are quoted masked, as its stderr is: the run's error goes to a hub, and a
+// Codex that could not use a credential may quote it back (DEV-192).
 func (t *turn) refused(method string, e *RPCError) {
+	said := adapter.Mask(e.Message, t.spec.Env, t.spec.Secrets)
 	switch {
 	case method == "thread/resume" && strings.Contains(e.Message, "no rollout found"):
-		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("codex has no thread %s on this runner (%s) — the session's rollout is gone; start a new session", t.asked, e.Message))
+		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("codex has no thread %s on this runner (%s) — the session's rollout is gone; start a new session", t.asked, said))
 	case method == "thread/fork" && strings.Contains(e.Message, "no rollout found"):
 		// Measured on 0.157.1: the same words as a resume of nothing.
-		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("codex has no thread %s to fork on this runner (%s) — the forked session's rollout is gone; fork a session that has one, or start a new session", t.forkFrom, e.Message))
+		t.tr.fail(adapter.ClassSessionNotFound, fmt.Sprintf("codex has no thread %s to fork on this runner (%s) — the forked session's rollout is gone; fork a session that has one, or start a new session", t.forkFrom, said))
 	case method == "turn/start":
-		t.tr.fail(adapter.ClassHarness, "codex refused the turn: "+e.Message)
+		t.tr.fail(adapter.ClassHarness, "codex refused the turn: "+said)
 	case method == "thread/inject_items":
-		t.tr.fail(adapter.ClassHarness, "codex would not take the run's context into the resumed thread: "+e.Message+" — check `codex --version` against the protocol this yad was built for")
+		t.tr.fail(adapter.ClassHarness, "codex would not take the run's context into the resumed thread: "+said+" — check `codex --version` against the protocol this yad was built for")
 	default:
-		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("codex refused %s: %s — check the owner's [harness.codex] settings in config.toml and `codex --version`", method, e.Message))
+		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("codex refused %s: %s — check the owner's [harness.codex] settings in config.toml and `codex --version`", method, said))
 	}
 	t.stop()
 }
