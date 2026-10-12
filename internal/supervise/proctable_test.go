@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"slices"
 	"strconv"
 	"strings"
@@ -73,6 +74,16 @@ func censusChild(mode string) {
 		fmt.Println(strings.Join(counted, " "))
 		fmt.Println(mcp.Process.Pid)
 		time.Sleep(time.Hour)
+	case "deaf-harness":
+		// A tool command that ignores SIGTERM, in a session of its own.
+		tool := start("deaf", true)
+		fmt.Println(tool.Process.Pid)
+		fmt.Println()
+		time.Sleep(time.Hour)
+	case "deaf":
+		signal.Ignore(syscall.SIGTERM)
+		fmt.Println()
+		time.Sleep(time.Hour)
 	case "escaper":
 		gc := start("sleep", true)
 		fmt.Println(gc.Process.Pid)
@@ -99,7 +110,11 @@ func TestCensusCountsToolWorkAndNotHelpers(t *testing.T) {
 	}
 }
 
-func testCensus(t *testing.T, mode string) {
+// startCensusChild starts a censusChild as a harness is started and returns
+// it once its work is in place, with the pids it expects counted and the
+// ones it expects left out.
+func startCensusChild(t *testing.T, mode string) (p *Process, counted, helpers []int) {
+	t.Helper()
 	p, err := Start(context.Background(), Spec{Path: os.Args[0],
 		Env: []string{"SUPERVISE_CENSUS_CHILD=" + mode, "GORACE=atexit_sleep_ms=0"}})
 	if err != nil {
@@ -117,7 +132,7 @@ func testCensus(t *testing.T, mode string) {
 			lines[i] = append(lines[i], n)
 		}
 	}
-	counted, helpers := lines[0], lines[1]
+	counted, helpers = lines[0], lines[1]
 	// What left the group is beyond the group kill; the test ends it.
 	t.Cleanup(func() {
 		p.Stop(Ladder{})
@@ -125,7 +140,11 @@ func testCensus(t *testing.T, mode string) {
 			syscall.Kill(pid, syscall.SIGKILL)
 		}
 	})
+	return p, counted, helpers
+}
 
+func testCensus(t *testing.T, mode string) {
+	p, counted, helpers := startCensusChild(t, mode)
 	left, err := p.Census(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +241,7 @@ func TestCensusRules(t *testing.T) {
 		}, nil, []string{"sleep", "node", "esbuild"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			left, ok := census(tc.table, h, tc.helpers)
+			left, ok := census(tc.table, time.Now(), h, tc.helpers)
 			var names []string
 			for _, l := range left {
 				names = append(names, l.Name)
