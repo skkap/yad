@@ -479,7 +479,7 @@ func (t *turn) respond(method string, m *jsonrpc.Message) {
 			id = t.asked
 		}
 		if id == "" {
-			t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s answered %s without a session — report this with `%s --version` as a yad bug", t.agent.Name, method, t.agent.ID))
+			t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s answered %s without a session — report this with `%s` as a yad bug", t.agent.Name, method, shellword.Command(t.agent.ID, "--version")))
 			t.stop()
 			return
 		}
@@ -705,7 +705,7 @@ func (t *turn) refused(method string, e *jsonrpc.RPCError) {
 	case "session/list":
 		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s refused to open the session: %s", t.agent.Name, t.refusal.Message))
 	default:
-		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s refused %s: %s — check `%s --version` against the release this yad was built for (`%s`)", t.agent.Name, method, e.Message, t.agent.ID, t.spec.YadCommand("doctor")))
+		t.tr.fail(adapter.ClassHarness, fmt.Sprintf("%s refused %s: %s — check `%s` against the release this yad was built for (`%s`)", t.agent.Name, method, e.Message, shellword.Command(t.agent.ID, "--version"), t.spec.YadCommand("doctor")))
 	}
 	t.stop()
 }
