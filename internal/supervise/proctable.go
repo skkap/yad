@@ -153,6 +153,15 @@ type Leftover struct {
 	PID  int
 	Name string
 	Age  time.Duration
+	// Start is when it started as the census reckoned it, which tells it
+	// from a later process given the same pid. StopLeftovers finds its group
+	// in a table read when it signals, not in the census's: a process may
+	// have moved to a group of its own since.
+	Start time.Time
+	// Stopped is set by StopLeftovers: yad signalled its group and it was no
+	// longer running after. One that went on its own, or whose group yad
+	// would not signal, is not.
+	Stopped bool
 }
 
 // shells are the names of the shells a harness runs a tool's command in. A
@@ -199,19 +208,20 @@ func (p *Process) Census(ctx context.Context, helpers ...string) ([]Leftover, er
 		return nil, ErrNotMeasured
 	}
 	table, err := procs(ctx)
+	read := time.Now()
 	if err != nil || p.exited(0) {
 		return nil, ErrNotMeasured
 	}
-	left, ok := census(table, p.Pid(), helpers)
+	left, ok := census(table, read, p.Pid(), helpers)
 	if !ok {
 		return nil, ErrNotMeasured
 	}
 	return left, nil
 }
 
-// census is Census over a table already read. ok is false when the leader
-// is not in the table alive.
-func census(table []Proc, leader int, helpers []string) ([]Leftover, bool) {
+// census is Census over a table already read at read. ok is false when the
+// leader is not in the table alive.
+func census(table []Proc, read time.Time, leader int, helpers []string) ([]Leftover, bool) {
 	byPID := make(map[int]Proc, len(table))
 	children := map[int][]int{}
 	for _, p := range table {
@@ -266,7 +276,7 @@ func census(table []Proc, leader int, helpers []string) ([]Leftover, bool) {
 		if p.Zombie || helper(p.Name, helpers) || waiting[pid] && slices.Contains(shells, p.Name) {
 			continue
 		}
-		left = append(left, Leftover{PID: pid, Name: p.Name, Age: p.Age})
+		left = append(left, Leftover{PID: pid, Name: p.Name, Age: p.Age, Start: read.Add(-p.Age)})
 	}
 	slices.SortFunc(left, func(a, b Leftover) int { return a.PID - b.PID })
 	return left, true

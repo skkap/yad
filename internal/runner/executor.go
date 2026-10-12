@@ -763,7 +763,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 			RunID: run.RunID, Model: run.Model, Effort: run.Effort, Workdir: prep.Dir,
 			SessionID: run.Session.ID, NativeSessionID: native, Brief: run.Brief,
 			Home: home, Env: turnEnv, Secrets: secrets, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
-			Yad: e.Paths.RemoteCommand,
+			Yad: e.Paths.RemoteCommand, StopLeftRunning: e.Config.Supervise.StopLeftRunning,
 		}
 		// Only until the fork has a conversation of its own: a turn after
 		// one that got that far — on the next account — resumes it.
@@ -852,8 +852,9 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		// Spooled before the result, so last_seq covers it and a hub reading
 		// left_running finds what it counts.
 		if out.LeftRunning != nil && len(*out.LeftRunning) > 0 {
-			turnLog.Info("the turn ended with its tool work still running", "left_running", leftRunningLog(*out.LeftRunning))
-			e.note(bg, c, &w, v1.Event{Kind: v1.EventStatus, Status: "left_running", Text: leftRunningText(*out.LeftRunning)})
+			stop := e.Config.Supervise.StopLeftRunning
+			turnLog.Info("the turn ended with its tool work still running", "left_running", leftRunningLog(*out.LeftRunning, stop))
+			e.note(bg, c, &w, v1.Event{Kind: v1.EventStatus, Status: "left_running", Text: leftRunningText(*out.LeftRunning, stop)})
 			lastSeq = w.lastSeq
 		}
 		// Folded in before the result is built, so the result is the whole

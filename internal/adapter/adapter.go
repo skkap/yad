@@ -85,6 +85,10 @@ type Spec struct {
 	// Settings is the owner's harness configuration: permission mode, sandbox,
 	// approval policy. Never from the hub (decision 0015).
 	Settings map[string]string
+	// StopLeftRunning is the owner's [supervise] stop_left_running: what the
+	// census at the end of a turn counts is stopped, not only counted
+	// (Census, decision 0086). Never from the hub.
+	StopLeftRunning bool
 }
 
 // Adapter drives one first-class harness.
@@ -203,7 +207,8 @@ type Outcome struct {
 	// or "" for an adapter that has none.
 	Check string
 	// LeftRunning is what the turn's tool work still had running when the
-	// harness gave its answer (Census), whoever stopped it after. Nil is not
+	// harness gave its answer (Census), whoever stopped it after; each says
+	// whether yad did, when Spec.StopLeftRunning asked it to. Nil is not
 	// measured — a turn that was cancelled, interrupted or stopped by a
 	// watchdog, or a census that could not be taken — and empty is measured,
 	// with nothing found: the two must not be confused.

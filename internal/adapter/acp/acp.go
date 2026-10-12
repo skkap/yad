@@ -223,7 +223,7 @@ type turn struct {
 	// answer carries no options is not asked again for ever.
 	modelSet, effortSet bool
 	// left is the census taken when the prompt was answered.
-	left *[]supervise.Leftover
+	left *adapter.Left
 
 	mu          sync.Mutex
 	session     string
@@ -350,8 +350,10 @@ loop:
 	}
 	t.mu.Unlock()
 	t.outcome = t.tr.outcome(e)
-	t.outcome.LeftRunning = t.left
 	t.q.Close()
+	// After the events end, so no watchdog is reading them while a stop of
+	// what the turn left finishes (decision 0086).
+	t.outcome.LeftRunning = t.left.Wait()
 	close(t.done)
 }
 
@@ -531,7 +533,7 @@ func (t *turn) respond(method string, m *jsonrpc.Message) {
 			measure := !t.interrupted
 			t.mu.Unlock()
 			if measure {
-				t.left = adapter.Census(t.ctx, t.p)
+				t.left = adapter.Census(t.ctx, t.p, t.spec.StopLeftRunning)
 			}
 		}
 		t.stop()

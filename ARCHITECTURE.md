@@ -851,7 +851,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   an error and never not ready; no environment or argv of another process is
   read, and no record or `ps` is no warning
   (`capability.SharedHomes`, 0077).
-- **What a turn left running is counted, not stopped.** Every harness
+- **What a turn left running is counted, and stopped only if the owner says.** Every harness
   measured — Claude Code 2.1.296, Codex 0.160.1, OpenCode 1.18.33 — runs a
   tool's command in a process group of its own, so the group signals above
   never reach it; the harness stops it as it exits. So each adapter, after
@@ -869,6 +869,20 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   shell backgrounded it and exited is already init's and is neither counted
   nor stopped
   ([0083](docs/decisions/0083-a-run-reports-how-many-processes-its-tool-work-left-running.md)).
+  With `[supervise] stop_left_running` on (off by default), the census is
+  followed at once by `supervise.Process.StopLeftovers`, the ladder's last
+  steps over the counted work's groups: SIGTERM before the harness's input
+  closes, then, beside the harness's exit, up to `TermGrace` (5 s) rereading
+  the table every 100 ms and SIGKILL to what still holds counted work. The
+  adapter waits for it after the turn's events end (`adapter.Left.Wait`), so
+  no watchdog is reading them meanwhile.
+  A group is signalled only when a table read just before the signal shows a
+  counted process alive in it — the same pid, started within 2 s of when the
+  census reckoned — and never when it is pgid 0 or 1, the daemon's own, the
+  harness's, or holds a named helper. Each leftover then says whether it
+  went, and the `left_running` event ends by saying what yad stopped; the
+  metric is unchanged. No subreaper: `nohup … &` work stays out of reach
+  ([0086](docs/decisions/0086-the-owner-may-have-yad-stop-what-a-turn-left-running.md)).
 - **Exit 0 is not success.** Only the harness's result event decides the state;
   `prompt_too_long` arrives with `subtype: success`.
 
@@ -1405,6 +1419,7 @@ disk_floor = "5GiB"   # below this free under the workdirs, idle sessions go; "0
 [supervise]
 inactivity   = "30m"   # stop a run whose harness emits no event this long; a run may lower it
 first_output = "2m"    # the same, before the harness's first event: harness_silent — 0075
+stop_left_running = true   # stop what a turn's tool work left running as the turn ends (TERM, 5 s, KILL); absent = false, count only — 0086
 
 [drain]
 wait = "30m"   # how long a drain lets runs finish before cancelling them — 0029

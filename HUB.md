@@ -1110,7 +1110,14 @@ still say "tests are running, will report". A `succeeded` run with
 finished. The runner names what it found just before the result, in a
 `status` event labelled `left_running` whose text lists each process by its
 command's name and how long it had run (`sleep (running 4s)`) — never its
-arguments, environment or pid.
+arguments, environment or pid. A runner whose owner has it stop that work as
+the turn ends (`[supervise] stop_left_running`, off by default) ends the text
+by saying what it did — `; yad stopped it`, `; yad stopped them`, `; yad
+did not stop them`, `; yad stopped 2 of them and did not stop 1` — and
+`left_running` still counts what the turn left, so the warning stands either
+way: work that was stopped did not finish either
+([0086](docs/decisions/0086-the-owner-may-have-yad-stop-what-a-turn-left-running.md)).
+The text is for showing, not parsing.
 
 Absent and `0` are different answers. Absent is a run none of whose turns was
 measured: every one was cancelled, interrupted or stopped by a watchdog, or

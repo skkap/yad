@@ -1,6 +1,6 @@
 ---
 date: 2026-10-12
-status: accepted
+status: amended by 0086 — an owner may turn on stop_left_running, and yad then stops what the census counts as it counts it
 ---
 
 # A run reports how many processes its tool work left running
@@ -68,7 +68,9 @@ of its own — an MCP server that does is counted.
 
 **yad does not stop the survivors.** Each harness measured stops them itself
 as it exits. Stopping, or keeping, work a run left behind is a separate
-question and a separate ticket.
+question and a separate ticket. *(Amended by [0086](0086-the-owner-may-have-yad-stop-what-a-turn-left-running.md):
+with `[supervise] stop_left_running` on, yad stops what the census counted,
+there and then; off, the default, this holds.)*
 
 No feature gate: the field is optional and additive (oasdiff passes), and a
 status label is an open set. The conformance suite now puts an unknown field
