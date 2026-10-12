@@ -69,8 +69,9 @@ func StderrTail(stderr string, env, secrets []string, truncated bool) string {
 }
 
 // Mask is s with every value of env and every one of secrets replaced as
-// StderrTail replaces them, for anything else of a harness's stderr a run's
-// error quotes — Claude's line refusing an effort.
+// StderrTail replaces them, for anything else of a harness's own words a
+// run's error quotes — Claude's line refusing an effort, and every error
+// message a harness answers with (DEV-192).
 //
 // The owner's [env] values are replaced too, though they are in no Spec: the
 // harness has them all the same (supervise.OwnerEnv), and a run's error goes

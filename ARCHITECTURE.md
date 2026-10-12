@@ -1790,7 +1790,8 @@ line here is a reviewed change.
   reaches it, a grant under a name it declares refuses the run, and which
   names it declares is not published. Its values stay on the machine as far
   as yad goes — doctor, the daemon's log and `yad config apply` give names
-  alone, and a run's quoted stderr masks them — but a harness can print its
+  alone, and a run's error masks them in the harness's stderr and error
+  messages it quotes ([0075](docs/decisions/0075-a-harness-silent-from-its-start-is-stopped-after-two-minutes.md)) — but a harness can print its
   environment into a run's events, so it is not for secrets
   ([0081](docs/decisions/0081-the-owner-declares-an-environment-for-everything-yad-starts.md)).
 - Three secret kinds, never interchangeable: registration token, runner

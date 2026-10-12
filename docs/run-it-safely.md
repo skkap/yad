@@ -159,8 +159,8 @@ wanted any of this could simply ask the harness for it.
   credential, and `IS_SANDBOX`, `PATH`, `HOME`, `USER` and `WT_*`, each with the way
   round it; a hub's grant under a name you declared fails its run rather than
   replace yours. yad never prints or sends a value — doctor, its log and
-  `yad config apply` name the variables, and a run's quoted stderr masks them
-  — but a harness can print its whole environment into a run's events, which
+  `yad config apply` name the variables, and a run's error masks them in the
+  harness's stderr and error messages it quotes — but a harness can print its whole environment into a run's events, which
   go to the hub. Every hub you connect can read what `[env]` holds. A secret
   for a project is a grant, which a hub sends for the one run that needs it.
 - **Sources are argv, never a shell.** For a repository off the machine, https
