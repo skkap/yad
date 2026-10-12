@@ -1487,7 +1487,7 @@ fork should see the same code), bound by its claim.
 - When the forked session's runner goes, close the forks of it no claim has
   bound, with its own sessions: no other runner can open them.
 - **Never leave a fork waiting on a session that can no longer be forked**
-  (DEV-151). When you unbind the forked session — its binding claim was
+  (YAD-151). When you unbind the forked session — its binding claim was
   withdrawn (above), so the runner deleted it before any turn ran — it has
   no conversation to copy; when you ask to close it, or a runner reports it
   closed, the runner would refuse the fork. Either way the fork can go to no

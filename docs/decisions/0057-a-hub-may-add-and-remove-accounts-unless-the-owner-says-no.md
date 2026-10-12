@@ -8,7 +8,7 @@ date: 2026-09-28
 in an account the owner had listed in `config.toml`, and never add one. On a
 work machine, a container or any box nobody opens a shell on, that left a
 second subscription — and every Codex login — needing a trip to the machine
-(DEV-137, DEV-135). The owner decided three things on 2026-09-28.
+(YAD-137, YAD-135). The owner decided three things on 2026-09-28.
 
 **A hub-added account is the machine's, like any other.** It is listed in
 `config.toml` beside the ones added at the machine, every connected hub's runs

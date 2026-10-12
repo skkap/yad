@@ -18,7 +18,7 @@ import (
 // The values below stand in for an owner's; a failure names the variable and
 // never prints one.
 const (
-	ownerDockerHost = "unix:///tmp/dev-188/colima/docker.sock"
+	ownerDockerHost = "unix:///tmp/yad-188/colima/docker.sock"
 	ownerBashMax    = "1800000"
 )
 
@@ -51,7 +51,7 @@ func hasVar(env, name, value string) bool {
 // A run's harness and its repository's setup hook both get what [env]
 // declares — the DOCKER_HOST colima needs and a harness setting like
 // BASH_MAX_TIMEOUT_MS — over whatever the runner's own environment says, with
-// nothing set in the repository (DEV-188).
+// nothing set in the repository (YAD-188).
 func TestE2EOwnerEnvReachesTheHarnessAndTheSetupHook(t *testing.T) {
 	git, err := exec.LookPath("git")
 	if err != nil {

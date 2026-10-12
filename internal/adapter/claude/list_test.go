@@ -36,7 +36,7 @@ func list(t *testing.T, fixture string, env map[string]string, timeout time.Dura
 }
 
 // The list is list_models's answer, with no user message sent: nothing is
-// run, so nothing is spent (DEV-50). No session is kept and no hook fires.
+// run, so nothing is spent (YAD-50). No session is kept and no hook fires.
 func TestListModelsAsksClaude(t *testing.T) {
 	got, s, err := list(t, modelsFixture, nil, 20*time.Second)
 	if err != nil {
@@ -81,7 +81,7 @@ func answer(models string) string {
 
 // What Claude writes before the answer is read past. A model it lists as
 // disabled is one this login will not run, and stays out; so does anything
-// not shaped like a model name, since the document reaches every hub (DEV-67).
+// not shaped like a model name, since the document reaches every hub (YAD-67).
 func TestListModelsKeepsOnlyWhatTheLoginRuns(t *testing.T) {
 	path := fixtureOf(t,
 		`{"type":"system","subtype":"hook_started","hook_name":"SessionStart:startup"}`,
@@ -103,7 +103,7 @@ func TestListModelsKeepsOnlyWhatTheLoginRuns(t *testing.T) {
 // One that died before answering is one error, whether it was gone before
 // the request was written or went after reading it, so the capability
 // document and doctor say the same thing whichever order the OS picked
-// (DEV-149). "died" leaves the order to the OS; the two after it fix it, and
+// (YAD-149). "died" leaves the order to the OS; the two after it fix it, and
 // check that the order they name is the one that happened.
 func TestListModelsFailures(t *testing.T) {
 	const died = "claude ended its output without listing its models"
@@ -113,7 +113,7 @@ func TestListModelsFailures(t *testing.T) {
 		lines []string
 		env   map[string]string
 		want  string
-		// kind is what the caller words its reason by (DEV-146); nil is a
+		// kind is what the caller words its reason by (YAD-146); nil is a
 		// Claude that ended before it answered, which wraps none.
 		kind error
 		// exitFirst holds the request until Claude has exited.

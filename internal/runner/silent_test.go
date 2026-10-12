@@ -22,7 +22,7 @@ const silentClaudeSecret = "sk-test-grant-value-0123456789"
 // with RUNNER_TEST_CLAUDE set to the mode: the real Claude adapter drives it
 // as it would drive claude, through supervise, pipes and process group.
 // "silent" says a few words on stderr and then nothing at all, ignoring its
-// input, as the native Claude of DEV-170 did after loading its settings;
+// input, as the native Claude of YAD-170 did after loading its settings;
 // SIGTERM ends it. "stderr" writes seven lines to stderr, quoting the grant
 // it was given, and exits 1 before writing a frame.
 func fakeClaudeRun(mode string) int {
@@ -59,7 +59,7 @@ func claudeExecutor(t *testing.T, e *env, mode string) *Exec {
 // A Claude that hangs before its first frame ends the run harness_silent at
 // the owner's first-output timeout, with what it said on stderr and the next
 // action, rather than sitting in running for the inactivity timeout's half
-// hour (DEV-170).
+// hour (YAD-170).
 func TestASilentClaudeIsStoppedAtItsFirstOutputTimeout(t *testing.T) {
 	e := newEnv(t)
 	l := e.loop(t, 1)

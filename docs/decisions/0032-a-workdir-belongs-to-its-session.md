@@ -25,13 +25,13 @@ workdir is the session's, not the run's (DOMAIN.md).
   recorded path: the conversation is in the harness's transcript, not in the
   workdir, and the harness will find out what is missing. Reclaiming is the
   hub's `close_session`, the idle TTL or disk pressure (decision
-  [0011](0011-hub-closes-sessions-runner-collects.md)) — Zumino task DEV-18.
+  [0011](0011-hub-closes-sessions-runner-collects.md)) — Zumino task YAD-18.
 - **Last used** is the end of the session's last run, written with the run's
   result: the idle TTL runs from when the session stopped being used, and a
   three-hour run leaves it three hours younger than its start would.
 
 What goes inside the directory — git worktrees, a `path` source, the setup
-hook — is `internal/workdir`'s (DEV-16/17); the executor asks it to prepare the
+hook — is `internal/workdir`'s (YAD-16/17); the executor asks it to prepare the
 directory it chose.
 
 ## Considered options

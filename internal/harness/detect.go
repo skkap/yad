@@ -24,7 +24,7 @@ type Detected struct {
 	// nor the path it was started from: the capability document reaches every
 	// connected hub, and a child's stderr is unbounded text nobody vetted — a
 	// proxy URL with a password in it, a loader error naming the owner's home
-	// (DEV-60).
+	// (YAD-60).
 	Error string `json:"error,omitempty"`
 	// Warnings are what is wrong with a harness that can still be driven: an
 	// override naming nothing while PATH has the binary, and the readiness
@@ -60,7 +60,7 @@ const versionTimeout = 5 * time.Second
 // that is meant to hang, so the case waits as little as it can, and a long one
 // for a fake that is meant to answer — a script spawned beside a whole
 // race-instrumented suite has taken over five seconds to print its version
-// (DEV-100), and a probe cut off then reports a timeout where the test injected
+// (YAD-100), and a probe cut off then reports a timeout where the test injected
 // something else. The shipped value stays where it is: it is how long a CLI
 // broken this way holds up every capability probe. Nothing outside
 // a test may set it: TestOnlyTestsReachTheProbeTimeouts, in internal/hostool,
@@ -168,7 +168,7 @@ const maxVersionLen = 32
 // and that is all that is kept. The line around it is the child's own text,
 // and it goes into the capability document every connected hub reads: a
 // wrapper's proxy URL with a password in it, the path it was installed under
-// in the owner's home (DEV-67). The first line holding a version wins, so a
+// in the owner's home (YAD-67). The first line holding a version wins, so a
 // warning printed first does not hide it; one holding none reports no version
 // rather than itself.
 func ParseVersion(raw string) string {

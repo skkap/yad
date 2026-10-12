@@ -53,7 +53,7 @@ const (
 	// hundreds at once, and one sync's body should stay small.
 	closedPerSync = 64
 	// earlySyncGap is the least time between a sync and the early one a
-	// run's end brings forward (DEV-145). It bounds a queue of runs that
+	// run's end brings forward (YAD-145). It bounds a queue of runs that
 	// each fail the moment they start, which would otherwise have the
 	// runner sync as fast as the hub answers. A second is what the
 	// runner already spends on a hub while a run streams — its reporter
@@ -105,7 +105,7 @@ type Claim struct {
 	// no run to deliver them to until Start has registered it: handed over
 	// separately, one sent before that moment would find nothing and be
 	// dropped, and the run would start as if the hub had said nothing
-	// (DEV-113).
+	// (YAD-113).
 	Controls []v1.Control
 }
 
@@ -194,7 +194,7 @@ type Loop struct {
 	// against the document as it stood, and one built while it was being
 	// recorded may have read the runs held before it: told now, the process
 	// counts it, so a harness that stopped being drivable during that build
-	// still counts while its run is held (DEV-169). Nil tells nobody.
+	// still counts while its run is held (YAD-169). Nil tells nobody.
 	HeldChanged func()
 	// Settle lets go of a branch a session reported lost here left pushed
 	// and clean, as a run that ends does (workdir.Manager.Settle). Nil
@@ -264,7 +264,7 @@ type Loop struct {
 	// wake that lands between that and the reads — a run's capacity back in
 	// the middle of an ordinary sync — is one the sync has already answered:
 	// it offered the capacity, and an early sync after it would tell the
-	// hub nothing new (DEV-157).
+	// hub nothing new (YAD-157).
 	woken   bool
 	wokenMu sync.Mutex
 	// inHand are the runs this loop started whose capacity has not come
@@ -407,7 +407,7 @@ func (l *Loop) Run(ctx context.Context) error {
 					// capacity comes back — the executor writes one,
 					// then gives the other — and a sync in between
 					// offers none, so the hub has nothing to hand
-					// over and the early sync is spent (DEV-156).
+					// over and the early sync is spent (YAD-156).
 					// The release wakes this loop again.
 					continue
 				}
@@ -621,7 +621,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	// Controls that name a run wait for the runs this sync starts: a run
 	// acknowledged by this very answer is not the executor's yet, and an
 	// interrupt delivered ahead of its start would find nothing and be
-	// dropped (DEV-113). Everything else is acted on now.
+	// dropped (YAD-113). Everything else is acted on now.
 	l.answered = byRun(out.Controls)
 	defer func() { l.answered = nil }()
 	for _, c := range out.Controls {
@@ -1404,7 +1404,7 @@ func (l *Loop) health(ctx context.Context, free offerable) v1.Health {
 //
 // Report projects the state Load decided and reads no clock of its own, so
 // each account's state and its harness's readiness come from one Load at one
-// moment, the loop's Clock (DEV-85). A limit that ends mid-sync is reported
+// moment, the loop's Clock (YAD-85). A limit that ends mid-sync is reported
 // limited until the next sync, which errs towards a hub being told the runner
 // can do less than it can: the harmless direction.
 func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
@@ -1445,7 +1445,7 @@ func (l *Loop) harnessHealth(ctx context.Context) []v1.HarnessHealth {
 		// leaves such a harness's offers alone.
 		//
 		// Soonest, not First: the account a run takes is the free one whose
-		// window resets soonest (DEV-28, decision 0039). Either way it is the
+		// window resets soonest (YAD-28, decision 0039). Either way it is the
 		// claim's own predicate, asked once — what a hub is told and what this
 		// runner then does come from one answer.
 		chosen, usable := account.Soonest(accounts, hr.ID, now)
@@ -1502,7 +1502,7 @@ func fatal(err error) bool {
 
 // SyncFloorForTests replaces minInterval while it is positive, so an
 // end-to-end test that is also the hub can drive the protocol in milliseconds;
-// at the shipped floor those tests spend their time asleep (DEV-63). The floor
+// at the shipped floor those tests spend their time asleep (YAD-63). The floor
 // itself stays: it is what keeps a hostile or broken hub from spinning this
 // machine, so it is reachable from no configuration file, flag or protocol
 // field — only from a test in this module. TestOnlyTestsReachTheSyncFloor fails

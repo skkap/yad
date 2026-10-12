@@ -32,7 +32,7 @@ type Spec struct {
 	Env []string
 	// KeepEnv names variables Scrub would otherwise remove. Nothing outside
 	// this package's tests sets it, and TestKeepEnvIsNotWired fails the day
-	// something does, because two rules bind whoever wires it (DEV-62).
+	// something does, because two rules bind whoever wires it (YAD-62).
 	//
 	// Wiring it to the owner's configuration must refuse, or at least warn in
 	// `yad doctor`, when a variable it keeps is one v1.AccountVariable names
@@ -45,7 +45,7 @@ type Spec struct {
 	// And a check that decides whether an account can take a run
 	// (account.LoggedIn) runs in the same environment as the run it answers
 	// for. `claude auth status` in an environment holding a key the run is
-	// denied says "logged in" about a credential the run never sees — DEV-26
+	// denied says "logged in" about a credential the run never sees — YAD-26
 	// shipped exactly that, and the check goes through Start for this reason.
 	// So a variable kept for a run is kept for that harness's login check
 	// too, or for neither. account.OwnLogin differs on purpose and only by

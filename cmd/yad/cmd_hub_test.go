@@ -216,7 +216,7 @@ func (r *hubRig) event(t *testing.T, runID string, ev v1.Event) {
 }
 
 // finish writes a result and moves the run to its state, as the runner's
-// result upload will once DEV-6 lands the protocol side.
+// result upload will once YAD-6 lands the protocol side.
 func (r *hubRig) finish(t *testing.T, runID string, res v1.Result) {
 	t.Helper()
 	b, err := json.Marshal(res)

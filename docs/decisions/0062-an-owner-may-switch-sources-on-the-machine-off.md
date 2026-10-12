@@ -11,8 +11,8 @@ source on the machine. That left no way back to 0033's default. `roots = []`
 reads as "none listed", which is the home directory, and could not mean
 anything else: the field is `omitempty`, so an empty list is dropped the next
 time `yad connect`, `yad account add` or a hub's added account rewrites
-`config.toml`. Roots could be widened or narrowed, never switched off (DEV-72,
-raised in DEV-30's review).
+`config.toml`. Roots could be widened or narrowed, never switched off (YAD-72,
+raised in YAD-30's review).
 
 The owner chose, on 2026-09-29, **an explicit toggle**: `path_sources = false`
 under `[workdirs]`.

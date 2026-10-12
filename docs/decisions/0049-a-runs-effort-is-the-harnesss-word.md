@@ -8,7 +8,7 @@ Zumino's automations carry an effort (ZUM-83), and v1 had no way to pass one:
 a hub could choose a harness's model and not how hard it thinks. Claude Code
 takes `--effort low|medium|high|xhigh|max`; Codex takes a reasoning effort per
 turn, from a set each model lists (`low` to `xhigh` for most, `max` or
-`ultra` for some). DEV-124 added it. The contract was decided with the owner;
+`ultra` for some). YAD-124 added it. The contract was decided with the owner;
 what is recorded here is why it has this shape, and the two things the
 harnesses did that the contract had to absorb.
 
@@ -102,7 +102,7 @@ Claude's `--effort` is per process too. So absent means the harness's default
 on every run, as the field's description says, and a hub that wants one
 effort for a whole session sends it with every run.
 
-OpenCode is the harness that does carry it (DEV-178). Measured on 1.18.33:
+OpenCode is the harness that does carry it (YAD-178). Measured on 1.18.33:
 after a run that set `high`, `session/resume` and `session/fork` both answer
 with the effort option at `high` (`restoreVariant` in its ACP service), and
 its prompt runs at the session's effort. So a run without an effort that resumes or forks a session whose effort
@@ -121,7 +121,7 @@ In the same change, `HarnessReport.models` for Codex is read from the model
 list Codex caches in each home a run may use (`models_cache.json`): every
 account's home, or the default home when there are no accounts. Only models
 Codex shows in its own picker, in its order, and only names shaped like
-model names — the capability document reaches every hub (DEV-67). The cache
+model names — the capability document reaches every hub (YAD-67). The cache
 also holds each model's supported reasoning levels and default; the list of
 names stays the documented field, and a per-model structure for the levels is
 proposed in the pull request rather than added here.

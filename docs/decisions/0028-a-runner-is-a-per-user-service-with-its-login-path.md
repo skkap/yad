@@ -52,11 +52,11 @@ systemd has `Restart=on-failure`, a `RestartSec` of 10 s growing to 5 min, and
 no start limit. A clean exit is the owner stopping the runner, and restarting
 it would leave no way to stop it short of uninstalling. The stop timeout is
 30 s: runs in flight are held across a stop and settled at the next start, so a
-stop only needs to flush the spool. Drain (DEV-13) is what waits for runs.
+stop only needs to flush the spool. Drain (YAD-13) is what waits for runs.
 systemd uses `KillMode=mixed`, so the runner, not systemd, stops its harnesses.
 
 Standard output and error go to `logs/service.log` in the profile's data
-directory under both managers, next to the daemon's own log (DEV-11). That file
+directory under both managers, next to the daemon's own log (YAD-11). That file
 catches what the runner prints before its logger is up, and a panic.
 
 **Lingering is the owner's decision.** A systemd user manager stops at logout

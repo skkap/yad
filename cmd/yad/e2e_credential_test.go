@@ -81,7 +81,7 @@ func testE2EASourceURLsTokenIsNotKept(t *testing.T, h *e2eHarness) {
 // left it, with the token, and the daemon started once: after that start
 // nothing under the data directory holds the token, the daemon printed none
 // of it, and the session opened before the upgrade continues instead of
-// failing on "a checkout of another repository" (DEV-154).
+// failing on "a checkout of another repository" (YAD-154).
 func TestE2EAPreUpgradeSourceTokenIsTakenOut(t *testing.T) {
 	const token = "ghp_FAKEt0kenFAKEt0ken"
 	m, git, served := tokenRepo(t, claudeE2E, token)

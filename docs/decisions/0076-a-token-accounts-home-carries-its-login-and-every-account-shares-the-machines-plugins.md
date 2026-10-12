@@ -5,7 +5,7 @@ date: 2026-10-11
 # A token account's home carries its login, and every account shares the machine's plugins
 
 Amends [0054](0054-a-claude-account-may-be-a-token-and-every-account-shares-the-machines-config.md).
-DEV-172 and DEV-174. Both are about the same thing 0054 set out to do: a run
+YAD-172 and YAD-174. Both are about the same thing 0054 set out to do: a run
 on an account should behave as a run on the machine's own login would, and
 each fell short of it in a way nobody saw until a run tried.
 

@@ -11,7 +11,7 @@ other variable of it. On Ashikaga Docker runs on colima, so a run had no
 override itself (JapanLaw #1, finding 7). The owner also had no way to give
 every run a harness setting such as Claude Code's `BASH_MAX_TIMEOUT_MS`, and
 a test suite longer than Claude's 10-minute command cap was backgrounded
-instead — the hollow successes DEV-186 is about. DEV-188. Amends
+instead — the hollow successes YAD-186 is about. YAD-188. Amends
 [0060](0060-the-owners-own-account-variables-are-removed-from-every-run.md),
 whose scrub this layer sits on.
 

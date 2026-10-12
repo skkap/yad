@@ -38,7 +38,7 @@ at.
   make the runner start the conversation over, a continuing run in no session
   would resume nothing.
 - **The shape leaves room for cancel.** Runs are a resource (`/runs/{run}`), so
-  cancel arrives as `POST /runs/{run}/cancel` (DEV-8) without touching anything
+  cancel arrives as `POST /runs/{run}/cancel` (YAD-8) without touching anything
   here.
 
 The CLI (`yad hub submit`, `yad hub watch`) finds the admin token in a `0600`

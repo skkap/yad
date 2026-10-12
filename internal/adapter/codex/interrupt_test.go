@@ -145,7 +145,7 @@ func (f *first) Write(b []byte) (int, error) {
 
 // An owed interrupt goes once Codex reads again, once only, and never after
 // the turn has ended: completed with input still open for a usage limit's
-// question, or with input closed (DEV-185).
+// question, or with input closed (YAD-185).
 func TestAnOwedInterruptIsSentOnceWhileTheTurnRuns(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -196,7 +196,7 @@ func TestAnOwedInterruptIsSentOnceWhileTheTurnRuns(t *testing.T) {
 // An interrupt that arrives after turn/start but before the turn has an id is
 // deferred to the id, and Interrupt has already said it was delivered: the
 // runner will not try it again. So when Codex's input is full as the id
-// arrives, the adapter must send it once Codex reads again (DEV-185).
+// arrives, the adapter must send it once Codex reads again (YAD-185).
 func TestADeferredInterruptRefusedAtTheTurnsIDIsSentOnceCodexReads(t *testing.T) {
 	dir := t.TempDir()
 	gate, drain := filepath.Join(dir, "gate"), filepath.Join(dir, "drain")

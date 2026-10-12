@@ -385,7 +385,7 @@ func (t *turn) handle(l jsonrpc.Line) {
 	if l.Msg != nil && l.Msg.Error != nil {
 		// Masked once, here, as its stderr is: every refusal quotes the
 		// agent's words into the run's error, which goes to a hub, and an
-		// agent that could not use a credential may quote it back (DEV-192).
+		// agent that could not use a credential may quote it back (YAD-192).
 		// Its data too, which an agent's Classify reads and may quote —
 		// OpenCode names the provider from there.
 		mask := func(s string) string { return adapter.Mask(s, t.env, t.spec.Secrets) }

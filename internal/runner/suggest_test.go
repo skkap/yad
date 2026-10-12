@@ -42,7 +42,7 @@ func TestTheRunsSpecCarriesWhatALoginCheckNeeds(t *testing.T) {
 // type at the machine — on the runner's own profile, or it adds an account to
 // a different runner. A runner whose data lives under YAD_DATA_DIR says the
 // variable is needed without saying where it points: the message goes to a
-// hub, and the path is under the owner's home (DEV-67).
+// hub, and the path is under the owner's home (YAD-67).
 func TestNoFreeAccountCommandRunsAsPrinted(t *testing.T) {
 	data := t.TempDir()
 	t.Setenv("YAD_DATA_DIR", data)

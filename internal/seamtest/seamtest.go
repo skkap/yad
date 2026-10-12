@@ -6,7 +6,7 @@
 // because the code still works; it is the machine running yad that pays. So
 // the only thing that stands between a seam and a shipped binary is a test that
 // reads the source, and it has to read it as Go: a pattern over the text missed
-// a tuple assignment and an address taken through the package name (DEV-191).
+// a tuple assignment and an address taken through the package name (YAD-191).
 package seamtest
 
 import (

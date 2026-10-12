@@ -25,7 +25,7 @@ var (
 
 // Codex's words in a run's error — a refused request, a resume of nothing, a
 // failed turn — are masked of the run's environment and file grants, as its
-// stderr is (DEV-192): the error goes to a hub.
+// stderr is (YAD-192): the error goes to a hub.
 func TestCodexsErrorIsMaskedInTheRunsError(t *testing.T) {
 	const missing = "01a0b86e-0000-7000-8000-000000000000"
 	refuse := func(id string) string {

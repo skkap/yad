@@ -342,7 +342,7 @@ func (t *translator) toolResults(f *frame) {
 		// Code sets it true on every failure recorded — a command that exited
 		// non-zero, a Read of no file, a call its permission mode refused —
 		// and leaves it out only on some successes (a Read), so absent is
-		// read as the API defines it, not guessed (DEV-125). Claude reports
+		// read as the API defines it, not guessed (YAD-125). Claude reports
 		// no exit status as a number, so exit_code stays absent: its "Exit
 		// code N" is text, and text is not parsed.
 		failed := b.IsError
@@ -444,7 +444,7 @@ type ended struct {
 }
 
 // mask is Claude's own words as a run's error may quote them (adapter.Mask):
-// a result that failed on a credential may quote it back (DEV-192).
+// a result that failed on a credential may quote it back (YAD-192).
 func (e ended) mask(s string) string { return adapter.Mask(s, e.env, e.secrets) }
 
 // outcome decides how the turn ended. Only a result decides success: exit 0

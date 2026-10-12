@@ -14,7 +14,7 @@ import (
 )
 
 // DeviceLogin is Codex's own device-code login, driven over its app-server
-// for a hub login (DEV-135, decision 0057): account/login/start with
+// for a hub login (YAD-135, decision 0057): account/login/start with
 // chatgptDeviceCode answers with a link and a code for the owner to type
 // there, and account/login/completed says whether they did. Both are
 // structure, so nothing Codex words is read — only the link and the code

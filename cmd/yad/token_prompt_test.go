@@ -86,7 +86,7 @@ func TestReadSecret(t *testing.T) {
 		// Piped in, each command reads what it always did, and says nothing.
 		{name: "pipe, whole-input command", in: tok + "\nsecond line\n", piped: wholeInput, want: tok + "\nsecond line\n"},
 		{name: "pipe, first-line command", in: tok + "\nsecond line\n", piped: firstLine, want: tok},
-		// `hub login start`'s code (DEV-177): the same at a terminal, one
+		// `hub login start`'s code (YAD-177): the same at a terminal, one
 		// line from a pipe, and refused rather than echoed.
 		{name: "terminal, login code", what: "login code", term: true, in: tok + "\nmore\n", piped: oneLine, want: tok, prompt: true},
 		{name: "terminal whose echo stays on, login code", what: "login code", term: true, in: tok + "\n", piped: oneLine, failEcho: errors.New("ioctl refused"), wantErr: "so the login code would be shown"},

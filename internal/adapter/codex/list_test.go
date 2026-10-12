@@ -30,7 +30,7 @@ func list(t *testing.T, fixture string, env map[string]string, timeout time.Dura
 }
 
 // The list is model/list's answer, asked over the app-server a run uses, with
-// no thread started: nothing is run, so nothing is spent (DEV-50).
+// no thread started: nothing is run, so nothing is spent (YAD-50).
 func TestListModelsAsksTheAppServer(t *testing.T) {
 	got, s, err := list(t, fixture("list-models"), nil, 20*time.Second)
 	if err != nil {
@@ -86,7 +86,7 @@ func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
 
 // Codex's picker is what is reported: a model it hides stays out, and so does
 // anything that is not shaped like a model name, since the document reaches
-// every hub (DEV-67). A second page is followed to its end.
+// every hub (YAD-67). A second page is followed to its end.
 func TestListModelsKeepsOnlyListedNamesAcrossPages(t *testing.T) {
 	path := derived(t,
 		asked(2, ""),
@@ -115,7 +115,7 @@ func TestListModelsFailures(t *testing.T) {
 		fixture func(t *testing.T) string
 		env     map[string]string
 		want    string
-		// kind is what the caller words its reason by (DEV-146); nil is a
+		// kind is what the caller words its reason by (YAD-146); nil is a
 		// Codex that ended before it answered, which wraps none.
 		kind error
 	}{

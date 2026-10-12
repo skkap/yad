@@ -240,7 +240,7 @@ func (r Run) Validate() error {
 // adapter learns of a level its harness refused only from what the harness
 // says about it — Claude's refusal is a warning on stderr quoting the word,
 // and a word longer than the runner keeps of stderr pushes the warning out of
-// sight, so the run would go ahead at the harness's default (DEV-124).
+// sight, so the run would go ahead at the harness's default (YAD-124).
 const maxEffortLen = 64
 
 // effortPattern is what a level looks like in every harness so far: low,

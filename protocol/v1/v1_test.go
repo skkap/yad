@@ -353,7 +353,7 @@ func TestGrantNames(t *testing.T) {
 // AccountVariable is the list Grant.Validate refuses, entry for entry, and the
 // Grant.Name doc a hub author reads names every entry. The runner removes the
 // same names from the owner's environment through AccountVariable, and
-// internal/account reads them back from that doc to check it (DEV-62) — so a
+// internal/account reads them back from that doc to check it (YAD-62) — so a
 // name added to the list and not to the doc would be refused and never
 // checked there.
 func TestAccountVariableIsTheGrantList(t *testing.T) {

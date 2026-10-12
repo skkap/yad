@@ -34,7 +34,7 @@ in the hub's hands, and account names into the protocol.
 Using several subscriptions is the owner's decision
 ([0039](0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)).
 
-## Verified by experiment, DEV-24
+## Verified by experiment, YAD-24
 
 Run by hand on 2026-09-19 against **claude 2.1.278** and **codex-cli 0.147.0**.
 The result is pinned to those versions: it rests on where each CLI keeps a
@@ -85,7 +85,7 @@ not both talk to the provider.
 subscription.** Everything up to the wire is measured; what is left is the
 response. No second login existed on the machine, and neither creating one
 unattended nor copying a credential into a test home was acceptable. Tracked as
-**DEV-58**, so the gap stays a task rather than a caveat in a merged document.
+**YAD-58**, so the gap stays a task rather than a caveat in a merged document.
 What the transcripts show is that there is no handle for a provider to check
 ownership against: neither format carries a server-side conversation id, and
 both CLIs re-send the whole conversation each turn. They are not free of account
@@ -107,7 +107,7 @@ isolation boundary it names sits at or above the account, and none of them puts
 two separately logged-in subscriptions on the same side. So failover should
 price one cache-cold turn per move, and a run that ping-pongs between accounts
 pays it every time — a reason to prefer the account whose window resets soonest
-and stay on it. DEV-58 confirms the miss at the same time as the move.
+and stay on it. YAD-58 confirms the miss at the same time as the move.
 
 Claude's transcript also embeds the originating account's e-mail address as
 environment-context prompt text, so a session resumed under a second account
@@ -130,5 +130,5 @@ the resumed Codex turn measured above re-sent the whole conversation, which is
 why the move works at all.
 
 So Codex's portability rests on a client-side choice its CLI could change in a
-release, not on a property of the API. That is the concrete risk DEV-58 exists
+release, not on a property of the API. That is the concrete risk YAD-58 exists
 to catch, and the reason the version pin at the top of this note matters.

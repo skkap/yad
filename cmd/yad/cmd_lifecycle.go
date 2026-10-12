@@ -78,7 +78,7 @@ func (u *unit) refuses(s startFlags) error {
 
 // unknownServiceError is a profile whose unit file is there and whose service
 // manager could not say whether it holds the job — no user bus, no GUI
-// domain. Starting a detached daemon could be DEV-173 again, and refusing
+// domain. Starting a detached daemon could be YAD-173 again, and refusing
 // every start where there is no service would be its mirror; so the owner,
 // who can tell, is given the manager's own command.
 type unknownServiceError struct {
@@ -464,7 +464,7 @@ func gone(ctx context.Context, p config.Paths, pid int, within time.Duration) bo
 // with --timeout and --force — and started again by its service manager. A
 // clean stop is an exit neither unit restarts (KeepAlive.SuccessfulExit is
 // false, Restart=on-failure), and a detached daemon in its place would be one
-// the manager no longer watches (DEV-173). kickstart -k or systemctl restart
+// the manager no longer watches (YAD-173). kickstart -k or systemctl restart
 // would do both halves in one, but with the manager's SIGTERM in place of the
 // stop decision 0027 settles, and a wait bounded by the unit, not the owner.
 func daemonRestart(ctx context.Context, g global, args []string, w io.Writer) error {

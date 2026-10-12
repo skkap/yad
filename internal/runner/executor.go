@@ -706,7 +706,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	// run's answer: the account is out of quota, the transcript is the whole
 	// of the session and lives where every account home can read it, so the
 	// work continues on another account in the same session (decision 0013,
-	// measured in DEV-24). Anything else ends the run here.
+	// measured in YAD-24). Anything else ends the run here.
 	//
 	// tried is the backstop under that loop. What normally ends it is the
 	// store — each limit is recorded before the next account is chosen, so
@@ -1369,7 +1369,7 @@ func (e *Exec) firstOutput() time.Duration {
 // stoppedDetail is what a watchdog's error adds to its own sentence: the end
 // of the harness's stderr, the one account of what it was doing, and for a
 // harness silent from its start, how to see where it stops (decision 0075).
-// Run on a default login, the likeliest cause known (DEV-170) is a harness
+// Run on a default login, the likeliest cause known (YAD-170) is a harness
 // that hangs in a home it shares with another of its kind running there, and
 // an account is a home of its own.
 func (e *Exec) stoppedDetail(class string, run v1.Run, out adapter.Outcome, hasAccount bool) string {

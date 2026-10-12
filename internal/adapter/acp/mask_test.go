@@ -29,7 +29,7 @@ var (
 )
 
 // Every refusal the core quotes into a run's error is masked of the run's
-// environment and file grants, as its stderr is (DEV-192): the error goes to
+// environment and file grants, as its stderr is (YAD-192): the error goes to
 // a hub, and an agent that could not use a credential may quote it back.
 func TestAnAgentsRefusalIsMaskedInTheRunsError(t *testing.T) {
 	ask := func(id int, method string) string {

@@ -31,8 +31,8 @@ func windowNamed(ws []adapter.Window, name string) (adapter.Window, bool) {
 	return adapter.Window{}, false
 }
 
-// The acceptance criterion, against a stream claude really wrote (DEV-27, the
-// DEV-24 instrument): the API answered 429 once, claude retried it by itself
+// The acceptance criterion, against a stream claude really wrote (YAD-27, the
+// YAD-24 instrument): the API answered 429 once, claude retried it by itself
 // and the turn succeeded.
 //
 // A rate limit is not a usage limit (DOMAIN.md): the retry is a metric and

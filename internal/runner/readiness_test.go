@@ -64,7 +64,7 @@ func claimed(t *testing.T, e *env, id string) bool {
 	return err == nil
 }
 
-// The harness DEV-170 found: a Claude on its own login that never says a
+// The harness YAD-170 found: a Claude on its own login that never says a
 // word. Its third silent run in a row makes it not ready, so the runner stops
 // claiming for it and the hub is told until when; the error of that run says
 // so, with the command that offers it again at once (decision 0077).

@@ -31,18 +31,18 @@ type HarnessReport struct {
 	Kind  string `json:"kind" enum:"first-class,recognised" doc:"first-class: the runner has an adapter for it and can run it. recognised: detected and reported so the gap is visible, and never the target of a run."`
 	// Present is there being a binary the runner starts for this harness —
 	// the one a YAD_<ID>_PATH override names, or PATH's when the override
-	// names nothing (DEV-68). It says nothing about whether it works; Error
+	// names nothing (YAD-68). It says nothing about whether it works; Error
 	// does.
 	Present bool `json:"present" doc:"There is a binary the runner starts for this harness's runs. Not that it works: a present harness with an error cannot take runs. A harness absent with an error has a path configured for it that names nothing and none on the runner's PATH either."`
 	// Version is the version number and nothing else of what the harness
-	// printed: the line around it can hold a path or a credential (DEV-67).
+	// printed: the line around it can hold a path or a credential (YAD-67).
 	Version string `json:"version,omitempty" doc:"The version number the harness reported, such as 2.4.1 or 1.0.0-beta.12, and nothing else of what it printed. Absent when it printed no version."`
 	// Error is the runner's own words, never the harness's: a child's output
-	// and the path it was started from stay on the machine (DEV-60).
+	// and the path it was started from stay on the machine (YAD-60).
 	Error string `json:"error,omitempty" doc:"Why this harness cannot take runs, and the next action for whoever owns the machine. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
 	// Models are asked of the harness itself, for each login a run may use —
 	// Claude's list_models control request, Codex's model/list — without a
-	// turn, so without a token (DEV-50). Where it could not be asked, the
+	// turn, so without a token (YAD-50). Where it could not be asked, the
 	// runner's catalog answers, and ModelsSource says so.
 	Models []string `json:"models,omitempty" doc:"Models the harness offers on this runner, such as opus or gpt-5.5, in the harness's own order: every model offered to any login a run may use, once. Where the logins differ, each account's models say what its own is offered. Not a limit: a run may name any model, and the harness decides whether it exists. Absent when the runner knows none."`
 	// ModelsSource is set whenever Models is.
@@ -58,7 +58,7 @@ type HarnessReport struct {
 	// one the adapter was built against, a path override naming nothing while
 	// PATH has the harness. A hub may show them or prefer a runner without;
 	// they never make a harness refuse runs, which Error does. The same rule
-	// as Error binds them (DEV-67).
+	// as Error binds them (YAD-67).
 	Warnings []string `json:"warnings,omitempty" doc:"What is wrong with a harness the runner can still drive, each with the next action for whoever owns the machine: a path configured for it that names nothing, so the one on PATH is used; a Codex whose protocol differs from the one the runner was built against. Never a reason to refuse runs. Written by the runner: it never quotes what the harness printed and never names a path on the machine."`
 }
 
@@ -125,7 +125,7 @@ type AccountReport struct {
 	// window from this harness, never that the account has no limits.
 	Windows []AccountWindow `json:"windows,omitempty" doc:"Every usage window the harness last reported for this account, whether or not it is at a limit, so a hub sees an account running low before it runs out. As fresh as the last turn that ran on it. Absent means no run has heard a window yet, never that the account has no limits."`
 	// Models is per account because a plan decides them: two logins of one
-	// harness can be offered different models (DEV-50).
+	// harness can be offered different models (YAD-50).
 	Models []string `json:"models,omitempty" doc:"The models the harness listed for this account's login, in its own order: what to offer a run on this account. Not a limit: a run may name any model, and the harness decides whether it exists. Absent when the harness has not listed them for it — the account needs login, or the harness did not answer — and the harness's models are then the runner's best answer."`
 }
 
@@ -157,7 +157,7 @@ type AccountWindow struct {
 type HostTool struct {
 	ID string `json:"id" doc:"The tool: git, gh or docker."`
 	// Present is the binary detection found and probed, under the same
-	// override rule as a harness (DEV-68), and the one a run uses: yad's own
+	// override rule as a harness (YAD-68), and the one a run uses: yad's own
 	// git resolves it the same way, and a harness's children find it ahead of
 	// PATH (0045).
 	Present bool   `json:"present" doc:"The runner found a binary for this tool and probed it: the one its configured path names, or the one on PATH when that path names nothing. Present is not usable: see error and logged_in."`
@@ -179,7 +179,7 @@ type HostTool struct {
 	// is not there, is both absent and worth explaining.
 	Error string `json:"error,omitempty" doc:"What is wrong with this tool on the runner: a path configured for it that names nothing with none on PATH either, a probe that timed out, a binary that would not run, a Docker daemon that is not answering. May accompany present: false, when a configured path names nothing and PATH has no such tool. Carries the next action. A runner with one still registers."`
 	// Warnings are what is wrong with a tool that still works, under the same
-	// rule as HarnessReport.Warnings. Added within v1 for DEV-68, so a hub
+	// rule as HarnessReport.Warnings. Added within v1 for YAD-68, so a hub
 	// generated before it ignores the field.
 	Warnings []string `json:"warnings,omitempty" doc:"What is wrong with a tool the runner can still use, each with the next action for whoever owns the machine: a path configured for it that names nothing, so the one on PATH is used. Never a reason to treat the tool as unusable. Written by the runner: it never quotes what the tool printed and never names a path on the machine."`
 }

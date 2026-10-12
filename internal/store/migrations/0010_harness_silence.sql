@@ -5,7 +5,7 @@
 -- until `until` (decision 0077), so a hub stops sending it work it cannot do.
 --
 -- Its own table rather than columns on accounts: a harness with no accounts
--- has no row there, and its default login is the home DEV-170 found wedged.
+-- has no row there, and its default login is the home YAD-170 found wedged.
 --
 -- until is the authority, as limited_until is for a limit: the home is
 -- offered again the moment it passes, and nothing has to come along and

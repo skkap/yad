@@ -8,7 +8,7 @@ status: amended by 0047 — only a claim the hub never acknowledged is withdrawn
 Epic E2 left a restarted runner giving up the runs its previous process held:
 lost locally, dropped from the sync listing, and lost on the hub only once
 their leases lapsed — a minute or more with no word, and no result naming the
-events that were streamed. DEV-14 asks for more.
+events that were streamed. YAD-14 asks for more.
 
 **An orphan is reported lost, never run again.** On start, every run the store
 holds in a non-terminal state belongs to a process that is gone. Its harness

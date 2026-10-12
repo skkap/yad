@@ -548,7 +548,7 @@ loop:
 	exitErr := t.p.Wait()
 	// Gone before the turn is over, not deferred past it: a runner that exits
 	// once its last turn is waited for would otherwise leave the brief's
-	// context behind in the shared temp directory (DEV-92).
+	// context behind in the shared temp directory (YAD-92).
 	removeFile(contextFile)
 
 	t.mu.Lock()

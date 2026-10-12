@@ -15,7 +15,7 @@ import (
 // the real release source. A release server — or a proxy in front of it —
 // that takes the request and never answers, or stops partway through a
 // download, must not stop the schedule: the check gives up at its bound,
-// counts as a failure, and the next check comes as it would have (DEV-181).
+// counts as a failure, and the next check comes as it would have (YAD-181).
 // The source's own stall is set beyond the test so that the check's bound is
 // the only thing that can end it.
 func TestACheckAgainstAServerThatStopsAnsweringEnds(t *testing.T) {

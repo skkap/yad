@@ -166,7 +166,7 @@ func endSessionRuns(ctx context.Context, q *db.Queries, id string, end unstarted
 // none there to copy. A queued run holds no lease, so a fork left waiting for
 // its source to be bound again — by a run that may never come — would wait for
 // ever, and one offered to a runner closing its source would be refused
-// (DEV-151). The fork's session closes rather than only its runs ending, so a
+// (YAD-151). The fork's session closes rather than only its runs ending, so a
 // run submitted to it later is refused at submit instead of queued behind them.
 // A runner that goes away closes these with its own sessions (SessionsToSettle).
 func endForksOf(ctx context.Context, q *db.Queries, source string, end unstartedEnd, now time.Time) error {

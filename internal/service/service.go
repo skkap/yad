@@ -95,7 +95,7 @@ type Manager interface {
 	Status(ctx context.Context, profile string) (Status, error)
 	// Start starts the profile's loaded unit now, and leaves one already
 	// running as it is. A daemon the manager starts is one it watches and
-	// restarts after a crash; one `yad daemon start` spawns is not (DEV-173).
+	// restarts after a crash; one `yad daemon start` spawns is not (YAD-173).
 	Start(ctx context.Context, profile string) error
 	// StartCommand and RestartCommand are the manager's own commands for the
 	// unit, as argv, for an error to offer when yad cannot run them itself.
@@ -112,7 +112,7 @@ type Manager interface {
 // a profile's job: no GUI domain over SSH, no user bus. It is never read as
 // "not loaded" — an uninstall would remove the unit file from under a job
 // still loaded, an install would load a second one beside it, and a start
-// would put a second runner beside the first (decisions 0074, DEV-176).
+// would put a second runner beside the first (decisions 0074, YAD-176).
 type UnansweredError struct {
 	Manager string // "launchd", "the systemd user manager"
 	Name    string // the unit

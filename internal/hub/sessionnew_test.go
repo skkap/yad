@@ -130,10 +130,10 @@ func TestAContinuingRunIsSentAsSubmitted(t *testing.T) {
 // A cancelled claim the runner withdrew takes the session it opened with it on
 // the runner (decision 0061), so the session goes back to unbound when that
 // claim is the one that bound it, and its next run goes out opening it
-// (DEV-143). Before, the session stayed bound, and the next run went out
+// (YAD-143). Before, the session stayed bound, and the next run went out
 // continuing a session no runner held, to be refused. Nothing else unbinds a
 // session: not a withdrawn claim after one that ran, since the runner keeps a
-// session with a transcript (DEV-77); not a lapsed lease, which cannot tell a
+// session with a transcript (YAD-77); not a lapsed lease, which cannot tell a
 // withdrawal from silence; not a departed runner, whose sessions close; and
 // not a session with a close asked for, which the runner closes rather than
 // deletes and the hub waits to hear closed.
@@ -240,13 +240,13 @@ func TestAWithdrawnClaimUnbindsTheSessionItBoundAlone(t *testing.T) {
 // is one the runner was never told was acknowledged: the answer saying so was
 // lost. The hub answers cancel, the runner withdraws the claim and deletes the
 // session it opened, so the session that claim bound goes back to unbound at
-// that answer, and its next run goes out opening it (DEV-148). Before, the
+// that answer, and its next run goes out opening it (YAD-148). Before, the
 // session stayed bound, and the next run went out continuing a session no
 // runner held, to be refused. Nothing in the session is offered beside the
 // cancel: the runner still holds the cancelled run when it claims the offers.
 // A run listed as started keeps its session, and so does one with a start
 // moment, whose acknowledged claim is listed as claimed until then; a session
-// with a close asked for stays bound, for DEV-143's reason.
+// with a close asked for stays bound, for YAD-143's reason.
 func TestALateClaimUnbindsTheSessionItBound(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
@@ -318,7 +318,7 @@ func TestALateClaimUnbindsTheSessionItBound(t *testing.T) {
 // A run with a start moment keeps its session when it is listed as claimed
 // after its lease lapsed: its runner holds a claim it was told was
 // acknowledged as claimed until the moment, and keeps the session it opened,
-// so a run sent opening it would be refused there (DEV-148).
+// so a run sent opening it would be refused there (YAD-148).
 func TestALateClaimWithAStartMomentKeepsItsSession(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)

@@ -17,7 +17,7 @@ register's `sync_interval_ms`, stay bounded 5–60 s. A runner's floor for
 only slower. Conformance checks each field against its own floor. The wire
 does not change, and no field is renamed or removed.
 
-**`yad hub` answers 3 s** — the owner's number (DEV-53, 2026-09-29) — while a
+**`yad hub` answers 3 s** — the owner's number (YAD-53, 2026-09-29) — while a
 queued run waits for that runner and nothing but a run it is executing: its
 capacity is full, or the run is the next in a session it holds. Precisely,
 a queued run passes every rule an offer to it applies except capacity and its
@@ -57,4 +57,4 @@ case the ticket was written for.
 
 **Holding a sync open until work arrives** closes the rest of the gap, the run
 submitted to an idle runner a moment after its sync, which no answer already
-sent can change. It is a new protocol capability, not a timing, and is DEV-49.
+sent can change. It is a new protocol capability, not a timing, and is YAD-49.

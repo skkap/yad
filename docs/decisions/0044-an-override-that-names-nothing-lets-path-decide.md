@@ -10,7 +10,7 @@ started without its owner's shell `PATH`. `internal/harness` and
 a file that was not there was reported `present: true` with a start failure.
 The same override on a host tool made it `present: false` with an error. A hub
 reads both from one capability document and cannot know that the rule depends
-on the kind (DEV-68). The two packages had drifted apart in their messages too.
+on the kind (YAD-68). The two packages had drifted apart in their messages too.
 
 ## Decision
 
@@ -30,7 +30,7 @@ So `present` means **the runner found a binary**, under the same rule for
 harnesses and host tools. For a harness, that binary is the one every run
 starts. For a host tool, it is the binary that was probed. When this was
 decided, yad's own git (`internal/workdir`) and a harness's children still
-looked host tools up on PATH, a separate gap (DEV-107) that
+looked host tools up on PATH, a separate gap (YAD-107) that
 [0045](0045-runs-use-the-host-tools-detection-resolved.md) closed: a run now
 uses the host tool detection found, through the same lookup. `present`
 says nothing about whether the binary works: `error` says that.

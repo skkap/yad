@@ -9,9 +9,9 @@ the connection's credential file, its `config.toml` entry, and whatever a
 running daemon holds of it — a sync loop, runs in hand, open sessions and
 their workdirs, parked runs, results and events owed. `yad connect` only
 writes files and lets the daemon read them at its next start. The first
-attempt at `yad disconnect` (DEV-29, parked on the `yad-disconnect` branch)
+attempt at `yad disconnect` (YAD-29, parked on the `yad-disconnect` branch)
 told the daemon in two stages either side of the hub call, and three review
-rounds found five defects in the orderings that created (DEV-81).
+rounds found five defects in the orderings that created (YAD-81).
 
 ## Decision
 
@@ -25,7 +25,7 @@ The owner's (2026-09-30).
    asked what it holds; with none, the state database is read read-only and a
    parked run counts — the next start would resume it — while a run a crashed
    process held does not, being lost already (decision 0030). `--now` goes on.
-2. **The hub.** `POST /runners/{runner}/deregister` (DEV-77): the hub marks
+2. **The hub.** `POST /runners/{runner}/deregister` (YAD-77): the hub marks
    the runs it held lost, returns its unclaimed offers to the queue, closes the
    runner's sessions and ends the runs queued in them. Sessions are closed and
    cancelled, never unbound: a session's transcript is on the machine that
@@ -42,7 +42,7 @@ The owner's (2026-09-30).
    the run cancelled in one has ended — and are marked reported, results and
    events owed are dropped, and the collector reclaims the workdirs. The other
    connections carry on. A daemon left with no connection stays up and
-   collects, as one started with none does (decision 0035's collector, DEV-74).
+   collects, as one started with none does (decision 0035's collector, YAD-74).
 
 **The hub records the runs lost, and `--now` stops them after it has.** Stopped
 first, a run's cancelled result would race the deregister and the hub could
@@ -74,7 +74,7 @@ removals it has been told of. So:
   finds the connection gone gives the owner's command two seconds to tell the
   daemon itself, so the command hears what was ended rather than that it
   already had been.
-- **No daemon** — the next start's first sweep ends it. This answers DEV-74's
+- **No daemon** — the next start's first sweep ends it. This answers YAD-74's
   question: a parked run with no `max_wait` and a claimed or running row a
   crash left belonged to a loop that will never run again, and ending them is
   what lets their sessions close.
@@ -151,5 +151,5 @@ with a connection it had stopped and a `config.toml` still listing it — the
 two-stage state again.
 
 **End only what the removed connection's loop would have, at the next start.**
-The daemon-down case alone (DEV-74). It leaves a running daemon with a loop
+The daemon-down case alone (YAD-74). It leaves a running daemon with a loop
 syncing a credential the hub has retired until its next restart.

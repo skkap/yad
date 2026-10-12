@@ -6,7 +6,7 @@ import (
 )
 
 // Which release scripts/breaking.sh compares against, in every topology it
-// can meet (DEV-90).
+// can meet (YAD-90).
 //
 // The repositories hold empty commits, so no tag carries the documents. The
 // script then says, for each document, "does not exist at <tag>" and never
@@ -35,7 +35,7 @@ func TestTheBreakingCheckComparesAgainstTheReleaseBeforeThisOne(t *testing.T) {
 			want: "v0.2.0",
 		},
 		{
-			// The topology DEV-90 is about: every tag contains HEAD, and
+			// The topology YAD-90 is about: every tag contains HEAD, and
 			// --no-contains alone left nothing to compare against.
 			name: "a release from a strict ancestor of an earlier release compares against it",
 			build: func(r *repo) string {
@@ -48,7 +48,7 @@ func TestTheBreakingCheckComparesAgainstTheReleaseBeforeThisOne(t *testing.T) {
 			want: "v0.2.0",
 		},
 		{
-			// DEV-90 as measured: no release below either, so --no-contains
+			// YAD-90 as measured: no release below either, so --no-contains
 			// excluded every tag and the check went inert.
 			name: "a release from a strict ancestor, with nothing older, compares against the later release",
 			build: func(r *repo) string {

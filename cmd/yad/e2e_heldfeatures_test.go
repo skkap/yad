@@ -13,7 +13,7 @@ import (
 	"github.com/skkap/yad/internal/capability"
 )
 
-// The case DEV-169 closes, end to end: OpenCode's binary goes while a run on
+// The case YAD-169 closes, end to end: OpenCode's binary goes while a run on
 // it is held, so OpenCode is no longer drivable and Claude is the only harness
 // that is. Counted over the drivable harnesses alone, the runner-wide strings
 // would say steer again, and a hub reading only them would steer the OpenCode

@@ -86,7 +86,7 @@ func termios(t *testing.T, f *os.File) syscall.Termios {
 	return tio
 }
 
-// The bug in DEV-171, through a real terminal: an owner pastes a token into
+// The bug in YAD-171, through a real terminal: an owner pastes a token into
 // `yad account add claude tl --token -` and presses Enter. The command must
 // ask for it, keep it off the screen, and go on at the end of the line —
 // not wait for an end of input a person at a keyboard never sends.
@@ -300,7 +300,7 @@ func TestHubLoginRefusesATerminalThatEchoes(t *testing.T) {
 		"yad", "--profile", "default", "hub", "login", "start", "--hub", hubURL, "--token-file", tokFile, "r1", "claude", "work")
 }
 
-// DEV-177, through a real terminal: the code `yad hub login start` reads —
+// YAD-177, through a real terminal: the code `yad hub login start` reads —
 // with --code - or without — is pasted with echo off, after a prompt on
 // stderr, and sent; it is on no screen and in no output. Ctrl-C at the
 // prompt ends the command, cancels the login and leaves echo on.

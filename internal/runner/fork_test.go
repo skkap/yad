@@ -161,7 +161,7 @@ func TestAForkOfASessionTheRunnerCannotForkIsRefused(t *testing.T) {
 
 // Through yad hub: a fork queued while the session it forks was bound by a
 // claim whose acknowledging answer was lost ends when the hub unbinds that
-// session, rather than waiting queued for a runner nobody can name (DEV-151).
+// session, rather than waiting queued for a runner nobody can name (YAD-151).
 // The runner withdrew the claim and deleted the session with it, so there is
 // no conversation to copy, and the fork ends with the reason decision 0065
 // gives for a source with nothing to copy; its session closes, so a run

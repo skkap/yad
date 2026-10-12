@@ -9,7 +9,7 @@
 # as an upgrade because it compares version numbers, not commits. Nothing
 # downstream reliably catches it: `make check` passes on old code as readily as
 # on new. check-breaking compares the new release with the one below it in
-# version order, which here is the newer code (DEV-90). It fails only when that
+# version order, which here is the newer code (YAD-90). It fails only when that
 # newer code changed a protocol document.
 #
 # A rollback is still possible. Revert on top of the newest release and tag

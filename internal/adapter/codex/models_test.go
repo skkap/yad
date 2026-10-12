@@ -73,7 +73,7 @@ func TestModelsMissingOrBrokenAddNothing(t *testing.T) {
 
 // The document reaches every connected hub, so only what looks like a model
 // name leaves the file: never a path, a URL or a sentence someone wrote into
-// it (DEV-67).
+// it (YAD-67).
 func TestModelsCarryOnlyModelNames(t *testing.T) {
 	home := writeCache(t, `{"models":[
  {"slug":"/Users/someone/.codex/auth.json","visibility":"list","priority":1},

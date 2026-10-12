@@ -23,7 +23,7 @@ func ownerEnv(t *testing.T, env map[string]string) {
 // A grant named for a variable the owner's [env] declares is refused at the
 // claim, naming that variable and the way round it, and never quoting the
 // owner's value or naming what else [env] declares. A grant under any other
-// name is taken as before (DEV-188).
+// name is taken as before (YAD-188).
 func TestRefusesAGrantNamedForAnOwnerVariable(t *testing.T) {
 	const ownerValue = "unix:///owner/colima.sock"
 	ownerEnv(t, map[string]string{"DOCKER_HOST": ownerValue, "BASH_MAX_TIMEOUT_MS": "1800000"})

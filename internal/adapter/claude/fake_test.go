@@ -172,7 +172,7 @@ func fakeClaude() {
 		// the fake does turns on one, and reading it is what playing it
 		// cost. Two JSON parses of 32 MiB under -race were ten of
 		// TestOversizedLineIsSkipped's thirteen seconds, and a loaded
-		// machine stretched them past drive's bound (DEV-140).
+		// machine stretched them past drive's bound (YAD-140).
 		oversized := len(strings.TrimSuffix(line, "\n")) > adapter.MaxLine
 		if !oversized && json.Unmarshal([]byte(line), &f) == nil {
 			switch {

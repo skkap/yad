@@ -7,7 +7,7 @@ date: 2026-09-29
 A runner starts a claimed run only once a sync listing it has been answered
 without a `cancel` for it, and withdraws the claim — never started, no result
 owed — when the answer carries one ([0019](0019-a-run-starts-once-its-claim-is-acknowledged.md)).
-One path through that was left to the lease (DEV-114, noted by DEV-113): the
+One path through that was left to the lease (YAD-114, noted by YAD-113): the
 answer that acknowledged the claim is lost in transit, so the hub holds the run
 as claimed while the runner is still waiting to hear so, and a cancel asked
 for then reaches the runner first. The runner withdraws, as 0019 says, and
@@ -36,19 +36,19 @@ before. The rule holds too when a runner deregisters holding such a claim, so
 the three ways a withdrawn claim can reach a hub agree.
 
 **The session that claim bound goes back to unbound, at the sync that leaves
-the claim out** (DEV-143). The runner deletes the session a withdrawn claim
+the claim out** (YAD-143). The runner deletes the session a withdrawn claim
 opened, so a hub that keeps it bound sends the next run in it as continuing,
 to that runner alone, which refuses it as a session it does not hold. `yad hub`
 keeps which run's claim bound each session (`sessions.bound_by_run`) and
 unbinds the session only when the withdrawn claim is that run. A later claim
 in the session came after a run that ran, whose session the runner keeps
-(DEV-77: a session with a transcript is closed, never unbound); a session with
+(YAD-77: a session with a transcript is closed, never unbound); a session with
 a close asked for is closed on the runner rather than deleted, and the hub is
 waiting for that report; a lapsed lease cannot tell a withdrawal from silence,
 and a departed runner's sessions close. Each of those stays bound.
 
 **So does a lapsed claim the runner comes back listing as `claimed`**
-(DEV-148): the answer acknowledging it was lost, and then the runner was
+(YAD-148): the answer acknowledging it was lost, and then the runner was
 silent past the lease, so the hub ended the run — `lost`, or `cancelled`
 under the rule above — and answers the listing with a cancel. A claim still
 listed as `claimed` is one no answer acknowledged, and the hub will never

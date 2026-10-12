@@ -38,8 +38,8 @@ const (
 // call site that formats a warning or an error — which is the whole of what
 // the ring keeps — so what leaves the machine here is text a reviewer has
 // read, never text a run produced.
-// That is the guarantee DEV-60 had to add to HarnessReport.Error after the
-// fact, and DEV-67 to its Warnings.
+// That is the guarantee YAD-60 had to add to HarnessReport.Error after the
+// fact, and YAD-67 to its Warnings.
 //
 // One ring, and every connection reports from it, so a hub hears about trouble
 // that was not its own — "could not reach the hub" reaches hub B when it was

@@ -5,7 +5,7 @@ date: 2026-09-19
 # A failed resume ends the run, names why, and leaves the session to the hub
 
 A run that continues a session hands the harness the native id the session
-store holds — `--resume <native id>` for Claude. DEV-15 settles what the hub
+store holds — `--resume <native id>` for Claude. YAD-15 settles what the hub
 sees when that does not work, and when the pointer is written.
 
 **The pointer is written at spawn.** Claude's session id is chosen by YAD

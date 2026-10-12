@@ -19,13 +19,13 @@ agent no longer names the terminal it ran in.
 | `effort` | `plain` with `effort: low` on the `turn/start` |
 | `effort-rejected` | an effort the model does not take: the turn fails with Codex's own message |
 | `resume-missing` | `thread/resume` of a thread Codex has no rollout for |
-| `resume` | a second turn in a thread, resumed with `excludeTurns: true` (DEV-139); Codex still replays the first turn's usage before it |
+| `resume` | a second turn in a thread, resumed with `excludeTurns: true` (YAD-139); Codex still replays the first turn's usage before it |
 | `resume-context` | a second turn whose context the first did not have, injected before it as a developer message |
 | `interrupt` | `turn/interrupt` sent at the first text |
 | `steer` | `turn/steer` sent at the first tool call, answered in the same turn |
 | `approval` | `approval = "untrusted"`, `sandbox = "read-only"`: a command approval, declined |
 
-Recorded when forks arrived (DEV-48, decision 0065):
+Recorded when forks arrived (YAD-48, decision 0065):
 
 | Fixture | The run |
 |---|---|
@@ -33,7 +33,7 @@ Recorded when forks arrived (DEV-48, decision 0065):
 | `fork-missing` | `thread/fork` of a thread Codex has no rollout for: the same `no rollout found` as a resume |
 
 Recorded by `TestRecordModels` the same way, with no thread, so spending
-nothing (DEV-50):
+nothing (YAD-50):
 
 | Fixture | The conversation |
 |---|---|
@@ -50,7 +50,7 @@ exhausting an account or a context window:
 | `prompt-too-long` | the turn fails `contextWindowExceeded` |
 
 Written by hand from the schema: the device-code login a hub starts
-(DEV-135). Recording one needs a person to type the code at OpenAI, so until a
+(YAD-135). Recording one needs a person to type the code at OpenAI, so until a
 login is recorded by hand on a machine with Codex, the order of the
 notifications after a code is typed — and whether `auth.json` is written
 before `account/login/completed` — is what the schema suggests, not what Codex

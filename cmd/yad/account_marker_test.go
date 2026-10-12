@@ -15,7 +15,7 @@ import (
 )
 
 // `yad account remove` marks the home before config.toml drops the label
-// (DEV-160, decision 0070), so what stops it half-way leaves a home the
+// (YAD-160, decision 0070), so what stops it half-way leaves a home the
 // daemon's next start finishes, and never an unlisted home with nothing to say
 // it is going.
 
@@ -147,7 +147,7 @@ func TestAccountAddTakesTheRemovalMarkerOff(t *testing.T) {
 
 // A daemon that holds the lock and does not answer Keep may still hold the
 // label as doomed, and delete its home when the last run on it ends — in the
-// middle of the login (DEV-167). The add stops before the login and before it
+// middle of the login (YAD-167). The add stops before the login and before it
 // takes the marker off, and says to run it again once the daemon answers.
 func TestAccountAddStopsWhenTheDaemonDoesNotAnswerKeep(t *testing.T) {
 	for _, tc := range []struct {

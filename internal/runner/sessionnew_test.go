@@ -73,7 +73,7 @@ func TestASessionWhoseFirstRunNeverBoundItOpensWithTheNext(t *testing.T) {
 			return l2
 		}},
 		{"cancelled after the answer acknowledging its claim was lost", func(t *testing.T, e *env, l *Loop) *Loop {
-			// DEV-143. The hub binds s1 at the listing whose answer never
+			// YAD-143. The hub binds s1 at the listing whose answer never
 			// arrives, so it holds a as claimed while the runner waits.
 			h := &losesAnswer{Hub: l.Hub}
 			l.Hub = h
@@ -180,7 +180,7 @@ func TestAnAcknowledgedClaimKeepsItsSessionAtRestart(t *testing.T) {
 	}
 }
 
-// lapseUnacknowledged is DEV-148. The hub binds s1 at the listing that claims
+// lapseUnacknowledged is YAD-148. The hub binds s1 at the listing that claims
 // a, whose answer never arrives, and the runner is then silent past the
 // lease: the sweep ends a lost, or cancelled when a cancel was asked for
 // meanwhile (decision 0061). Back, the runner lists a as claimed, which the

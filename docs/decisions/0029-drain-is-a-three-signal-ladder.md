@@ -6,7 +6,7 @@ date: 2026-09-19
 
 A runner is stopped for an upgrade, a reboot or a retiring machine, and each of
 those should cost no run that was about to finish. DOMAIN.md defines **drain**
-— stop claiming, let live runs finish, then exit — and DEV-13 put it on the
+— stop claiming, let live runs finish, then exit — and YAD-13 put it on the
 signals a runner already gets.
 
 **Three signals, counted.** The first stop signal (SIGTERM or SIGINT) drains.

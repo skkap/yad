@@ -19,7 +19,7 @@ import (
 	"github.com/skkap/yad/internal/supervise"
 )
 
-// Pinning the app-server protocol (DEV-22, decision 0037). The app-server is
+// Pinning the app-server protocol (YAD-22, decision 0037). The app-server is
 // marked experimental and Codex ships weekly; the adapter was written against
 // what `codex app-server generate-json-schema` says for the version below.
 // A runner checks the installed version's schema against it and reports
@@ -205,7 +205,7 @@ const schemaTimeout = 10 * time.Second
 // warning it becomes is copied into the capability document, which every
 // connected hub reads, so it is a type of its own rather than an error: an
 // error's text is where a child's stderr, the exec path under the owner's home
-// and the temp directory's absolute path end up (DEV-67; DEV-60 found the same
+// and the temp directory's absolute path end up (YAD-67; YAD-60 found the same
 // in Error). Every value is one of those below. What codex printed and what
 // the OS said are not kept: the warning names where the owner looks instead —
 // the command, run by hand, which prints all of it, or for the temp directory,

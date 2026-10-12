@@ -174,7 +174,7 @@ func runForeground(ctx context.Context, g global, interval time.Duration, w io.W
 	noted := modelsNoted{}
 	monitor := runner.NewMonitor()
 	// The harnesses with a run held count in the runner-wide per-run
-	// features whether or not they are drivable now (DEV-169). Read after
+	// features whether or not they are drivable now (YAD-169). Read after
 	// the probe, so a run claimed while it ran is counted; one claimed after
 	// this read asks for a recount. A read that fails counts none, which is
 	// the document a runner with no run in hand sends: the strings then

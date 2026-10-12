@@ -93,7 +93,7 @@ code would end succeeded and remove the token. A plain `yad account add`
 counts the same way.
 
 A link login's harness is given a browser that opens nothing (`BROWSER=true`;
-[DEV-133](https://zumino.cc/app/yad/t/DEV-133)). Measured on claude 2.1.282:
+[YAD-133](https://zumino.cc/app/yad/t/YAD-133)). Measured on claude 2.1.282:
 over pipes it still opens the machine's browser before printing the link, and
 a browser there signed in to claude.ai finishes the login through its own
 callback — as whoever is signed in there, with no code. A hub login is signed

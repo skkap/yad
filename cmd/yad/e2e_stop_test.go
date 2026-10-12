@@ -17,7 +17,7 @@ import (
 )
 
 // yad daemon stop against a runner that is listening but slow to answer
-// (DEV-65). The runner holds a run and a drain wait of an hour, so only a
+// (YAD-65). The runner holds a run and a drain wait of an hour, so only a
 // second stop could cancel it: whatever the CLI concludes from a late answer,
 // the runner hears one stop, drains, and the run finishes. Before the fix the
 // daemon acted on the first line of the ask, the CLI took the late answer for

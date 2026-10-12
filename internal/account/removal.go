@@ -13,7 +13,7 @@ import (
 )
 
 // A removal outlives the process that started it in one way only: a marker
-// file inside the home, written before config.toml drops the label (DEV-160,
+// file inside the home, written before config.toml drops the label (YAD-160,
 // decision 0070). Everything else a removal knows — that a run is still in
 // the home and the home goes when it ends, or that the rename out of the
 // account's path failed — is in the daemon's memory, and a daemon killed

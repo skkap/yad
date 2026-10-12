@@ -63,7 +63,7 @@ func Run(ctx context.Context, spec Spec, limit int) (Capture, error) {
 	// These three only say when to stop waiting. Once a deadline fires all of
 	// them are ready — its kill ends the leader and closes the pipe — and Go
 	// picks among ready cases at random, so none of them may decide TimedOut
-	// (DEV-70). The reap in Start does.
+	// (YAD-70). The reap in Start does.
 	case <-p.Done():
 	case <-ctx.Done():
 	}

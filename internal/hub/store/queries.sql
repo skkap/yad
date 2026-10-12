@@ -63,7 +63,7 @@ UPDATE sessions SET runner_id = sqlc.arg(runner_id), bound_by_run = sqlc.arg(run
 WHERE id = sqlc.arg(id) AND runner_id IS NULL;
 
 -- A session goes back to unbound when the claim that bound it was withdrawn
--- (DEV-143): the runner deletes the session a withdrawn claim opened, so the
+-- (YAD-143): the runner deletes the session a withdrawn claim opened, so the
 -- next run in it must open it again, wherever it is offered. Only that claim
 -- unbinds it. Any later run in the session was offered after it, continuing
 -- a session its runner held, and withdrawing one of those leaves the session
@@ -96,7 +96,7 @@ SELECT * FROM runs WHERE id = ?;
 -- bound to it, and never while another run of that session is out, since a
 -- session has at most one live run. Nor in a session whose close is asked
 -- for: the runner acts on close_session before the offers beside it and would
--- refuse the run, which instead ends with the close once reported (DEV-120).
+-- refuse the run, which instead ends with the close once reported (YAD-120).
 -- Nor in one whose release is asked for: the run waits to hear whether it
 -- goes to the same runner or, released, to any (decision 0084) -- any but
 -- the ones it was ever released from, each of which closed it and keeps the
@@ -225,7 +225,7 @@ ON CONFLICT (run_id) DO NOTHING;
 -- name: GetResult :one
 SELECT * FROM results WHERE run_id = ?;
 
--- Admin tokens and the service API (DEV-7). Kept in one block so the runner's
+-- Admin tokens and the service API (YAD-7). Kept in one block so the runner's
 -- events and result queries can land beside it without a merge fight.
 
 -- name: CreateAdminToken :exec
@@ -240,7 +240,7 @@ SELECT name, created_at FROM admin_tokens ORDER BY name;
 -- name: RevokeAdminToken :execrows
 DELETE FROM admin_tokens WHERE name = ?;
 
--- Events and results (DEV-6): the protocol's two reporting calls.
+-- Events and results (YAD-6): the protocol's two reporting calls.
 
 -- name: EventSeqsFrom :many
 SELECT seq FROM events WHERE run_id = sqlc.arg(run_id) AND seq > sqlc.arg(after) ORDER BY seq LIMIT sqlc.arg(max);
@@ -262,7 +262,7 @@ SELECT e.seq, e.body FROM events e JOIN runs r ON r.id = e.run_id
 WHERE e.run_id = sqlc.arg(run_id) AND e.seq > sqlc.arg(after) AND e.seq <= r.events_through
 ORDER BY e.seq LIMIT sqlc.arg(max);
 
--- Cancel, interrupt and steer (DEV-8).
+-- Cancel, interrupt and steer (YAD-8).
 
 -- name: AddControl :exec
 INSERT INTO run_controls (run_id, kind, text, created_at) VALUES (?, ?, ?, ?);
@@ -296,7 +296,7 @@ WHERE id = sqlc.arg(id) AND closed_at IS NULL;
 -- A runner's report closes a session bound to it, or an unbound one whose
 -- run was last offered to it: its claim may have been withdrawn before any
 -- sync listed it, and the close its owner asked for meanwhile is still owed
--- (DEV-103). Such a session is bound to the reporter as it closes, since
+-- (YAD-103). Such a session is bound to the reporter as it closes, since
 -- whatever it left is on that runner's disk. A repeat changes nothing, and a
 -- report from any other runner is not applied.
 -- name: RecordSessionClosed :execrows

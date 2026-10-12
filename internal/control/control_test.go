@@ -97,7 +97,7 @@ func TestStatusAndSingleInstance(t *testing.T) {
 // However many times it is asked, a daemon stops once. The handler is slow on
 // purpose: a daemon answers a stop before acting on it, so a goroutine
 // descheduled between the two — routine on a loaded machine — is what this
-// test must count across, and only halt waits for it (DEV-92).
+// test must count across, and only halt waits for it (YAD-92).
 func TestStopIsAskedOnce(t *testing.T) {
 	p := testPaths(t)
 	var stops atomic.Int32
@@ -126,7 +126,7 @@ func TestStopIsAskedOnce(t *testing.T) {
 	}
 }
 
-// A stop the CLI did not confirm is never acted on (DEV-65). The CLI gives up
+// A stop the CLI did not confirm is never acted on (YAD-65). The CLI gives up
 // on an ask whose acknowledgement is late — a daemon slow to accept, an answer
 // slow in transit — and falls back to SIGTERM. Had the daemon acted on the ask
 // too, that SIGTERM would be the runner's second stop and cancel every run it

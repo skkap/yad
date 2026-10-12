@@ -71,7 +71,7 @@ func defaultLogin(ctx context.Context, d harness.Detected) (errMsg, warning stri
 	}
 	a = loginAnswer{until: loginNow().Add(loginRecheck)}
 	// Neither message quotes what the harness printed or names a path: both
-	// travel to every hub (DEV-60, DEV-67).
+	// travel to every hub (YAD-60, YAD-67).
 	switch {
 	case err != nil:
 		a.warning = "yad could not tell whether it is logged in, and runs may fail — as the runner's user, " + probed(d).Try(command(d, account.StatusArgs(d.ID)), "what it says")

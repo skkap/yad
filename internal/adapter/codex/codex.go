@@ -65,7 +65,7 @@ var (
 	handshakeTimeout = 30 * time.Second
 	// exitGrace is how long the app-server gets to exit once the turn is over
 	// and its input is closed. It exits at once; anything longer is a server
-	// that will not, and its group is killed (DEV-21).
+	// that will not, and its group is killed (YAD-21).
 	exitGrace = 2 * time.Second
 	// drainGrace is how long the reader keeps going after the app-server has
 	// exited, for output already in the pipe. Anything holding the pipe open
@@ -186,7 +186,7 @@ type turn struct {
 	interrupted bool
 	// owed is a turn/interrupt deferred to the turn's id that Codex's full
 	// input refused when the id came. Interrupt has already said it was
-	// delivered, so the adapter sends it once the input has room (DEV-185).
+	// delivered, so the adapter sends it once the input has room (YAD-185).
 	owed  bool
 	begun chan struct{} // closed once the turn has an id, or will never have one
 
@@ -247,7 +247,7 @@ func (t *turn) Steer(text string) error {
 		return errors.New("codex did not take the steer in time — it may still arrive; watch for it in the answer before sending it again")
 	}
 	// Codex's words, masked as refused masks them: the runner quotes them
-	// in an error event, which goes to a hub (DEV-192).
+	// in an error event, which goes to a hub (YAD-192).
 	return errors.New("codex refused the steer: " + adapter.Mask(err.Error(), t.spec.Env, t.spec.Secrets))
 }
 
@@ -263,7 +263,7 @@ func (t *turn) Steer(text string) error {
 // (internal/runner, control). A deferred one has already counted, so the
 // hub will not repeat it; if Codex's input is full when the id arrives, the
 // adapter itself sends it once the input has room, unless the turn has
-// ended by then (DEV-185).
+// ended by then (YAD-185).
 func (t *turn) Interrupt() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -451,7 +451,7 @@ func (t *turn) respond(method string, m *Message) {
 		// A fork is a resume into a new thread, and its developerInstructions
 		// are read no sooner than a resume's: until a compaction the copy
 		// opens with the forked thread's (decision 0050; measured for forks
-		// on 0.157.1, DEV-150, decision 0065).
+		// on 0.157.1, YAD-150, decision 0065).
 		if method != "thread/start" && t.spec.Brief.Context != "" {
 			t.send("thread/inject_items", injectContext(r.Thread.ID, t.spec.Brief.Context))
 			return
@@ -485,7 +485,7 @@ func (t *turn) respond(method string, m *Message) {
 // the runner does not. Absent, Codex uses its configured default: the
 // protocol says an effort holds for later turns, but each run is its own
 // app-server, and a resumed thread was measured running at the default
-// again after a run that set low (DEV-124, decision 0049).
+// again after a run that set low (YAD-124, decision 0049).
 func turnStart(thread string, spec adapter.Spec) map[string]any {
 	params := map[string]any{"threadId": thread, "input": textInput(spec.Brief.Instruction)}
 	if spec.Effort != "" {
@@ -518,7 +518,7 @@ func (t *turn) startThread() {
 	// thread's id is read, its turns never are. Without excludeTurns the
 	// answer carries every one of them — one line that grows with the
 	// session toward adapter.MaxLine — and, since 0.157.1, a deprecation
-	// notice saying hydration is going away (DEV-139). 0.147.0 refused the
+	// notice saying hydration is going away (YAD-139). 0.147.0 refused the
 	// field; it is no longer pinned (decision 0067).
 	if t.asked != "" {
 		params["threadId"] = t.asked
@@ -540,7 +540,7 @@ func (t *turn) startThread() {
 // before the run's turn. Measured on Codex 0.147.0: thread/resume's
 // developerInstructions reach the model only after a compaction, so a
 // continuing run otherwise works under the context of the run that opened the
-// session; measured on 0.157.1, thread/fork's are the same (DEV-150). Injected
+// session; measured on 0.157.1, thread/fork's are the same (YAD-150). Injected
 // on every resumed or forked run that has a context, so each run's own is the
 // latest one the model has read; one that has none injects nothing (decisions
 // 0050 and 0065).
@@ -560,7 +560,7 @@ func setting(spec adapter.Spec, key, def string) string {
 
 // refused ends the run on a request Codex answered with an error. Its words
 // are quoted masked, as its stderr is: the run's error goes to a hub, and a
-// Codex that could not use a credential may quote it back (DEV-192).
+// Codex that could not use a credential may quote it back (YAD-192).
 func (t *turn) refused(method string, e *RPCError) {
 	said := adapter.Mask(e.Message, t.spec.Env, t.spec.Secrets)
 	switch {

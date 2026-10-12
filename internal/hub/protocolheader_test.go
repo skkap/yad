@@ -15,7 +15,7 @@ import (
 // The Yad-Protocol header is enforced by protocolRoutes, outside huma, and
 // declared to huma separately so it reaches the documents. Nothing ties the
 // two together, and once they drifted for the whole of v1: the header was
-// enforced on every call and declared on none (DEV-93). So enforcement is
+// enforced on every call and declared on none (YAD-93). So enforcement is
 // measured here rather than assumed — every operation of each document is
 // called without the header — and the document must declare exactly where the
 // hub refuses: a required Yad-Protocol of 1, and the 426 the refusal is.

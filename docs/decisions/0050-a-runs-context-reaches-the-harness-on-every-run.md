@@ -6,7 +6,7 @@ date: 2026-09-24
 
 HUB.md promised that `brief.context` is appended to the harness's system
 prompt and survives compaction. Zumino's hub found it true only for a
-session's first run (DEV-122, from ZUM-75): a question put only in a
+session's first run (YAD-122, from ZUM-75): a question put only in a
 continuing run's context went unanswered, and an automation's standing
 instructions, which Zumino puts in context, were obeyed on a session's first
 run and ignored on its continuations.

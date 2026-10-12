@@ -54,7 +54,7 @@ type AddControlParams struct {
 	CreatedAt int64
 }
 
-// Cancel, interrupt and steer (DEV-8).
+// Cancel, interrupt and steer (YAD-8).
 func (q *Queries) AddControl(ctx context.Context, arg AddControlParams) error {
 	_, err := q.db.ExecContext(ctx, addControl,
 		arg.RunID,
@@ -279,7 +279,7 @@ type CreateAdminTokenParams struct {
 	CreatedAt int64
 }
 
-// Admin tokens and the service API (DEV-7). Kept in one block so the runner's
+// Admin tokens and the service API (YAD-7). Kept in one block so the runner's
 // events and result queries can land beside it without a merge fight.
 func (q *Queries) CreateAdminToken(ctx context.Context, arg CreateAdminTokenParams) error {
 	_, err := q.db.ExecContext(ctx, createAdminToken, arg.Hash, arg.Name, arg.CreatedAt)
@@ -557,7 +557,7 @@ type EventSeqsFromParams struct {
 	Max   int64
 }
 
-// Events and results (DEV-6): the protocol's two reporting calls.
+// Events and results (YAD-6): the protocol's two reporting calls.
 func (q *Queries) EventSeqsFrom(ctx context.Context, arg EventSeqsFromParams) ([]int64, error) {
 	rows, err := q.db.QueryContext(ctx, eventSeqsFrom, arg.RunID, arg.After, arg.Max)
 	if err != nil {
@@ -1221,7 +1221,7 @@ type OfferCandidatesParams struct {
 // bound to it, and never while another run of that session is out, since a
 // session has at most one live run. Nor in a session whose close is asked
 // for: the runner acts on close_session before the offers beside it and would
-// refuse the run, which instead ends with the close once reported (DEV-120).
+// refuse the run, which instead ends with the close once reported (YAD-120).
 // Nor in one whose release is asked for: the run waits to hear whether it
 // goes to the same runner or, released, to any (decision 0084) -- any but
 // the ones it was ever released from, each of which closed it and keeps the
@@ -1522,7 +1522,7 @@ type RecordSessionClosedParams struct {
 // A runner's report closes a session bound to it, or an unbound one whose
 // run was last offered to it: its claim may have been withdrawn before any
 // sync listed it, and the close its owner asked for meanwhile is still owed
-// (DEV-103). Such a session is bound to the reporter as it closes, since
+// (YAD-103). Such a session is bound to the reporter as it closes, since
 // whatever it left is on that runner's disk. A repeat changes nothing, and a
 // report from any other runner is not applied.
 func (q *Queries) RecordSessionClosed(ctx context.Context, arg RecordSessionClosedParams) (int64, error) {
@@ -2170,7 +2170,7 @@ type UnbindWithdrawnSessionParams struct {
 }
 
 // A session goes back to unbound when the claim that bound it was withdrawn
-// (DEV-143): the runner deletes the session a withdrawn claim opened, so the
+// (YAD-143): the runner deletes the session a withdrawn claim opened, so the
 // next run in it must open it again, wherever it is offered. Only that claim
 // unbinds it. Any later run in the session was offered after it, continuing
 // a session its runner held, and withdrawing one of those leaves the session

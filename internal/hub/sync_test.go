@@ -447,7 +447,7 @@ func TestASyncIsRefusedOnlyOverWhatRoutingReads(t *testing.T) {
 }
 
 // A capability document naming another runner is refused like a body naming
-// one (DEV-120): stored, it would describe this runner by a document written
+// one (YAD-120): stored, it would describe this runner by a document written
 // for another, and which of the two ids the hub believes would be a guess.
 func TestASyncWhoseDocumentNamesAnotherRunnerIsRefused(t *testing.T) {
 	f := newFixture(t)

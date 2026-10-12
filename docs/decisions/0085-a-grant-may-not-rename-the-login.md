@@ -6,7 +6,7 @@ date: 2026-10-12
 
 Amends [0038](0038-the-owner-trusts-the-hubs-it-connects.md)'s grant list, for
 the reason [0040](0040-a-grant-may-not-move-a-run-off-its-account.md) gives
-for its own. DEV-193, found by review on DEV-188.
+for its own. YAD-193, found by review on YAD-188.
 
 Claude on macOS keeps a home's login in the Keychain, in an item whose account
 attribute is `$USER` ([0070](0070-a-claude-accounts-keychain-login-goes-with-its-home.md)),

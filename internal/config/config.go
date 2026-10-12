@@ -296,7 +296,7 @@ const (
 	// is answered. The slow starts known so far — Claude connecting its MCP
 	// servers or running a SessionStart hook first, an ACP agent's cold
 	// start under its 60 s handshake bound — fit inside two minutes,
-	// and a harness wedged before its first word (DEV-170: three runs sat
+	// and a harness wedged before its first word (YAD-170: three runs sat
 	// for 3+ minutes) is told apart 28 minutes sooner than the inactivity
 	// timeout would (decision 0075).
 	DefaultFirstOutput = 2 * time.Minute

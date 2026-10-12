@@ -13,7 +13,7 @@ import (
 	"github.com/skkap/yad/protocol/hubapi"
 )
 
-// The whole of DEV-36 end to end: a real daemon syncs with a real hub, and
+// The whole of YAD-36 end to end: a real daemon syncs with a real hub, and
 // `yad hub runners` shows what that machine said about itself. Nothing here is
 // hand-built — the health is what the runner computed and sent.
 func TestE2EHubShowsRunnerHealth(t *testing.T) {
@@ -58,7 +58,7 @@ func TestE2EHubShowsRunnerHealth(t *testing.T) {
 	if len(h.Harnesses) == 0 {
 		t.Fatalf("no harness health:\n%s", d.out.String())
 	}
-	// The e2e machine configures no accounts, so this is the case DEV-26
+	// The e2e machine configures no accounts, so this is the case YAD-26
 	// settled, proved end to end: the harness runs on its own login, reports
 	// zero accounts, is ready, and nothing about it is an error.
 	for _, hh := range h.Harnesses {

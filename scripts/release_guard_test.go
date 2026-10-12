@@ -8,7 +8,7 @@ import (
 )
 
 // scripts/release-guard.sh refuses a release tagged on a commit an earlier
-// release already contains, the topology DEV-90 found, and nothing else.
+// release already contains, the topology YAD-90 found, and nothing else.
 func TestTheReleaseGuardRefusesOnlyOlderCode(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

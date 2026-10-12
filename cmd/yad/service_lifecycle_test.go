@@ -39,7 +39,7 @@ type fakeService struct {
 }
 
 // withService gives the lifecycle's profile a loaded unit with nothing
-// running under it — what `launchctl list` showed in DEV-173.
+// running under it — what `launchctl list` showed in YAD-173.
 func withService(l *lifecycle) *fakeService {
 	l.t.Helper()
 	f := &fakeService{t: l.t, p: l.p, loaded: true, file: filepath.Join(l.t.TempDir(), "yad.runner.default.plist"),
@@ -157,7 +157,7 @@ func (f *fakeService) Start(_ context.Context, p string) error {
 	return nil
 }
 
-// DEV-173: a restart of a runner that is a launchd job or a systemd unit
+// YAD-173: a restart of a runner that is a launchd job or a systemd unit
 // starts it through the service manager, so the manager watches the new
 // daemon and restarts it after a crash. From the state the report found — a
 // daemon spawned outside the unit holding the lock, the job loaded with no

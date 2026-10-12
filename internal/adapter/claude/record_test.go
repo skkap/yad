@@ -56,7 +56,7 @@ type scenario struct {
 	// answer instead of at the API: "retry" for a 429 claude gets past by
 	// itself, "limit" for one it never does. A scenario with it spends no
 	// token and needs no login, and it is the only way to record an
-	// exhausted account without exhausting one (DEV-24, DEV-27).
+	// exhausted account without exhausting one (YAD-24, YAD-27).
 	instrument string
 }
 
@@ -286,7 +286,7 @@ func transcript(t *testing.T, home, id string) []byte {
 
 // TestRecordModels keeps what list_models answers for the recording login, as
 // testdata/claude-<version>/list-models.jsonl. No user message is sent, so it
-// runs no turn and spends no token (DEV-50):
+// runs no turn and spends no token (YAD-50):
 //
 //	YAD_REAL_HARNESS=1 go test -tags realharness -run TestRecordModels -v ./internal/adapter/claude/
 func TestRecordModels(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 
 // A token account's home carries its token as the login a claude started by
 // the run finds there, since Claude Code hands CLAUDE_CODE_OAUTH_TOKEN to no
-// child (DEV-172). Only a login yad marked, with no refresh token, is yad's:
+// child (YAD-172). Only a login yad marked, with no refresh token, is yad's:
 // any other is never touched, and what Claude keeps beside the login stays.
 func TestATokenAccountsHomeCarriesItsLoginForANestedClaude(t *testing.T) {
 	const first, second = "sk-ant-oat01-first", "sk-ant-oat01-second"

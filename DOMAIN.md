@@ -104,7 +104,7 @@ OS, arch, labels, `yad` version, the harness list with versions and accounts,
 host tools, capacity, and the protocol features it supports. Public surface —
 every field is one somebody will depend on.
 _Rules_: Every connected hub reads it, so the runner writes it without a path
-on the machine and without quoting what a harness or tool printed (DEV-67). A
+on the machine and without quoting what a harness or tool printed (YAD-67). A
 run's error goes only to the hub that sent the run, and may name a path
 ([0064](docs/decisions/0064-a-runs-error-may-name-a-path-on-the-runner.md)).
 A **per-run feature** — steer, interrupt, effort, fork, release — is the harness's:
@@ -255,7 +255,7 @@ in between. It is not ready for a cool-down — 15 minutes, doubling with each
 further silent run to at most 4 hours — and then tried again; it carries
 `silent_until` meanwhile.
 _Rules_: Kept per home, because the one cause known is a home shared with
-another harness running there (DEV-170) and an account is a home of its own.
+another harness running there (YAD-170) and an account is a home of its own.
 A run on it that produces any event clears it, a daemon start ends its
 cool-down and keeps its count, and removing the account forgets it. Never a
 fourth account state. Another Claude found running from a home is a warning

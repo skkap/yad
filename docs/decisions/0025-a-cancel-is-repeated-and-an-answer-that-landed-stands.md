@@ -4,7 +4,7 @@ date: 2026-09-19
 
 # A cancel is repeated until the run ends, and an answer that landed first stands
 
-`yad hub cancel`, `interrupt` and `steer` (DEV-8) reach a runner as controls in
+`yad hub cancel`, `interrupt` and `steer` (YAD-8) reach a runner as controls in
 its sync responses, and the runner acts on them through the cancel ladder of
 ARCHITECTURE.md §3. Four things about that were not settled by the protocol as
 written.

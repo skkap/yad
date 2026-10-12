@@ -6,9 +6,9 @@ date: 2026-09-22
 
 A runner that deregisters is settled at once: its held runs are lost, its
 offers requeued, its sessions closed with the runs queued in them ended
-(DEV-77). A runner that simply stops syncing — crashed, switched off, cut off —
+(YAD-77). A runner that simply stops syncing — crashed, switched off, cut off —
 was settled only for the runs it held, whose leases lapse. Two things were left
-to each hub to invent (DEV-94): when it may take back an **offer** the runner
+to each hub to invent (YAD-94): when it may take back an **offer** the runner
 never claimed, since re-offering was defined by a *next* sync that never comes;
 and when it may give up the runner's **sessions**, whose later runs go to that
 runner alone and so wait for good. A fresh agent writing a hub from HUB.md

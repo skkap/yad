@@ -13,7 +13,7 @@ import (
 // A gh that only YAD_GH_PATH finds is advertised as this runner's gh, so it is
 // the gh a harness's own `gh pr create` runs — not a different one PATH
 // happens to hold, nor none at all. The override's file is not even called gh
-// (DEV-107, 0045).
+// (YAD-107, 0045).
 func TestE2EAHarnessChildRunsTheOverridesGH(t *testing.T) {
 	m := newMachine(t, claudeE2E)
 	override := filepath.Join(t.TempDir(), "gh-beta")

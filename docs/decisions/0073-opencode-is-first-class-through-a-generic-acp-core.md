@@ -13,8 +13,8 @@ speaks it natively. Not Claude or Codex, which keep their own adapters
 ([0006](0006-claude-by-stream-json-codex-by-app-server.md)): each native
 protocol carries what ACP lacks — steer, usage windows, a system prompt.
 
-The research of 2026-09-30 (on DEV-44) compared the four; the owner decided
-OpenCode first, Copilot next, Gemini and Cursor not now. DEV-44.
+The research of 2026-09-30 (on YAD-44) compared the four; the owner decided
+OpenCode first, Copilot next, Gemini and Cursor not now. YAD-44.
 
 ## Decision
 

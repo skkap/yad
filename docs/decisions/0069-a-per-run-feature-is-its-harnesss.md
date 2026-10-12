@@ -1,5 +1,5 @@
 ---
-status: amended on 2026-09-30 (DEV-168) — the runner-wide strings are computed over the harnesses the machine can drive, not the build's catalog, and a machine that can drive none lists no per-run feature — and on 2026-10-12 (DEV-169), where a harness with a run held counts too, drivable or not
+status: amended on 2026-09-30 (YAD-168) — the runner-wide strings are computed over the harnesses the machine can drive, not the build's catalog, and a machine that can drive none lists no per-run feature — and on 2026-10-12 (YAD-169), where a harness with a run held counts too, drivable or not
 date: 2026-09-30
 ---
 
@@ -10,11 +10,11 @@ runner does: `steer`, `interrupt`, `effort` and `fork`. Until now each was one
 runner-wide string, advertised only while every first-class adapter
 supported it (decisions 0049, 0065), with a test holding the two together.
 That was fine while Claude and Codex were the only harnesses and both did all
-four. The next harnesses are driven over the Agent Client Protocol (DEV-44),
+four. The next harnesses are driven over the Agent Client Protocol (YAD-44),
 and ACP has no steer at all; Copilot, Cursor and Gemini have no fork. Made
 first-class under the old rule, any one of them would switch the feature off
 for Claude and Codex runs on every runner of that build. The owner decided on
-2026-09-30 that the features become per harness first. DEV-158.
+2026-09-30 that the features become per harness first. YAD-158.
 
 ## Decision
 
@@ -42,7 +42,7 @@ only more cautious than it needs to be, holding back a Claude run's steer
 because another harness this build drives takes none. "Every first-class
 harness" is the build's catalog, not what is installed on the machine: the
 strings stay a fact about the build, as they were, rather than moving with
-detection. *(Amended below, DEV-168: every harness the machine can drive.)*
+detection. *(Amended below, YAD-168: every harness the machine can drive.)*
 
 **Gating reads the run's harness.** `capability.RunMayUse(doc, harness,
 feature)` is the one rule: the harness's list beside `harness_features`, the
@@ -61,9 +61,9 @@ runner's own refusals stay as they were: an effort or a fork handed to an
 adapter that cannot is refused, class `refused`, and a steer to a turn that
 takes none is an `error` event, class `steer_failed`.
 
-## Amendment: over what the machine can drive (DEV-168)
+## Amendment: over what the machine can drive (YAD-168)
 
-OpenCode became first-class on the same day (DEV-44,
+OpenCode became first-class on the same day (YAD-44,
 [0073](0073-opencode-is-first-class-through-a-generic-acp-core.md)), and ACP
 v1 has no steer. Under the build's catalog every yad runner stopped
 advertising `steer` runner-wide — including the many with no OpenCode
@@ -108,14 +108,14 @@ strings may steer that run. The runner answers with an `error` event, class
 `steer_failed`, and the run goes on. Counting the harnesses with live runs
 as well would close it, at the price of the document depending on the
 runner's run state; one failed steer in that window was judged not worth it.
-*(Closed by the second amendment below, DEV-169.)*
+*(Closed by the second amendment below, YAD-169.)*
 
 The conformance suite's document is unchanged, and still a probe: a yad
 runner's runner-wide strings still only name what every harness it can drive
 lists, with OpenCode or without it, which a test in `internal/conformance`
 checks against both machines.
 
-## Amendment: and the harnesses with runs held (DEV-169)
+## Amendment: and the harnesses with runs held (YAD-169)
 
 The gap the first amendment accepted is closed. **A harness counts in the
 runner-wide strings while a run on it is held** — claimed, preparing,

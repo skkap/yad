@@ -6,14 +6,14 @@ date: 2026-09-19
 
 `yad daemon stop` asks the daemon over the control socket for a graceful stop.
 The daemon answers first and then calls one function, `gracefulStop` in
-`cmd/yad/cmd_daemon.go`. That function is the seam with drain (DEV-13). Today it
+`cmd/yad/cmd_daemon.go`. That function is the seam with drain (YAD-13). Today it
 does what Ctrl-C does: the runner's context ends, and runs in flight stay held
 for the next start. Drain replaces its body. The socket stays up until the
 process exits, so `yad status` shows a stopping daemon and the runs it waits on.
 `stop` waits `--timeout` (1m) for the lock to be released.
 
 The ask is two lines, so the CLI can tell an ask the daemon never acted on
-from one it did (DEV-65). The CLI sends `stop`; the daemon acknowledges it and
+from one it did (YAD-65). The CLI sends `stop`; the daemon acknowledges it and
 does nothing yet; the CLI sends `confirm`, and only that makes the daemon
 answer and call `gracefulStop`. A daemon that never acknowledged has acted on
 nothing — an ask it reads after the CLI gave up is dropped — so a signal is
@@ -45,7 +45,7 @@ running. Multica lost working daemons by restarting into a revoked login
 a sync, and a sync from a second process would renew or drop the running
 daemon's leases and could be handed offers the daemon then never lists. A real
 authentication probe needs a protocol call of its own, and that is in the
-backlog (DEV-11).
+backlog (YAD-11).
 
 A background start re-executes the binary as `daemon start --foreground` with
 `setsid`, stdout to `/dev/null` and stderr to `logs/stderr.log`. It returns only

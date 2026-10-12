@@ -473,7 +473,7 @@ func TestACutReasonIsNotQuoted(t *testing.T) {
 }
 
 // path_sources = false refuses a directory inside the roots, and says that the
-// setting refused it rather than the roots (DEV-72). A repository on the
+// setting refused it rather than the roots (YAD-72). A repository on the
 // network still goes: it is not a source on the machine.
 func TestPathSourcesOff(t *testing.T) {
 	f := newFixture(t)
@@ -623,7 +623,7 @@ func TestSetupHookFails(t *testing.T) {
 
 // A hook that will not start fails the run in the runner's words: the exec
 // error names the hook by its absolute path, under the owner's home, and the
-// run's error goes to a hub (DEV-67).
+// run's error goes to a hub (YAD-67).
 func TestSetupHookThatWillNotStart(t *testing.T) {
 	f := newFixture(t)
 	o := newOrigin(t, f.root, "acme", map[string]string{hookPath: "#!/nonexistent/interpreter\n"})

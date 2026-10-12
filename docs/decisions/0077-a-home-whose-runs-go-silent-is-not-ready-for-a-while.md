@@ -4,17 +4,17 @@ date: 2026-10-11
 
 # A home whose runs go silent is not ready for a while, and another Claude in it is a warning
 
-DEV-170 found a Mac runner whose every Claude run hung before its first word.
+YAD-170 found a Mac runner whose every Claude run hung before its first word.
 Decision 0075 made such a run stop after two minutes, ending `harness_silent`.
 It left the readiness question open: `yad doctor`, the capability document and
 health all still said Claude was ready, so a hub kept sending it work, and
 each run failed the same way. Every check that would catch the hang runs the
 model, which spends a token and needs the network, and no probe may do either
-(DEV-175).
+(YAD-175).
 
 ## Decision
 
-The maintainer chose both directions on the ticket. The agent working DEV-175
+The maintainer chose both directions on the ticket. The agent working YAD-175
 decided the details below; the reasoning is on the ticket and the pull request
 for the maintainer to review.
 
@@ -38,7 +38,7 @@ move to an account that works.
 One silent start can be a slow cold start that ran past two minutes once:
 MCP servers connecting, a SessionStart hook. Two can be two runs started
 together into one passing fault. Three in a row with nothing said in between
-is past coincidence. DEV-170 saw three, and three costs at most three
+is past coincidence. YAD-170 saw three, and three costs at most three
 two-minute failures before hubs are told. Two would trip on the coincidence.
 Four or more would spend a fourth failed run of somebody's work for little
 more certainty.
@@ -157,7 +157,7 @@ that fails, nothing is said, because absence is data. Doctor adds a note when
 
 **A Claude subcommand that loads settings as a run does and exits.** None was
 found that does both without calling the API. `claude auth status` loads too
-little: it answered in the DEV-170 home.
+little: it answered in the YAD-170 home.
 
 **Readiness per harness.** This is simpler, but one silent account would stop
 every account of the harness, and an account is the fix 0075 recommends.

@@ -499,7 +499,7 @@ func TestResume(t *testing.T) {
 	}
 	// The answer's turns are never read; asking for them earns a deprecation
 	// notice today and a line toward adapter.MaxLine on a long session
-	// (DEV-139).
+	// (YAD-139).
 	if p["excludeTurns"] != true {
 		t.Errorf("thread/resume = %v: asked for the thread's whole history", p)
 	}
@@ -896,7 +896,7 @@ func TestStubbornProcesses(t *testing.T) {
 		// handshake is short only where it is meant to run out. The server
 		// that answers must be given the shipped bound: its first answer comes
 		// from a race-instrumented test binary still starting, which takes
-		// longer than any short bound on a loaded machine (DEV-100).
+		// longer than any short bound on a loaded machine (YAD-100).
 		handshake time.Duration
 	}{
 		// The turn is over; the server ignores its closed input and SIGTERM.

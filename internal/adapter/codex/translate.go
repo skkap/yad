@@ -387,7 +387,7 @@ func toolCall(it item) (name, input string, ok bool) {
 }
 
 // toolOutcome is whether a finished tool item failed, and a command's exit
-// status, from the fields the pinned protocol gives each item (DEV-125):
+// status, from the fields the pinned protocol gives each item (YAD-125):
 // status for every kind that has one, exitCode for a command, success for a
 // dynamic tool, error for an MCP call. A kind with none of them — a web
 // search, an image view — leaves the answer absent rather than guessed; so
@@ -554,7 +554,7 @@ type ended struct {
 }
 
 // mask is Codex's own words as a run's error may quote them (adapter.Mask):
-// a turn that failed on a credential may quote it back (DEV-192).
+// a turn that failed on a credential may quote it back (YAD-192).
 func (e ended) mask(s string) string { return adapter.Mask(s, e.env, e.secrets) }
 
 // outcome decides how the run ended. Only the turn's own completion decides

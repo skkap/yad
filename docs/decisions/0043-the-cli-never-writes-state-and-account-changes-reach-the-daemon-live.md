@@ -9,7 +9,7 @@ date: 2026-09-22
 close` through the control socket because the state database is the daemon's.
 `yad account add` and `yad account remove` did not follow it: they opened
 `state.db` read-write themselves to record or clear an account's row
-(DEV-26, DEV-64). A schema guard was added in front of that write, which settles
+(YAD-26, YAD-64). A schema guard was added in front of that write, which settles
 when a CLI may touch a schema it does not understand — not who owns the file.
 And a running daemon held the account lists it started with, so both commands
 ended by telling the owner to restart it.
@@ -80,7 +80,7 @@ that holds the lock and does not answer — a timeout, a socket it cannot be
 reached on — may still hold one, and a login of minutes gives the last run
 every chance to end and take the home with it. So the add stops before it
 touches the home, as it does when the daemon refuses, and says to run it
-again once `yad status` answers (DEV-167, 2026-09-29). Before that, only a
+again once `yad status` answers (YAD-167, 2026-09-29). Before that, only a
 refusal stopped it, on the reasoning that a daemon too wedged to answer
 `keep` would not answer the add at the end either; that covered the add, not
 the deletion.
@@ -92,13 +92,13 @@ run lets go leaves the home behind the same way; the label is already out of
 
 ## Considered options
 
-**The CLI writes the row when no daemon runs.** The first shape of DEV-26, and
+**The CLI writes the row when no daemon runs.** The first shape of YAD-26, and
 the reason the ownership rule broke: a daemon starting in the moment between
 the check and the write has two writers, and the schema guard is still needed
 for a CLI newer than the file. Nothing is lost by leaving it to the daemon — a
 missing row with a home on disk already reads free.
 
-**Add the label before the login, as DEV-26 did, so a half-finished login is
+**Add the label before the login, as YAD-26 did, so a half-finished login is
 visible.** It made a needs-login account the ordinary result of walking away
 from a browser tab, reported to every hub. Keeping the home is enough for the
 retry.

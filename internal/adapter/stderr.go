@@ -10,7 +10,7 @@ import (
 
 // The end of a harness's stderr a run's error carries. Five lines is the
 // error and the few before it that say where the harness was — a hang's last
-// line alone is usually a log line, not a reason (DEV-170). A KiB keeps a
+// line alone is usually a log line, not a reason (YAD-170). A KiB keeps a
 // harness that writes one enormous line from filling the message.
 const (
 	StderrLines = 5
@@ -71,7 +71,7 @@ func StderrTail(stderr string, env, secrets []string, truncated bool) string {
 // Mask is s with every value of env and every one of secrets replaced as
 // StderrTail replaces them, for anything else of a harness's own words a
 // run's error quotes — Claude's line refusing an effort, and every error
-// message a harness answers with (DEV-192).
+// message a harness answers with (YAD-192).
 //
 // The owner's [env] values are replaced too, though they are in no Spec: the
 // harness has them all the same (supervise.OwnerEnv), and a run's error goes

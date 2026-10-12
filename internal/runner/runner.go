@@ -58,7 +58,7 @@ type Options struct {
 	// HeldChanged is told when a claim is recorded, and when a run's
 	// terminal state is in the store or it parked, so the process can count
 	// the harnesses with runs held again for the capability document's
-	// runner-wide features (DEV-169) rather than at its next probe. It must
+	// runner-wide features (YAD-169) rather than at its next probe. It must
 	// not block. Nil tells nobody.
 	HeldChanged func()
 }

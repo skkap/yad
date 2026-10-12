@@ -27,7 +27,7 @@ func outcome(tool *v1.ToolEvent) string {
 // Codex 0.157.1: a command that exited 3, one that exited 0, a file created
 // with apply_patch, and a command the owner's approval policy declined. The
 // output keeps its "[exit N]" and "[declined: …]" tails, so a hub reading
-// only the output loses nothing (DEV-125).
+// only the output loses nothing (YAD-125).
 func TestToolResultsSayWhetherTheyFailed(t *testing.T) {
 	for _, tc := range []struct {
 		fixture  string

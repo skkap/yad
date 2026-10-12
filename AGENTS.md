@@ -55,7 +55,7 @@ rebuilds them and `make check` fails when they drift.
   with (`Paths.Command`), the account's home,
   `YAD_REPO` for an upgrade, the `--hub`, `--token-file` or `--db` the command
   it follows was given. A command that leaves the machine — in a run's error,
-  a hub's answer — carries no path under anyone's home (DEV-67):
+  a hub's answer — carries no path under anyone's home (YAD-67):
   `Paths.RemoteCommand` names the profile and keeps each directory variable
   with a `<placeholder>` value, and a home or a database stays a placeholder
   beside the command that shows it. What the writer cannot know — a hub's

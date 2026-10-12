@@ -6,7 +6,7 @@ date: 2026-09-21
 
 The owner decided to skip storing runner credentials in the OS keychain (macOS
 Keychain, Secret Service on Linux) for the time being. The backlog item for it,
-DEV-51, is closed as won't-do rather than left open, so nothing in the backlog
+YAD-51, is closed as won't-do rather than left open, so nothing in the backlog
 suggests the storage model is about to change.
 
 What stays is what [0010](0010-registration-token-exchanged-for-runner-credential.md)

@@ -188,7 +188,7 @@ func TestE2EBothHarnessesAtOnce(t *testing.T) {
 // An override naming nothing is not the end of a runner: detection falls back
 // to PATH, advertises the harness with a warning rather than an error, and the
 // run starts the binary detection found — PATH's, not the one the dead
-// override named (DEV-68). Only the fake on PATH can play the turn here, so a
+// override named (YAD-68). Only the fake on PATH can play the turn here, so a
 // run that succeeds is one that started it.
 func TestE2EAnOverrideNamingNothingRunsPATHs(t *testing.T) {
 	eachHarness(t, testE2EAnOverrideNamingNothingRunsPATHs)

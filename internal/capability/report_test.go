@@ -17,7 +17,7 @@ import (
 // Every fake here is meant to answer, so every probe gets a budget no spawn
 // should reach. At the shipped five seconds, TestDocumentCarriesNoChildOutputOrHomePath
 // read a timeout from every one of its fresh scripts under `make check`
-// instead of the failures it injects (DEV-100): macOS assesses a new
+// instead of the failures it injects (YAD-100): macOS assesses a new
 // executable on its first run, and beside a race-instrumented suite that alone
 // can outlast five seconds. The shipped values are asserted where they live.
 func TestMain(m *testing.M) {
@@ -139,7 +139,7 @@ func TestBuildReportsEveryHostTool(t *testing.T) {
 }
 
 // The guard on the document as a whole, because that is what every connected
-// hub reads. DEV-60 kept child output out of a harness's Error and DEV-67
+// hub reads. YAD-60 kept child output out of a harness's Error and YAD-67
 // found the same leak in its Warnings: sweeping by field misses a sibling
 // field, so this sweeps by destination. Every binary the runner probes lives
 // under a home named like an owner's, and every one fails printing a

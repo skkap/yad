@@ -72,7 +72,7 @@ func TestClaimByListing(t *testing.T) {
 
 // A claim recorded tells HeldChanged once it is in the store, so the
 // capability document counts its harness even when a rebuild read the runs
-// held before it (DEV-169); a run refused is never held and tells nothing.
+// held before it (YAD-169); a run refused is never held and tells nothing.
 func TestARecordedClaimTellsHeldChanged(t *testing.T) {
 	e := newEnv(t)
 	// Refused by the store, after the claim took its unit: the last point a

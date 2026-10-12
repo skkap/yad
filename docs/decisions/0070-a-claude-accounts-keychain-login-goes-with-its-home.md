@@ -6,11 +6,11 @@ date: 2026-09-29
 
 Amends [0039](0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)
 and [0060](0060-the-owners-own-account-variables-are-removed-from-every-run.md).
-DEV-134.
+YAD-134.
 
 0039 says an account's login lives in its home, so that removing the home logs
 the account out of the machine. On Linux that is true. On macOS it is not.
-While testing hub login (DEV-133), an account removed with
+While testing hub login (YAD-133), an account removed with
 `yad account remove claude hubtest --yes` and listed again in `config.toml`
 read free, with no credential file in the re-created home. The owner read
 claude 2.1.284's own code on 2026-09-29 and found why:
@@ -32,7 +32,7 @@ claude 2.1.284's own code on 2026-09-29 and found why:
   Claude writes where there is no Keychain: on Linux it is written under
   `CLAUDE_SECURESTORAGE_CONFIG_DIR` instead of the home.
 - **On Linux the login is `.credentials.json` inside the home**, measured in
-  DEV-26. Deleting the home deletes it, and no keyring is consulted.
+  YAD-26. Deleting the home deletes it, and no keyring is consulted.
 
 So deleting a home on macOS leaves its login in the Keychain. A home made
 again at the same path — the same label, added again — finds that login, and
@@ -88,7 +88,7 @@ free.
   owner's Keychain by accident. The one manual check, on 2026-09-29, used a
   throwaway item made for a temporary path. `yad account add` deleted it and
   printed the line above.
-- **`CLAUDE_SECURESTORAGE_CONFIG_DIR` joins DEV-62's list, and every account
+- **`CLAUDE_SECURESTORAGE_CONFIG_DIR` joins YAD-62's list, and every account
   sets it to its own home.** On the list, a hub may not grant it (0040). Set
   on the machine, it would point every account at one login. It passes
   `supervise.Scrub` the way `CLAUDE_CONFIG_DIR` does, and every account's
@@ -140,9 +140,9 @@ somewhere spelled in decomposed Unicode. That case is named in
 `config.toml` chooses the keyring, and yad never writes one that does
 (0054 shares only `AGENTS.md` and `prompts/`). Nothing is done for it here.
 
-## A removal outlives the daemon: the marker (DEV-160)
+## A removal outlives the daemon: the marker (YAD-160)
 
-Added 2026-09-29. Found by review on DEV-134. The start sweep above found
+Added 2026-09-29. Found by review on YAD-134. The start sweep above found
 only homes already set aside. Two removals never get that far:
 
 - one waiting for a run still in the home, which `runner.Accounts` holds as
@@ -201,7 +201,7 @@ on purpose for the next try (0043).
   marker is still there. An add whose marker will not come off does not
   begin, and the removal it would have cancelled stands whole. The same goes
   for a daemon that refuses `Keep`, and for one that holds the lock and does
-  not answer it (DEV-167, 0043). With no daemon running, the CLI takes the
+  not answer it (YAD-167, 0043). With no daemon running, the CLI takes the
   marker off itself, under
   `config.toml`'s lock (`account.Reclaim`), so a daemon starting at that
   moment never looks at the marker and moves the home in the gap between.

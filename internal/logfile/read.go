@@ -55,7 +55,7 @@ const pollEvery = 250 * time.Millisecond
 // A test that appends has to know the follower is in place first, and the only
 // alternative is a sleep long enough to be sure on the slowest machine that
 // will ever run it — which every green run then pays, and a slower one still
-// breaks (DEV-55). Nothing in production assigns it.
+// breaks (YAD-55). Nothing in production assigns it.
 var followReady = func() {}
 
 // Follow writes each whole line appended to the log from its current end,

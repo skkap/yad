@@ -6,7 +6,7 @@ date: 2026-10-11
 
 On a Mac whose runner was the launchd job `yad.runner.default`,
 `yad daemon restart` stopped the job's daemon and started a detached one in
-its place (DEV-173). `launchctl list` then showed the job with no pid. A clean
+its place (YAD-173). `launchctl list` then showed the job with no pid. A clean
 stop is an exit KeepAlive leaves alone (0028), so launchd was watching
 nothing, and a crash of the new daemon would have stayed down. systemd's
 `Restart=on-failure` leaves the same gap.
@@ -40,12 +40,12 @@ names other directories' log. A systemd manager that cannot be asked cannot
 say which directory it searches, so the file is looked for in each one it
 may: the XDG config and data directories and their defaults. With this
 profile's unit file there, or one that cannot be read or looked at, the
-profile may be a service, and either guess repeats DEV-173 or refuses a start that was
+profile may be a service, and either guess repeats YAD-173 or refuses a start that was
 fine. So start and restart refuse, leave the running daemon alone, and print
 the manager's own command (`launchctl kickstart [-k] …`,
 `systemctl --user start|restart …`) for the owner, who can tell.
 
-**Install and uninstall answer to the same rule** (DEV-176). Each decides
+**Install and uninstall answer to the same rule** (YAD-176). Each decides
 from whether the manager holds the job: install boots out a loaded job
 before loading the new plist, uninstall unloads a loaded one before removing
 its file. launchd's install and uninstall used to read any failed
@@ -86,7 +86,7 @@ to remember.
 
 **Telling the unit apart by an environment variable the daemon reports**
 (launchd's `XPC_SERVICE_NAME`, systemd's `INVOCATION_ID`). It identifies a
-running daemon only. The case in DEV-173 is a unit with nothing running under
+running daemon only. The case in YAD-173 is a unit with nothing running under
 it.
 
 **`yad service install` as the restart**, which `yad upgrade` used to offer.

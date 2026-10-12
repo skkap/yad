@@ -5,14 +5,14 @@
 // The two used to do this each in their own way, and drifted: an override
 // naming nothing made a harness present and broken and a host tool absent,
 // and a binary that would not start sent a harness's owner to run it and a
-// host tool's owner to `ls -l` a file already proved executable (DEV-68). A
+// host tool's owner to `ls -l` a file already proved executable (YAD-68). A
 // hub reads both from the same capability document and cannot know the rule
 // differs by kind, so there is one rule, and it lives here.
 //
 // Every sentence here names a variable or a command and never a path or a
 // word a child printed: the capability document reaches every connected hub,
 // a path under /Users/<name> is the owner's name, and a child's stderr is
-// unbounded text nobody vetted (DEV-60, DEV-67).
+// unbounded text nobody vetted (YAD-60, YAD-67).
 package probe
 
 import (
@@ -48,7 +48,7 @@ type Found struct {
 // Find locates name, preferring the file envVar names.
 //
 // An override "names nothing" when nothing is at that path or what is there is
-// a directory (decided 2026-09-22, DEV-68). That is the owner's mistake rather
+// a directory (decided 2026-09-22, YAD-68). That is the owner's mistake rather
 // than the machine's state, so it is reported — but it does not hide a binary
 // PATH has: the override exists for a daemon started without a shell's PATH,
 // and one left pointing at a version since uninstalled should not take a
@@ -106,7 +106,7 @@ func namesNothing(path string) bool {
 // the name would run PATH's copy, or nothing — the override exists because
 // PATH lacks it — so the program is the variable instead, "$YAD_CODEX_PATH":
 // the file itself, without printing a path that is under its owner's home
-// and may not leave the machine (DEV-67, DEV-108). Such a command runs only
+// and may not leave the machine (YAD-67, YAD-108). Such a command runs only
 // where the variable is set, which Try says beside it.
 func (f Found) Command(args ...string) string {
 	program := shellword.Quote(f.name)

@@ -418,7 +418,7 @@ func setAccountState(ctx context.Context, p config.Paths, label string, state v1
 // A harness whose every account needs login cannot take a run, and doctor
 // says so as it does for a harness with none that is logged out (decision
 // 0053) — where it used to call it ready, and a hub login that ended without
-// taking went unseen on the machine (DEV-138). One account that can run is
+// taking went unseen on the machine (YAD-138). One account that can run is
 // enough; its runs never use the default home, so that is not asked.
 func TestDoctorSaysAHarnessWhoseAccountsAllNeedLoginNeedsLogin(t *testing.T) {
 	for _, tc := range []struct {

@@ -25,7 +25,7 @@ const dockerFileCap = 1 << 20
 // no context finds — DefaultDockerSocket, or a link to the same socket. The
 // docker CLI follows its context, so `docker ps` works; Testcontainers and
 // other tools that read DOCKER_HOST or the default socket alone find no
-// daemon (DEV-188, colima on Ashikaga). ok is false whenever that is not
+// daemon (YAD-188, colima on Ashikaga). ok is false whenever that is not
 // known to be the case.
 //
 // Read from docker's own files the way the CLI reads them — DOCKER_CONTEXT,

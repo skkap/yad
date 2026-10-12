@@ -126,7 +126,7 @@ func TestTheRunnerWideStringsAreWhatEveryDrivableHarnessMayUse(t *testing.T) {
 // it is drivable now: OpenCode's binary gone mid-upgrade leaves its run going,
 // and a hub reading only the strings must not be told that run takes a steer.
 // Once no run is held on it, the strings follow the drivable harnesses alone
-// again (DEV-169).
+// again (YAD-169).
 func TestAHarnessWithARunHeldCountsInTheRunnerWideStrings(t *testing.T) {
 	all := RunFeatures()
 	withCodex := HarnessFeatures("codex")

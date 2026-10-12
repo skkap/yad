@@ -292,7 +292,7 @@ func checkRunnerIDMatchesThePath(ctx context.Context, s *session) error {
 // checkDocumentRunnerIDMatchesThePath sends this runner's own credential, id
 // and fingerprint to its own path with a capability document naming another
 // runner. The document is stored as the syncing runner's, so a hub taking it
-// describes one runner by what another advertised (DEV-120). No capacity is
+// describes one runner by what another advertised (YAD-120). No capacity is
 // declared, so a hub that takes it offers nothing on the strength of it.
 func checkDocumentRunnerIDMatchesThePath(ctx context.Context, s *session) error {
 	id, err := newID()

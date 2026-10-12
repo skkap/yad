@@ -199,7 +199,7 @@ UNION SELECT connection FROM events WHERE acked = 0
 ORDER BY connection
 `
 
-// A removed connection's leftovers (DEV-81): every connection this store still
+// A removed connection's leftovers (YAD-81): every connection this store still
 // holds something of that a connection's own loop would otherwise settle -- an
 // open session, a close its hub has not heard of, a run held, a result or an
 // event owed. The collector ends those of a connection config.toml no longer
@@ -296,7 +296,7 @@ type CreateSessionParams struct {
 // anywhere above a query truncates that query's text and every later one:
 // `SELECT *` arrives at its parser as `SELECharness` and generation fails
 // naming queries nobody touched. The repo's prose uses an em dash; here it
-// costs an afternoon. (Confirmed by adding one and removing it again, DEV-27.)
+// costs an afternoon. (Confirmed by adding one and removing it again, YAD-27.)
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
 	_, err := q.db.ExecContext(ctx, createSession,
 		arg.Connection,
@@ -1952,7 +1952,7 @@ type SetAccountStateParams struct {
 	UpdatedAt int64
 }
 
-// The state an account is in, without disturbing limited_until: DEV-27 owns
+// The state an account is in, without disturbing limited_until: YAD-27 owns
 // the limit, this owns free and needs_login.
 func (q *Queries) SetAccountState(ctx context.Context, arg SetAccountStateParams) error {
 	_, err := q.db.ExecContext(ctx, setAccountState,

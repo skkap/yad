@@ -12,7 +12,7 @@ import (
 // be a slow one that ran past the first-output timeout once — MCP servers
 // connecting, a SessionStart hook — and two can be two runs started together
 // into one passing fault. Three in a row, with no turn on the home saying a
-// word in between, is past coincidence; it is what DEV-170 saw, and it costs at
+// word in between, is past coincidence; it is what YAD-170 saw, and it costs at
 // most three two-minute failures before hubs are told.
 const SilentRuns = 3
 

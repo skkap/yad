@@ -228,15 +228,15 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   in every response to a sync listing the run, until the run ends; the runner
   acts on the first. An interrupt counts once it reaches the harness: one a
   harness not reading its input refused is an error from the adapter, which
-  marks nothing, and the next repeat sends it again (DEV-179). The exception
+  marks nothing, and the next repeat sends it again (YAD-179). The exception
   is one that reaches Codex before its turn has an id: it counts at once and
   is sent when the id arrives; refused then, the adapter sends it itself once
-  Codex reads its input again, unless the turn has ended first (DEV-185). A
+  Codex reads its input again, unless the turn has ended first (YAD-185). A
   `steer` is sent once — twice, the harness would read it twice. An interrupt that reaches a run before its harness is up ends it as a
   cancel does, with nothing spawned —
   [0025](docs/decisions/0025-a-cancel-is-repeated-and-an-answer-that-landed-stands.md).
   That includes the answer that acknowledges the claim: a control there rides
-  in the run's claim to the executor rather than arriving ahead of it (DEV-113).
+  in the run's claim to the executor rather than arriving ahead of it (YAD-113).
   A cancel in that answer withdraws the claim; an interrupt starts the run
   already stopped, so it ends `cancelled` with a result, and a steer waits
   for the harness. A withdrawn claim leaves the next listing, and the hub
@@ -245,7 +245,7 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   ([0061](docs/decisions/0061-a-cancelled-claim-the-runner-withdraws-ends-cancelled.md)).
   At that sync it also unbinds the session, when that claim is the one that
   bound it: the runner deleted the session with the claim, and the next run
-  must open it again (DEV-143).
+  must open it again (YAD-143).
 - **Drain** — [0029](docs/decisions/0029-drain-is-a-three-signal-ladder.md).
   A hub sends `drain` only to a runner advertising the `drain` feature, and
   repeats it until a sync's health says `draining`. A draining runner declares
@@ -363,7 +363,7 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   lapsed claim the runner lists as `claimed` is one no answer acknowledged,
   which it withdraws with the session it opened, so the hub unbinds the session
   when that claim bound it — unless the run has a start moment, which the
-  runner holds an acknowledged claim for (DEV-148).
+  runner holds an acknowledged claim for (YAD-148).
 - **Abandon after.** A runner that has not synced for longer than the hub's
   abandon-after (default a day, and always longer than the lease) has every
   session bound to it closed and the runs queued in them ended. Its credential
@@ -509,7 +509,7 @@ so it waits; one without the feature would open the session empty
 [0065](docs/decisions/0065-a-fork-is-a-new-session-opened-from-another-sessions-conversation.md).
 It waits only while that session can be forked: once it is unbound, closing
 or closed, a fork no claim has bound closes and its runs end `failed` with
-nothing to copy (DEV-151); once its runner has gone, the fork closes with
+nothing to copy (YAD-151); once its runner has gone, the fork closes with
 that runner's sessions, and its runs end with the departure's reason. A run
 opening a session with a source on the machine does not go to a runner whose
 document says `path_sources: false`, which would refuse it
@@ -526,7 +526,7 @@ lists, and a runner lists one only while every harness it can drive —
 first-class, present, no `error` (`capability.Drivable`) — supports it, and
 none while it can drive nothing. A harness with a run held counts too,
 drivable or not, with its adapter's list: one whose binary goes mid-run keeps
-its features out of the strings until that run ends (DEV-169). The daemon
+its features out of the strings until that run ends (YAD-169). The daemon
 reads the held runs' harnesses from its store at every rebuild, after the
 probe (`runner.Monitor.HeldHarnesses`), and a claim recorded or a run ending
 recounts at once over the reports already probed, without probing again. One harness without a feature
@@ -677,7 +677,7 @@ run's environment, which carries the hub's grants.
 `thread/start`, `thread/resume` with the stored thread id, or `thread/fork` of
 the forked session's thread for a fork, whose answer names the new thread —
 both with `excludeTurns: true`, since the answer's thread id and model are
-read and its turns never are, and they would grow with the session (DEV-139) →
+read and its turns never are, and they would grow with the session (YAD-139) →
 one `turn/start`
 with the instruction and the run's `effort`, when it has one; the brief's
 context is the thread's `developerInstructions`, and on a resume or a fork it is also
@@ -776,7 +776,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   `ANTHROPIC_API_KEY` or any other variable that chooses the harness's
   credential (0040), nor one `[env]` declares (0081). The check that decides whether an account can take a run
   (`account.LoggedIn`) gets the environment the run gets, or it answers about a
-  different credential (DEV-26; the rule, and `OwnLogin`'s one deliberate
+  different credential (YAD-26; the rule, and `OwnLogin`'s one deliberate
   difference, are on `Spec.KeepEnv`). git and setup hooks start
   with `NoTTY` — a session of their own, no controlling terminal — so nothing
   they run can prompt. A host tool a run uses is the one detection resolved
@@ -1148,7 +1148,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   login and a bad model identically, both inside an object that says
   `subtype: "success"`; and a hub login that ends any way but succeeded when
   that same check then says the home has no login, or cannot answer for a home
-  the login itself made (`Accounts.loginNotTaken`, DEV-138) — making the home
+  the login itself made (`Accounts.loginNotTaken`, YAD-138) — making the home
   is what would otherwise have turned a hand-listed label free, so its
   `needs_login` is recorded before the home is made, for a daemon killed
   mid-login. A needs-login
@@ -1167,7 +1167,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   the harness reports an error naming its own login command and takes no runs,
   and `yad doctor` shows it as `needs login`
   ([0053](docs/decisions/0053-a-harness-on-its-own-login-is-checked-like-an-account.md)).
-- **Models are the harness's, per login** (`capability.addModels`, DEV-50).
+- **Models are the harness's, per login** (`capability.addModels`, YAD-50).
   Each login a run may use — every account that does not need login, or the
   default home — is asked for its models in a run's environment, side by
   side, each ask bounded at 15 s so a hanging harness never holds a
@@ -1180,7 +1180,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   plan's list within the hour. The harness's `models` merge every login's; each
   account carries its own. With no answer at all Claude reports the catalog's
   aliases with `models_source: catalog`. Why an ask failed is kept beside
-  the answer it leaves standing (DEV-146) — refused (too old for the
+  the answer it leaves standing (YAD-146) — refused (too old for the
   request, or for Codex a configuration it cannot load, which answers with
   the same code), cut off at 15 s, would not start, stopped before
   answering, or answered with no model yad can read — in yad's words with the next action, worded from the
@@ -1246,7 +1246,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   the token in no log, report or error — so a restart forgets those in flight.
   A connection's removal ends its hub's, as a `cancel_login` would, and
   forgets each once it has let go of the home: no control or sync of that hub
-  comes again to stop it or carry its end (DEV-182).
+  comes again to stop it or carry its end (YAD-182).
   `yad hub` keeps them in `hub.db` and blanks the token once the runner has
   reported its login, and the code once it has taken it. It ends a login on
   its own word only while no answer has carried it (`sent_at`); once one has,
@@ -1278,7 +1278,7 @@ a throwaway home and spend nothing); the suite never runs a real harness.
   and `account.Read` take the moment they judge against and read no clock of
   their own, the sync loop passes its injected `Clock`, and a report never
   re-judges what Load decided — so a test on a fake clock sees limits on that
-  clock rather than on the wall (DEV-85).
+  clock rather than on the wall (YAD-85).
 - **On a limit**: mark the account limited until its reset → the free account
   whose window resets soonest ([0039](docs/decisions/0039-accounts-log-in-themselves-and-the-soonest-reset-goes-first.md)) → resume the same session with a continuation turn, which is the
   run's own instruction again against the session's native id: the transcript
@@ -1828,7 +1828,7 @@ line here is a reviewed change.
   never passed to a shell, never an instruction to the runner.
 - What leaves the machine is written for its reader. The capability document
   and health go to every connected hub, so they never name a path on the
-  machine or quote what a child printed (DEV-67). A run's error and events go
+  machine or quote what a child printed (YAD-67). A run's error and events go
   only to the hub that sent the run, so they may name a path; the runner quotes
   a cause of its own only when it is an OS error — a path and an errno — and
   otherwise points at `yad daemon logs`. A command in either follows

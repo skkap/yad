@@ -109,18 +109,18 @@ func TestSetOwnerEnv(t *testing.T) {
 // LookupEnv answers as a child inherits: [env] over this process's own.
 func TestLookupEnv(t *testing.T) {
 	t.Cleanup(func() { SetOwnerEnv(nil) })
-	t.Setenv("DEV188_BOTH", "process")
-	t.Setenv("DEV188_PROCESS", "process")
-	SetOwnerEnv(map[string]string{"DEV188_BOTH": "owner", "DEV188_OWNER": "", "DEV188_ONLY": "owner"})
+	t.Setenv("YAD188_BOTH", "process")
+	t.Setenv("YAD188_PROCESS", "process")
+	SetOwnerEnv(map[string]string{"YAD188_BOTH": "owner", "YAD188_OWNER": "", "YAD188_ONLY": "owner"})
 	for _, tc := range []struct {
 		name, want string
 		set        bool
 	}{
-		{"DEV188_BOTH", "owner", true},
-		{"DEV188_PROCESS", "process", true},
-		{"DEV188_OWNER", "", true},
-		{"DEV188_ONLY", "owner", true},
-		{"DEV188_NEITHER", "", false},
+		{"YAD188_BOTH", "owner", true},
+		{"YAD188_PROCESS", "process", true},
+		{"YAD188_OWNER", "", true},
+		{"YAD188_ONLY", "owner", true},
+		{"YAD188_NEITHER", "", false},
 	} {
 		if v, ok := LookupEnv(tc.name); v != tc.want || ok != tc.set {
 			t.Errorf("LookupEnv(%s) = %q %v, want %q %v", tc.name, v, ok, tc.want, tc.set)

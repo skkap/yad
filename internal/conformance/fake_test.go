@@ -112,7 +112,7 @@ const (
 	flawRefusesLogins    = "a sync reporting a login the hub never started is refused"
 	flawNoNextAction     = "errors say what went wrong and not what to do"
 	flawRenewsEverything = "every run's lease is renewed, listed or not"
-	// The gap DEV-94 closed: an offer held for its runner however long that
+	// The gap YAD-94 closed: an offer held for its runner however long that
 	// runner is gone, and claimed by its listing whenever it comes back.
 	flawOffersNeverLapse   = "an offer waits for its runner's next sync, however late"
 	flawAcceptsAnyToken    = "any bearer is taken as a registration token"
@@ -155,9 +155,9 @@ const (
 	// The answer is right and the write happened anyway: only what the
 	// holder hears afterwards can show it.
 	flawStoresRefusedResult = "a result from a runner that does not hold the run is refused with 403 and stored"
-	// The flaws the clean-room hub of DEV-110 showed no check could see.
+	// The flaws the clean-room hub of YAD-110 showed no check could see.
 	flawIgnoresBodyRunner = "the body's runner_id is not compared with the path"
-	// DEV-120: a document naming another runner, stored as this one's.
+	// YAD-120: a document naming another runner, stored as this one's.
 	flawIgnoresDocumentRunner = "the capability document's runner_id is not compared with the path"
 	// Refused, and in a way a runner retries for ever.
 	flawDocumentRunnerIs500 = "a capability document naming another runner is refused with 500 internal"
@@ -169,12 +169,12 @@ const (
 	flawTooLargeIsInvalid   = "a body over the size limit is refused 400 invalid"
 	flawRefusalNeedsAClaim  = "a result is taken only from the runner that claimed the run"
 	flawReoffersRefused     = "a run refused before its claim is offered again"
-	// The document marked the dashboard health required until DEV-117, and a
+	// The document marked the dashboard health required until YAD-117, and a
 	// hub generated from it refuses a sync that leaves any of it out. The
 	// suite's own syncs send zeros, which v1 omits, so this refuses them all:
 	// the named check is what says why.
 	flawStrictDashboardHealth = "a sync that leaves out load, disk, spool or outbox depth is refused"
-	// The clean-room hub's guess of DEV-110: the last runner a queued run was
+	// The clean-room hub's guess of YAD-110: the last runner a queued run was
 	// offered to may still refuse it.
 	flawRefusalOutlivesTheOffer = "a refusal is taken from the runner a run was last offered to after the offer was taken back"
 )

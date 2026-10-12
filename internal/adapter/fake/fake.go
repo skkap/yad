@@ -32,7 +32,7 @@ type Script struct {
 	// delivered and then, when Release is set, until Release is closed. A
 	// turn the interrupt did not stop then ends with Outcome: with
 	// IgnoreInterrupt it is a harness that is interrupted and carries on,
-	// with no clock to race the interrupt's delivery (DEV-147).
+	// with no clock to race the interrupt's delivery (YAD-147).
 	AwaitInterrupt bool
 	Release        <-chan struct{}
 	// Stopped is the outcome an interrupt or SIGTERM ends the turn with; nil

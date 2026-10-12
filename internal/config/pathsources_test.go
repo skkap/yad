@@ -31,7 +31,7 @@ func TestAllowsPathSources(t *testing.T) {
 }
 
 // path_sources = false is how an owner switches sources on the machine off,
-// because `roots = []` does not survive a rewrite (DEV-72). So it must survive
+// because `roots = []` does not survive a rewrite (YAD-72). So it must survive
 // every writer of config.toml: `yad connect` adding a connection, an account
 // added or removed at the terminal or by a hub, and `yad config apply` from a
 // spec that says it. Unset stays unset, so the home default is never written.

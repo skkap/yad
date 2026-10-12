@@ -4,8 +4,8 @@ date: 2026-09-23
 
 # Six hub behaviours settled by Zumino's hub
 
-Zumino built a hub from HUB.md and the OpenAPI document alone (DEV-120), the
-second clean-room reading after DEV-110's
+Zumino built a hub from HUB.md and the OpenAPI document alone (YAD-120), the
+second clean-room reading after YAD-110's
 ([0047](0047-four-v1-protocol-rules-settled-by-the-clean-room-check.md)), and
 listed six behaviours the page left open. Two of them showed `yad hub` doing
 something it should not. They are recorded together because they are one

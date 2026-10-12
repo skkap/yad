@@ -7,12 +7,12 @@ date: 2026-09-30
 Decision [0033](0033-sources-reach-only-what-the-owner-allows.md) refused a git
 URL that carried a password, and let through one whose user was a token —
 `https://ghp_xxx@github.com/org/repo`, the usual shape of a GitHub or GitLab
-token. DEV-96 stopped that token being quoted back in refusals, events and
+token. YAD-96 stopped that token being quoted back in refusals, events and
 git's reasons, but it was still handed to git as argv, where every user on the
 machine can read it, and written as `remote.origin.url` into the bare cache
 under `<data>/repos`, which outlives the run and which every later run, from
 any hub, reads. It sat in `state.db` too, in the run's spec and the session's
-sources (DEV-144).
+sources (YAD-144).
 
 ## Decision
 
@@ -66,7 +66,7 @@ another.
 Needs git 2.31 or later, which reads config from the environment; an older git
 ignores it and fetches with the machine's own credentials.
 
-**The upgrade takes out what an earlier version kept** (DEV-154). A cache it
+**The upgrade takes out what an earlier version kept** (YAD-154). A cache it
 made from a URL with userinfo held that URL as its origin, under a directory
 named by it, where a session opened then has its worktree; `state.db` held the
 URL in the run's spec, the session's sources, and the events, reason and result
