@@ -438,7 +438,14 @@ type ended struct {
 	// effort is the run's effort, and effortRefused Claude's line saying it
 	// would not use it, when it said one.
 	effort, effortRefused string
+	// env and secrets are what yad added to Claude's environment and what
+	// the run's file grants hold: what mask takes out of Claude's words.
+	env, secrets []string
 }
+
+// mask is Claude's own words as a run's error may quote them (adapter.Mask):
+// a result that failed on a credential may quote it back (DEV-192).
+func (e ended) mask(s string) string { return adapter.Mask(s, e.env, e.secrets) }
 
 // outcome decides how the turn ended. Only a result decides success: exit 0
 // with no result is a failure, and a result that says `success` may carry
@@ -511,7 +518,7 @@ func (t *translator) outcome(e ended) adapter.Outcome {
 	}
 	// An error result that was final, or one Claude gave before it read any
 	// input at all (a resume with no transcript): what it says is the outcome.
-	msg := resultMessage(r)
+	msg := e.mask(resultMessage(r))
 	switch {
 	case r.TerminalReason == "prompt_too_long" || strings.HasPrefix(r.Result, "Prompt is too long"):
 		return fail(adapter.ClassPromptTooLong, msg)

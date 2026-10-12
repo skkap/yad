@@ -557,6 +557,8 @@ loop:
 		tail:        adapter.StderrTail(stderr, t.env, t.secrets, len(stderr) >= supervise.StderrTail),
 		final:       t.settled,
 		check:       t.check,
+		env:         t.env,
+		secrets:     t.secrets,
 	}
 	e.effort, e.effortRefused = t.effort, t.effortRefused
 	if e.effortRefused == "" && t.effort != "" {
