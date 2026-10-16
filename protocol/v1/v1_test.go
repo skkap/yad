@@ -174,6 +174,7 @@ func TestEnumTagsMatchSets(t *testing.T) {
 		{SessionRef{}, "Mode", []string{string(SessionPerRun), string(SessionLive)}},
 		{LoginReport{}, "Method", strs(LoginMethods())},
 		{LoginReport{}, "State", strs(LoginStates())},
+		{SourceReach{}, "Error", strs(SourceReachErrors())},
 	} {
 		f, ok := reflect.TypeOf(tc.v).FieldByName(tc.field)
 		if !ok {

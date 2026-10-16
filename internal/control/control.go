@@ -245,6 +245,21 @@ type Connection struct {
 	LastSync        *time.Time `json:"last_sync,omitempty"`
 	LastError       string     `json:"last_error,omitempty"`
 	LastErrorAt     *time.Time `json:"last_error_at,omitempty"`
+	// Sources are the repositories this hub asked the runner to probe, with
+	// each answer so far (decision 0087). Empty when it asked about none,
+	// and from a daemon older than it.
+	Sources []SourceProbe `json:"sources,omitempty"`
+}
+
+// SourceProbe is one repository a hub asked about. URL is redacted as a hub
+// URL is, though a hub never lists one with a credential. Checked is nil
+// until the first probe of it has ended; Error is the class a hub is sent.
+type SourceProbe struct {
+	URL       string     `json:"url"`
+	Ref       string     `json:"ref,omitempty"`
+	Reachable bool       `json:"reachable"`
+	Error     string     `json:"error,omitempty"`
+	Checked   *time.Time `json:"checked,omitempty"`
 }
 
 // Run is one run the runner holds.

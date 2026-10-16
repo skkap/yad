@@ -110,6 +110,8 @@ const (
 	flawUngatedRemoval   = "a remove_account goes to a runner that never advertised accounts"
 	flawUngatedAdd       = "a control carrying add goes to a runner that never advertised accounts"
 	flawRefusesLogins    = "a sync reporting a login the hub never started is refused"
+	flawUngatedProbe     = "probe_sources goes to a runner that never advertised source_probe"
+	flawRefusesReach     = "a sync answering a source probe the hub never asked for is refused"
 	flawNoNextAction     = "errors say what went wrong and not what to do"
 	flawRenewsEverything = "every run's lease is renewed, listed or not"
 	// The gap YAD-94 closed: an offer held for its runner however long that
@@ -396,6 +398,9 @@ func (f *fake) sync(w http.ResponseWriter, r *http.Request, runner string) {
 	if f.flaw == flawUngatedControl {
 		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlSteer, RunID: "fake-run-0", Text: "carry on"})
 	}
+	if f.flaw == flawUngatedProbe {
+		res.ProbeSources = []v1.ProbeSource{{URL: "https://git.example/acme.git"}}
+	}
 	if f.flaw == flawUngatedLogin {
 		res.Controls = append(res.Controls, v1.Control{Kind: v1.ControlStartLogin, LoginID: "fake-login", Harness: "claude"})
 	}
@@ -634,6 +639,10 @@ func (f *fake) authenticated(w http.ResponseWriter, r *http.Request, body any, g
 			f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "the result carries a field this hub does not know", "send only the fields in protocol/v1/openapi.yaml")
 			return false
 		}
+	}
+	if sync, isSync := body.(*v1.SyncRequest); isSync && f.flaw == flawRefusesReach && len(sync.SourceReach) > 0 {
+		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "this hub asked about no such repository", "answer only the repositories this hub listed")
+		return false
 	}
 	if sync, isSync := body.(*v1.SyncRequest); isSync && f.flaw == flawRefusesLogins && len(sync.Logins) > 0 {
 		f.fail(w, http.StatusBadRequest, v1.CodeInvalid, "this hub started no such login", "report only logins this hub started")

@@ -41,6 +41,10 @@ var unchecked = []struct {
 	sections: []section{hubSessions},
 	why:      "only a hub's own API asks for a release, which is outside v1, and this runner advertises release runner-wide alone, with an empty list for its harness, so none is sent to it. What is checked is that neither release_session nor a run carrying session.archive reaches it.",
 }, {
+	rule:     "Source probes: probe_sources sent whole in every answer to a runner advertising source_probe, at most 64 distinct URLs and never one carrying a credential; the latest answer in source_reach kept per runner and URL, an older one arriving late not replacing it, and dropped once the URL is no longer listed; a run opening a session on a repository a runner says it cannot reach, for any reason but ref_not_found, offered to another runner.",
+	sections: []section{hubReach},
+	why:      "this runner advertises no source_probe, so no hub sends it a list to answer, and seeing a run routed on an answer needs a run queued for a repository, which only a hub's own queueing can arrange. What is checked is that no list reaches it, and that a sync carrying source_reach is taken.",
+}, {
 	rule:     "Sessions stay put: the first claim in a session binds it to that runner, its later runs are offered to that runner alone, one at a time, and session.new is true for the run that opens a session and false for every later one.",
 	sections: []section{hubSessions},
 	why:      "it needs two runs in one session, which only a hub's own way of queueing runs can arrange.",

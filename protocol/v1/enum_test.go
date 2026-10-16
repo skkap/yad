@@ -46,6 +46,8 @@ func TestTheV1EnumsAreClosed(t *testing.T) {
 		{LoginReport{}, "State", "hub", []string{"starting", "waiting", "checking", "succeeded", "failed", "expired", "cancelled"}},
 		{SessionRef{}, "Mode", "runner", []string{"per_run", "live"}},
 		{Grant{}, "As", "runner", []string{"env", "file"}},
+		// Came with its field and the source_probe feature (decision 0087).
+		{SourceReach{}, "Error", "hub", []string{"auth", "not_found", "ref_not_found", "network", "timeout", "refused", "failed"}},
 	} {
 		f, ok := reflect.TypeOf(tc.v).FieldByName(tc.field)
 		if !ok {
@@ -71,7 +73,7 @@ func TestEveryEnumIsPinned(t *testing.T) {
 	pinned := map[string]bool{
 		"Event.Kind": true, "HeldRun.State": true, "Result.State": true, "ClosedSession.Reason": true,
 		"AccountReport.State": true, "HarnessReport.Kind": true, "HarnessReport.ModelsSource": true, "Control.Kind": true, "SessionRef.Mode": true, "Grant.As": true,
-		"LoginReport.Method": true, "LoginReport.State": true,
+		"LoginReport.Method": true, "LoginReport.State": true, "SourceReach.Error": true,
 	}
 	seen := map[reflect.Type]bool{}
 	var walk func(reflect.Type)

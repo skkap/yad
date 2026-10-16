@@ -534,3 +534,35 @@ SELECT EXISTS (SELECT 1 FROM runs WHERE session_id = sqlc.arg(session_id) AND ru
 -- name: NoteSessionReleased :exec
 INSERT INTO session_releases (session_id, runner_id, released_at) VALUES (?, ?, ?)
 ON CONFLICT (session_id, runner_id) DO UPDATE SET released_at = excluded.released_at;
+
+-- name: ProbeSourceCandidates :many
+-- The git URLs of the runs submitted since since, the most recently used
+-- first: the repositories this hub may send a runner, which it asks every
+-- runner advertising source_probe about (decision 0087). The caller drops a
+-- URL carrying a credential, so it asks for more than it lists.
+SELECT CAST(json_extract(src.value, '$.git.url') AS TEXT) AS url,
+       CAST(MAX(r.created_at) AS INTEGER) AS last_used
+FROM runs r, json_each(r.spec, '$.sources') src
+WHERE r.created_at >= sqlc.arg(since)
+  AND json_extract(src.value, '$.git.url') IS NOT NULL
+GROUP BY 1
+ORDER BY 2 DESC, 1
+LIMIT sqlc.arg(max);
+
+-- name: RecordSourceReach :exec
+-- A newer answer replaces the one held; an older one, arriving late, does not.
+INSERT INTO runner_source_reach (runner_id, url, reachable, error, checked_at, received_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT (runner_id, url) DO UPDATE SET
+    reachable = excluded.reachable, error = excluded.error,
+    checked_at = excluded.checked_at, received_at = excluded.received_at
+WHERE excluded.checked_at >= runner_source_reach.checked_at;
+
+-- name: ForgetSourceReach :exec
+-- Answers about URLs this hub no longer lists for the runner.
+DELETE FROM runner_source_reach
+WHERE runner_id = sqlc.arg(runner_id)
+  AND url NOT IN (SELECT value FROM json_each(sqlc.arg(urls_json)));
+
+-- name: SourceReachOf :many
+SELECT * FROM runner_source_reach WHERE runner_id = ? ORDER BY url;

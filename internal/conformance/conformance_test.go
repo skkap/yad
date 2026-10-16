@@ -107,6 +107,8 @@ func TestEachBrokenRuleIsReportedWithItsSection(t *testing.T) {
 		{flaw: flawUngatedRemoval, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawUngatedAdd, check: "versioning/controls-are-gated", want: Failed},
 		{flaw: flawRefusesLogins, check: "sync/logins-accepted", want: Failed},
+		{flaw: flawRefusesReach, check: "sync/source-reach-accepted", want: Failed},
+		{flaw: flawUngatedProbe, check: "versioning/probe-sources-are-gated", want: Failed},
 		{flaw: flawNoNextAction, check: "errors/next-action", want: Failed},
 		{flaw: flawRenewsEverything, check: "lease/lapse", leaseWait: time.Minute, want: Failed},
 		{flaw: flawOffersNeverLapse, check: "lease/offer-lapse", leaseWait: time.Minute, third: true, want: Failed},
@@ -882,7 +884,7 @@ func TestHubMDCountsTheSuite(t *testing.T) {
 		t.Fatal(err)
 	}
 	flat := strings.Join(strings.Fields(string(b)), " ")
-	checksIn := map[int]string{44: "Forty-four", 45: "Forty-five", 46: "Forty-six", 47: "Forty-seven", 48: "Forty-eight", 49: "Forty-nine", 50: "Fifty"}
+	checksIn := map[int]string{44: "Forty-four", 45: "Forty-five", 46: "Forty-six", 47: "Forty-seven", 48: "Forty-eight", 49: "Forty-nine", 50: "Fifty", 51: "Fifty-one", 52: "Fifty-two"}
 	rulesIn := map[int]string{14: "fourteen", 15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty"}
 	n, u := len(checks()), len(unchecked)
 	if checksIn[n] == "" || rulesIn[u] == "" {

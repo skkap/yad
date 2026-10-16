@@ -785,6 +785,23 @@ func (q *Queries) FirstControl(ctx context.Context, arg FirstControlParams) (Run
 	return i, err
 }
 
+const forgetSourceReach = `-- name: ForgetSourceReach :exec
+DELETE FROM runner_source_reach
+WHERE runner_id = ?1
+  AND url NOT IN (SELECT value FROM json_each(?2))
+`
+
+type ForgetSourceReachParams struct {
+	RunnerID string
+	UrlsJson interface{}
+}
+
+// Answers about URLs this hub no longer lists for the runner.
+func (q *Queries) ForgetSourceReach(ctx context.Context, arg ForgetSourceReachParams) error {
+	_, err := q.db.ExecContext(ctx, forgetSourceReach, arg.RunnerID, arg.UrlsJson)
+	return err
+}
+
 const getAccountRemoval = `-- name: GetAccountRemoval :one
 SELECT runner_id, harness, account, requested_at FROM account_removals WHERE runner_id = ? AND harness = ? AND account = ?
 `
@@ -1408,6 +1425,54 @@ func (q *Queries) OweSessionClose(ctx context.Context, id string) error {
 	return err
 }
 
+const probeSourceCandidates = `-- name: ProbeSourceCandidates :many
+SELECT CAST(json_extract(src.value, '$.git.url') AS TEXT) AS url,
+       CAST(MAX(r.created_at) AS INTEGER) AS last_used
+FROM runs r, json_each(r.spec, '$.sources') src
+WHERE r.created_at >= ?1
+  AND json_extract(src.value, '$.git.url') IS NOT NULL
+GROUP BY 1
+ORDER BY 2 DESC, 1
+LIMIT ?2
+`
+
+type ProbeSourceCandidatesParams struct {
+	Since int64
+	Max   int64
+}
+
+type ProbeSourceCandidatesRow struct {
+	Url      string
+	LastUsed int64
+}
+
+// The git URLs of the runs submitted since since, the most recently used
+// first: the repositories this hub may send a runner, which it asks every
+// runner advertising source_probe about (decision 0087). The caller drops a
+// URL carrying a credential, so it asks for more than it lists.
+func (q *Queries) ProbeSourceCandidates(ctx context.Context, arg ProbeSourceCandidatesParams) ([]ProbeSourceCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, probeSourceCandidates, arg.Since, arg.Max)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProbeSourceCandidatesRow{}
+	for rows.Next() {
+		var i ProbeSourceCandidatesRow
+		if err := rows.Scan(&i.Url, &i.LastUsed); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const putResult = `-- name: PutResult :execrows
 INSERT INTO results (run_id, state, body, received_at) VALUES (?, ?, ?, ?)
 ON CONFLICT (run_id) DO NOTHING
@@ -1536,6 +1601,37 @@ func (q *Queries) RecordSessionClosed(ctx context.Context, arg RecordSessionClos
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const recordSourceReach = `-- name: RecordSourceReach :exec
+INSERT INTO runner_source_reach (runner_id, url, reachable, error, checked_at, received_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT (runner_id, url) DO UPDATE SET
+    reachable = excluded.reachable, error = excluded.error,
+    checked_at = excluded.checked_at, received_at = excluded.received_at
+WHERE excluded.checked_at >= runner_source_reach.checked_at
+`
+
+type RecordSourceReachParams struct {
+	RunnerID   string
+	Url        string
+	Reachable  int64
+	Error      string
+	CheckedAt  int64
+	ReceivedAt int64
+}
+
+// A newer answer replaces the one held; an older one, arriving late, does not.
+func (q *Queries) RecordSourceReach(ctx context.Context, arg RecordSourceReachParams) error {
+	_, err := q.db.ExecContext(ctx, recordSourceReach,
+		arg.RunnerID,
+		arg.Url,
+		arg.Reachable,
+		arg.Error,
+		arg.CheckedAt,
+		arg.ReceivedAt,
+	)
+	return err
 }
 
 const recordSync = `-- name: RecordSync :exec
@@ -2143,6 +2239,40 @@ func (q *Queries) SoonCandidates(ctx context.Context, arg SoonCandidatesParams) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.EventsThrough,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sourceReachOf = `-- name: SourceReachOf :many
+SELECT runner_id, url, reachable, error, checked_at, received_at FROM runner_source_reach WHERE runner_id = ? ORDER BY url
+`
+
+func (q *Queries) SourceReachOf(ctx context.Context, runnerID string) ([]RunnerSourceReach, error) {
+	rows, err := q.db.QueryContext(ctx, sourceReachOf, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunnerSourceReach{}
+	for rows.Next() {
+		var i RunnerSourceReach
+		if err := rows.Scan(
+			&i.RunnerID,
+			&i.Url,
+			&i.Reachable,
+			&i.Error,
+			&i.CheckedAt,
+			&i.ReceivedAt,
 		); err != nil {
 			return nil, err
 		}

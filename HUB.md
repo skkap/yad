@@ -300,6 +300,7 @@ the runner the path names, and the body's `runner_id` must equal the path's.
 | `closed_sessions` | sessions the runner has closed, repeated until answered (§8) |
 | `logins` | the hub logins you started on this runner, each repeated until one carrying its end is answered (§7) |
 | `released_sessions` | the releases you asked of this runner that it has settled, each released with its archive or refused with an error, repeated until one carrying it is answered (§8) |
+| `source_reach` | the runner's answers about the repositories you list in `probe_sources`: whether it can reach each with its own credentials, and why not as a class — sent when an answer is new or changed, and again at least every 30 minutes (§4, [Which runner can reach a repository](#which-runner-can-reach-a-repository)) |
 
 The rest of `health` — load, disk, spool and outbox depth, recent errors — is
 for your operators and dashboards. It is the runner's own words, bounded, and
@@ -376,7 +377,10 @@ says why it goes where it does):
    releases in `released_sessions` (§8), and add a `release_session`
    control for each release you are still waiting on from it. Take the
    `logins` too, and add the login controls each open one still needs (§7) —
-   a draining runner still reports them.
+   a draining runner still reports them. Take the answers in `source_reach`,
+   and put the repositories you want answered in `probe_sources` if the
+   runner advertises `source_probe` (§4) — a draining runner's answers are as
+   true as any.
 6. **Take back every run you offered this runner that this sync did not
    list.** It was never received. It goes back in your queue now, in this
    sync — not when its lease lapses — for this runner or another, and step 7
@@ -421,7 +425,8 @@ session it opened with it, so a session that claim bound is no longer bound
 (§8).
 
 **Response:** `next_sync_ms` and `lease_ms` (required), `runs` (the offers),
-`controls`, `min_version`. Omit `runs` and `controls` when empty.
+`controls`, `min_version`, `archive_max_bytes`, `probe_sources` (§4). Omit
+`runs`, `controls` and `probe_sources` when empty.
 
 **Refusals** (`yad hub`): `400 invalid` for a body that does not validate, or a
 `runner_id` differing from the path's in the body or in the capability
@@ -777,9 +782,123 @@ open the session with none of the conversation — and never to a runner it
 was ever released from, each of which closed it and keeps it closed. Like a `fork_from`, it never lapses: hold
 it until such a runner can take it (§8).
 
+**Only a runner that can reach its repository, where you asked.** A run
+opening a session (`session.new`) with a `git` source whose URL a runner
+advertising `source_probe` last said it cannot reach — `reachable: false`
+with any `error` but `ref_not_found` — goes to another runner. The next
+section has the whole exchange.
+
 **Session rules** decide the rest (§8): a run in a session bound to another
 runner is not offerable here, and neither is a run whose session already has
 a run offered or held.
+
+### Which runner can reach a repository
+
+`host_tools` tells you a runner's `gh` is logged in to `github.com`. It cannot
+tell you that the account it is logged in as sees a repository in another
+organisation, or that its token has not quietly expired: the first you hear
+of either is a run failing `source_failed` minutes into its preparation. A
+runner advertising **`source_probe`** in `protocol_features` answers the
+question directly: you list the repositories you may send it, it checks each
+with its own credentials, and you route on the answer
+([0087](docs/decisions/0087-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
+Probing is optional for a hub; a hub that lists nothing has nothing probed.
+
+**What you send.** Every sync answer to a runner advertising `source_probe`
+may carry
+
+```json
+"probe_sources": [
+  {"url": "https://github.com/acme/api.git"},
+  {"url": "git@github.com:acme/web.git", "ref": "main"}
+]
+```
+
+- `url` is a repository as a `git` source names it (§4, *What a run
+  carries*): an https or ssh URL, or an absolute path or `file://` URL on the
+  runner's machine. **Never one with a credential in it** — an https URL with
+  userinfo, or an ssh URL with a password. A run that carries its own token
+  in its URL brings its own way in, and there is nothing to ask; a runner
+  answers such a URL `refused` without probing it.
+- `ref` is optional: what `git ls-remote` is asked for, a branch, tag or full
+  ref name. Absent, `HEAD`.
+- **The list is the whole list, every time.** A URL you leave out is no
+  longer asked about, and its answers are forgotten on the runner; absent
+  asks about nothing. Send it in every answer while you want answers, the
+  same list or a changed one — it is a few hundred bytes.
+- Each URL at most once; a runner takes the first entry for a URL and the
+  first **64** distinct URLs (`ProbeSourcesMax`), and ignores the rest. Put
+  the ones you most want answered first.
+- Send it **only to a runner advertising `source_probe`**, and, like every
+  gated field, only while you hold its current document (§3 step 2). An
+  older runner drops the field; nothing breaks, and nothing is answered.
+
+**What the runner does.** For each URL it runs `git ls-remote --exit-code --
+<url> <ref|HEAD>` with exactly the environment a run's `git` uses: the same
+`git`, the owner's `[env]` layer, its credential helpers and its ssh agent,
+no terminal prompt. It checks a URL the moment a list first names it, and
+again every **30 minutes** while it is reachable and every **5 minutes**
+while it is not — so a credential the owner fixes (`gh auth login`) shows
+within five minutes, and one that expires within thirty. Each check is
+stopped after **20 seconds**. A repository two hubs ask about is one check,
+shared. At most four checks run at once.
+
+**What it answers.** In a later sync request:
+
+```json
+"source_reach": [
+  {"url": "https://github.com/acme/api.git", "reachable": true,
+   "checked_at": "2026-10-16T09:00:12Z"},
+  {"url": "git@github.com:acme/web.git", "reachable": false,
+   "checked_at": "2026-10-16T09:00:13Z", "error": "auth"}
+]
+```
+
+- `url` is exactly the string you listed; `checked_at` is when the runner
+  checked; `error` is present only when `reachable` is false.
+- **An answer is sent when it is new or differs** from the last one you took
+  with a 2xx — `reachable` or `error` moved — and **again at least every 30
+  minutes** with a fresh `checked_at`, so an answer left out of a sync is
+  unchanged, not withdrawn. An answer you did not take (the sync failed) is
+  sent again. The first answers arrive one sync after the probes end:
+  seconds after the first list, not in the answer to it.
+- Keep **the latest answer per runner and URL**, by `checked_at`: an older one
+  arriving late does not replace it. Drop the answers for a URL once you stop
+  listing it. An answer for a URL you never listed is news you may ignore —
+  never a reason to refuse the sync.
+
+`error` is a class, never `git`'s own words, which can quote a URL holding a
+credential:
+
+| `error` | means | route away? |
+|---|---|---|
+| `auth` | the remote refused the runner's credential, or asked for one it does not have | yes |
+| `not_found` | no repository at the URL. GitHub answers this way, too, for a private repository the credential cannot see | yes |
+| `ref_not_found` | the repository answered and has no such ref. Every runner will say the same, so it is no reason to prefer another | **no** |
+| `network` | the host could not be resolved or reached | yes |
+| `timeout` | `git` did not finish in 20 seconds | yes |
+| `refused` | the runner would not probe the URL: it carries a credential, is not a URL a `git` source may name, or is on the machine where its owner does not allow sources (`path_sources: false`, or outside its roots) | yes |
+| `failed` | `git` failed some other way, or could not be started | yes |
+
+The set is closed for all of v1, like every enum (§11).
+
+**How to route on it.** A run that opens a session (`session.new`) and has a
+`git` source whose URL this runner last answered `reachable: false`, with an
+`error` other than `ref_not_found`, is not offered to it. With no answer yet —
+a URL just listed, a runner that does not advertise `source_probe` — offer as
+you would without probing: the run's own preparation is still the last word.
+A run in a session already bound to the runner goes regardless: its workdir
+is built, and it can go nowhere else. A run whose repository every runner
+says it cannot reach stays queued, and goes as soon as one answers that it
+can; show your users why it is waiting.
+
+**What `yad hub` does.** It lists the distinct `git` URLs of the runs
+submitted in the last seven days, the most recently used first, without
+those carrying a credential, to every runner advertising `source_probe`; it
+keeps each runner's latest answers, shows them in `GET /runners` and
+`yad hub runners`, and routes as above. Your hub may list whatever it likes —
+the repositories a project is configured with, say — so long as the list
+obeys the rules above.
 
 ### Run states
 
@@ -1197,6 +1316,7 @@ asked for it.
 | `login` | the four login controls. A runner advertising it reports each login in `logins` |
 | `accounts` | `add` on `start_login` and `login_token`, and the `remove_account` control. Per hub: a runner advertises it only to a hub its owner lets add and remove accounts, and only beside `login`, so its fingerprint for you may differ from another hub's |
 | `live_sessions` | a run whose `session.mode` is `live` — offer one only to a runner that advertises it. The spec lists `live` as an enum value and connects it to no feature, so this pairing exists only here |
+| `source_probe` | `probe_sources` in a sync answer. A runner advertising it checks each repository listed with its own credentials and answers in `source_reach` (§4, [Which runner can reach a repository](#which-runner-can-reach-a-repository)) |
 | `harness_features` | nothing by itself: it says each harness report carries `features`, the per-run features a run on that harness may use, and that those lists — not the runner-wide strings — answer for `steer`, `interrupt`, `effort`, `fork` and `release` |
 
 **`steer`, `interrupt`, `effort`, `fork` and `release` are the harness's.** Whether a
@@ -1738,7 +1858,7 @@ cannot parse — an unstamped `dev` build, or a mistyped floor.
 yad conformance <connection url> --token <token> [--second-token <token>] [--harness id] [--lease-wait d]
 ```
 
-Forty-nine black-box checks against a URL, written from the protocol rather
+Fifty-one black-box checks against a URL, written from the protocol rather
 than from `yad hub`'s internals — nothing in the suite imports the hub, so it
 tests the protocol and not one implementation of it. A failure gives you the
 rule as a sentence and the section of this page that states it.
@@ -1811,12 +1931,12 @@ yad hub token create |
 rm first.token
 ```
 
-It ends `49 passed, 0 failed, 0 skipped`, after about a minute spent waiting
+It ends `51 passed, 0 failed, 0 skipped`, after about a minute spent waiting
 out a lease.
 
 ### What it does not check
 
-The suite prints this list itself, and it is eighteen rules — not a footnote. Each
+The suite prints this list itself, and it is nineteen rules — not a footnote. Each
 is something **your hub still has to get right** with nothing to catch you:
 
 | rule | why the suite cannot reach it |
@@ -1832,6 +1952,7 @@ is something **your hub still has to get right** with nothing to catch you:
 | Lapsed leases found by a timer as well as by a sync | anything the suite sends to find out is itself a request you could settle leases on, so a hub that settles them only when asked looks the same |
 | A known runner id re-registers only with a token issued for that runner | such a token comes from your own API, outside v1; trying the second token on the first runner's id could spend it before the runner it is for |
 | Releasing a session — `release_session` repeated until `released_sessions` answers it, its runs held back meanwhile; the report believed only from the bound runner; the archive taken by `PUT` only from that runner while a release is asked for and handed by `GET` only to a runner a run of the session is offered to or bound to; the session's next run opening it with `session.archive` on another runner advertising `release`; the archive kept until a run opened from it runs, the session closes or its time is up | only your own API asks for a release, outside v1, and the suite advertises `release` runner-wide alone, beside an empty list for its harness. What is checked: that neither `release_session` nor a run carrying `session.archive` reaches it |
+| Source probes — `probe_sources` whole in every answer to a runner advertising `source_probe`, at most 64 URLs and none carrying a credential; the latest answer per runner and URL kept, an older one arriving late not replacing it, dropped once the URL is unlisted; a run opening a session on a repository a runner cannot reach, for any reason but `ref_not_found`, offered to another | the suite advertises no `source_probe`, so it is sent no list to answer, and seeing a run routed needs a run queued for a repository, which only your own queueing can arrange. What is checked: that no list reaches it, and that a sync carrying `source_reach` is taken |
 | Grant values kept only until the run is terminal (§9) | v1 gives a runner no way to read a run back |
 | `internal` only with a `5xx`, never for a request you will never accept | a fault cannot be caused from outside. What is checked: the refusals the suite can cause — an invalid body, a run the caller does not hold, a body too large |
 | A runner silent past your abandon-after — its sessions closed and their queued runs ended, its credential kept, `close_session` sent when it returns | the silence is a day by default and every hub names its own, which v1 gives a runner no way to ask |
@@ -1887,6 +2008,7 @@ checks; the rest is yours to get right.
 - [ ] Every offered run passes the rules the schema cannot state — [§4](#rules-the-schema-cannot-state) (C)
 - [ ] `start_at` still ahead, `effort`, `fork_from` and `live` sessions only to runners advertising them — `effort` and `fork_from` on the run's harness's own list when the runner advertises `harness_features` — [§7](#7-controls-and-features) (C)
 - [ ] A run opening a session with a source on the machine not offered to a runner whose document says `path_sources: false` — [§4](#who-may-be-offered-what)
+- [ ] If you probe sources: `probe_sources` only to a runner advertising `source_probe`, whole in every answer, at most 64 URLs, none with a credential; a sync carrying `source_reach` taken, the latest answer per runner and URL kept; a run opening a session not offered to a runner that says it cannot reach its repository, unless the class is `ref_not_found` — [§4](#which-runner-can-reach-a-repository) (C, as far as the gate and taking the answers)
 - [ ] `report_capabilities` when the fingerprint moves without a document — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync refused when its body's `runner_id` or its capability document's differs from the path, or its credential is another runner's — [§3](#post-runnersrunnersync) (C)
 - [ ] A sync never refused over a dashboard field — load, disk, spool or outbox depth — only over what routing reads — [§3](#post-runnersrunnersync) (C)

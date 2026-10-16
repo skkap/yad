@@ -604,6 +604,14 @@ func printRunners(w io.Writer, runners []hubapi.Runner, now time.Time) {
 			fmt.Fprintf(tw, "  %s\t%s\t%s\n", cleanLine(hh.ID), ready, accountLine(hh.Accounts))
 		}
 		tw.Flush()
+		if line := reachLine(r.SourceReach); line != "" {
+			fmt.Fprintln(w, line)
+		}
+		for _, sr := range r.SourceReach {
+			if !sr.Reachable {
+				fmt.Fprintf(w, "    %s — %s, checked %s ago\n", cleanLine(sr.URL), cleanLine(sr.Error), now.Sub(sr.CheckedAt).Round(time.Second))
+			}
+		}
 		if len(h.RecentErrors) > 0 {
 			fmt.Fprintln(w, "  recent errors, newest first (the runner's own words — `yad daemon logs` on that machine has everything)")
 			for _, e := range h.RecentErrors {
@@ -611,6 +619,25 @@ func printRunners(w io.Writer, runners []hubapi.Runner, now time.Time) {
 			}
 		}
 	}
+}
+
+// reachLine counts what a runner said about the repositories this hub asks
+// it to probe (decision 0087); each unreachable one follows on a line of its
+// own, since that is what routes runs away from it.
+func reachLine(reach []hubapi.SourceReach) string {
+	if len(reach) == 0 {
+		return ""
+	}
+	n := 0
+	for _, sr := range reach {
+		if sr.Reachable {
+			n++
+		}
+	}
+	if n == len(reach) {
+		return fmt.Sprintf("  repositories: all %d reachable", n)
+	}
+	return fmt.Sprintf("  repositories: %d of %d reachable; runs opening a session on these go to another runner:", n, len(reach))
 }
 
 // accountLine is one harness's accounts as one cell: each label with its state

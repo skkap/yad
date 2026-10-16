@@ -272,6 +272,31 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		}
 		out.Controls = append(out.Controls, removals...)
 
+		// The repositories this runner is asked about, and what it says of
+		// them, before the early return below: a draining runner's answers
+		// are as true as any (decision 0087). Taken from a runner that does
+		// not advertise the feature too, as a feature gates only what is
+		// sent; but only one that does is asked, and routed on.
+		probes := described && advertises(doc, capability.FeatureSourceProbe)
+		if probes || len(req.SourceReach) > 0 {
+			listed, err := probeList(ctx, q, now)
+			if err != nil {
+				return err
+			}
+			if probes {
+				out.ProbeSources = listed
+			}
+			if err := syncSourceReach(ctx, q, runner.ID, listed, req.SourceReach, now); err != nil {
+				return err
+			}
+		}
+		var away map[string]bool
+		if probes {
+			if away, err = unreachable(ctx, q, runner.ID); err != nil {
+				return err
+			}
+		}
+
 		// Whatever is still offered to this runner was in the last response
 		// and missing from this list: never received. Back in the queue.
 		unlisted, err := q.RunsOfferedTo(ctx, me)
@@ -289,11 +314,11 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 		if req.Health.Draining || runner.DrainRequestedAt.Valid {
 			return nil
 		}
-		out.Runs, err = h.offer(ctx, q, runner.ID, doc, described, req.Health.FreeCapacity, cancelled, lease, now)
+		out.Runs, err = h.offer(ctx, q, runner.ID, doc, described, away, req.Health.FreeCapacity, cancelled, lease, now)
 		if err != nil {
 			return err
 		}
-		soon, err := h.waitsForThisRunner(ctx, q, runner.ID, doc, described, req.Runs, req.Health.FreeCapacity, now)
+		soon, err := h.waitsForThisRunner(ctx, q, runner.ID, doc, described, away, req.Runs, req.Health.FreeCapacity, now)
 		if soon {
 			out.NextSyncMS = int(h.quickInterval() / time.Millisecond)
 		}
@@ -311,7 +336,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 // offer picks queued runs for this runner and marks them offered. Never more
 // than the free capacity it declared, in total or for any harness it capped,
 // and never a harness it cannot drive: the runner would have to refuse it.
-func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, free v1.Capacity, cancelled map[string]bool, lease sql.NullInt64, now time.Time) ([]v1.Run, error) {
+func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, away map[string]bool, free v1.Capacity, cancelled map[string]bool, lease sql.NullInt64, now time.Time) ([]v1.Run, error) {
 	me := sql.NullString{String: runnerID, Valid: true}
 	left := map[string]int{}
 	for id, n := range free.ByHarness {
@@ -334,7 +359,7 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 	if free.Total <= 0 {
 		return nil, nil
 	}
-	admits := admission(doc, described, now)
+	admits := admission(doc, described, away, now)
 	var runs []v1.Run
 	err := walkCandidates(ctx, takeable, func(harnesses string, after db.Run) ([]db.Run, error) {
 		return q.OfferCandidates(ctx, db.OfferCandidatesParams{
@@ -382,7 +407,7 @@ func (h *Hub) offer(ctx context.Context, q *db.Queries, runnerID string, doc v1.
 // end, so asking either sooner finds it no freer. With its harness's own cap
 // full, only a run of that harness ending frees it; otherwise the total is
 // what is full, and any run ending frees that.
-func (h *Hub) waitsForThisRunner(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, held []v1.HeldRun, free v1.Capacity, now time.Time) (bool, error) {
+func (h *Hub) waitsForThisRunner(ctx context.Context, q *db.Queries, runnerID string, doc v1.Capabilities, described bool, away map[string]bool, held []v1.HeldRun, free v1.Capacity, now time.Time) (bool, error) {
 	executing := map[string]bool{}
 	for _, r := range held {
 		if r.State == v1.RunWaiting {
@@ -414,7 +439,7 @@ func (h *Hub) waitsForThisRunner(ctx context.Context, q *db.Queries, runnerID st
 		}
 	}
 	me := sql.NullString{String: runnerID, Valid: true}
-	admits := admission(doc, described, now)
+	admits := admission(doc, described, away, now)
 	found := false
 	err := walkCandidates(ctx, func() []string { return harnesses }, func(list string, after db.Run) ([]db.Run, error) {
 		return q.SoonCandidates(ctx, db.SoonCandidatesParams{
@@ -440,10 +465,12 @@ func (h *Hub) waitsForThisRunner(ctx context.Context, q *db.Queries, runnerID st
 }
 
 // admission is what a runner's document says about the queued runs it may be
-// offered, capacity aside, judged on a run opening has prepared. Shared by the
+// offered, capacity aside, judged on a run opening has prepared — and what it
+// said of the repositories it was asked about: away is the URLs it cannot
+// reach. Shared by the
 // offer and by waitsForThisRunner, so that a runner is never asked back
 // sooner for a run it would then not be offered.
-func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) bool {
+func admission(doc v1.Capabilities, described bool, away map[string]bool, now time.Time) func(v1.Run) bool {
 	// A run whose start moment is still ahead goes only to a runner that will
 	// hold it back: one without the feature starts it on arrival. Once the
 	// moment has passed there is nothing left to hold, so the run is offered
@@ -504,6 +531,16 @@ func admission(doc v1.Capabilities, described bool, now time.Time) func(v1.Run) 
 			return false
 		}
 		if run.Session.Archive != nil && !opensArchive(run.Harness) {
+			return false
+		}
+		// A run opening a session builds its workdir by fetching its
+		// sources: one this runner says it cannot reach would fail there,
+		// where another runner may fetch it (decision 0087). It waits while
+		// every runner says so, and goes as soon as one can — an owner
+		// fixing a credential shows within the runner's re-check. A run in
+		// a session already bound here goes regardless: its workdir is
+		// built, and it can go nowhere else.
+		if run.Session.New && slices.ContainsFunc(run.Sources, func(s v1.Source) bool { return s.Git != nil && away[s.Git.URL] }) {
 			return false
 		}
 		return !run.Session.New || takesLocal || !slices.ContainsFunc(run.Sources, onTheMachine)

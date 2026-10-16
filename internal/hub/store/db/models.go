@@ -101,6 +101,15 @@ type Runner struct {
 	DrainRequestedAt  sql.NullInt64
 }
 
+type RunnerSourceReach struct {
+	RunnerID   string
+	Url        string
+	Reachable  int64
+	Error      string
+	CheckedAt  int64
+	ReceivedAt int64
+}
+
 type Session struct {
 	ID                  string
 	Harness             string

@@ -142,6 +142,9 @@ func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 			if c.LastError != "" && c.LastErrorAt != nil {
 				fmt.Fprintf(tw, "  \t\tlast error %s: %s\t\n", ago(*c.LastErrorAt), cleanLine(c.LastError))
 			}
+			for _, sp := range c.Sources {
+				fmt.Fprintf(tw, "  \t\trepository %s\t\n", sourceLine(sp, ago))
+			}
 		}
 		tw.Flush()
 	}
@@ -176,4 +179,21 @@ func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 			fmt.Fprintln(w, line)
 		}
 	}
+}
+
+// sourceLine is one repository a hub asked this runner to probe, and what
+// the probe found (decision 0087): the class the hub was sent, never git's
+// words.
+func sourceLine(sp control.SourceProbe, ago func(time.Time) string) string {
+	name := cleanLine(sp.URL)
+	if sp.Ref != "" {
+		name += " " + cleanLine(sp.Ref)
+	}
+	switch {
+	case sp.Checked == nil:
+		return name + ": not checked yet"
+	case sp.Reachable:
+		return name + ": reachable, checked " + ago(*sp.Checked)
+	}
+	return name + ": unreachable (" + cleanLine(sp.Error) + "), checked " + ago(*sp.Checked)
 }

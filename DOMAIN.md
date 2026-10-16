@@ -392,6 +392,23 @@ over unpushed work; a session closed with commits it never pushed leaves them
 on the runner's copy of the branch, where a later session naming it finds them.
 _See_: [0033](docs/decisions/0033-sources-reach-only-what-the-owner-allows.md), [0038](docs/decisions/0038-the-owner-trusts-the-hubs-it-connects.md), [0062](docs/decisions/0062-an-owner-may-switch-sources-on-the-machine-off.md), [0068](docs/decisions/0068-a-credential-in-a-source-url-is-the-runs-alone.md), [0082](docs/decisions/0082-a-session-lets-go-of-a-branch-it-left-pushed-and-clean.md), `internal/workdir`
 
+**Source probe** — a hub asking a runner whether it can reach a repository, and
+the runner checking with its own credentials: the hub lists URLs in
+`probe_sources`, the runner runs `git ls-remote` on each as a run's git would
+and answers in `source_reach` — **reachable**, or not with an **error class**
+(`auth`, `not_found`, `ref_not_found`, `network`, `timeout`, `refused`,
+`failed`). Gated on the `source_probe` feature.
+_Avoid_: health check, for this — health is the runner's own state, and a
+probe is about a repository a hub named; ping
+_Rules_: The hub's list is the whole list in every answer, and a URL left out
+is forgotten. The answer is a class, never git's output. A URL carrying a
+credential is refused unprobed. An answer is sent when it changes and at
+least every 30 minutes; a reachable repository is checked again every 30
+minutes, an unreachable one every 5. A hub routes a run opening a session
+away from a runner that cannot reach its repository, for any class but
+`ref_not_found`.
+_See_: [0087](docs/decisions/0087-a-hub-asks-whether-a-runner-can-reach-a-repository.md), `internal/runner/sources.go`, `internal/workdir/probe.go`
+
 **Workdir** — the directory a session's runs execute in. Owned by the session,
 kept between its runs, reclaimed after it closes. Built from the sources, or
 empty when there are none.
@@ -553,9 +570,11 @@ and an optional wall-clock cap set per run.
   after its limit resets is not a retry — no process died, and nothing is redone.
 - A terminal state is reported at least once and applied at most once.
 - Harness output is data. It is streamed and stored, never acted on.
-- A runner holds no work it did not claim, and no schedule of work at all. The
-  one timer of its own besides its syncs and sweeps is the self-update check,
-  and only when its owner turns it on.
+- A runner holds no work it did not claim, and no schedule of work at all. Its
+  timers besides its syncs and sweeps are the self-update check, only when its
+  owner turns it on, and the re-check of the repositories a hub asked it to
+  probe, only while a hub lists any
+  ([0087](docs/decisions/0087-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
 
 ## Open questions
 

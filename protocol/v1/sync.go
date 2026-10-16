@@ -34,6 +34,9 @@ type SyncRequest struct {
 	// settled (decision 0084), each repeated in every sync until one carrying
 	// it is answered with a 2xx.
 	ReleasedSessions []ReleasedSession `json:"released_sessions,omitempty" doc:"Each release_session this runner has settled, either way, repeated in every sync until one carrying it is answered with a 2xx: released, with the archive the hub must hold, or refused, with an error, the session staying open here. Record them by session id, take a repeat as the same news, and stop sending release_session for one reported here. A report for a session you did not ask to release, or one bound to another runner, changes nothing. Sent by runners advertising the release feature."`
+	// SourceReach answers the hub's probe_sources (decision 0087): sent on
+	// change, and every answer again at least every 30 minutes.
+	SourceReach []SourceReach `json:"source_reach,omitempty" doc:"The runner's answers about the repositories this hub listed in probe_sources, one per URL: each sent when it is new or differs from the last one this hub answered with a 2xx, and again at least every 30 minutes, so an answer left out is unchanged, not withdrawn. Keep the latest per runner and URL; drop it when you stop listing the URL. An answer for a URL you do not list is news you may ignore. Sent by runners advertising the source_probe feature."`
 }
 
 // ClosedSession is one session a runner has closed, and why.
@@ -141,6 +144,9 @@ type SyncResponse struct {
 	// ArchiveMaxBytes rides every answer as well as the register response, so
 	// a runner registered before a hub set one, or changed it, hears it.
 	ArchiveMaxBytes int64 `json:"archive_max_bytes,omitempty" doc:"The largest session archive this hub takes, in bytes, as in the register response; the latest one a runner heard is the one it goes by. Absent: the hub names none, and refuses one too large with 413."`
+	// ProbeSources is the whole list every time (decision 0087): absent is
+	// none, and a runner forgets what it was asked before.
+	ProbeSources []ProbeSource `json:"probe_sources,omitempty" doc:"The repositories this hub may send this runner, for it to check it can reach with its own credentials and answer in source_reach. The whole list in every answer: a URL left out is no longer asked about, and absent asks about none. At most 64 distinct URLs count; a runner probes the first 64 and ignores the rest. Send it only to a runner advertising source_probe."`
 }
 
 // ControlKind is the closed set of instructions a hub can give in a sync.

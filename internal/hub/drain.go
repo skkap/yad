@@ -66,7 +66,7 @@ func (h *Hub) registerDrain(api huma.API) {
 			if err != nil {
 				return err
 			}
-			view, err = runnerView(r)
+			view, err = runnerView(ctx, q, r)
 			return err
 		})
 		if err != nil {
@@ -82,8 +82,15 @@ func (h *Hub) registerDrain(api huma.API) {
 //
 // The health is passed on as the runner sent it: a hub that edited it would be
 // answering a question about the machine with an opinion of its own.
-func runnerView(r db.Runner) (hubapi.Runner, error) {
+func runnerView(ctx context.Context, q *db.Queries, r db.Runner) (hubapi.Runner, error) {
 	view := hubapi.Runner{RunnerID: r.ID, Name: r.Name}
+	reach, err := sourceReachOf(ctx, q, r.ID)
+	if err != nil {
+		return view, err
+	}
+	for _, sr := range reach {
+		view.SourceReach = append(view.SourceReach, hubapi.SourceReach{URL: sr.URL, Reachable: sr.Reachable, Error: string(sr.Error), CheckedAt: sr.CheckedAt})
+	}
 	if r.LastSyncAt.Valid {
 		t := time.UnixMilli(r.LastSyncAt.Int64).UTC()
 		view.LastSyncAt = &t

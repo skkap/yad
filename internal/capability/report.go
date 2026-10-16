@@ -57,7 +57,7 @@ func Features(reports []v1.HarnessReport, held ...string) []string {
 			out = append(out, f)
 		}
 	}
-	return append(out, FeatureDrain, FeatureCloseSession, FeatureLogin, FeatureHarnessFeatures)
+	return append(out, FeatureDrain, FeatureCloseSession, FeatureLogin, FeatureHarnessFeatures, FeatureSourceProbe)
 }
 
 // FeatureStartAt is a runner that holds a run until its start_at rather than
@@ -110,6 +110,13 @@ const FeatureFork = "fork"
 // are installed: a login this runner cannot do ends failed with the reason,
 // which a hub can show, where a control it ignored would say nothing.
 const FeatureLogin = "login"
+
+// FeatureSourceProbe is a runner that checks the repositories a hub lists in
+// probe_sources with its own credentials and answers in source_reach
+// (decision 0087). Advertised whatever is installed: a runner with no git
+// answers each one failed, which a hub can route on, where silence would say
+// nothing.
+const FeatureSourceProbe = "source_probe"
 
 // FeatureAccounts is a runner that lets this hub add accounts — start_login
 // and login_token carrying add — and remove them with remove_account

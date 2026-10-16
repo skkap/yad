@@ -52,6 +52,7 @@ var (
 	hubResultCall    = section{3, "`POST /runs/{run}/result`"}
 	hubRunRules      = section{4, "Rules the schema cannot state"}
 	hubOffers        = section{4, "Who may be offered what"}
+	hubReach         = section{4, "Which runner can reach a repository"}
 	hubLeases        = section{n: 5}
 	hubEvents        = section{6, "Events"}
 	hubResults       = section{6, "Results"}
@@ -158,6 +159,12 @@ func checks() []check {
 		section: hubControls,
 		needs:   credential,
 		run:     checkLoginsAccepted,
+	}, {
+		id:      "sync/source-reach-accepted",
+		rule:    "A sync answering source probes in source_reach is accepted, one answering about a URL the hub never listed included: a runner advertising source_probe sends each answer on change and again every 30 minutes, a hub that probes nothing still has to take one, and a refused sync renews no lease.",
+		section: hubReach,
+		needs:   credential,
+		run:     checkSourceReachAccepted,
 	}, {
 		id:      "sync/report-capabilities",
 		rule:    "A sync whose fingerprint differs from the one that came with the document the hub holds, and that carries no document, is answered with a report_capabilities control.",
@@ -358,6 +365,12 @@ func checks() []check {
 		section: hubControls,
 		needs:   credential,
 		run:     checkControlsAreGated,
+	}, {
+		id:      "versioning/probe-sources-are-gated",
+		rule:    "probe_sources goes only to a runner whose capability document advertises source_probe: one without it would drop the list, and a hub waiting on its answers would wait for ever. Probing is optional for a hub; sending the list to this runner, which does not advertise it, is not.",
+		section: hubReach,
+		needs:   credential,
+		run:     checkProbeSourcesAreGated,
 	}, {
 		id:      "errors/next-action",
 		rule:    "Every error a hub returns carries a next_action, because a runner on a customer's machine is debugged by whoever reads it.",

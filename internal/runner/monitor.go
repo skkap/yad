@@ -23,6 +23,7 @@ type Monitor struct {
 	store    *store.Store
 	sessions *Collector
 	logins   *Logins
+	sources  *Sources
 	ready    bool
 	// remover is the running Serve's removal of a connection; nil until its
 	// loops are set up.
@@ -88,6 +89,27 @@ func (m *Monitor) attachLogins(l *Logins) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logins = l
+}
+
+func (m *Monitor) attachSources(s *Sources) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sources = s
+}
+
+// Probes is what conn's hub has asked this runner to probe, with each
+// answer so far (decision 0087). None before Serve has set up.
+func (m *Monitor) Probes(conn string) []SourceProbe {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	s := m.sources
+	m.mu.Unlock()
+	return s.Probes(conn)
 }
 
 // Idle is whether nothing is in progress: the runner is set up, every unit

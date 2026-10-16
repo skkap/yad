@@ -377,6 +377,40 @@ func checkLoginsAccepted(ctx context.Context, s *session) error {
 	return nil
 }
 
+// checkSourceReachAccepted sends a sync answering a source probe the hub never
+// asked for, as a runner might after its hub's list moved on. A hub may ignore
+// the answer; refusing the sync would renew no lease (decision 0087).
+func checkSourceReachAccepted(ctx context.Context, s *session) error {
+	req := s.syncRequest(0)
+	raw, err := s.syncBodyWith(0, map[string]any{"source_reach": []v1.SourceReach{{
+		URL: "https://yad-conformance.invalid/never-listed.git", Reachable: false,
+		Error: v1.ReachNotFound, CheckedAt: time.Now().UTC(),
+	}}})
+	if err != nil {
+		return err
+	}
+	_, a, err := s.syncWith(ctx, req, raw)
+	if err != nil {
+		return err
+	}
+	if !a.ok() {
+		return brokenf("a sync answering a source probe the hub never asked for was refused; a runner advertising source_probe sends its answers on change, a feature gates what a hub sends and never what it takes, and a refused sync renews no lease: %s", a)
+	}
+	return nil
+}
+
+// checkProbeSourcesAreGated reads every answer the suite has had: none may
+// carry probe_sources, since this runner never advertises source_probe.
+func checkProbeSourcesAreGated(_ context.Context, s *session) error {
+	for _, seen := range s.syncs {
+		if len(seen.res.ProbeSources) > 0 {
+			return brokenf("answering %s the hub sent probe_sources (%d repositories) to a runner whose capability document does not advertise \"source_probe\"; such a runner drops the list and never answers it",
+				seen.call, len(seen.res.ProbeSources))
+		}
+	}
+	return nil
+}
+
 func sorted(set map[string]bool) []string { return slices.Sorted(maps.Keys(set)) }
 
 func setOf(ids []string) map[string]bool {
