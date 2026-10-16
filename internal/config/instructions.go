@@ -84,19 +84,26 @@ func (c InstructionsConfig) Read(p Paths) (string, error) {
 
 // readBounded reads path, stopping a byte past limit: a file far over the
 // cap is refused by the size check without being read whole into memory.
+//
+// What it names must be a regular file, checked before the open: opening a
+// FIFO with no writer blocks, and would hold the run — and `yad status`,
+// which reads it too — for as long as nothing writes.
 func readBounded(path string, limit int64) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case fi.IsDir():
+		return nil, errors.New("it is a directory")
+	case !fi.Mode().IsRegular():
+		return nil, errors.New("it is not a regular file")
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if fi.IsDir() {
-		return nil, errors.New("it is a directory")
-	}
 	return io.ReadAll(io.LimitReader(f, limit+1))
 }
 

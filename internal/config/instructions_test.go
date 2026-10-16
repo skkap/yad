@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -29,6 +30,10 @@ func TestInstructionsRead(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(p.Config, "DIR.md"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// A FIFO nothing writes to: opened, it would block the run for ever.
+	if err := syscall.Mkfifo(filepath.Join(p.Config, "FIFO.md"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name    string
 		c       InstructionsConfig
@@ -43,6 +48,7 @@ func TestInstructionsRead(t *testing.T) {
 		{name: "blank file adds nothing", c: InstructionsConfig{Text: "first", File: "BLANK.md"}, want: "first"},
 		{name: "missing file", c: InstructionsConfig{File: "GONE.md"}, wantErr: "instructions.file could not be read"},
 		{name: "a directory", c: InstructionsConfig{File: "DIR.md"}, wantErr: "it is a directory"},
+		{name: "a FIFO", c: InstructionsConfig{File: "FIFO.md"}, wantErr: "not a regular file"},
 		{name: "not UTF-8", c: InstructionsConfig{File: "LATIN1.md"}, wantErr: "not UTF-8"},
 		// Each under the cap, together over it: the cap is on what the run
 		// carries.
