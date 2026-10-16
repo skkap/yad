@@ -91,7 +91,7 @@ func TestStandingInstructionsThatCannotBeGivenRefuseTheRun(t *testing.T) {
 		name, file, want string
 		body             []byte
 	}{
-		{name: "over the cap", file: "INSTRUCTIONS.md", body: []byte(strings.Repeat("x", config.MaxInstructions+1)), want: "over the 16.0 KiB"},
+		{name: "over the cap", file: "INSTRUCTIONS.md", body: []byte(strings.Repeat("x", config.MaxInstructions+1)), want: "instructions.file is 16385 bytes, over the 16384"},
 		{name: "a file that is not there", file: "GONE.md", want: "instructions.file could not be read"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

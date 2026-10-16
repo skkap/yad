@@ -20,7 +20,7 @@ func TestDoctorReportsTheStandingInstructions(t *testing.T) {
 		name, body, want string
 	}{
 		{"set", "Never pkill by name.\n", "note: every run is given 51 B of standing instructions after its hub's context, from instructions.text in "},
-		{"over the cap", strings.Repeat("x", config.MaxInstructions), "error: the standing instructions in [instructions] are 16.0 KiB, over the 16.0 KiB a run may carry"},
+		{"over the cap", strings.Repeat("x", config.MaxInstructions), "error: the standing instructions in [instructions] are 16415 bytes, text and file together, over the 16384 a run may carry"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := privateDir(t)

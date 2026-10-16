@@ -45,7 +45,8 @@ is refused at load with the fix.
 
 **A cap, and a refusal rather than a cut.** 16 KiB for the text and the file
 together, about four thousand tokens that every request of every turn pays
-for. `instructions.text` over it is refused when `config.toml` loads. A file
+for — and for the file as it is on disk, so a file over it is refused whole
+rather than read in part and trimmed. Refusals give exact byte counts. `instructions.text` over it is refused when `config.toml` loads. A file
 over it, missing, a directory or not UTF-8 fails the run `prepare_failed`
 before anything is made for it, with the reason: a rule cut in half can say
 the opposite of the whole, and a run started without the rules would do what

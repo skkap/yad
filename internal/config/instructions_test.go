@@ -52,7 +52,7 @@ func TestInstructionsRead(t *testing.T) {
 		{name: "not UTF-8", c: InstructionsConfig{File: "LATIN1.md"}, wantErr: "not UTF-8"},
 		// Each under the cap, together over it: the cap is on what the run
 		// carries.
-		{name: "text and file over the cap together", c: InstructionsConfig{Text: strings.Repeat("x", 20), File: "BIG.md"}, wantErr: "over the 16.0 KiB a run may carry"},
+		{name: "text and file over the cap together", c: InstructionsConfig{Text: strings.Repeat("x", 20), File: "BIG.md"}, wantErr: "are 16396 bytes, text and file together, over the 16384 a run may carry"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := tc.c.Read(p)
@@ -82,12 +82,26 @@ func TestInstructionsFileIsReadBounded(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(p.Config, "HUGE.md"), make([]byte, 4<<20), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	b, err := readBounded(filepath.Join(p.Config, "HUGE.md"), MaxInstructions)
-	if err != nil || len(b) != MaxInstructions+1 {
-		t.Errorf("read %d bytes, %v; want the cap and one more", len(b), err)
+	if _, err := (InstructionsConfig{File: "HUGE.md"}).Read(p); err == nil || !strings.Contains(err.Error(), "instructions.file is 4194304 bytes, over the 16384") {
+		t.Errorf("err = %v, want the cap's refusal with the file's real size", err)
 	}
-	if _, err := (InstructionsConfig{File: "HUGE.md"}).Read(p); err == nil || !strings.Contains(err.Error(), "refused rather than cut") {
-		t.Errorf("err = %v, want the cap's refusal", err)
+}
+
+// A file over the cap is refused even when its first MaxInstructions bytes,
+// trimmed, would fit: reading a prefix and trimming it is how rules past the
+// cap would be cut off unseen.
+func TestAnInstructionsFileOverTheCapIsNeverCut(t *testing.T) {
+	p := testPaths(t)
+	if err := os.MkdirAll(p.Config, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := "\n" + strings.Repeat("x", MaxInstructions) + "\nthe rule past the cap\n"
+	if err := os.WriteFile(filepath.Join(p.Config, "I.md"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (InstructionsConfig{File: "I.md"}).Read(p)
+	if err == nil || got != "" || !strings.Contains(err.Error(), "refused rather than cut") {
+		t.Errorf("Read = %d bytes, %v; want a refusal and nothing", len(got), err)
 	}
 }
 
@@ -117,7 +131,7 @@ func TestLoadInstructions(t *testing.T) {
 	}
 	for src, want := range map[string]string{
 		"[instructions]\nfile = \"~/.config/yad/INSTRUCTIONS.md\"\n":                  "starts with ~",
-		"[instructions]\ntext = \"" + strings.Repeat("x", MaxInstructions+1) + "\"\n": "instructions.text is 16.0 KiB, over",
+		"[instructions]\ntext = \"" + strings.Repeat("x", MaxInstructions+1) + "\"\n": "instructions.text is 16385 bytes, over the 16384",
 		"[instructions]\nwords = \"x\"\n":                                             "unknown setting instructions.words",
 	} {
 		writeConfig(t, p, src)

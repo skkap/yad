@@ -25,7 +25,8 @@ type InstructionsConfig struct {
 	File string `toml:"file,omitempty"`
 }
 
-// MaxInstructions bounds the text and the file together. Every run carries
+// MaxInstructions bounds the file as it is on disk, and the text and the
+// file together as a run receives them. Every run carries
 // them in its harness's system prompt or developer instructions, which every
 // request of every turn pays for, and 16 KiB — some four thousand tokens —
 // is several pages of rules: past it is a document, which belongs in a file
@@ -65,6 +66,9 @@ func (c InstructionsConfig) Read(p Paths) (string, error) {
 	}
 	if path := c.FilePath(p); path != "" {
 		b, err := readBounded(path, MaxInstructions)
+		if tooBig, ok := errors.AsType[fileTooBig](err); ok {
+			return "", fmt.Errorf("instructions.file is %d bytes, over the %d a run may carry — shorten it; it is refused rather than cut", tooBig.size, MaxInstructions)
+		}
 		if err != nil {
 			return "", fmt.Errorf("instructions.file could not be read (%w) — fix the file, or the path in [instructions] in config.toml", err)
 		}
@@ -77,13 +81,24 @@ func (c InstructionsConfig) Read(p Paths) (string, error) {
 	}
 	out := strings.Join(parts, "\n\n")
 	if len(out) > MaxInstructions {
-		return "", fmt.Errorf("the standing instructions in [instructions] are %s, over the %s a run may carry — shorten them; they are refused rather than cut", Size(len(out)), Size(MaxInstructions))
+		// In bytes: rounded to a tenth of a KiB, a text a few bytes over
+		// reads as the cap itself, and says nothing of how much to cut.
+		return "", fmt.Errorf("the standing instructions in [instructions] are %d bytes, text and file together, over the %d a run may carry — shorten them; they are refused rather than cut", len(out), MaxInstructions)
 	}
 	return out, nil
 }
 
-// readBounded reads path, stopping a byte past limit: a file far over the
-// cap is refused by the size check without being read whole into memory.
+// fileTooBig is a file over the cap, with its size as the file system states
+// it, since the read stopped short of it.
+type fileTooBig struct{ size int64 }
+
+func (e fileTooBig) Error() string { return fmt.Sprintf("%d bytes", e.size) }
+
+// readBounded reads path whole, or refuses it with fileTooBig when it holds
+// more than limit bytes — never a prefix: a caller handed the first limit
+// bytes of a longer file, trimmed, could find them under the cap and give a
+// run the rules cut off. A file far over the cap is read no further than one
+// byte past it.
 //
 // What it names must be a regular file, checked before the open: opening a
 // FIFO with no writer blocks, and would hold the run — and `yad status`,
@@ -104,7 +119,15 @@ func readBounded(path string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, limit+1))
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		// The size stat saw, or what was read when the file grew since.
+		return nil, fileTooBig{size: max(fi.Size(), int64(len(b)))}
+	}
+	return b, nil
 }
 
 // WithInstructions is a run's context with the owner's instructions after the
@@ -137,7 +160,7 @@ func (c InstructionsConfig) validate() []error {
 		errs = append(errs, errors.New("[instructions] holds a NUL byte"))
 	}
 	if n := len(strings.TrimSpace(c.Text)); n > MaxInstructions {
-		errs = append(errs, fmt.Errorf("instructions.text is %s, over the %s a run may carry — shorten it", Size(n), Size(MaxInstructions)))
+		errs = append(errs, fmt.Errorf("instructions.text is %d bytes, over the %d a run may carry — shorten it", n, MaxInstructions))
 	}
 	return errs
 }
