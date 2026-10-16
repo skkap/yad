@@ -154,7 +154,10 @@ and the one a run uses: yad's own git, and the harness and setup hook finding
 the tool by name ([0045](docs/decisions/0045-runs-use-the-host-tools-detection-resolved.md)). It
 does not mean the binary works. A present harness with an `error` takes no
 runs.
-_Rules_: One rule for harnesses and host tools. An override **names nothing**
+The browser has no single binary and no override: it is present when a Chrome
+or Chromium is found on `PATH` or at its standard location, or Playwright has
+finished installing a browser in its cache, and no run is handed it.
+_Rules_: One rule for harnesses and the binary host tools. An override **names nothing**
 when nothing is at the path or it is a directory. Then `PATH` decides and the
 override is reported: as a warning when `PATH` has the binary, which is still
 usable, and as an error beside `present: false` when it has none. A file that

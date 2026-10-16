@@ -62,13 +62,19 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		supervise.SetOwnerEnv(cfg.Env)
 	}
 	// Beside the harnesses, as the capability document probes them: gh's
-	// login check can take seconds, and in series it would add them.
+	// login check can take seconds, and in series it would add them. Not
+	// for --json, which is the harness detection alone and would wait on
+	// gh's network round trip for nothing.
 	var tools []hostool.Detected
 	toolsDone := make(chan struct{})
-	go func() {
-		defer close(toolsDone)
-		tools = hostool.Detect(ctx)
-	}()
+	if *asJSON {
+		close(toolsDone)
+	} else {
+		go func() {
+			defer close(toolsDone)
+			tools = hostool.Detect(ctx)
+		}()
+	}
 	found := capability.Detect(ctx)
 	var locked, silent map[string]bool
 	var sharedErr error

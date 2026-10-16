@@ -19,7 +19,8 @@ type Detected struct {
 	Version string `json:"version,omitempty"`
 	// Present is there being a binary detection found and probed: Path, which
 	// is also the one a run uses (Locate, Links). Not that it works — Error
-	// says whether it does.
+	// says whether it does. For the browser, Path is what was found — an
+	// executable, or Playwright's cache — and no run is handed it (0087).
 	Present bool `json:"present"`
 	// Error is what went wrong with this tool: a path override that names
 	// nothing with no binary on PATH either, a probe that timed out, a binary

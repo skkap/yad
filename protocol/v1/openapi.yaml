@@ -518,7 +518,7 @@ components:
             type: string
           type: array
         present:
-          description: "The runner found a binary for this tool and probed it: the one its configured path names, or the one on PATH when that path names nothing. Present is not usable: see error and logged_in."
+          description: "The runner found a binary for this tool and probed it: the one its configured path names, or the one on PATH when that path names nothing. For browser, which has no configured path: a Chrome or Chromium on PATH or at its standard install location, or a browser Playwright finished installing in its cache. Present is not usable: see error and logged_in."
           type: boolean
         version:
           description: The version number the tool reported, such as 2.51.0, and nothing else of what it printed. For browser, the browser's own, such as 141.0.7390.65. Absent when the tool printed none, and for a browser whose version could not be read.

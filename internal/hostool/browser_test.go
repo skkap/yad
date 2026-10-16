@@ -5,9 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/skkap/yad/internal/seamtest"
+	"github.com/skkap/yad/internal/shellword"
+	"github.com/skkap/yad/internal/shellword/shellwordtest"
 )
 
 // browserMachine is a machine with nothing on PATH, no override, a home of
@@ -209,21 +213,83 @@ func TestPlaywrightBrowsers(t *testing.T) {
 }
 
 // A browser that will not answer is present and broken, in the runner's own
-// words: never what it printed, never where it is.
-func TestBrokenBrowserIsReportedWithoutItsOutputOrPath(t *testing.T) {
-	root, _ := browserMachine(t)
-	put(t, root, "/usr/bin/chromium", "#!/bin/sh\necho 'cannot open /home/alice/.config/chromium hunter2' >&2\nexit 1\n", 0o755)
-	d := detectBrowser(context.Background(), "linux")
-	if !d.Present || d.Kind != BrowserChromium || d.Error == "" || d.Version != "" {
-		t.Fatalf("got %+v, want chromium present with an error", d)
-	}
-	for _, leak := range []string{"hunter2", "/home/alice", "/usr/bin", root} {
-		if strings.Contains(d.Error, leak) {
-			t.Errorf("error %q carries %q", d.Error, leak)
+// words: never what it printed, and a next action that runs as pasted — the
+// name PATH found it by, or a fixed location, which is the system's and
+// never under a home, in full.
+func TestBrokenBrowserIsReportedWithoutItsOutput(t *testing.T) {
+	const fails = "#!/bin/sh\necho 'cannot open /home/alice/.config/chromium hunter2' >&2\nexit 1\n"
+	t.Run("at a fixed location", func(t *testing.T) {
+		root, _ := browserMachine(t)
+		put(t, root, "/usr/bin/chromium", fails, 0o755)
+		d := detectBrowser(context.Background(), "linux")
+		if !d.Present || d.Kind != BrowserChromium || d.Error == "" || d.Version != "" {
+			t.Fatalf("got %+v, want chromium present with an error", d)
 		}
+		for _, leak := range []string{"hunter2", "/home/alice", root} {
+			if strings.Contains(d.Error, leak) {
+				t.Errorf("error %q carries %q", d.Error, leak)
+			}
+		}
+		if got := shellwordtest.Commands(d.Error, "/usr/bin/chromium"); len(got) != 1 || got[0] != shellword.Command("/usr/bin/chromium", "--version") {
+			t.Errorf("error %q: commands %q, want the one that runs it", d.Error, got)
+		}
+	})
+	t.Run("on PATH", func(t *testing.T) {
+		browserMachine(t)
+		dir := t.TempDir()
+		put(t, dir, "chromium-browser", fails, 0o755)
+		t.Setenv("PATH", dir)
+		d := detectBrowser(context.Background(), "linux")
+		if !d.Present || d.Error == "" || strings.Contains(d.Error, dir) || strings.Contains(d.Error, "hunter2") {
+			t.Fatalf("got %+v, want present with an error naming no path and no output", d)
+		}
+		// Compared as text: sh cannot stub a name with a dash in it.
+		if got := shellwordtest.Commands(d.Error, "chromium-browser"); len(got) != 1 || got[0] != shellword.Command("chromium-browser", "--version") {
+			t.Errorf("error %q: commands %q, want the one that runs it", d.Error, got)
+		}
+	})
+}
+
+// Playwright's Chromium downloaded without its system libraries cannot
+// answer --version and cannot open a page: present, with the error that says
+// how to add them, so no hub sends it a run that needs a browser.
+func TestPlaywrightChromiumThatWillNotRunIsBroken(t *testing.T) {
+	root, home := browserMachine(t)
+	dir := playwright(t, root, filepath.Join(home, ".cache", "ms-playwright"), "chromium-1243", true)
+	put(t, root, filepath.Join(dir, "chrome-linux", "chrome"), "#!/bin/sh\necho 'error while loading shared libraries: libnss3.so' >&2\nexit 127\n", 0o755)
+	d := detectBrowser(context.Background(), "linux")
+	if !d.Present || d.Kind != BrowserPlaywright || d.Version != "" || d.Error == "" {
+		t.Fatalf("got %+v, want playwright present with an error", d)
 	}
-	if !strings.Contains(d.Error, "--version") {
-		t.Errorf("error %q does not say what to run", d.Error)
+	if strings.Contains(d.Error, "libnss3") || strings.Contains(d.Error, home) {
+		t.Errorf("error %q quotes the browser or names the home", d.Error)
+	}
+	cmds := shellwordtest.Commands(d.Error, "sudo")
+	if len(cmds) != 1 {
+		t.Fatalf("error %q names no command", d.Error)
+	}
+	shellwordtest.Check(t, cmds[0], "sudo", "npx", "playwright", "install-deps", "chromium")
+}
+
+// A bundle whose Info.plist is a FIFO — a broken or hostile app under
+// ~/Applications — must not block detection: nothing would read the other
+// end, and every capability probe would wait with it.
+func TestABundleThatIsNotAFileDoesNotBlock(t *testing.T) {
+	root, home := browserMachine(t)
+	app := filepath.Join(root, home, "Applications", "Google Chrome.app", "Contents")
+	put(t, root, filepath.Join(home, "Applications", "Google Chrome.app", "Contents", "MacOS", "Google Chrome"), "#!/bin/sh\n", 0o755)
+	if err := syscall.Mkfifo(filepath.Join(app, "Info.plist"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan Detected, 1)
+	go func() { done <- detectBrowser(context.Background(), "darwin") }()
+	select {
+	case d := <-done:
+		if !d.Present || d.Kind != BrowserChrome || d.Version != "" {
+			t.Errorf("got %+v, want chrome present with no version", d)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("detection blocked on a FIFO")
 	}
 }
 

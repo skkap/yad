@@ -43,3 +43,23 @@ func TestDoctorListsTheHostTools(t *testing.T) {
 		}
 	}
 }
+
+// --json is the harness detection alone, so it probes no host tool: gh's
+// login check would cost it a network round trip for an answer it drops.
+func TestDoctorJSONProbesNoHostTool(t *testing.T) {
+	t.Setenv("YAD_CONFIG_DIR", privateDir(t))
+	t.Setenv("YAD_DATA_DIR", shortDir(t))
+	noTools(t)
+	bin, marker := t.TempDir(), filepath.Join(t.TempDir(), "asked")
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\ntouch '"+marker+"'\necho 'git version 2.51.0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	var out, errb bytes.Buffer
+	if code := run(context.Background(), []string{"doctor", "--json"}, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("doctor --json asked git its version")
+	}
+}

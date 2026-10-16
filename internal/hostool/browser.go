@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/skkap/yad/internal/harness"
+	"github.com/skkap/yad/internal/shellword"
 	"github.com/skkap/yad/internal/supervise"
 )
 
@@ -171,7 +172,7 @@ func detectBrowser(ctx context.Context, goos string) Detected {
 			if chromium, ok := playwrightBrowsers(rooted(p.path)); ok {
 				d.Present, d.Kind, d.Path = true, p.kind, p.path
 				if chromium != "" {
-					d.Version = playwrightVersion(ctx, chromium, goos)
+					d.Version, d.Error = playwrightVersion(ctx, chromium, goos)
 				}
 				return d
 			}
@@ -181,7 +182,7 @@ func detectBrowser(ctx context.Context, goos string) Detected {
 				continue
 			}
 			d.Present, d.Kind, d.Path = true, p.kind, path
-			d.Version, d.Error = askVersion(ctx, path, "`"+p.onPATH+" --version`")
+			d.Version, d.Error = askVersion(ctx, path, shellword.Command(p.onPATH, "--version"))
 			return d
 		default:
 			path := rooted(p.path)
@@ -195,7 +196,9 @@ func detectBrowser(ctx context.Context, goos string) Detected {
 			case "windows":
 				d.Version = windowsVersion(filepath.Dir(path))
 			default:
-				d.Version, d.Error = askVersion(ctx, path, "its `--version`")
+				// Named in full: a fixed location is the system's, never
+				// under anyone's home, and not on PATH to be named by.
+				d.Version, d.Error = askVersion(ctx, path, shellword.Command(p.path, "--version"))
 			}
 			return d
 		}
@@ -203,25 +206,27 @@ func detectBrowser(ctx context.Context, goos string) Detected {
 	return d
 }
 
-// askVersion runs path --version. The error names what was run in what, and
-// never the path: a fixed location is no owner's name, but the document's
-// rule is one rule (internal/probe).
-func askVersion(ctx context.Context, path, what string) (version, problem string) {
+// askVersion runs path --version. command is that, as its owner would paste
+// it (shellword.Command): the name PATH found, or a fixed location in full.
+// Never what the browser printed (internal/probe).
+func askVersion(ctx context.Context, path, command string) (version, problem string) {
 	out, err := run(ctx, path, []string{"--version"}, false, versionWait())
 	switch {
 	case err != nil:
-		return "", "the browser found will not start — run " + what + " on this machine to see why"
+		return "", "the browser found will not start — run `" + command + "` on this machine to see why"
 	case out.TimedOut:
-		return "", fmt.Sprintf("no answer from the browser found to %s within %s — run it on this machine to see what it waits on", what, versionWait())
+		return "", fmt.Sprintf("no answer to `%s` within %s — run it on this machine to see what it waits on", command, versionWait())
 	case out.Err != nil:
-		return "", "the browser found exited with an error to " + what + " — run it on this machine to see why"
+		return "", "`" + command + "` exited with an error — run it on this machine to see why"
 	}
 	return harness.ParseVersion(string(out.Stdout)), ""
 }
 
+// isFile is a regular file: not a directory, and not a FIFO or a device,
+// which a read would block on or never finish.
 func isFile(path string) bool {
 	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir()
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // plistVersion is the bundle's CFBundleShortVersionString. Chrome's and
@@ -245,6 +250,11 @@ func bundleVersion(exe string) string {
 // readCapped reads at most outputCap bytes: an Info.plist is a few kilobytes,
 // and a file that is not one must not grow the runner.
 func readCapped(path string) ([]byte, error) {
+	// Checked before the open, which would block on a FIFO with no writer
+	// and hold every capability probe with it.
+	if !isFile(path) {
+		return nil, fmt.Errorf("%s is not a regular file", filepath.Base(path))
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -321,9 +331,15 @@ func playwrightBrowsers(dir string) (chromium string, ok bool) {
 // playwrightVersion is the version of the Chromium Playwright installed in
 // dir, read as an installed Chrome's is: from the bundle on macOS, from the
 // binary on Linux. On Windows it is not read: Playwright's build has no
-// version directory, and chrome.exe answers --version with a window. A version
-// that cannot be read is no error — the browsers are there either way.
-func playwrightVersion(ctx context.Context, dir, goos string) string {
+// version directory, and chrome.exe answers --version with a window.
+//
+// A Linux Chromium that will not answer is a problem, not a missing version:
+// Playwright's download without --with-deps lacks the system libraries it
+// loads before main, so it cannot answer --version and cannot open a page
+// either, and a hub told it is present with no error would send it the
+// verifier run that then fails. The advice names Playwright's command rather
+// than the binary, whose path is under the owner's home.
+func playwrightVersion(ctx context.Context, dir, goos string) (version, problem string) {
 	switch goos {
 	case "darwin":
 		// chrome-mac/ or chrome-mac-arm64/, holding Chromium.app or, since
@@ -332,7 +348,7 @@ func playwrightVersion(ctx context.Context, dir, goos string) string {
 		slices.Sort(plists)
 		for _, p := range plists {
 			if v := bundleVersion(filepath.Join(filepath.Dir(p), "MacOS", "x")); v != "" {
-				return v
+				return v, ""
 			}
 		}
 	case "windows":
@@ -340,10 +356,15 @@ func playwrightVersion(ctx context.Context, dir, goos string) string {
 		bins, _ := filepath.Glob(filepath.Join(dir, "chrome-linux*", "chrome"))
 		slices.Sort(bins)
 		for _, b := range bins {
-			if v, problem := askVersion(ctx, b, "its `--version`"); problem == "" && v != "" {
-				return v
+			if !isFile(b) {
+				continue
 			}
+			out, err := run(ctx, b, []string{"--version"}, false, versionWait())
+			if err != nil || out.TimedOut || out.Err != nil {
+				return "", "Playwright's newest Chromium will not run on this machine — usually it lacks the system libraries it needs, which `sudo npx playwright install-deps chromium` installs"
+			}
+			return harness.ParseVersion(string(out.Stdout)), ""
 		}
 	}
-	return ""
+	return "", ""
 }

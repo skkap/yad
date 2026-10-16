@@ -164,8 +164,9 @@ type HostTool struct {
 	// Present is the binary detection found and probed, under the same
 	// override rule as a harness (YAD-68), and the one a run uses: yad's own
 	// git resolves it the same way, and a harness's children find it ahead of
-	// PATH (0045).
-	Present bool   `json:"present" doc:"The runner found a binary for this tool and probed it: the one its configured path names, or the one on PATH when that path names nothing. Present is not usable: see error and logged_in."`
+	// PATH (0045). The browser is the exception: it is searched for, takes
+	// no override and is not linked into a run's PATH (0087).
+	Present bool   `json:"present" doc:"The runner found a binary for this tool and probed it: the one its configured path names, or the one on PATH when that path names nothing. For browser, which has no configured path: a Chrome or Chromium on PATH or at its standard install location, or a browser Playwright finished installing in its cache. Present is not usable: see error and logged_in."`
 	Version string `json:"version,omitempty" doc:"The version number the tool reported, such as 2.51.0, and nothing else of what it printed. For browser, the browser's own, such as 141.0.7390.65. Absent when the tool printed none, and for a browser whose version could not be read."`
 	// LoggedIn is nil when the tool has no notion of a login, and nil too when
 	// it has one and the runner could not find out — Error says why.
