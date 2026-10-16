@@ -89,7 +89,7 @@ func TestNoStandingInstructionsLeaveTheBriefAlone(t *testing.T) {
 func TestStandingInstructionsThatCannotBeGivenRefuseTheRun(t *testing.T) {
 	for _, tc := range []struct {
 		name, file, want string
-		body           []byte
+		body             []byte
 	}{
 		{name: "over the cap", file: "INSTRUCTIONS.md", body: []byte(strings.Repeat("x", config.MaxInstructions+1)), want: "over the 16.0 KiB"},
 		{name: "a file that is not there", file: "GONE.md", want: "instructions.file could not be read"},

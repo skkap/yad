@@ -110,9 +110,9 @@ func TestLoadInstructions(t *testing.T) {
 		t.Errorf("instructions = %+v", c.Instructions)
 	}
 	for src, want := range map[string]string{
-		"[instructions]\nfile = \"~/.config/yad/INSTRUCTIONS.md\"\n":              "starts with ~",
+		"[instructions]\nfile = \"~/.config/yad/INSTRUCTIONS.md\"\n":                  "starts with ~",
 		"[instructions]\ntext = \"" + strings.Repeat("x", MaxInstructions+1) + "\"\n": "instructions.text is 16.0 KiB, over",
-		"[instructions]\nwords = \"x\"\n":                                          "unknown setting instructions.words",
+		"[instructions]\nwords = \"x\"\n":                                             "unknown setting instructions.words",
 	} {
 		writeConfig(t, p, src)
 		if _, err := Load(p); err == nil || !strings.Contains(err.Error(), want) {
