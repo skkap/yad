@@ -72,8 +72,8 @@ machines/yad-machine up SPEC_DIR [--yad PATH]   create or update the machine
 machines/yad-machine status [NAME] [--json]     every machine, or one: runner, hubs, logins, checks
 machines/yad-machine login NAME                 make every login the machine is missing, one by one
 machines/yad-machine shell NAME [COMMAND...]    a login shell, or a command, as agent
-machines/yad-machine start NAME                 start a machine that is stopped
-machines/yad-machine autostart NAME             start it at the host user's login again
+machines/yad-machine start NAME                 start a machine that is stopped or Broken
+machines/yad-machine autostart NAME             start it at the host user's login, retried until it runs
 machines/yad-machine destroy NAME               delete the VM and everything in it
 ```
 
@@ -87,9 +87,9 @@ release, or `YAD_VERSION`'s, and checks it against the release's
 different yad was installed, or the runner was not running — since a restart
 drains the runs it holds. An `up` that changes nothing restarts nothing.
 
-`up` also registers the VM to start at the host user's login
-(`limactl autostart`) and protects it from `limactl delete`. `destroy` undoes
-both after you type the name.
+`up` also registers the VM to start at the host user's login — see
+[After the host restarts](#after-the-host-restarts) — and protects it from
+`limactl delete`. `destroy` undoes both after you type the name.
 
 **From another computer.** With `YAD_MACHINE_HOST=<ssh host>`, every command
 runs on that host through its own `yad-machine` — put the kit on its `PATH`
@@ -286,6 +286,41 @@ Taking `auto = true` out of the spec and running `up` turns it off again.
 - **`--yad PATH` is replaced too**, if the build carries a release version older
   than the newest release. A build between tags carries the tag before it and
   is replaced once a newer one exists; one with no version at all never is.
+
+## After the host restarts
+
+A machine comes back on its own at the host user's login. `up` registers the
+kit's own agent for it — a launchd agent, `~/Library/LaunchAgents/yad-machine.NAME.plist`,
+on macOS; a systemd user unit, `yad-machine-NAME.service`, on Linux — which
+runs `yad-machine boot NAME` and runs it again every 30 seconds until the VM is
+Running ([0090](../docs/decisions/0090-a-work-machine-is-started-at-login-by-the-kits-own-agent.md)).
+What it did is in `~/.local/state/yad-machine/NAME.log`.
+
+**A host that did not shut its VMs down leaves Lima's pid files behind**, and
+after the reboot a pid in one may belong to another process. Lima then takes
+that process for its host agent, lists the instance as **Broken**, and its own
+start refuses it — which is why the kit does not use `limactl autostart`.
+`boot`, and `yad-machine start`, first remove every pid file of the instance
+that does not name the instance's own Lima process, and the host agent's
+sockets with them; while any Lima process of the instance is running they
+remove nothing. `status` shows a Broken machine with each stale file and what
+its pid now is:
+
+```
+  tl-general: its VM is Broken: Lima's files name processes that are not its own — the host restarted, or its host agent was killed:
+      ha.pid: pid 742 now belongs to another process: /Applications/Granola.app/Contents/Frameworks/Granola Helper.app/…
+      vz.pid: pid 742 now belongs to another process: /Applications/Granola.app/Contents/Frameworks/Granola Helper.app/…
+    `machines/yad-machine start tl-general` removes them and starts it, as the kit's agent does at login
+```
+
+**A machine built before the kit had its own agent** starts through Lima's
+autostart, and `status` says so. Run the kit again — `yad-machine up SPEC`,
+or just `yad-machine autostart NAME` — and it disables Lima's registration and
+installs its own, without stopping a running machine.
+
+The agent runs a copy of the kit kept in `~/.local/share/yad-machine/`, so it
+does not depend on the checkout or cache `up` was run from still being there.
+It finds `limactl` where `up` did, and keeps `LIMA_HOME` if `up` had one.
 
 ## Rebuilding
 

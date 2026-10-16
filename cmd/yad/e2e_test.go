@@ -117,6 +117,11 @@ func TestMain(m *testing.M) {
 	case "wedged":
 		wedgedDaemon()
 		return
+	case "lima":
+		// A Lima host agent for the work-machine kit's tests: only its
+		// command line matters, and it lives until the test kills it.
+		time.Sleep(time.Hour)
+		return
 	}
 	// The suite run over SSH on a Mac would otherwise have doctor call every
 	// logged-out Claude it sets up unknown (keychainLocked); the test that
