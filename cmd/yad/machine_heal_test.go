@@ -503,7 +503,7 @@ func TestKitStartIsLockedAndItsAdviceRunsAsPrinted(t *testing.T) {
 	d := h.instance("tl-general", "Broken", map[string]string{"ha.pid": unrelated})
 	holder := liveProcess(t, exec.Command("sleep", "600"))
 	lock := filepath.Join(d, "yad-machine.lock")
-	started, err := exec.Command("sh", "-c", "ps -o lstart= -p "+holder+" | tr -s ' '").Output()
+	started, err := exec.Command("sh", "-c", "LC_ALL=C TZ=UTC ps -o lstart= -p "+holder+" | tr -s ' '").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,8 +514,11 @@ func TestKitStartIsLockedAndItsAdviceRunsAsPrinted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Held: a live pid that started when the lock says.
+	// Held: a live pid that started when the lock says — asked from a
+	// terminal in another locale and zone than the login agent's, which
+	// must still read the same time.
 	setLock(holder + " " + strings.TrimRight(string(started), "\n"))
+	h.env = append(h.env, "LC_ALL=ja_JP.UTF-8", "LANG=ja_JP.UTF-8", "TZ=Asia/Tokyo")
 	out, err := h.run("", "start", "tl-general")
 	if err == nil || !strings.Contains(out, "is being started already, by pid "+holder) || !onDisk(filepath.Join(d, "ha.pid")) || !onDisk(lock) {
 		t.Errorf("start while another holds the lock = %v; want it refused, touching nothing:\n%s", err, out)

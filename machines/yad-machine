@@ -297,9 +297,11 @@ heal() {
 # A pid alone is no proof: the lock outlives a power cut, and the next boot
 # may give its pid to anything — the very failure this kit heals Lima of. A
 # holder is live only when that pid is running and started at that time;
-# otherwise the lock is taken over. It sits in the instance's directory, so
+# otherwise the lock is taken over. The time is printed in one locale and
+# zone whoever asks — ps prints it with strftime's %c — or a start from a
+# Japanese terminal would judge a login boot's lock stale. It sits in the instance's directory, so
 # every caller agrees on it whatever its XDG directories, and goes with it.
-started_at() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' || true; }
+started_at() { LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' || true; }
 lock() {
 	local d mine held aside
 	d=$(instance_dirs "$name" | head -n 1)
