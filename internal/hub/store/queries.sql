@@ -538,8 +538,9 @@ ON CONFLICT (session_id, runner_id) DO UPDATE SET released_at = excluded.release
 -- name: ProbeSourceCandidates :many
 -- The git URLs of the runs submitted since since, the most recently used
 -- first: the repositories this hub may send a runner, which it asks every
--- runner advertising source_probe about (decision 0087). The caller drops a
--- URL carrying a credential, so it asks for more than it lists.
+-- runner advertising source_probe about (decision 0087), a page at a time:
+-- the caller drops a URL that may hold a secret, and pages on until it has
+-- enough it can list.
 SELECT CAST(json_extract(src.value, '$.git.url') AS TEXT) AS url,
        CAST(MAX(r.created_at) AS INTEGER) AS last_used
 FROM runs r, json_each(r.spec, '$.sources') src
@@ -547,7 +548,7 @@ WHERE r.created_at >= sqlc.arg(since)
   AND json_extract(src.value, '$.git.url') IS NOT NULL
 GROUP BY 1
 ORDER BY 2 DESC, 1
-LIMIT sqlc.arg(max);
+LIMIT sqlc.arg(max) OFFSET sqlc.arg(skip);
 
 -- name: RecordSourceReach :exec
 -- A newer answer replaces the one held; an older one, arriving late, does not.

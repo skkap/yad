@@ -20,26 +20,36 @@ const probeWindow = 7 * 24 * time.Hour
 
 // probeList is what this hub lists in probe_sources (decision 0087): the git
 // URLs its recent runs named, the most recently used first, up to the most a
-// runner probes. A URL with a credential in it is left out: the run carrying
-// it brings its own way in, and a runner would refuse to probe it.
+// runner probes. A URL that may hold a secret (maySecret) is left out: a run
+// carrying a token in its URL brings its own way in, and a runner would
+// refuse to probe it.
+//
+// Paged, and filtered before the cap rather than after: a hub whose runs each
+// carry their own token in the URL has a distinct URL per run, and those must
+// not crowd the plain ones out of the list.
 func probeList(ctx context.Context, q *db.Queries, now time.Time) ([]v1.ProbeSource, error) {
-	rows, err := q.ProbeSourceCandidates(ctx, db.ProbeSourceCandidatesParams{
-		Since: store.Ms(now.Add(-probeWindow)), Max: 2 * v1.ProbeSourcesMax,
-	})
-	if err != nil {
-		return nil, err
-	}
+	const page = 2 * v1.ProbeSourcesMax
 	var out []v1.ProbeSource
-	for _, r := range rows {
-		if r.Url == "" || carriesCredential(r.Url) {
-			continue
+	for skip := int64(0); ; skip += page {
+		rows, err := q.ProbeSourceCandidates(ctx, db.ProbeSourceCandidatesParams{
+			Since: store.Ms(now.Add(-probeWindow)), Max: page, Skip: skip,
+		})
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, v1.ProbeSource{URL: r.Url})
-		if len(out) == v1.ProbeSourcesMax {
-			break
+		for _, r := range rows {
+			if r.Url == "" || maySecret(r.Url) {
+				continue
+			}
+			out = append(out, v1.ProbeSource{URL: r.Url})
+			if len(out) == v1.ProbeSourcesMax {
+				return out, nil
+			}
+		}
+		if len(rows) < page {
+			return out, nil
 		}
 	}
-	return out, nil
 }
 
 // syncSourceReach takes a sync's source_reach: the latest answer for each URL
@@ -112,14 +122,20 @@ func sourceReachOf(ctx context.Context, q *db.Queries, runnerID string) ([]v1.So
 	return out, nil
 }
 
-// carriesCredential is a git URL with a credential in its userinfo: any
-// userinfo in an https URL, where a token is the user, and a password in an
-// ssh one, whose user is only the login name. It reads the URL as the
-// runner's parseRemote does, cut from the string rather than parsed.
-func carriesCredential(raw string) bool {
+// maySecret is a git URL that is not listed for probing: one with a
+// credential in its userinfo — any userinfo in an https URL, where a token is
+// the user, and a password in an ssh one, whose user is only the login name —
+// or with a query or a fragment, which config.RedactURL treats as a place a
+// token may sit and which no plain repository URL needs. It reads the URL as
+// the runner's parseRemote does, cut from the string rather than parsed; the
+// runner refuses the same URLs unprobed.
+func maySecret(raw string) bool {
 	scheme, rest, ok := strings.Cut(raw, "://")
 	if !ok {
 		return false
+	}
+	if strings.ContainsAny(rest, "?#") {
+		return true
 	}
 	end := strings.IndexAny(rest, "/?#")
 	if end < 0 {

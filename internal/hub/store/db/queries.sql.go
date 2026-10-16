@@ -1433,11 +1433,12 @@ WHERE r.created_at >= ?1
   AND json_extract(src.value, '$.git.url') IS NOT NULL
 GROUP BY 1
 ORDER BY 2 DESC, 1
-LIMIT ?2
+LIMIT ?3 OFFSET ?2
 `
 
 type ProbeSourceCandidatesParams struct {
 	Since int64
+	Skip  int64
 	Max   int64
 }
 
@@ -1448,10 +1449,11 @@ type ProbeSourceCandidatesRow struct {
 
 // The git URLs of the runs submitted since since, the most recently used
 // first: the repositories this hub may send a runner, which it asks every
-// runner advertising source_probe about (decision 0087). The caller drops a
-// URL carrying a credential, so it asks for more than it lists.
+// runner advertising source_probe about (decision 0087), a page at a time:
+// the caller drops a URL that may hold a secret, and pages on until it has
+// enough it can list.
 func (q *Queries) ProbeSourceCandidates(ctx context.Context, arg ProbeSourceCandidatesParams) ([]ProbeSourceCandidatesRow, error) {
-	rows, err := q.db.QueryContext(ctx, probeSourceCandidates, arg.Since, arg.Max)
+	rows, err := q.db.QueryContext(ctx, probeSourceCandidates, arg.Since, arg.Skip, arg.Max)
 	if err != nil {
 		return nil, err
 	}

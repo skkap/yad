@@ -46,6 +46,8 @@ func TestProbe(t *testing.T) {
 		{"a directory that is no repository", f.root, "", false, v1.ReachNotFound},
 		{"a host nobody answers on", "https://" + closed + "/acme.git", "", false, v1.ReachNetwork},
 		{"a token in the URL", "https://ghp_secret@" + closed + "/acme.git", "", false, v1.ReachRefused},
+		{"a token in the query", "https://" + closed + "/acme.git?token=ghp_secret", "", false, v1.ReachRefused},
+		{"a fragment", "https://" + closed + "/acme.git#x", "", false, v1.ReachRefused},
 		{"a password in an ssh URL", "ssh://git:pw@" + closed + "/acme.git", "", false, v1.ReachRefused},
 		{"a remote helper", "ext::sh -c touch% /tmp/pwned", "", false, v1.ReachRefused},
 		{"plain http", "http://" + closed + "/acme.git", "", false, v1.ReachRefused},

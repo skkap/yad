@@ -32,13 +32,14 @@ const probeOutputCap = 64 << 10
 //
 // It answers with a class and never with git's words, which can quote a URL
 // carrying a credential an insteadOf rule of the owner's put there. A URL
-// carrying a credential of its own is refused unprobed: a hub sends that
+// carrying a credential of its own — or a query or a fragment, where one may
+// sit (queried) — is refused unprobed: a hub sends that
 // credential with the run that needs it, so a probe would only say whether
 // the hub's token works, and the runner would hold it for nothing.
 func (m *Manager) Probe(ctx context.Context, rawURL, ref string) (bool, v1.SourceReachError) {
 	m.init()
 	r, err := parseRemote(rawURL, m.reach)
-	if err != nil || r.cred != nil || !probeRef(ref) {
+	if err != nil || r.cred != nil || !probeRef(ref) || queried(rawURL) {
 		return false, v1.ReachRefused
 	}
 	if ref == "" {
@@ -77,6 +78,14 @@ func (m *Manager) Probe(ctx context.Context, rawURL, ref string) (bool, v1.Sourc
 		return false, v1.ReachRefNotFound
 	}
 	return false, reachClass(p.Stderr())
+}
+
+// queried is a URL with a query or a fragment: a place config.RedactURL
+// treats as holding a token, and that no plain repository URL needs, so a
+// probe refuses it as it refuses userinfo.
+func queried(raw string) bool {
+	_, rest, ok := strings.Cut(raw, "://")
+	return ok && strings.ContainsAny(rest, "?#")
 }
 
 // probeRef is a ref a hub may ask about: handed to git as a pattern after

@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
@@ -119,7 +120,7 @@ func TestARunGoesToARunnerThatCanReachItsRepository(t *testing.T) {
 	}
 }
 
-func TestCarriesCredential(t *testing.T) {
+func TestMaySecret(t *testing.T) {
 	for url, want := range map[string]bool{
 		"https://ghp_x@github.com/a/b.git":     true,
 		"https://u:p@github.com/a/b.git":       true,
@@ -127,13 +128,33 @@ func TestCarriesCredential(t *testing.T) {
 		"ssh://git@github.com/a/b.git":         false,
 		"git@github.com:a/b.git":               false,
 		"https://github.com/a/b.git":           false,
-		"https://github.com/a/b.git?x=a@b":     false,
+		"https://github.com/a/b.git?x=a@b":     true,
+		"https://github.com/a/b.git?token=x":   true,
+		"https://github.com/a/b.git#x":         true,
 		"/srv/repos/acme.git":                  false,
 		"file:///srv/repos/acme.git":           false,
 		"https://github.com/user@example/repo": false,
 	} {
-		if got := carriesCredential(url); got != want {
-			t.Errorf("carriesCredential(%q) = %v, want %v", url, got, want)
+		if got := maySecret(url); got != want {
+			t.Errorf("maySecret(%q) = %v, want %v", url, got, want)
 		}
+	}
+}
+
+// A week of runs each carrying its own token in the URL is a distinct URL
+// per run; they are left out before the cap, so they cannot crowd out the
+// plain repository named before them.
+func TestTokenedURLsDoNotCrowdOutThePlainOnes(t *testing.T) {
+	f := newFixture(t)
+	const plain = "https://git.example/acme/plain.git"
+	f.enqueue(t, gitRun("plain", "s-plain", plain))
+	for i := range 3 * v1.ProbeSourcesMax {
+		f.clock.Advance(time.Second)
+		f.enqueue(t, gitRun(fmt.Sprintf("tok-%d", i), fmt.Sprintf("s-tok-%d", i),
+			fmt.Sprintf("https://x-access-token:ghs_%d@git.example/acme/plain.git", i)))
+	}
+	cred := f.register(t, "r1")
+	if got := f.mustSync(t, "r1", cred, first("r1", 0)).ProbeSources; !slices.Equal(got, []v1.ProbeSource{{URL: plain}}) {
+		t.Errorf("probe_sources = %+v, want the plain URL alone", got)
 	}
 }

@@ -9,7 +9,7 @@ import (
 
 	v1 "github.com/skkap/yad/protocol/v1"
 
-	"github.com/skkap/yad/internal/config"
+	"github.com/skkap/yad/internal/workdir"
 )
 
 // Source probing (decision 0087): each hub lists, in every sync answer, the
@@ -239,6 +239,12 @@ func (s *Sources) Run(ctx context.Context) {
 		for _, k := range keys {
 			wg.Go(func() {
 				ok, class := s.Check(ctx, k.url, k.ref)
+				if ctx.Err() != nil {
+					// Stopped by the way down, not answered by the remote:
+					// nothing to keep, and nothing to warn about.
+					s.forget(k)
+					return
+				}
 				s.record(k, ok, class)
 				select {
 				case done <- struct{}{}:
@@ -299,6 +305,13 @@ func (s *Sources) due() ([]probeKey, time.Duration) {
 	return start, next
 }
 
+// forget lets go of a probe that ended without an answer.
+func (s *Sources) forget(k probeKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.running, k)
+}
+
 // record keeps a probe's answer, while some hub still asks: one it stopped
 // asking about while the probe ran is not news to anyone.
 func (s *Sources) record(k probeKey, ok bool, class v1.SourceReachError) {
@@ -311,9 +324,11 @@ func (s *Sources) record(k probeKey, ok bool, class v1.SourceReachError) {
 	prev, had := s.results[k]
 	s.results[k] = probeResult{ok, class, s.Clock.Now()}
 	if !ok && (!had || prev.reachable || prev.class != class) {
-		// Redacted though a hub never lists a URL with a credential, and
-		// one that did was refused unprobed: it costs nothing.
+		// Shown as a run's error shows a source: a hub never lists a URL
+		// with a credential, and one that did was refused unprobed, but
+		// redacting costs nothing — and an scp-like URL keeps its host and
+		// path, which config.RedactURL would hide whole.
 		s.Log.Warn("a repository a hub asked about cannot be reached from this runner with its own credentials; the hub routes runs needing it elsewhere until it can",
-			"url", config.RedactURL(k.url), "error", string(class))
+			"url", workdir.ShownURL(k.url), "error", string(class))
 	}
 }

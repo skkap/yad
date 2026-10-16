@@ -1,9 +1,12 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -247,5 +250,48 @@ func TestARunWaitsForARunnerThatCanReachItsRepository(t *testing.T) {
 	res = mustSync(t, l)
 	if len(res.Runs) != 1 || res.Runs[0].RunID != "a" {
 		t.Fatalf("once reachable, offered %v", res.Runs)
+	}
+}
+
+// `yad status` reads the probes through the monitor: an scp-like URL keeps
+// its host and path rather than becoming the unprintable placeholder a hub
+// URL's redaction makes of it, and a query never reaches the socket.
+func TestMonitorShowsEachRepositoryItCanName(t *testing.T) {
+	s := newSources(&stillClock{}, &fakeReach{answers: map[string]v1.SourceReachError{}})
+	s.Want("hub", []v1.ProbeSource{{URL: "git@github.com:acme/web.git"}, {URL: "https://github.com/acme/api.git?token=secret"}})
+	m := NewMonitor()
+	m.attachSources(s)
+	got := m.Probes("hub")
+	if len(got) != 2 || got[0].URL != "redacted@github.com:acme/web.git" {
+		t.Fatalf("probes = %+v; want the scp-like URL shown with its host and path", got)
+	}
+	if strings.Contains(got[1].URL, "secret") {
+		t.Errorf("a query reached status: %q", got[1].URL)
+	}
+}
+
+// A probe the way down stops is no answer: nothing is kept, and nothing is
+// logged as unreachable.
+func TestAProbeStoppedByTheWayDownIsNoAnswer(t *testing.T) {
+	var logged bytes.Buffer
+	started := make(chan struct{})
+	s := &Sources{Clock: &stillClock{}, Log: slog.New(slog.NewTextHandler(&logged, nil)),
+		Check: func(ctx context.Context, url, ref string) (bool, v1.SourceReachError) {
+			close(started)
+			<-ctx.Done()
+			return false, v1.ReachFailed
+		}}
+	s.Want("hub", []v1.ProbeSource{{URL: "https://github.com/acme/api.git"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	<-started
+	cancel()
+	<-done
+	if got := s.Probes("hub"); len(got) != 1 || !got[0].Checked.IsZero() {
+		t.Errorf("probes = %+v; want the repository not checked", got)
+	}
+	if logged.Len() != 0 {
+		t.Errorf("logged on the way down: %s", logged.String())
 	}
 }

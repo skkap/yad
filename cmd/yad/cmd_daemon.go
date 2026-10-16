@@ -531,7 +531,7 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 			conn.LastErrorAt = &cs.LastErrorAt
 		}
 		for _, sp := range m.Probes(c.Name) {
-			probe := control.SourceProbe{URL: config.RedactURL(sp.URL), Ref: sp.Ref, Reachable: sp.Reachable, Error: string(sp.Error)}
+			probe := control.SourceProbe{URL: sp.URL, Ref: sp.Ref, Reachable: sp.Reachable, Error: string(sp.Error)}
 			if !sp.Checked.IsZero() {
 				probe.Checked = &sp.Checked
 			}

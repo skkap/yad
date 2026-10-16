@@ -67,7 +67,10 @@ check is stopped at **20 s**, which a reachable remote never comes near.
 run's own way in ([0068](0068-a-credential-in-a-source-url-is-the-runs-alone.md)):
 probing it would say only whether the hub's token works, which the hub can
 learn itself, and would have the runner hold a hub's token past any run. It
-is answered `refused`, and `yad hub` never lists one.
+is answered `refused`, and `yad hub` never lists one. So is a URL with a
+query or a fragment: `config.RedactURL` already treats both as places a
+token may sit, git's smart-HTTP appends its own path and query to the URL so
+neither works as a way in, and no plain repository URL needs one.
 
 **Cached per repository and ref, shared by every hub.** The answer is the
 machine's, whichever hub asked. Checked at once when a list first names it,
@@ -87,7 +90,8 @@ runner says it cannot reach stays queued until one can.
 
 **`yad hub`** lists the distinct git URLs of the runs submitted in the last
 seven days, the most recently used first, without those carrying a
-credential; keeps each runner's latest answer per URL in
+credential, a query or a fragment — filtered before the cap of 64, so
+per-run token URLs cannot crowd the plain ones out; keeps each runner's latest answer per URL in
 `runner_source_reach`, replacing it only with a newer `checked_at` and
 deleting it once the URL is no longer listed; routes as above; and shows the
 answers in `GET /runners` and `yad hub runners`. `yad status` shows each

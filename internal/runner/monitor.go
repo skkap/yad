@@ -11,6 +11,7 @@ import (
 
 	"github.com/skkap/yad/internal/store"
 	"github.com/skkap/yad/internal/store/db"
+	"github.com/skkap/yad/internal/workdir"
 )
 
 // Monitor is the runner as `yad status` sees it: each connection's last sync
@@ -101,7 +102,9 @@ func (m *Monitor) attachSources(s *Sources) {
 }
 
 // Probes is what conn's hub has asked this runner to probe, with each
-// answer so far (decision 0087). None before Serve has set up.
+// answer so far (decision 0087), each URL as a run's error shows a source:
+// whatever reads the control socket is handed nothing a URL could hide, and
+// an scp-like URL keeps its host and path. None before Serve has set up.
 func (m *Monitor) Probes(conn string) []SourceProbe {
 	if m == nil {
 		return nil
@@ -109,7 +112,11 @@ func (m *Monitor) Probes(conn string) []SourceProbe {
 	m.mu.Lock()
 	s := m.sources
 	m.mu.Unlock()
-	return s.Probes(conn)
+	out := s.Probes(conn)
+	for i := range out {
+		out[i].URL = workdir.ShownURL(out[i].URL)
+	}
+	return out
 }
 
 // Idle is whether nothing is in progress: the runner is set up, every unit

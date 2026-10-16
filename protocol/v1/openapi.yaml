@@ -633,7 +633,7 @@ components:
           description: "The ref to ask the remote for, as git ls-remote matches a pattern: a branch, a tag or a full ref name. Absent: HEAD, the repository's default branch."
           type: string
         url:
-          description: "The repository, as a git source's url names it: an https or ssh URL, or an absolute path or file:// URL on the runner's machine. Never with a credential in it — an https URL with userinfo, or an ssh URL with a password — which the runner refuses unprobed and answers with error refused. Each URL at most once."
+          description: "The repository, as a git source's url names it: an https or ssh URL, or an absolute path or file:// URL on the runner's machine. Never with a credential in it — an https URL with userinfo, or an ssh URL with a password — nor with a query or a fragment, which the runner refuses unprobed and answers with error refused. Each URL at most once."
           type: string
       required:
         - url
@@ -893,7 +893,7 @@ components:
           format: date-time
           type: string
         error:
-          description: "Why reachable is false, as a class — never git's own words, which can quote a URL holding a credential. auth: the remote refused or asked for a credential this runner does not have. not_found: no repository at the URL; GitHub answers this way too for a private repository the credential cannot see. ref_not_found: the repository answered, and has no such ref — every runner will say the same, so it is no reason to route elsewhere. network: the host could not be resolved or reached. timeout: git did not finish in 20 seconds. refused: the runner would not probe the URL — it carries a credential, is not a URL a git source may name, or is on the machine where its owner does not allow sources. failed: git failed some other way, or could not be started. Absent when reachable is true. A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."
+          description: "Why reachable is false, as a class — never git's own words, which can quote a URL holding a credential. auth: the remote refused or asked for a credential this runner does not have. not_found: no repository at the URL; GitHub answers this way too for a private repository the credential cannot see. ref_not_found: the repository answered, and has no such ref — every runner will say the same, so it is no reason to route elsewhere. network: the host could not be resolved or reached. timeout: git did not finish in 20 seconds. refused: the runner would not probe the URL — it carries a credential, a query or a fragment, is not a URL a git source may name, or is on the machine where its owner does not allow sources. failed: git failed some other way, or could not be started. Absent when reachable is true. A closed set for all of v1: a value outside it goes only to a hub that advertised, in hub_features, the feature adding it."
           enum:
             - auth
             - not_found
