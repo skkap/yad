@@ -94,6 +94,9 @@ components:
           items:
             $ref: "#/components/schemas/HostTool"
           type: array
+        instructions:
+          description: "true: this runner's owner has given every run on it standing instructions, which the runner appends to each run's context after brief.context, under a heading of its own, whichever hub sent the run. Their text is the owner's and is never sent. Absent: none are set. Never sent as false."
+          type: boolean
         labels:
           description: Free-form routing strings the owner attached, such as linux, gpu or work. The runner never interprets them; a hub may route on them.
           items:

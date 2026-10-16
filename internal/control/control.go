@@ -149,6 +149,10 @@ type Status struct {
 	// 0062). The daemon's copy and not config.toml's, since an edit to the
 	// file reaches runs only at a restart. Nil from a daemon older than it.
 	PathSources *bool `json:"path_sources,omitempty"`
+	// Instructions is the owner's standing instructions as the next run
+	// would read them (decision 0089): nil when none are configured, and
+	// from a daemon older than it.
+	Instructions *Instructions `json:"instructions,omitempty"`
 
 	Capacity    Capacity     `json:"capacity"`
 	Connections []Connection `json:"connections"`
@@ -170,6 +174,14 @@ type Status struct {
 	// binary it runs (decision 0078), so another profile updating that
 	// binary would not see what this one's hubs need; empty when it is.
 	NeedsUnrecorded string `json:"needs_unrecorded,omitempty"`
+}
+
+// Instructions is how much standing instructions every run is given, or why
+// runs are refused. Never their text.
+type Instructions struct {
+	Bytes int    `json:"bytes"`
+	File  string `json:"file,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // Update is the runner's self-update. The version this process runs is

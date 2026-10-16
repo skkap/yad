@@ -98,6 +98,13 @@ func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 	if s.PathSources != nil && !*s.PathSources {
 		fmt.Fprintln(w, "sources on the machine switched off (path_sources = false under [workdirs] in config.toml) — a run with a path source or a local git URL is refused")
 	}
+	if in := s.Instructions; in != nil {
+		if in.Error != "" {
+			fmt.Fprintf(w, "standing instructions refuse every run: %s\n", cleanLine(in.Error))
+		} else {
+			fmt.Fprintf(w, "standing instructions: %s given to every run after its hub's context (limit %s)\n", config.Size(in.Bytes), config.Size(config.MaxInstructions))
+		}
+	}
 	if s.Update != nil {
 		printUpdate(w, *s.Update, now)
 	}

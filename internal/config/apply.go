@@ -32,7 +32,8 @@ type Change struct {
 	Hidden        bool
 }
 
-// hiddenValue stands in for an [env] value in a Change.
+// hiddenValue stands in for an [env] value, or instructions.text, in a
+// Change.
 const hiddenValue = "(a value)"
 
 func (c Change) String() string {
@@ -206,8 +207,9 @@ func diff(before, after map[string]string) []Change {
 		c := Change{Key: k, From: before[k], To: after[k]}
 		// Compared by value, reported by name: a spec's [env] reaches the
 		// terminal and a provisioning log, and a value is no business of
-		// either.
-		if strings.HasPrefix(k, "env.") {
+		// either. instructions.text is no secret, but it is pages of prose
+		// that would bury every other line of the report.
+		if strings.HasPrefix(k, "env.") || k == "instructions.text" {
 			c.Hidden = true
 			for _, v := range []*string{&c.From, &c.To} {
 				if *v != "" {

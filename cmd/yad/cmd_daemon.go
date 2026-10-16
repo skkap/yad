@@ -506,6 +506,14 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		Capacity:    control.Capacity{Total: doc.Capacity.Total, Free: doc.Capacity.Total},
 		PathSources: new(cfg.Workdirs.AllowsPathSources()),
 	}
+	if cfg.Instructions.Set() {
+		// The daemon's text, and the file as the next run will read it.
+		text, err := cfg.Instructions.Read(p)
+		st.Instructions = &control.Instructions{Bytes: len(text), File: cfg.Instructions.FilePath(p)}
+		if err != nil {
+			st.Instructions = &control.Instructions{File: st.Instructions.File, Error: err.Error()}
+		}
+	}
 	snap, err := m.Snapshot(ctx)
 	if snap.Capacity != nil {
 		st.Capacity = control.Capacity{Total: snap.Capacity.Total, Free: snap.Capacity.Free}

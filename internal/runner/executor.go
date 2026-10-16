@@ -608,6 +608,18 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 		fail(ClassRefused, err.Error())
 		return
 	}
+	// The owner's standing instructions, read now so an edit to their file
+	// reaches this run without a restart, and before anything is made for
+	// it: a run is refused rather than started without them, or with them
+	// cut, since either would do what they forbid (decision 0089).
+	instructions, err := e.Config.Instructions.Read(e.Paths)
+	if err != nil {
+		log.Warn("the owner's standing instructions could not be read; the run is refused", "err", err)
+		fail(ClassPrepare, "this runner's standing instructions cannot be given to the run: "+err.Error())
+		return
+	}
+	brief := run.Brief
+	brief.Context = config.WithInstructions(brief.Context, instructions)
 	dir, native, forkOf, err := e.workdir(bg, c)
 	if err != nil {
 		log.Warn("the session's workdir could not be made", "err", err)
@@ -761,7 +773,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 
 		spec := adapter.Spec{
 			RunID: run.RunID, Model: run.Model, Effort: run.Effort, Workdir: prep.Dir,
-			SessionID: run.Session.ID, NativeSessionID: native, Brief: run.Brief,
+			SessionID: run.Session.ID, NativeSessionID: native, Brief: brief,
 			Home: home, Env: turnEnv, Secrets: secrets, Binary: bin, Settings: settings(e.Config.Harness[run.Harness]),
 			Yad: e.Paths.RemoteCommand, StopLeftRunning: e.Config.Supervise.StopLeftRunning,
 		}
