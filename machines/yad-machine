@@ -290,33 +290,53 @@ heal() {
 	done
 }
 
-# lock takes the machine's start lock, a directory holding the taker's pid,
-# so a start at login and one by hand never heal or start the same instance
-# at once — one would clear what the other's new host agent just wrote. A
-# lock whose taker is gone is taken over. Under the instance's directory, so
-# every caller agrees on it whatever its XDG directories, and it goes with
-# the instance.
+# lock takes the machine's start lock, so a start at login and one by hand
+# never heal or start the same instance at once — one would clear what the
+# other's new host agent just wrote. The lock is a symlink, made in one step
+# with its holder in it: the holder's pid and the time that process started.
+# A pid alone is no proof: the lock outlives a power cut, and the next boot
+# may give its pid to anything — the very failure this kit heals Lima of. A
+# holder is live only when that pid is running and started at that time;
+# otherwise the lock is taken over. It sits in the instance's directory, so
+# every caller agrees on it whatever its XDG directories, and goes with it.
+started_at() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' || true; }
 lock() {
-	local d holder
+	local d mine held aside
 	d=$(instance_dirs "$name" | head -n 1)
 	[[ -n $d ]] || return 0
-	locked=$d/yad-machine.lock
-	if ! mkdir "$locked" 2>/dev/null; then
-		holder=$(cat "$locked/pid" 2>/dev/null || true)
-		if [[ $holder =~ ^[0-9]+$ && -n $(command_of "$holder") ]]; then
-			locked=''
-			die "$name is being started already, by pid $holder — \`$(me status "$name")\` shows how it went"
+	mine="$$ $(started_at $$)"
+	if ! ln -s "$mine" "$d/yad-machine.lock" 2>/dev/null; then
+		held=$(readlink "$d/yad-machine.lock" 2>/dev/null || true)
+		if [[ -n $held && "${held%% *} $(started_at "${held%% *}")" == "$held" ]]; then
+			die "$name is being started already, by pid ${held%% *} — \`$(me status "$name")\` shows how it went"
 		fi
-		rm -rf -- "$locked"
-		mkdir "$locked" 2>/dev/null || { locked=''; die "$name is being started already — \`$(me status "$name")\` shows how it went"; }
+		# Set aside by a rename, which only one taker can make; then put
+		# back if what was set aside is not the stale lock judged above —
+		# another taker's fresh one.
+		aside=$d/yad-machine.lock.$$
+		mv -f "$d/yad-machine.lock" "$aside" 2>/dev/null || true
+		if [[ -L $aside && $(readlink "$aside") != "$held" ]]; then
+			mv -n "$aside" "$d/yad-machine.lock" 2>/dev/null || true
+		fi
+		rm -f -- "$aside"
+		ln -s "$mine" "$d/yad-machine.lock" 2>/dev/null ||
+			die "$name is being started already — \`$(me status "$name")\` shows how it went"
 	fi
-	echo $$ >"$locked/pid"
+	locked=$d/yad-machine.lock
+	lock_token=$mine
 }
-unlock() { [[ -z ${locked:-} ]] || rm -rf -- "$locked"; locked=''; }
+# unlock removes the lock only while it is still this process's.
+unlock() {
+	if [[ -n ${locked:-} && $(readlink "$locked" 2>/dev/null) == "${lock_token:-}" ]]; then
+		rm -f -- "$locked"
+	fi
+	locked=''
+}
 
 # on_exit leaves nothing behind however the kit exits, die included: the
 # start lock it holds, and up's stage.
 locked=''
+lock_token=''
 tmp=''
 on_exit() {
 	unlock

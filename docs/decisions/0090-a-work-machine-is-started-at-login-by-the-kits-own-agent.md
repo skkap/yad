@@ -66,8 +66,13 @@ process as gone.
 **One start of a machine at a time.** `boot`, `start` and `up` take a lock,
 `yad-machine.lock` in the instance's directory, before they heal and start.
 Without it, a start at login and one run by hand could each clear what the
-other's new host agent had just written. A lock whose holder has exited is
-taken over. The process table is scanned a second time before the sockets
+other's new host agent had just written. The lock is a symlink made in one
+step, and it names its holder by pid and by the time that process started.
+A pid alone would not do: the lock outlives a power cut, and a reused pid
+would then keep the machine down for good. That is the failure this
+decision exists to end. A lock whose holder is not running, or started at
+another time, is set aside by a rename and taken over. A process removes
+only a lock that is still its own. The process table is scanned a second time before the sockets
 go.
 
 **What is printed about a process is its executable, never its arguments.**

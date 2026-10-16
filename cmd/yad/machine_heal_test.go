@@ -503,19 +503,35 @@ func TestKitStartIsLockedAndItsAdviceRunsAsPrinted(t *testing.T) {
 	d := h.instance("tl-general", "Broken", map[string]string{"ha.pid": unrelated})
 	holder := liveProcess(t, exec.Command("sleep", "600"))
 	lock := filepath.Join(d, "yad-machine.lock")
-	if err := os.MkdirAll(lock, 0o755); err != nil {
+	started, err := exec.Command("sh", "-c", "ps -o lstart= -p "+holder+" | tr -s ' '").Output()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(lock, "pid"), []byte(holder+"\n"), 0o644); err != nil {
-		t.Fatal(err)
+	setLock := func(holder string) {
+		t.Helper()
+		os.Remove(lock)
+		if err := os.Symlink(holder, lock); err != nil {
+			t.Fatal(err)
+		}
 	}
+	// Held: a live pid that started when the lock says.
+	setLock(holder + " " + strings.TrimRight(string(started), "\n"))
 	out, err := h.run("", "start", "tl-general")
 	if err == nil || !strings.Contains(out, "is being started already, by pid "+holder) || !onDisk(filepath.Join(d, "ha.pid")) || !onDisk(lock) {
 		t.Errorf("start while another holds the lock = %v; want it refused, touching nothing:\n%s", err, out)
 	}
-	if err := os.WriteFile(filepath.Join(lock, "pid"), []byte(exitedPid(t)+"\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// Left by a power cut, its pid since given to another process — the
+	// same live pid, started at another time — or to none: taken over.
+	for _, stale := range []string{holder + " Thu Jan  1 00:00:00 1970", exitedPid(t) + " Thu Jan  1 00:00:00 1970"} {
+		setLock(stale)
+		h.instance("tl-general", "Broken", map[string]string{"ha.pid": unrelated})
+		out, err := h.run("", "start", "tl-general")
+		if err != nil || h.status("tl-general") != "Running" || onDisk(lock) {
+			t.Errorf("start over a stale lock %q = %v, status %q, lock left %v; want it taken over and the machine started:\n%s", stale, err, h.status("tl-general"), onDisk(lock), out)
+		}
 	}
+	setLock(exitedPid(t) + " Thu Jan  1 00:00:00 1970")
+	h.instance("tl-general", "Broken", map[string]string{"ha.pid": unrelated})
 
 	out, err = h.run("", "status", "tl-general")
 	if err != nil {
