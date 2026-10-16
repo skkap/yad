@@ -70,7 +70,9 @@ type Manager struct {
 	SetupTimeout time.Duration
 	// TeardownTimeout bounds a repository's .worktree/teardown in Reclaim.
 	TeardownTimeout time.Duration
-	Slots           Slots
+	// ProbeTimeout bounds one Probe; zero is ProbeTimeout.
+	ProbeTimeout time.Duration
+	Slots        Slots
 	// Log takes what a teardown did: Reclaim has no run to report it in.
 	// Nil discards it.
 	Log *slog.Logger

@@ -222,6 +222,8 @@ func (s *server) finishRemoval(ctx context.Context, conn string, out Removal) (R
 		out.Stopped = s.exec.CancelConnection(conn, removedReason(conn))
 	}
 	s.logins.connectionRemoved(conn, removedReason(conn))
+	// Nobody will read its answers.
+	s.sources.Want(conn, nil)
 	// A connection nothing syncs takes no turn at the capacity.
 	if s.pool != nil {
 		s.pool.Pass(conn)

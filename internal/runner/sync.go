@@ -196,6 +196,11 @@ type Loop struct {
 	// counts it, so a harness that stopped being drivable during that build
 	// still counts while its run is held (YAD-169). Nil tells nobody.
 	HeldChanged func()
+	// Sources probes the repositories this hub lists in probe_sources and
+	// holds the answers its syncs carry in source_reach (decision 0088),
+	// shared with every other connection. Nil probes nothing and answers
+	// nothing.
+	Sources *Sources
 	// Settle lets go of a branch a session reported lost here left pushed
 	// and clean, as a run that ends does (workdir.Manager.Settle). Nil
 	// keeps every branch.
@@ -586,6 +591,7 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	if err != nil {
 		return v1.SyncResponse{}, err
 	}
+	req.SourceReach = l.Sources.Reports(l.Connection)
 	listed := map[string]bool{}
 	for _, r := range held {
 		listed[r.ID] = true
@@ -617,6 +623,8 @@ func (l *Loop) SyncOnce(ctx context.Context) (v1.SyncResponse, error) {
 	l.Logins.Reported(l.Connection, req.Logins)
 	l.Releases.Reported(ctx, l.Connection, req.ReleasedSessions)
 	l.Releases.SetCap(l.Connection, out.ArchiveMaxBytes)
+	l.Sources.Reported(l.Connection, req.SourceReach)
+	l.Sources.Want(l.Connection, out.ProbeSources)
 
 	// Controls that name a run wait for the runs this sync starts: a run
 	// acknowledged by this very answer is not the executor's yet, and an

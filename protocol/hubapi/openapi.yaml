@@ -623,6 +623,11 @@ components:
         runner_id:
           description: The runner's id.
           type: string
+        source_reach:
+          description: "What the runner last said about each repository this hub asks it to probe: whether it can reach it with its own credentials and, when not, why as a class. A run opening a session on a repository the runner cannot reach, for any reason but ref_not_found, is offered to another runner. Absent for a runner that does not advertise source_probe, or has answered nothing yet."
+          items:
+            $ref: "#/components/schemas/SourceReach"
+          type: array
       required:
         - runner_id
         - name
@@ -756,6 +761,27 @@ components:
           $ref: "#/components/schemas/GitSource"
         path:
           type: string
+      type: object
+    SourceReach:
+      additionalProperties: true
+      properties:
+        checked_at:
+          description: When the runner checked.
+          format: date-time
+          type: string
+        error:
+          description: "Why not, as the runner's class: auth, not_found, ref_not_found, network, timeout, refused or failed."
+          type: string
+        reachable:
+          description: Whether the runner reached it with its own credentials.
+          type: boolean
+        url:
+          description: The repository, as the hub listed it.
+          type: string
+      required:
+        - url
+        - reachable
+        - checked_at
       type: object
     SteerRequest:
       additionalProperties: true

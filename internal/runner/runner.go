@@ -175,6 +175,12 @@ func Serve(ctx context.Context, o Options) error {
 	releases := &Releases{Store: st, Data: o.Paths.Data, Adapters: o.Adapters, Workdirs: workdirs, Accounts: o.Accounts,
 		Capabilities: o.Capabilities, Sessions: sessions, Log: o.Log}
 	sv.releases = releases
+	// One prober for every hub: a repository two hubs ask about is one
+	// ls-remote, and its answer is the machine's, whichever hub asked.
+	sources := &Sources{Check: workdirs.Probe, Log: o.Log}
+	sv.sources = sources
+	o.Monitor.attachSources(sources)
+	defer o.Monitor.attachSources(nil)
 	// Every connection is set up before any goroutine starts, so the
 	// executor's reporter lookup reads a map nothing writes any more.
 	sv.exec = &Exec{
@@ -227,7 +233,7 @@ func Serve(ctx context.Context, o Options) error {
 			RecentErrors: o.RecentErrors, Logins: logins,
 			ManageAccounts: manage[conn.Name], Paths: o.Paths, AccountsChanged: o.AccountsChanged,
 			HeldChanged: o.HeldChanged, Settle: workdirs.Settle,
-			ReleaseSessions: conn.MayReleaseSessions(), Releases: releases,
+			ReleaseSessions: conn.MayReleaseSessions(), Releases: releases, Sources: sources,
 		}
 		releases.Join(conn.Name, client, l.Wake)
 		// A result the hub now has is a session's live run ended there,
@@ -304,6 +310,7 @@ type server struct {
 	sessions *Collector
 	probe    *LoginProbe
 	releases *Releases
+	sources  *Sources
 	// logins are the hub logins in flight, which a self-update's drain
 	// waits for as it waits for runs. Nil has none.
 	logins    *Logins
@@ -402,6 +409,9 @@ func (s *server) run(ctx context.Context) error {
 	// Releases go on whether or not a loop does: one built and owed an
 	// upload waits for its connection's hub, and one settled for its sync.
 	bg.Go(func() { s.releases.Run(lctx) })
+	if s.sources != nil {
+		bg.Go(func() { s.sources.Run(lctx) })
+	}
 	go func() { bg.Wait(); close(background) }()
 	defer func() { stopLoops(); <-background }()
 	s.mu.Lock()

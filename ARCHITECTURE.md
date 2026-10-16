@@ -187,13 +187,29 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
                url?, user_code?, error?, updated_at }],     // until answered
     released_sessions: [{ session_id, released_at,
                           archive?: {sha256, bytes},
-                          error?: {code, message, next_action} }] }  // until answered
+                          error?: {code, message, next_action} }],  // until answered
+    source_reach: [{ url, reachable, checked_at, error? }] }  // on change, and every 30 min
 ← { next_sync_ms, lease_ms,
     runs: [Run],                                  // never more than free capacity
     controls: [{ kind, run_id?, session_id?, text?,
                  login_id?, harness?, account?, code?, token?, discard_local? }],
-    min_version?, archive_max_bytes? }
+    min_version?, archive_max_bytes?,
+    probe_sources: [{ url, ref? }] }              // the whole list, to source_probe runners
 ```
+
+- **Source probes**: a hub may list, in every answer to a runner advertising
+  `source_probe`, the repositories it may send it; the runner checks each with
+  `git ls-remote --exit-code` under the environment a run's git has — the
+  owner's `[env]`, credential helpers, ssh agent — 20 s each, four at once,
+  one check per repository and ref shared by every hub that asks; again every
+  30 minutes while reachable and every 5 while not; and answers with a class,
+  never git's words. `Sources` in `internal/runner` holds the lists, the
+  answers and what each hub has taken; `workdir.Manager.Probe` is the check,
+  through `parseRemote`, so a URL a run could not fetch — a credential in it,
+  a helper, a path outside the roots — is refused unprobed. `yad hub` lists
+  the git URLs of its last week's runs and routes a new session away from a
+  runner that cannot reach its repository
+  ([0088](docs/decisions/0088-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
 
 - **Account state**: `free`, `limited` (until `limited_until`) or `needs_login`
   — a home whose login the owner has to finish. The field is optional: a runner
@@ -1500,6 +1516,10 @@ reported: deleted once a run of the session is running or has succeeded on
 the runner that opened it, by the `sessions_forget_archive` trigger when the
 session closes, and after the archive TTL
 ([0084](docs/decisions/0084-a-hub-may-release-a-session-to-resume-on-another-runner.md)).
+`runner_source_reach` holds each runner's latest answer about each repository
+the hub lists for it, replaced only by a newer `checked_at` and deleted once
+the URL drops off the list
+([0088](docs/decisions/0088-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
 Both databases are opened with `secure_delete`, so freed bytes are zeroed
 rather than left in the file.
 

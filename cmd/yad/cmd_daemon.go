@@ -530,6 +530,13 @@ func statusOf(ctx context.Context, p config.Paths, cfg config.Config, doc v1.Cap
 		if !cs.LastErrorAt.IsZero() {
 			conn.LastErrorAt = &cs.LastErrorAt
 		}
+		for _, sp := range m.Probes(c.Name) {
+			probe := control.SourceProbe{URL: sp.URL, Ref: sp.Ref, Reachable: sp.Reachable, Error: string(sp.Error)}
+			if !sp.Checked.IsZero() {
+				probe.Checked = &sp.Checked
+			}
+			conn.Sources = append(conn.Sources, probe)
+		}
 		st.Connections = append(st.Connections, conn)
 	}
 	for _, r := range snap.Held {

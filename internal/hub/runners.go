@@ -36,7 +36,7 @@ func (h *Hub) registerRunners(api huma.API) {
 				return err
 			}
 			for _, r := range rows {
-				view, err := runnerView(r)
+				view, err := runnerView(ctx, q, r)
 				if err != nil {
 					return err
 				}
@@ -66,7 +66,7 @@ func (h *Hub) registerRunners(api huma.API) {
 			if err != nil {
 				return err
 			}
-			view, err = runnerView(r)
+			view, err = runnerView(ctx, q, r)
 			return err
 		})
 		if err != nil {

@@ -140,6 +140,18 @@ type Runner struct {
 	// has gone still shows the health of its last word. Nothing here is
 	// derived by the hub.
 	Health *Health `json:"health,omitempty" doc:"The runner's own health at its last sync, unchanged by the hub. Absent for a runner that has never synced, and as old as last_sync_at."`
+	// SourceReach is what the runner last said about each repository this
+	// hub asks it to probe (decision 0088), which routing reads.
+	SourceReach []SourceReach `json:"source_reach,omitempty" doc:"What the runner last said about each repository this hub asks it to probe: whether it can reach it with its own credentials and, when not, why as a class. A run opening a session on a repository the runner cannot reach, for any reason but ref_not_found, is offered to another runner. Absent for a runner that does not advertise source_probe, or has answered nothing yet."`
+}
+
+// SourceReach is one of a runner's answers about a repository, as this API
+// shows it.
+type SourceReach struct {
+	URL       string    `json:"url" doc:"The repository, as the hub listed it."`
+	Reachable bool      `json:"reachable" doc:"Whether the runner reached it with its own credentials."`
+	Error     string    `json:"error,omitempty" doc:"Why not, as the runner's class: auth, not_found, ref_not_found, network, timeout, refused or failed."`
+	CheckedAt time.Time `json:"checked_at" doc:"When the runner checked."`
 }
 
 // Health is a runner's v1.Health as this API shows it. Its own type rather

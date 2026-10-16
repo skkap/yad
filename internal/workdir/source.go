@@ -395,6 +395,11 @@ func shownURL(raw string) string {
 	return "redacted@" + host + ":" + path
 }
 
+// ShownURL is shownURL for a caller outside the package: a source URL as the
+// owner's status and log may print it, an scp-like one included, which
+// config.RedactURL alone cannot parse and would hide whole.
+func ShownURL(raw string) string { return shownURL(raw) }
+
 // redactSource is msg with every copy of the source URL raw in it printed as
 // shownURL prints it. git's reason quotes the remote as it was given, and
 // redactURLs finds only what looks like a URL to a pattern: not an scp-like
