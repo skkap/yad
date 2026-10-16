@@ -8,7 +8,8 @@
 #   yad-machine status [NAME] [--json]     every machine, or one: runner, hubs, logins, checks
 #   yad-machine login NAME                 make every login the machine is missing, one by one
 #   yad-machine shell NAME [COMMAND...]    a login shell, or a command, as the runner's user
-#   yad-machine start NAME                 start a machine that is stopped
+#   yad-machine start NAME                 start a machine that is stopped or Broken
+#   yad-machine stop NAME [--force]        stop it; --force for one Broken while Lima still runs
 #   yad-machine autostart NAME             start it at the host user's login, retried until it runs
 #   yad-machine destroy NAME               delete the VM and everything in it
 #
@@ -66,13 +67,28 @@ cmd() {
 # me is a command for this kit as its reader will paste it: the kit's own path
 # on the host, or — run over ssh from another computer — the prefix that
 # computer passed in YAD_MACHINE_PRINT, so every command printed runs where it
-# is read and not only where it was written.
+# is read and not only where it was written. A LIMA_HOME this ran with goes in
+# front, so the command acts on the same Lima — and main() carries it to the
+# host when the reader is elsewhere. Every command this kit prints is one of
+# its own, never limactl's or a service manager's, which pasted on another
+# computer would act there.
 me() {
+	local lima=''
+	[[ -z ${LIMA_HOME:-} ]] || lima="LIMA_HOME=$(sq "$LIMA_HOME") "
 	if [[ -n ${YAD_MACHINE_PRINT:-} ]]; then
-		printf '%s %s' "$YAD_MACHINE_PRINT" "$(cmd "$@")"
+		printf '%s%s %s' "$lima" "$YAD_MACHINE_PRINT" "$(cmd "$@")"
 	else
-		cmd "$KIT_DIR/yad-machine" "$@"
+		printf '%s%s' "$lima" "$(cmd "$KIT_DIR/yad-machine" "$@")"
 	fi
+}
+
+# lima_errors is what Lima says is wrong with an instance it lists as Broken:
+# the errors= of the warning `limactl list` prints for it, control
+# characters removed.
+lima_errors() {
+	local e
+	e=$(limactl list "$1" 2>&1 >/dev/null | sed -n 's/.*errors="\(.*\)"$/\1/p' | head -n 1 | tr -d '\000-\037\177')
+	printf '%s' "${e:-nothing it gave a reason for}"
 }
 
 # lima_error is what limactl said when it last could not list its machines.
@@ -149,9 +165,13 @@ agent_file() {
 # autostart_of says what starts a machine at login: the kit's agent, Lima's
 # own autostart, or nothing. A machine with both says lima: the two would
 # race at the next login, and that is what needs fixing.
+#
+# On macOS a plist in LaunchAgents is loaded at every login, so the file is
+# the answer; on Linux a unit file starts nothing until it is enabled.
 autostart_of() {
 	if [[ -f $(lima_autostart "$1") ]]; then echo lima
-	elif [[ -f $(agent_file "$1") ]]; then echo kit
+	elif [[ $(uname -s) == Darwin && -f $(agent_file "$1") ]]; then echo kit
+	elif [[ $(uname -s) != Darwin ]] && systemctl --user is-enabled --quiet "$(systemd_unit "$1")" 2>/dev/null; then echo kit
 	else echo none; fi
 }
 
@@ -190,7 +210,26 @@ is_lima_of() {
 # were gone — and a reused pid may well be root's.
 command_of() { ps -ww -o command= -p "$1" 2>/dev/null || true; }
 
-clean() { printf '%s' "$1" | tr -d '\000-\037\177' | cut -c 1-100; }
+# program_of is what is printed about a process: its executable, never its
+# arguments, which are another program's and may hold a secret — and what is
+# printed here lands in a log and in status --json.
+program_of() {
+	local p
+	p=$(ps -o comm= -p "$1" 2>/dev/null || true)
+	printf '%s' "${p:-?}" | tr -d '\000-\037\177' | cut -c 1-100
+}
+
+# lima_pid_of prints the pid of a Lima process of the instance whose
+# directories are given, if one is running.
+lima_pid_of() {
+	local pid line
+	while read -r pid line; do
+		if is_lima_of "$line" "$@"; then
+			echo "$pid"
+			return 0
+		fi
+	done < <(ps -A -ww -o pid=,command= 2>/dev/null)
+}
 
 # heal clears what a machine's Lima host agent left when it did not shut down
 # — the host rebooted, or it was killed — so limactl will start it again.
@@ -209,12 +248,11 @@ heal() {
 	local mode=${2:-} dirs=() d line pid f found=''
 	while IFS= read -r d; do dirs+=("$d"); done < <(instance_dirs "$1")
 	[[ ${#dirs[@]} -gt 0 ]] || return 0
-	while read -r pid line; do
-		if is_lima_of "$line" "${dirs[@]}"; then
-			echo "pid $pid is $1's own Lima process: $(clean "$line")"
-			return 1
-		fi
-	done < <(ps -A -ww -o pid=,command= 2>/dev/null)
+	pid=$(lima_pid_of "${dirs[@]}")
+	if [[ -n $pid ]]; then
+		echo "pid $pid is $1's own Lima process ($(program_of "$pid"))"
+		return 1
+	fi
 	for f in "${dirs[0]}"/*.pid; do
 		[[ -f $f ]] || continue
 		pid=$(tr -d '[:space:]' <"$f")
@@ -227,10 +265,10 @@ heal() {
 			elif is_lima_of "$line" "${dirs[@]}"; then
 				# The scan above should have seen it; a process can start
 				# between the two looks, and then it is left alone.
-				echo "pid $pid is $1's own Lima process: $(clean "$line")"
+				echo "pid $pid is $1's own Lima process ($(program_of "$pid"))"
 				return 1
 			else
-				line="pid $pid now belongs to another process: $(clean "$line")"
+				line="pid $pid now belongs to another process: $(program_of "$pid")"
 			fi
 		fi
 		found=1
@@ -238,12 +276,53 @@ heal() {
 		[[ $mode == check ]] || rm -f -- "$f"
 	done
 	[[ -n $found && $mode != check ]] || return 0
+	# Looked at again: a host agent started since the scan above has made
+	# its sockets by now, and they are not to be taken from under it.
+	pid=$(lima_pid_of "${dirs[@]}")
+	if [[ -n $pid ]]; then
+		echo "pid $pid is $1's own Lima process ($(program_of "$pid")), started meanwhile — its sockets are left"
+		return 1
+	fi
 	for f in "${dirs[0]}"/ha.sock "${dirs[0]}"/*_ep.sock "${dirs[0]}"/*_fd.sock; do
 		[[ -e $f || -L $f ]] || continue
 		echo "${f##*/}: a socket nothing listens on"
 		rm -f -- "$f"
 	done
 }
+
+# lock takes the machine's start lock, a directory holding the taker's pid,
+# so a start at login and one by hand never heal or start the same instance
+# at once — one would clear what the other's new host agent just wrote. A
+# lock whose taker is gone is taken over. Under the instance's directory, so
+# every caller agrees on it whatever its XDG directories, and it goes with
+# the instance.
+lock() {
+	local d holder
+	d=$(instance_dirs "$name" | head -n 1)
+	[[ -n $d ]] || return 0
+	locked=$d/yad-machine.lock
+	if ! mkdir "$locked" 2>/dev/null; then
+		holder=$(cat "$locked/pid" 2>/dev/null || true)
+		if [[ $holder =~ ^[0-9]+$ && -n $(command_of "$holder") ]]; then
+			locked=''
+			die "$name is being started already, by pid $holder — \`$(me status "$name")\` shows how it went"
+		fi
+		rm -rf -- "$locked"
+		mkdir "$locked" 2>/dev/null || { locked=''; die "$name is being started already — \`$(me status "$name")\` shows how it went"; }
+	fi
+	echo $$ >"$locked/pid"
+}
+unlock() { [[ -z ${locked:-} ]] || rm -rf -- "$locked"; locked=''; }
+
+# on_exit leaves nothing behind however the kit exits, die included: the
+# start lock it holds, and up's stage.
+locked=''
+tmp=''
+on_exit() {
+	unlock
+	[[ -z $tmp ]] || rm -rf -- "$tmp"
+}
+trap on_exit EXIT
 
 # bring_up starts the machine $name names, clearing a stale pid first when
 # Lima calls it Broken, and fails unless it ends Running.
@@ -254,14 +333,19 @@ bring_up() {
 	Running) return 0 ;;
 	unknown) die "limactl could not list its machines, so $name was not started: $(lima_error)" ;;
 	'') die "there is no machine called $name — \`$(me up "$(spec_of "$name")")\` builds it" ;;
-	Broken)
+	esac
+	lock
+	# Again, under the lock: another start may have finished meanwhile.
+	st=$(instance_status "$name")
+	[[ $st != Running ]] || { unlock; return 0; }
+	if [[ $st == Broken ]]; then
 		say "$name is Broken — clearing what its last host agent left"
 		heal "$name" ||
-			die "$name is Broken while a Lima process of it is running, so nothing was cleared — it may still be starting; if it stays Broken, \`$(cmd limactl stop --force "$name")\` and then \`$(me start "$name")\`"
-		;;
-	esac
+			die "$name is Broken while a Lima process of it is running, so nothing was cleared — it may still be starting, and \`$(me start "$name")\` in a minute tries again; if it stays Broken, \`$(me stop "$name" --force)\` stops what is left of it"
+	fi
 	say "starting $name"
 	limactl start --tty=false "$name" || die "limactl could not start $name — what it printed above says why"
+	unlock
 	st=$(instance_status "$name")
 	[[ $st == Running ]] || die "limactl started $name, and it is ${st:-gone} — \`$(me status "$name")\` says more"
 }
@@ -284,16 +368,20 @@ install_agent() {
 	# and the qemu beside it — are not.
 	path="$(dirname "$limactl_path"):/usr/bin:/bin:/usr/sbin:/sbin"
 	log=$LOGS/$name.log
-	mkdir -p "$(dirname "$KEEPER")" "$LOGS"
-	cp "${BASH_SOURCE[0]}" "$KEEPER.new" && chmod 0755 "$KEEPER.new" && mv -f "$KEEPER.new" "$KEEPER"
+	# An agent is never registered to run a copy that is not there.
+	if ! { mkdir -p "$(dirname "$KEEPER")" "$LOGS" &&
+		cp "${BASH_SOURCE[0]}" "$KEEPER.new" && chmod 0755 "$KEEPER.new" && mv -f "$KEEPER.new" "$KEEPER"; }; then
+		echo "note: could not copy the kit to $KEEPER, which the agent runs, so none was registered"
+		return 1
+	fi
 	if [[ -f $(lima_autostart "$name") ]]; then
 		limactl autostart disable "$name" >/dev/null 2>&1 || {
-			echo "note: Lima's own autostart for $name is still registered, and would race the kit's at login — \`$(cmd limactl autostart disable "$name")\` removes it"
+			echo "note: Lima's own autostart for $name is still registered, and would race the kit's at login — \`$(me autostart "$name")\` tries again to remove it"
 			ok=1
 		}
 	fi
 	file=$(agent_file "$name")
-	mkdir -p "$(dirname "$file")"
+	mkdir -p "$(dirname "$file")" || { echo "note: could not make $(dirname "$file")"; return 1; }
 	if [[ $(uname -s) == Darwin ]]; then
 		label=$(agent_label "$name")
 		body=$(
@@ -341,10 +429,10 @@ EOF
 		# Reloaded only when it changed or is not loaded: loading runs it,
 		# and an up that changed nothing does nothing.
 		if [[ ! -f $file || $(cat "$file") != "$body" ]] || ! launchctl print "gui/$uid/$label" >/dev/null 2>&1; then
-			printf '%s\n' "$body" >"$file"
+			printf '%s\n' "$body" >"$file" || { echo "note: could not write $file"; return 1; }
 			launchctl bootout "gui/$uid/$label" >/dev/null 2>&1 || true
 			launchctl bootstrap "gui/$uid" "$file" >/dev/null 2>&1 || {
-				echo "note: launchd did not load $file now — it loads at $(id -un)'s next login; \`$(cmd launchctl bootstrap "gui/$uid" "$file")\` loads it from a session that has a GUI login"
+				echo "note: launchd did not load $file now — it loads at $(id -un)'s next login; \`$(me autostart "$name")\` loads it, run from a session that has a GUI login"
 				ok=1
 			}
 		fi
@@ -367,17 +455,19 @@ Environment=$(sd "PATH=$path") $(sd "YAD_MACHINE_LOG=$log")$(if [[ -n ${LIMA_HOM
 Restart=on-failure
 RestartSec=$RETRY_SECONDS
 KillMode=process
+StandardOutput=append:${log//%/%%}
+StandardError=append:${log//%/%%}
 
 [Install]
 WantedBy=default.target
 EOF
 		)
 		if [[ ! -f $file || $(cat "$file") != "$body" ]]; then
-			printf '%s\n' "$body" >"$file"
+			printf '%s\n' "$body" >"$file" || { echo "note: could not write $file"; return 1; }
 			systemctl --user daemon-reload >/dev/null 2>&1 || true
 		fi
 		systemctl --user enable "$(systemd_unit "$name")" >/dev/null 2>&1 || {
-			echo "note: systemd did not enable $(systemd_unit "$name") — \`$(cmd systemctl --user enable "$(systemd_unit "$name")")\` tries again"
+			echo "note: systemd did not enable $(systemd_unit "$name") — \`$(me autostart "$name")\` tries again"
 			ok=1
 		}
 	fi
@@ -489,7 +579,6 @@ cmd_up() {
 
 	# Global, not local: the EXIT trap runs after cmd_up has returned.
 	tmp=$(mktemp -d)
-	trap 'rm -rf "$tmp"' EXIT
 	mkdir -p "$tmp/stage"
 	# Read by root.sh, which installs yad where the runner can replace it
 	# only when this is there.
@@ -693,7 +782,7 @@ cmd_status() {
 				live=0
 				why=$(heal "$name" check) || live=1
 				if [[ $live == 1 ]]; then
-					notes+="  $name: its VM is Broken while a Lima process of it runs — $why. It may still be starting; if it stays Broken, \`$(cmd limactl stop --force "$name")\` and then \`$(me start "$name")\`"$'\n'
+					notes+="  $name: its VM is Broken while a Lima process of it runs — $why. It may still be starting; if it stays Broken, \`$(me stop "$name" --force)\` stops what is left of it and \`$(me start "$name")\` starts it again"$'\n'
 				elif [[ -n $why ]]; then
 					notes+="  $name: its VM is Broken: Lima's files name processes that are not its own — the host restarted, or its host agent was killed:"$'\n'
 					notes+="      ${why//$'\n'/$'\n'      }"$'\n'
@@ -701,7 +790,7 @@ cmd_status() {
 					if [[ $auto == kit ]]; then notes+=", as the kit's agent does at login"; fi
 					notes+=$'\n'
 				else
-					notes+="  $name: its VM is Broken and no stale pid file explains it — \`$(cmd limactl list "$name")\` and $(sq "${LIMA_HOME:-$HOME/.lima}/$name/ha.stderr.log") say why; \`$(me start "$name")\` tries again"$'\n'
+					notes+="  $name: its VM is Broken and no stale pid file explains it — Lima says: $(lima_errors "$name"); \`$(me start "$name")\` tries again"$'\n'
 				fi
 			else
 				notes+="  $name: its VM is $st — \`$(me start "$name")\` starts it"$'\n'
@@ -828,6 +917,10 @@ cmd_autostart() {
 	need_lima
 	name=$1
 	check_name "$name"
+	local st
+	st=$(instance_status "$name")
+	[[ $st != unknown ]] || die "limactl could not list its machines, so nothing was registered: $(lima_error)"
+	[[ -n $st ]] || die "there is no machine called $name, so nothing was registered — \`$(me up "$(spec_of "$name")")\` builds it, and registers it"
 	install_agent || exit 1
 	echo "$name starts at $(id -un)'s login, through $(agent_file "$name")"
 }
@@ -854,6 +947,23 @@ cmd_boot() {
 	fi
 	bring_up
 	echo "$(date '+%Y-%m-%dT%H:%M:%S%z') $name is running"
+}
+
+# cmd_stop is limactl's stop, through the kit so a command printed for it runs
+# on the host and against the right Lima wherever it is pasted.
+cmd_stop() {
+	[[ $# -ge 1 ]] || die "usage: yad-machine stop NAME [--force]"
+	need_lima
+	name=$1
+	shift
+	check_name "$name"
+	local force=()
+	case ${1:-} in
+	'') ;;
+	--force) force=(--force) ;;
+	*) die "unknown argument $(sq "$1") — usage: yad-machine stop NAME [--force]" ;;
+	esac
+	limactl stop ${force[@]+"${force[@]}"} "$name"
 }
 
 cmd_start() {
@@ -909,7 +1019,7 @@ main() {
 		# release an `up` fetches (YAD_VERSION, YAD_REPO) goes with it, both
 		# to the remote and into what it prints.
 		local print='' env='' v
-		for v in YAD_MACHINE_HOST YAD_MACHINE_REMOTE YAD_VERSION YAD_REPO; do
+		for v in YAD_MACHINE_HOST YAD_MACHINE_REMOTE YAD_VERSION YAD_REPO LIMA_HOME; do
 			[[ -n ${!v:-} ]] || continue
 			print+="$v=$(sq "${!v}") "
 			[[ $v == YAD_MACHINE_HOST || $v == YAD_MACHINE_REMOTE ]] || env+="$v=$(sq "${!v}") "
@@ -921,7 +1031,7 @@ main() {
 		[[ -t 0 ]] && tty=(-t)
 		exec ssh ${tty[@]+"${tty[@]}"} "$YAD_MACHINE_HOST" "YAD_MACHINE_PRINT=$(sq "$print") ${env}exec \$SHELL -lc $(sq "$(cmd "${YAD_MACHINE_REMOTE:-yad-machine}" "$@")")"
 	fi
-	[[ $# -ge 1 ]] || { sed -n '6,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+	[[ $# -ge 1 ]] || { sed -n '6,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 	local sub=$1
 	shift
 	case $sub in
@@ -930,11 +1040,12 @@ main() {
 	status) cmd_status "$@" ;;
 	login) cmd_login "$@" ;;
 	start) cmd_start "$@" ;;
+	stop) cmd_stop "$@" ;;
 	autostart) cmd_autostart "$@" ;;
 	boot) cmd_boot "$@" ;;
 	destroy) cmd_destroy "$@" ;;
-	-h | --help | help) sed -n '6,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
-	*) die "unknown command $(sq "$sub") — up, status, login, shell, start, autostart or destroy" ;;
+	-h | --help | help) sed -n '6,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+	*) die "unknown command $(sq "$sub") — up, status, login, shell, start, stop, autostart or destroy" ;;
 	esac
 }
 

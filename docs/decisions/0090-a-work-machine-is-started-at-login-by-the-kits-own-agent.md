@@ -45,7 +45,9 @@ The agent runs a copy of the kit kept at
 `~/.local/share/yad-machine/yad-machine`. The kit itself is often fetched
 into a cache, or run from a checkout, and either can be gone by the next
 boot. Its PATH is the directory `limactl` was found in, followed by the
-system's, and it carries `LIMA_HOME` when the kit was run with one. An
+system's, and it carries `LIMA_HOME` when the kit was run with one. Its
+output goes to `~/.local/state/yad-machine/NAME.log` on both systems, through
+`StandardOutput=append:` on systemd 240 or newer. An
 unchanged agent is not reloaded, because loading it runs it.
 
 **A pid file is removed only when it does not name the instance's own Lima
@@ -61,11 +63,30 @@ files are gone, the host agent's sockets (`ha.sock`, `*_ep.sock`,
 liveness check uses `ps` rather than `kill -0`, which reports another user's
 process as gone.
 
+**One start of a machine at a time.** `boot`, `start` and `up` take a lock,
+`yad-machine.lock` in the instance's directory, before they heal and start.
+Without it, a start at login and one run by hand could each clear what the
+other's new host agent had just written. A lock whose holder has exited is
+taken over. The process table is scanned a second time before the sockets
+go.
+
+**What is printed about a process is its executable, never its arguments.**
+Arguments belong to another program and may hold a secret, and what heal
+prints ends up in the agent's log and in `status --json`.
+
+**Every command the kit prints is its own, and carries `LIMA_HOME`.** A
+`limactl` or `launchctl` line pasted on the laptop that `YAD_MACHINE_HOST`
+reads from would act on the laptop. So the advice goes through the kit, and
+the kit gained `yad-machine stop NAME [--force]` for the one case that needs
+Lima's stop. `LIMA_HOME` goes in front of the command and is carried to the
+host.
+
 **`yad-machine start` heals the same way, and `status` says so.** A Broken
 machine is listed with each stale pid file, the process its pid now belongs
 to, and the command that heals it. `status` removes nothing. It also says
 when a machine still starts through Lima's own autostart, or when nothing
-starts it at all. `--json` carries `autostart` and `broken`.
+starts it at all; on Linux, that is asked of systemd, since a unit file that
+is not enabled starts nothing. `--json` carries `autostart` and `broken`.
 
 **A machine an older kit built changes over when the kit is run again:**
 `yad-machine up SPEC`, which is tl-yad's `./up NAME`, or `yad-machine

@@ -93,6 +93,11 @@ esac
 `)
 	writeExec(t, filepath.Join(bin, "systemctl"), `#!/bin/sh
 echo "$*" >>"$KIT_SYSTEMCTL"
+case "$2" in
+is-enabled) [ -e "$KIT_STATES/.enabled" ] ;;
+enable) : >"$KIT_STATES/.enabled" ;;
+disable) rm -f "$KIT_STATES/.enabled" ;;
+esac
 `)
 	h.env = append(os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -244,9 +249,9 @@ func TestKitStartClearsOnlyAStalePidAndStartsTheMachine(t *testing.T) {
 		says    []string
 	}{
 		{"dead", map[string]string{"ha.pid": exitedPid(t), "vz.pid": exitedPid(t)}, true, []string{"is not running"}},
-		{"reused", map[string]string{"ha.pid": unrelated, "vz.pid": unrelated}, true, []string{"pid " + unrelated + " now belongs to another process: sleep 600"}},
-		{"mixed", map[string]string{"ha.pid": exitedPid(t), "vz.pid": unrelated}, true, []string{"ha.pid: pid", "vz.pid: pid " + unrelated + " now belongs to another process: sleep 600"}},
-		{"tl", map[string]string{"ha.pid": agent}, true, []string{"pid " + agent + " now belongs to another process: /"}},
+		{"reused", map[string]string{"ha.pid": unrelated, "vz.pid": unrelated}, true, []string{"pid " + unrelated + " now belongs to another process: sleep"}},
+		{"mixed", map[string]string{"ha.pid": exitedPid(t), "vz.pid": unrelated}, true, []string{"ha.pid: pid", "vz.pid: pid " + unrelated + " now belongs to another process: sleep"}},
+		{"tl", map[string]string{"ha.pid": agent}, true, []string{"pid " + agent + " now belongs to another process: "}},
 		{"garbage", map[string]string{"ha.pid": "not a pid"}, true, []string{"ha.pid: it holds no pid"}},
 		{"tl-general", nil, false, []string{"pid " + agent + " is tl-general's own Lima process", "nothing was cleared"}},
 	} {
@@ -261,6 +266,13 @@ func TestKitStartClearsOnlyAStalePidAndStartsTheMachine(t *testing.T) {
 			for _, s := range c.says {
 				if !strings.Contains(out, s) {
 					t.Errorf("start said nothing like %q:\n%s", s, out)
+				}
+			}
+			// What it says about a process is its executable, never its
+			// arguments, which are another program's.
+			for _, arg := range []string{"sleep 600", "--pidfile"} {
+				if strings.Contains(out, arg) {
+					t.Errorf("start printed a process's arguments (%q):\n%s", arg, out)
 				}
 			}
 			for _, f := range []string{"ha.pid", "vz.pid", "ha.sock", "default_ep.sock", "default_fd.sock"} {
@@ -300,10 +312,10 @@ func TestKitStatusReportsABrokenMachineAndHowItIsHealed(t *testing.T) {
 	for _, s := range []string{
 		"tl-general  Broken",
 		"its VM is Broken: Lima's files name processes that are not its own",
-		"ha.pid: pid " + unrelated + " now belongs to another process: sleep 600",
+		"ha.pid: pid " + unrelated + " now belongs to another process: sleep",
 		h.kit + " start tl-general` removes them and starts it",
 		// Lima's own autostart is not registered here, and neither is the kit's.
-		"nothing starts it at login — `" + h.kit + " autostart tl-general` registers it",
+		"nothing starts it at login — `LIMA_HOME=" + h.limaHome + " " + h.kit + " autostart tl-general` registers it",
 	} {
 		if !strings.Contains(out, s) {
 			t.Errorf("status said nothing like %q:\n%s", s, out)
@@ -316,7 +328,7 @@ func TestKitStatusReportsABrokenMachineAndHowItIsHealed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status --json: %v\n%s", err, out)
 	}
-	for _, s := range []string{`"vm": "Broken"`, `"autostart": "none"`, `"ha.pid: pid ` + unrelated + ` now belongs to another process: sleep 600"`} {
+	for _, s := range []string{`"vm": "Broken"`, `"autostart": "none"`, `"ha.pid: pid ` + unrelated + ` now belongs to another process: sleep"`} {
 		if !strings.Contains(out, s) {
 			t.Errorf("status --json has nothing like %s:\n%s", s, out)
 		}
@@ -452,6 +464,7 @@ func TestKitAgentReplacesLimasAutostartOnLinux(t *testing.T) {
 		fmt.Sprintf("ExecStart=/bin/bash %q boot tl-general", h.keeper),
 		fmt.Sprintf("%q", "LIMA_HOME="+h.limaHome),
 		"Restart=on-failure\nRestartSec=30\nKillMode=process",
+		"StandardOutput=append:" + filepath.Join(h.home, ".local", "state", "yad-machine", "tl-general.log"),
 		"WantedBy=default.target",
 	} {
 		if !bytes.Contains(b, []byte(s)) {
@@ -461,10 +474,72 @@ func TestKitAgentReplacesLimasAutostartOnLinux(t *testing.T) {
 	if log := h.log(h.systemd); !strings.Contains(log, "--user daemon-reload") || !strings.Contains(log, "--user enable yad-machine-tl-general.service") {
 		t.Errorf("systemctl was not asked to reload and enable the unit:\n%s", log)
 	}
+	// A unit file starts nothing unless it is enabled: status asks systemd.
+	if out, _ := h.run("", "status", "tl-general", "--json"); !strings.Contains(out, `"autostart": "kit"`) {
+		t.Errorf("status --json does not say the kit starts it:\n%s", out)
+	}
+	os.Remove(filepath.Join(h.states, ".enabled"))
+	if out, _ := h.run("", "status", "tl-general"); !strings.Contains(out, "nothing starts it at login") {
+		t.Errorf("status does not say a disabled unit starts nothing:\n%s", out)
+	}
 	if out, err := h.run("tl-general\n", "destroy", "tl-general"); err != nil {
 		t.Fatalf("destroy: %v\n%s", err, out)
 	}
 	if onDisk(unit) || !strings.Contains(h.log(h.systemd), "--user disable yad-machine-tl-general.service") {
 		t.Errorf("destroy left the kit's unit behind:\n%s", h.log(h.systemd))
+	}
+}
+
+// Two starts of one machine never heal it at once — one would clear what the
+// other's new host agent just wrote: a start holding the machine's lock
+// refuses a second, and a lock whose holder is gone is taken over. autostart
+// refuses a machine that does not exist rather than registering an agent
+// for it. And every command printed runs as pasted, against the same
+// LIMA_HOME: the advice status gives for a Broken machine, run through sh,
+// heals it.
+func TestKitStartIsLockedAndItsAdviceRunsAsPrinted(t *testing.T) {
+	h := newKitHost(t, "Darwin")
+	unrelated := liveProcess(t, exec.Command("sleep", "600"))
+	d := h.instance("tl-general", "Broken", map[string]string{"ha.pid": unrelated})
+	holder := liveProcess(t, exec.Command("sleep", "600"))
+	lock := filepath.Join(d, "yad-machine.lock")
+	if err := os.MkdirAll(lock, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lock, "pid"), []byte(holder+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.run("", "start", "tl-general")
+	if err == nil || !strings.Contains(out, "is being started already, by pid "+holder) || !onDisk(filepath.Join(d, "ha.pid")) || !onDisk(lock) {
+		t.Errorf("start while another holds the lock = %v; want it refused, touching nothing:\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(lock, "pid"), []byte(exitedPid(t)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err = h.run("", "status", "tl-general")
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	want := "LIMA_HOME=" + h.limaHome + " " + h.kit + " start tl-general"
+	i := strings.Index(out, "`"+want+"`")
+	if i < 0 {
+		t.Fatalf("status gives no %q to paste:\n%s", want, out)
+	}
+	// Pasted into a shell that has no LIMA_HOME of its own.
+	cmd := exec.Command("sh", "-c", want)
+	for _, kv := range h.env {
+		if !strings.HasPrefix(kv, "LIMA_HOME=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	cmd.Env = append(cmd.Env, "LIMA_HOME=")
+	if b, err := cmd.CombinedOutput(); err != nil || h.status("tl-general") != "Running" || onDisk(filepath.Join(d, "ha.pid")) || onDisk(lock) {
+		t.Errorf("the printed command = %v, status %q; want the machine healed, Running and the lock gone:\n%s", err, h.status("tl-general"), b)
+	}
+
+	out, err = h.run("", "autostart", "tl-generl")
+	if err == nil || !strings.Contains(out, "there is no machine called tl-generl, so nothing was registered") || onDisk(filepath.Join(h.home, "Library", "LaunchAgents", "yad-machine.tl-generl.plist")) {
+		t.Errorf("autostart for a machine that does not exist = %v; want it refused, registering nothing:\n%s", err, out)
 	}
 }

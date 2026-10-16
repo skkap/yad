@@ -73,6 +73,7 @@ machines/yad-machine status [NAME] [--json]     every machine, or one: runner, h
 machines/yad-machine login NAME                 make every login the machine is missing, one by one
 machines/yad-machine shell NAME [COMMAND...]    a login shell, or a command, as agent
 machines/yad-machine start NAME                 start a machine that is stopped or Broken
+machines/yad-machine stop NAME [--force]        stop it; --force for one Broken while Lima still runs
 machines/yad-machine autostart NAME             start it at the host user's login, retried until it runs
 machines/yad-machine destroy NAME               delete the VM and everything in it
 ```
@@ -294,7 +295,7 @@ kit's own agent for it — a launchd agent, `~/Library/LaunchAgents/yad-machine.
 on macOS; a systemd user unit, `yad-machine-NAME.service`, on Linux — which
 runs `yad-machine boot NAME` and runs it again every 30 seconds until the VM is
 Running ([0090](../docs/decisions/0090-a-work-machine-is-started-at-login-by-the-kits-own-agent.md)).
-What it did is in `~/.local/state/yad-machine/NAME.log`.
+What it did is in `~/.local/state/yad-machine/NAME.log`, on Linux too (systemd 240 or newer).
 
 **A host that did not shut its VMs down leaves Lima's pid files behind**, and
 after the reboot a pid in one may belong to another process. Lima then takes
