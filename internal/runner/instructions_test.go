@@ -15,7 +15,7 @@ import (
 
 // The owner's standing instructions reach every run after the hub's context,
 // under the runner's own heading — a run continuing the session included, and
-// a run the hub gave no context of its own (decision 0088).
+// a run the hub gave no context of its own (decision 0089).
 func TestStandingInstructionsFollowTheHubsContext(t *testing.T) {
 	e := newEnv(t)
 	l := e.loop(t, 1)

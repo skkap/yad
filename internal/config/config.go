@@ -44,7 +44,7 @@ type Config struct {
 	// supervise.OwnerRefusal does.
 	Env map[string]string `toml:"env,omitempty"`
 	// Instructions is what the owner tells every run on this runner, after
-	// the hub's context (decision 0088).
+	// the hub's context (decision 0089).
 	Instructions InstructionsConfig `toml:"instructions,omitempty"`
 }
 

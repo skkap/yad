@@ -611,7 +611,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	// The owner's standing instructions, read now so an edit to their file
 	// reaches this run without a restart, and before anything is made for
 	// it: a run is refused rather than started without them, or with them
-	// cut, since either would do what they forbid (decision 0088).
+	// cut, since either would do what they forbid (decision 0089).
 	instructions, err := e.Config.Instructions.Read(e.Paths)
 	if err != nil {
 		log.Warn("the owner's standing instructions could not be read; the run is refused", "err", err)

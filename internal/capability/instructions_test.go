@@ -11,7 +11,7 @@ import (
 
 // The document says that standing instructions exist and nothing more: not
 // their text, not their file, and not their size, so editing them moves no
-// fingerprint (decision 0088).
+// fingerprint (decision 0089).
 func TestTheDocumentAdvertisesOnlyThatInstructionsExist(t *testing.T) {
 	noTools(t)
 	cfg := config.Default()

@@ -352,7 +352,7 @@ func envNotes(cfg config.Config, p config.Paths, getenv func(string) string) []s
 }
 
 // instructionsNote is what doctor says of config.toml's [instructions]
-// (decision 0088): how much every run is given and from where, or why runs
+// (decision 0089): how much every run is given and from where, or why runs
 // are refused. Read as a run reads it, so a file edited since the daemon
 // started is judged as the next run will find it. The text is not printed:
 // it is in the files doctor names.

@@ -13,7 +13,7 @@ import (
 // InstructionsConfig is config.toml's [instructions]: what the machine's owner
 // tells every run on this runner, whichever hub sent it — "Docker is the
 // colima context, leave colima-ci alone", "never pkill by name, CI shares
-// this box" (decision 0088). yad's own and hub-neutral: no protocol field
+// this box" (decision 0089). yad's own and hub-neutral: no protocol field
 // reaches it, and a hub learns only that it is set.
 type InstructionsConfig struct {
 	// Text is written in config.toml itself, read when the daemon starts

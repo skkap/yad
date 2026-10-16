@@ -150,7 +150,7 @@ type Status struct {
 	// file reaches runs only at a restart. Nil from a daemon older than it.
 	PathSources *bool `json:"path_sources,omitempty"`
 	// Instructions is the owner's standing instructions as the next run
-	// would read them (decision 0088): nil when none are configured, and
+	// would read them (decision 0089): nil when none are configured, and
 	// from a daemon older than it.
 	Instructions *Instructions `json:"instructions,omitempty"`
 

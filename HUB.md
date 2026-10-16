@@ -595,7 +595,7 @@ without a context of yours gets them alone. You are not sent their text and
 cannot change them; the instruction is never touched. If the runner cannot
 give them whole, it fails the run `prepare_failed` rather than start it
 without them
-([0088](docs/decisions/0088-a-runners-owner-may-give-every-run-standing-instructions.md)).
+([0089](docs/decisions/0089-a-runners-owner-may-give-every-run-standing-instructions.md)).
 
 ### Rules the schema cannot state
 

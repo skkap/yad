@@ -381,7 +381,7 @@ run instructions — the instruction is the hub's user turn
 _Rules_: yad's own and hub-neutral: no protocol field sets them, and a hub
 learns only `instructions: true`. 16 KiB in all; over it, or unreadable, a run
 is refused (`prepare_failed`), never given them cut.
-_See_: [0088](docs/decisions/0088-a-runners-owner-may-give-every-run-standing-instructions.md)
+_See_: [0089](docs/decisions/0089-a-runners-owner-may-give-every-run-standing-instructions.md)
 
 **Sources** — the material a run's workdir is built from: git repositories
 (URL, base ref, branch) or an existing local path. Optional — a run that answers
