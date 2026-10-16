@@ -615,7 +615,7 @@ func (e *Exec) execute(ctx context.Context, c Claim, a *activeRun) {
 	instructions, err := e.Config.Instructions.Read(e.Paths)
 	if err != nil {
 		log.Warn("the owner's standing instructions could not be read; the run is refused", "err", err)
-		fail(ClassPrepare, "this runner's standing instructions could not be read: "+err.Error())
+		fail(ClassPrepare, "this runner's standing instructions cannot be given to the run: "+err.Error())
 		return
 	}
 	brief := run.Brief
