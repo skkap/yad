@@ -2,6 +2,7 @@ package hostool
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"time"
 
@@ -11,12 +12,15 @@ import (
 
 // Detected is one host tool as it exists on this machine.
 type Detected struct {
-	ID      string `json:"id"`
+	ID string `json:"id"`
+	// Kind is set for the browser alone: which kind was found (browser.go).
+	Kind    string `json:"kind,omitempty"`
 	Path    string `json:"path,omitempty"`
 	Version string `json:"version,omitempty"`
 	// Present is there being a binary detection found and probed: Path, which
 	// is also the one a run uses (Locate, Links). Not that it works — Error
-	// says whether it does.
+	// says whether it does. For the browser, Path is what was found — an
+	// executable, or Playwright's cache — and no run is handed it (0087).
 	Present bool `json:"present"`
 	// Error is what went wrong with this tool: a path override that names
 	// nothing with no binary on PATH either, a probe that timed out, a binary
@@ -89,14 +93,19 @@ func statusWait() time.Duration {
 // is broken, and must not grow the runner's memory.
 const outputCap = 64 << 10
 
-// Detect probes every catalog entry concurrently and returns them in catalog
-// order. It never returns an error: a missing docker, a logged-out gh and a
+// Detect probes every catalog entry and the browser concurrently, and returns
+// them in IDs order. It never returns an error: a missing docker, a logged-out gh and a
 // hanging `--version` are facts about the machine that belong in the capability
 // document, not reasons to fail registration.
 func Detect(ctx context.Context) []Detected {
 	cat := Catalog()
-	out := make([]Detected, len(cat))
+	out := make([]Detected, len(cat)+1)
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		out[len(cat)] = detectBrowser(ctx, runtime.GOOS)
+	}()
 	for i, t := range cat {
 		wg.Add(1)
 		go func(i int, t Tool) {

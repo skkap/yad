@@ -42,6 +42,11 @@ func noTools(t *testing.T) {
 	for _, tool := range hostool.Catalog() {
 		t.Setenv(tool.EnvPath, "")
 	}
+	// And every standard place a browser installs itself, which PATH does
+	// not cover: the machine's own Chrome is not the test's.
+	oldRoot := hostool.BrowserRootForTests
+	hostool.BrowserRootForTests = t.TempDir()
+	t.Cleanup(func() { hostool.BrowserRootForTests = oldRoot })
 }
 
 func TestFingerprintIgnoresTimeOnly(t *testing.T) {
@@ -100,6 +105,7 @@ func TestHostToolReportIsPublicSafe(t *testing.T) {
 		{ID: "gh", Path: "/opt/homebrew/bin/gh", Present: true, Version: "gh 2.98.0", LoggedIn: &in, LoginHosts: []string{"ghe.example.com", "github.com"}},
 		{ID: "docker", Path: "/usr/local/bin/docker", Present: true, Version: "Docker 29.1.3", Error: "the Docker daemon is not answering — start it"},
 		{ID: "podman", Present: false, LoggedIn: &out},
+		{ID: "browser", Kind: "chrome", Path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", Present: true, Version: "155.0.8059.82"},
 	})
 	b, _ := json.Marshal(reps)
 	s := string(b)
@@ -110,12 +116,13 @@ func TestHostToolReportIsPublicSafe(t *testing.T) {
 		`"id":"git"`, `"present":true`, `"version":"git version 2.51.0"`,
 		`"login_hosts":["ghe.example.com","github.com"]`, `"logged_in":true`,
 		`"error":"the Docker daemon`, `"warnings":["YAD_GIT_PATH names no file"]`,
+		`"id":"browser","kind":"chrome"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %s: %s", want, s)
 		}
 	}
-	for _, leak := range []string{"/opt/homebrew", "/usr/local", `"path"`} {
+	for _, leak := range []string{"/opt/homebrew", "/usr/local", "/Applications", `"path"`} {
 		if strings.Contains(s, leak) {
 			t.Errorf("the report leaks %q: %s", leak, s)
 		}
@@ -128,12 +135,13 @@ func TestHostToolReportIsPublicSafe(t *testing.T) {
 func TestBuildReportsEveryHostTool(t *testing.T) {
 	noTools(t)
 	doc := Build(context.Background(), "r1", config.Default(), State{})
-	if len(doc.HostTools) != len(hostool.Catalog()) {
-		t.Fatalf("document carries %d host tools, want %d", len(doc.HostTools), len(hostool.Catalog()))
+	ids := hostool.IDs()
+	if len(doc.HostTools) != len(ids) {
+		t.Fatalf("document carries %d host tools, want %d", len(doc.HostTools), len(ids))
 	}
 	for i, tool := range doc.HostTools {
-		if tool.ID != hostool.Catalog()[i].ID || tool.Present {
-			t.Errorf("host tool %d = %+v, want %s absent", i, tool, hostool.Catalog()[i].ID)
+		if tool.ID != ids[i] || tool.Present {
+			t.Errorf("host tool %d = %+v, want %s absent", i, tool, ids[i])
 		}
 	}
 }

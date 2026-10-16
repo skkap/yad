@@ -330,7 +330,7 @@ func HostTools(found []hostool.Detected) []v1.HostTool {
 	out := make([]v1.HostTool, 0, len(found))
 	for _, d := range found {
 		out = append(out, v1.HostTool{
-			ID: d.ID, Present: d.Present, Version: d.Version,
+			ID: d.ID, Kind: d.Kind, Present: d.Present, Version: d.Version,
 			LoggedIn: d.LoggedIn, LoginHosts: d.LoginHosts, Error: d.Error,
 			Warnings: d.Warnings,
 		})

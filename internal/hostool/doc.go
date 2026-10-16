@@ -1,5 +1,5 @@
-// Package hostool probes the non-harness tools a run may need — git, gh and
-// docker — and how far each one actually works: whether gh is logged in and to
+// Package hostool probes the non-harness tools a run may need — git, gh,
+// docker and a browser — and how far each one actually works: whether gh is logged in and to
 // which host, whether docker's daemon answers at all.
 //
 // Absence is data, exactly as for harnesses. A machine with no docker, a gh

@@ -69,7 +69,7 @@ internal/config          profiles, config.toml, credentials on disk
 internal/store           SQLite: schema, migrations, sqlc-generated queries
 internal/harness         the catalog, detection, versions
 internal/capability      the capability document and its fingerprint
-internal/hostool         probing host tools (git, gh, docker) and how far each works; the binary a run uses (0045)
+internal/hostool         probing host tools (git, gh, docker, a browser) and how far each works; the binary a run uses (0045, 0087)
 internal/probe           what both share: which binary an override or PATH names, and the words for what is wrong with it (0044)
 internal/account         accounts per harness, homes, limit state, failover
 internal/service         yad service: launchd agent and systemd user unit, login PATH (0028)
