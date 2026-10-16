@@ -41,7 +41,7 @@ or its tailnet. The shape of "one runner per trust domain" that holds on a Mac,
 where a second OS user cannot keep a runner service up.
 _Avoid_: area, box, environment, sandbox — it confines what the machine reaches,
 not what a hub may ask of it
-_See_: [0052](docs/decisions/0052-a-work-machine-is-a-lima-vm-built-from-a-spec.md), `machines/README.md`
+_See_: [0052](docs/decisions/0052-a-work-machine-is-a-lima-vm-built-from-a-spec.md), [0090](docs/decisions/0090-a-work-machine-is-started-at-login-by-the-kits-own-agent.md), `machines/README.md`
 
 **Machine spec** — the directory a work machine is built from: `machine.env`
 (name, size, harnesses, egress), the runner's `config.toml` — every setting
