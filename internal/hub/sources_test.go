@@ -24,7 +24,7 @@ func answer(url string, class v1.SourceReachError, at time.Time) v1.SourceReach 
 // yad hub lists the repositories of its recent runs to every runner that
 // advertises source_probe, and to no other; leaves out one with a token in
 // it; and keeps a runner's answers only while it lists the URL (decision
-// 0087).
+// 0088).
 func TestTheHubListsItsRecentRepositories(t *testing.T) {
 	f := newFixture(t)
 	const a, b = "https://git.example/acme/a.git", "git@git.example:acme/b.git"

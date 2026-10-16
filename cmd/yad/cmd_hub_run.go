@@ -622,7 +622,7 @@ func printRunners(w io.Writer, runners []hubapi.Runner, now time.Time) {
 }
 
 // reachLine counts what a runner said about the repositories this hub asks
-// it to probe (decision 0087); each unreachable one follows on a line of its
+// it to probe (decision 0088); each unreachable one follows on a line of its
 // own, since that is what routes runs away from it.
 func reachLine(reach []hubapi.SourceReach) string {
 	if len(reach) == 0 {

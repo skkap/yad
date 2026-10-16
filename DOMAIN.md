@@ -407,7 +407,7 @@ least every 30 minutes; a reachable repository is checked again every 30
 minutes, an unreachable one every 5. A hub routes a run opening a session
 away from a runner that cannot reach its repository, for any class but
 `ref_not_found`.
-_See_: [0087](docs/decisions/0087-a-hub-asks-whether-a-runner-can-reach-a-repository.md), `internal/runner/sources.go`, `internal/workdir/probe.go`
+_See_: [0088](docs/decisions/0088-a-hub-asks-whether-a-runner-can-reach-a-repository.md), `internal/runner/sources.go`, `internal/workdir/probe.go`
 
 **Workdir** — the directory a session's runs execute in. Owned by the session,
 kept between its runs, reclaimed after it closes. Built from the sources, or
@@ -574,7 +574,7 @@ and an optional wall-clock cap set per run.
   timers besides its syncs and sweeps are the self-update check, only when its
   owner turns it on, and the re-check of the repositories a hub asked it to
   probe, only while a hub lists any
-  ([0087](docs/decisions/0087-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
+  ([0088](docs/decisions/0088-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
 
 ## Open questions
 

@@ -2,7 +2,7 @@ package v1
 
 import "time"
 
-// A source probe (decision 0087) is a hub asking a runner whether it can
+// A source probe (decision 0088) is a hub asking a runner whether it can
 // reach a repository, and the runner answering with its own credentials: the
 // hub lists the repositories it may send the runner in probe_sources, the
 // runner checks each with git ls-remote as a run's git would, and reports

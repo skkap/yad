@@ -379,7 +379,7 @@ func checkLoginsAccepted(ctx context.Context, s *session) error {
 
 // checkSourceReachAccepted sends a sync answering a source probe the hub never
 // asked for, as a runner might after its hub's list moved on. A hub may ignore
-// the answer; refusing the sync would renew no lease (decision 0087).
+// the answer; refusing the sync would renew no lease (decision 0088).
 func checkSourceReachAccepted(ctx context.Context, s *session) error {
 	req := s.syncRequest(0)
 	raw, err := s.syncBodyWith(0, map[string]any{"source_reach": []v1.SourceReach{{

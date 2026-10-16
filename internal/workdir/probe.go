@@ -28,7 +28,7 @@ const probeOutputCap = 64 << 10
 // Probe is whether this runner can reach the repository at rawURL and find
 // ref there (HEAD when empty), checked as a run's git would fetch it: the
 // same git, the same environment — the owner's [env] layer, its credential
-// helpers, its ssh agent — and the same checks on the URL (decision 0087).
+// helpers, its ssh agent — and the same checks on the URL (decision 0088).
 //
 // It answers with a class and never with git's words, which can quote a URL
 // carrying a credential an insteadOf rule of the owner's put there. A URL

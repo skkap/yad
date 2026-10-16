@@ -1,4 +1,4 @@
--- Source probing (decision 0087): what each runner advertising source_probe
+-- Source probing (decision 0088): what each runner advertising source_probe
 -- last said about each repository this hub lists for it in probe_sources.
 -- One row per runner and URL, replaced by a newer answer and dropped once
 -- the hub stops listing the URL. Routing reads it: a run opening a session

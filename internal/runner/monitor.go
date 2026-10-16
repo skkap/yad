@@ -102,7 +102,7 @@ func (m *Monitor) attachSources(s *Sources) {
 }
 
 // Probes is what conn's hub has asked this runner to probe, with each
-// answer so far (decision 0087), each URL as a run's error shows a source:
+// answer so far (decision 0088), each URL as a run's error shows a source:
 // whatever reads the control socket is handed nothing a URL could hide, and
 // an scp-like URL keeps its host and path. None before Serve has set up.
 func (m *Monitor) Probes(conn string) []SourceProbe {

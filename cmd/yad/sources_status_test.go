@@ -13,7 +13,7 @@ import (
 
 // `yad status` lists, under each connection, the repositories its hub asked
 // about and what the probe found: the class the hub was sent, and a line for
-// one not checked yet (decision 0087).
+// one not checked yet (decision 0088).
 func TestStatusShowsTheRepositoriesAHubAskedAbout(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	checked := now.Add(-2 * time.Minute)

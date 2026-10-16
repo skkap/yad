@@ -18,7 +18,7 @@ import (
 // next runs are likely to name again.
 const probeWindow = 7 * 24 * time.Hour
 
-// probeList is what this hub lists in probe_sources (decision 0087): the git
+// probeList is what this hub lists in probe_sources (decision 0088): the git
 // URLs its recent runs named, the most recently used first, up to the most a
 // runner probes. A URL that may hold a secret (maySecret) is left out: a run
 // carrying a token in its URL brings its own way in, and a runner would

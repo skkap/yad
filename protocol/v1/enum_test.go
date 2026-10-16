@@ -46,7 +46,7 @@ func TestTheV1EnumsAreClosed(t *testing.T) {
 		{LoginReport{}, "State", "hub", []string{"starting", "waiting", "checking", "succeeded", "failed", "expired", "cancelled"}},
 		{SessionRef{}, "Mode", "runner", []string{"per_run", "live"}},
 		{Grant{}, "As", "runner", []string{"env", "file"}},
-		// Came with its field and the source_probe feature (decision 0087).
+		// Came with its field and the source_probe feature (decision 0088).
 		{SourceReach{}, "Error", "hub", []string{"auth", "not_found", "ref_not_found", "network", "timeout", "refused", "failed"}},
 	} {
 		f, ok := reflect.TypeOf(tc.v).FieldByName(tc.field)

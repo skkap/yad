@@ -182,7 +182,7 @@ func printStatus(w io.Writer, p config.Paths, s control.Status, now time.Time) {
 }
 
 // sourceLine is one repository a hub asked this runner to probe, and what
-// the probe found (decision 0087): the class the hub was sent, never git's
+// the probe found (decision 0088): the class the hub was sent, never git's
 // words.
 func sourceLine(sp control.SourceProbe, ago func(time.Time) string) string {
 	name := cleanLine(sp.URL)

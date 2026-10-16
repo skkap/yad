@@ -209,7 +209,7 @@ hub handles it in, [§4](HUB.md#4-runs) for what may be offered,
   a helper, a path outside the roots — is refused unprobed. `yad hub` lists
   the git URLs of its last week's runs and routes a new session away from a
   runner that cannot reach its repository
-  ([0087](docs/decisions/0087-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
+  ([0088](docs/decisions/0088-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
 
 - **Account state**: `free`, `limited` (until `limited_until`) or `needs_login`
   — a home whose login the owner has to finish. The field is optional: a runner
@@ -1519,7 +1519,7 @@ session closes, and after the archive TTL
 `runner_source_reach` holds each runner's latest answer about each repository
 the hub lists for it, replaced only by a newer `checked_at` and deleted once
 the URL drops off the list
-([0087](docs/decisions/0087-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
+([0088](docs/decisions/0088-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
 Both databases are opened with `secure_delete`, so freed bytes are zeroed
 rather than left in the file.
 

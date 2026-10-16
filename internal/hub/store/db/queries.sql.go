@@ -1449,7 +1449,7 @@ type ProbeSourceCandidatesRow struct {
 
 // The git URLs of the runs submitted since since, the most recently used
 // first: the repositories this hub may send a runner, which it asks every
-// runner advertising source_probe about (decision 0087), a page at a time:
+// runner advertising source_probe about (decision 0088), a page at a time:
 // the caller drops a URL that may hold a secret, and pages on until it has
 // enough it can list.
 func (q *Queries) ProbeSourceCandidates(ctx context.Context, arg ProbeSourceCandidatesParams) ([]ProbeSourceCandidatesRow, error) {

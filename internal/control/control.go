@@ -246,7 +246,7 @@ type Connection struct {
 	LastError       string     `json:"last_error,omitempty"`
 	LastErrorAt     *time.Time `json:"last_error_at,omitempty"`
 	// Sources are the repositories this hub asked the runner to probe, with
-	// each answer so far (decision 0087). Empty when it asked about none,
+	// each answer so far (decision 0088). Empty when it asked about none,
 	// and from a daemon older than it.
 	Sources []SourceProbe `json:"sources,omitempty"`
 }

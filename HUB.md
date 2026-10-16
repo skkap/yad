@@ -801,7 +801,7 @@ of either is a run failing `source_failed` minutes into its preparation. A
 runner advertising **`source_probe`** in `protocol_features` answers the
 question directly: you list the repositories you may send it, it checks each
 with its own credentials, and you route on the answer
-([0087](docs/decisions/0087-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
+([0088](docs/decisions/0088-a-hub-asks-whether-a-runner-can-reach-a-repository.md)).
 Probing is optional for a hub; a hub that lists nothing has nothing probed.
 
 **What you send.** Every sync answer to a runner advertising `source_probe`

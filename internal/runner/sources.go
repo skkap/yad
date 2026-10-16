@@ -12,7 +12,7 @@ import (
 	"github.com/skkap/yad/internal/workdir"
 )
 
-// Source probing (decision 0087): each hub lists, in every sync answer, the
+// Source probing (decision 0088): each hub lists, in every sync answer, the
 // repositories it may send this runner, and Sources checks each one with the
 // runner's own credentials and hands the answers back to that hub's syncs.
 const (

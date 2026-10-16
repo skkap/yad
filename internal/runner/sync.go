@@ -197,7 +197,7 @@ type Loop struct {
 	// still counts while its run is held (YAD-169). Nil tells nobody.
 	HeldChanged func()
 	// Sources probes the repositories this hub lists in probe_sources and
-	// holds the answers its syncs carry in source_reach (decision 0087),
+	// holds the answers its syncs carry in source_reach (decision 0088),
 	// shared with every other connection. Nil probes nothing and answers
 	// nothing.
 	Sources *Sources

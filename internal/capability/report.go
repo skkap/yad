@@ -113,7 +113,7 @@ const FeatureLogin = "login"
 
 // FeatureSourceProbe is a runner that checks the repositories a hub lists in
 // probe_sources with its own credentials and answers in source_reach
-// (decision 0087). Advertised whatever is installed: a runner with no git
+// (decision 0088). Advertised whatever is installed: a runner with no git
 // answers each one failed, which a hub can route on, where silence would say
 // nothing.
 const FeatureSourceProbe = "source_probe"

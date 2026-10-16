@@ -274,7 +274,7 @@ func (h *Hub) sync(ctx context.Context, in *syncInput) (*syncOutput, error) {
 
 		// The repositories this runner is asked about, and what it says of
 		// them, before the early return below: a draining runner's answers
-		// are as true as any (decision 0087). Taken from a runner that does
+		// are as true as any (decision 0088). Taken from a runner that does
 		// not advertise the feature too, as a feature gates only what is
 		// sent; but only one that does is asked, and routed on.
 		probes := described && advertises(doc, capability.FeatureSourceProbe)
@@ -535,7 +535,7 @@ func admission(doc v1.Capabilities, described bool, away map[string]bool, now ti
 		}
 		// A run opening a session builds its workdir by fetching its
 		// sources: one this runner says it cannot reach would fail there,
-		// where another runner may fetch it (decision 0087). It waits while
+		// where another runner may fetch it (decision 0088). It waits while
 		// every runner says so, and goes as soon as one can — an owner
 		// fixing a credential shows within the runner's re-check. A run in
 		// a session already bound here goes regardless: its workdir is

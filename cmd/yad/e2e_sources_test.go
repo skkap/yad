@@ -12,7 +12,7 @@ import (
 	"github.com/skkap/yad/internal/config"
 )
 
-// Decision 0087 end to end: yad hub lists the repositories its runs name, the
+// Decision 0088 end to end: yad hub lists the repositories its runs name, the
 // daemon checks each with its own git and answers, the hub keeps the answers
 // and shows them, and `yad status` shows them on the machine. One repository
 // is on disk inside the owner's root and answers reachable; the other is a
