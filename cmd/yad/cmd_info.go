@@ -61,6 +61,14 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		// Before the probes, which then see what the daemon's will.
 		supervise.SetOwnerEnv(cfg.Env)
 	}
+	// Beside the harnesses, as the capability document probes them: gh's
+	// login check can take seconds, and in series it would add them.
+	var tools []hostool.Detected
+	toolsDone := make(chan struct{})
+	go func() {
+		defer close(toolsDone)
+		tools = hostool.Detect(ctx)
+	}()
 	found := capability.Detect(ctx)
 	var locked, silent map[string]bool
 	var sharedErr error
@@ -84,6 +92,7 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		// its default home, which needs none of them to look in.
 		sharedErr = capability.SharedHomes(ctx, found, cfg, accounts, g.paths.Command, true)
 	}
+	<-toolsDone
 	if *asJSON {
 		return writeJSON(w, found)
 	}
@@ -153,6 +162,9 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 				who, f.Since.Local().Format("2006-01-02 15:04"), f.Reason)
 		}
 	}
+	if err := writeHostTools(w, tools); err != nil {
+		return err
+	}
 	if sharedErr != nil {
 		fmt.Fprintf(w, "\nnote: this machine's processes could not be listed, so whether another Claude runs from the home yad's runs use is not shown: %v\n", sharedErr)
 	}
@@ -211,6 +223,47 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		return nil
 	}
 	fmt.Fprintf(w, "%d harness(es) this runner can be given work for.\n", ready)
+	return nil
+}
+
+// writeHostTools is the host tools as the capability document reports them,
+// with the path each was found at, which the document leaves out. What is
+// wrong with one is printed in full below the table, as a harness's is.
+func writeHostTools(w io.Writer, tools []hostool.Detected) error {
+	fmt.Fprintln(w)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "HOST TOOL\tSTATUS\tVERSION\tPATH")
+	for _, d := range tools {
+		status := "—"
+		switch {
+		case d.Present && d.Error != "":
+			status = "broken"
+		case d.LoggedIn != nil && !*d.LoggedIn:
+			status = "not logged in"
+		case d.Present && len(d.LoginHosts) > 0:
+			status = "ready (" + strings.Join(d.LoginHosts, ", ") + ")"
+		case d.Present:
+			status = "ready"
+		case d.Error != "":
+			status = "broken"
+		}
+		version := d.Version
+		if d.Kind != "" {
+			version = strings.TrimSpace(d.Kind + " " + version)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", d.ID, status, version, d.Path)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	for _, d := range tools {
+		if d.Error != "" {
+			fmt.Fprintf(w, "\nerror: %s — %s\n", d.ID, d.Error)
+		}
+		for _, warn := range d.Warnings {
+			fmt.Fprintf(w, "\nwarning: %s — %s\n", d.ID, warn)
+		}
+	}
 	return nil
 }
 

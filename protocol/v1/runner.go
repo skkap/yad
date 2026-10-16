@@ -148,20 +148,25 @@ type AccountWindow struct {
 	ResetsAt *time.Time `json:"resets_at,omitempty" doc:"When the window refills, if the harness said."`
 }
 
-// HostTool is a non-harness executable a run may need — git, gh, docker.
+// HostTool is a non-harness tool a run may need — git, gh, docker, a browser.
 //
 // A tool that is present is not necessarily usable: a gh nobody has signed in
 // cannot open a pull request, and a docker whose daemon is down cannot run a
 // container. A hub routing on a tool wants `present`, no `error`, and
 // `logged_in` where the tool has a login.
 type HostTool struct {
-	ID string `json:"id" doc:"The tool: git, gh or docker."`
+	ID string `json:"id" doc:"The tool: git, gh, docker or browser. browser is a browser a run can drive headless: Google Chrome, Chromium, or the browsers Playwright installed; kind says which. Present means one was found; no display is checked for. Ignore ids you do not know."`
+	// Kind is the browser's alone. Added within v1 for YAD-201, so a hub
+	// generated before it ignores the field. Not an enum: v1's enums are
+	// closed (0047), and a browser yad learns to find later — Edge, say — is
+	// a new kind no hub should have to advertise a feature to be told.
+	Kind string `json:"kind,omitempty" doc:"For browser only: which was found. chrome: Google Chrome. chromium: Chromium. playwright: browsers Playwright installed in its cache, and no Chrome or Chromium installed; version is then its newest Chromium's when the runner could read it. When a machine has several, the first of chrome, chromium and playwright is reported. Absent for every other tool, and for a browser not present. An open set: treat a kind you do not know as a browser that is there."`
 	// Present is the binary detection found and probed, under the same
 	// override rule as a harness (YAD-68), and the one a run uses: yad's own
 	// git resolves it the same way, and a harness's children find it ahead of
 	// PATH (0045).
 	Present bool   `json:"present" doc:"The runner found a binary for this tool and probed it: the one its configured path names, or the one on PATH when that path names nothing. Present is not usable: see error and logged_in."`
-	Version string `json:"version,omitempty" doc:"The version number the tool reported, such as 2.51.0, and nothing else of what it printed. Absent when it printed no version."`
+	Version string `json:"version,omitempty" doc:"The version number the tool reported, such as 2.51.0, and nothing else of what it printed. For browser, the browser's own, such as 141.0.7390.65. Absent when the tool printed none, and for a browser whose version could not be read."`
 	// LoggedIn is nil when the tool has no notion of a login, and nil too when
 	// it has one and the runner could not find out — Error says why.
 	LoggedIn *bool `json:"logged_in,omitempty" doc:"Whether the tool is signed in. Absent for a tool with no login, and for one whose login state the runner could not find out, where error says why."`

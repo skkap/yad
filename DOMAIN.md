@@ -122,12 +122,15 @@ _Avoid_: using it for detection (Nomad's "fingerprinting") — here it is only t
 **Labels** — free-form routing strings the owner attaches to a runner
 (`linux`, `gpu`, `work`). Hubs route on them; YAD never interprets them.
 
-**Host tools** — the non-harness executables a run may need from the machine
-itself: `git`, `gh`, `docker`, and only those three. Probed and advertised so a
-hub can route "needs gh + docker" to a runner that has them — and reported
-whether or not they are there, since a missing docker and a gh nobody has
-signed in are both answers a hub routes on. Anything else a run needs, it
-installs itself.
+**Host tools** — the non-harness tools a run may need from the machine
+itself: `git`, `gh`, `docker` and a `browser`, and only those four. Probed and
+advertised so a hub can route "needs gh + docker" to a runner that has them —
+and reported whether or not they are there, since a missing docker and a gh
+nobody has signed in are both answers a hub routes on. Anything else a run
+needs, it installs itself. The **browser** is Chrome, Chromium or Playwright's
+browsers, reported as one entry with its `kind`; it is searched for rather
+than one binary, so it takes no `YAD_<ID>_PATH` and is not linked into a run's
+`PATH` ([0087](docs/decisions/0087-a-browser-is-a-host-tool.md)).
 _Rules_: Long-lived credentials behind host tools belong to the machine and never
 travel in the protocol.
 

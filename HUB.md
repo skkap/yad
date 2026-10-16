@@ -692,11 +692,16 @@ never make a harness unusable: they are for whoever owns the machine. A
 runner refuses a run for a harness it cannot drive, but the run has held your
 queue until then.
 
-**Host tools** — `git`, `gh`, `docker` — are reported the same way, if you
-route on them: a tool is usable when it is `present` with no `error`, and
-`logged_in` too for a tool that has a login. `login_hosts` says which hosts a
-`gh` is signed in to, so you can tell a runner that can reach your
-repositories from one that cannot.
+**Host tools** — `git`, `gh`, `docker`, `browser` — are reported the same
+way, if you route on them: a tool is usable when it is `present` with no
+`error`, and `logged_in` too for a tool that has a login. `login_hosts` says
+which hosts a `gh` is signed in to, so you can tell a runner that can reach
+your repositories from one that cannot. `browser` is a browser a run can drive
+headless — for screenshots or a Playwright suite — and its `kind` says which
+was found: `chrome`, `chromium`, or `playwright` for the browsers Playwright
+installed; no display is checked for
+([0087](docs/decisions/0087-a-browser-is-a-host-tool.md)). Ignore a tool id you
+do not know.
 
 **A harness's `models` are what to offer, not a gate.** The runner asks the
 harness itself, without spending a token, which models each login a run may

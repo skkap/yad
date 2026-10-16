@@ -29,6 +29,11 @@ func noTools(t *testing.T) {
 	for _, tool := range hostool.Catalog() {
 		t.Setenv(tool.EnvPath, "")
 	}
+	// And every standard place a browser installs itself, which PATH does
+	// not cover: the machine's own Chrome is not the test's.
+	oldRoot := hostool.BrowserRootForTests
+	hostool.BrowserRootForTests = t.TempDir()
+	t.Cleanup(func() { hostool.BrowserRootForTests = oldRoot })
 }
 
 // The round trip: a token from the hub, yad connect, and a runner that can

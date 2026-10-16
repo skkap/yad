@@ -114,6 +114,17 @@ func isolate(t *testing.T, envPath, path string) {
 		t.Setenv(other.EnvPath, "")
 	}
 	t.Setenv(envPath, path)
+	noBrowser(t)
+}
+
+// noBrowser puts every standard place a browser installs itself out of
+// reach, which PATH does not cover: the machine's own Chrome is not the
+// test's.
+func noBrowser(t *testing.T) {
+	t.Helper()
+	old := BrowserRootForTests
+	BrowserRootForTests = t.TempDir()
+	t.Cleanup(func() { BrowserRootForTests = old })
 }
 
 // forgetGHLogin drops what the last probe of gh left behind, so one test's gh
@@ -154,22 +165,26 @@ func TestDetectReportsAbsentTools(t *testing.T) {
 	for _, entry := range Catalog() {
 		t.Setenv(entry.EnvPath, "")
 	}
+	noBrowser(t)
 	got := Detect(context.Background())
-	if len(got) != len(Catalog()) {
-		t.Fatalf("Detect returned %d entries, want %d", len(got), len(Catalog()))
+	ids := IDs()
+	if len(got) != len(ids) {
+		t.Fatalf("Detect returned %d entries, want %d", len(got), len(ids))
 	}
 	for i, d := range got {
-		if d.ID != Catalog()[i].ID {
-			t.Errorf("entry %d is %q, want catalog order %q", i, d.ID, Catalog()[i].ID)
+		if d.ID != ids[i] {
+			t.Errorf("entry %d is %q, want order %q", i, d.ID, ids[i])
 		}
-		if d.Present || d.Error != "" || d.LoggedIn != nil {
+		if d.Present || d.Error != "" || d.LoggedIn != nil || d.Kind != "" {
 			t.Errorf("%s with an empty PATH: %+v", d.ID, d)
 		}
 	}
 }
 
-// The catalog is the three tools YAD-31 settled on and no more: a fourth would
-// cost every runner two spawns an interval and every hub a field to learn.
+// The catalog is the three binaries YAD-31 settled on and no more: a fourth
+// would cost every runner two spawns an interval and every hub a field to
+// learn. The browser is reported beside them and is not one of them
+// (decision 0087).
 func TestCatalogIsTheThree(t *testing.T) {
 	var ids []string
 	for _, entry := range Catalog() {
@@ -177,6 +192,9 @@ func TestCatalogIsTheThree(t *testing.T) {
 	}
 	if got := strings.Join(ids, ","); got != "git,gh,docker" {
 		t.Errorf("catalog = %s, want git,gh,docker", got)
+	}
+	if got := strings.Join(IDs(), ","); got != "git,gh,docker,browser" {
+		t.Errorf("IDs = %s, want git,gh,docker,browser", got)
 	}
 }
 
