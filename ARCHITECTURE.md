@@ -662,6 +662,9 @@ The brief's context is appended to the system prompt on every run, and
 than replay the one it recorded on the session's first request — without it a
 resumed run's context never reaches the model
 ([0050](docs/decisions/0050-a-runs-context-reaches-the-harness-on-every-run.md)).
+The context every adapter is handed is the hub's with the owner's standing
+instructions after it, joined by the executor before the turn
+([0088](docs/decisions/0088-a-runners-owner-may-give-every-run-standing-instructions.md)).
 The capability probe asks the installed claude's `--help` for every flag a run
 passes, and a Claude lacking one is reported with an error — not drivable —
 saying to run `claude update`. Its models are Claude's answer to the
@@ -1449,6 +1452,10 @@ teardown_timeout = "2m"              # a .worktree/teardown past this is stopped
 
 [update]
 auto = true   # check for a newer release every 6 h, install it, re-exec at an idle moment — 0071; absent = never
+
+[instructions]   # told to every run, after the hub's context under "## This machine"; 16 KiB in all — 0088
+text = "Docker is the colima context; leave colima-ci alone."   # read at start
+file = "INSTRUCTIONS.md"   # relative to this config directory, or absolute; read at every run's start
 
 [env]   # given to every child yad starts, after the scrub; strings, taken as written, read at start — 0081
 DOCKER_HOST         = "unix:///Users/me/.colima/default/docker.sock"

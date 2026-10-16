@@ -19,8 +19,12 @@ type Capabilities struct {
 	// PathSources is sent only as false, so the document of every runner
 	// that takes them — and of every runner older than the field — is the
 	// same, fingerprint included (decision 0062).
-	PathSources *bool     `json:"path_sources,omitempty" doc:"false: this runner's owner has switched sources on the machine off, so a run with a path source, or a git source whose url is a path or file:// URL, fails with source_refused. Offer a run opening a session (session.new) with one to another runner; a run in a session already bound to this runner can go nowhere else, so offer it, and the refusal names the setting. Absent: the runner takes them inside the directories its owner allows. Never sent as true."`
-	ObservedAt  time.Time `json:"observed_at" doc:"When the runner built this document. Left out of the fingerprint, so it changes without the fingerprint moving."`
+	PathSources *bool `json:"path_sources,omitempty" doc:"false: this runner's owner has switched sources on the machine off, so a run with a path source, or a git source whose url is a path or file:// URL, fails with source_refused. Offer a run opening a session (session.new) with one to another runner; a run in a session already bound to this runner can go nowhere else, so offer it, and the refusal names the setting. Absent: the runner takes them inside the directories its owner allows. Never sent as true."`
+	// Instructions is sent only as true, and says nothing of the text: the
+	// owner's instructions may name paths and arrangements on the machine,
+	// which no hub needs to route (decision 0088). Added within v1.
+	Instructions *bool     `json:"instructions,omitempty" doc:"true: this runner's owner has given every run on it standing instructions, which the runner appends to each run's context after brief.context, under a heading of its own, whichever hub sent the run. Their text is the owner's and is never sent. Absent: none are set. Never sent as false."`
+	ObservedAt   time.Time `json:"observed_at" doc:"When the runner built this document. Left out of the fingerprint, so it changes without the fingerprint moving."`
 }
 
 // HarnessReport is one harness as it exists on the runner. Accounts appear by

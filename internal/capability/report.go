@@ -236,8 +236,19 @@ func Build(ctx context.Context, runnerID string, cfg config.Config, st State) v1
 		Capacity:         caps,
 		ProtocolFeatures: Features(reports),
 		PathSources:      PathSources(cfg.Workdirs),
+		Instructions:     Instructions(cfg.Instructions),
 		ObservedAt:       time.Now().UTC(),
 	}
+}
+
+// Instructions is the document's instructions: true when the owner has
+// configured standing instructions, absent otherwise — only that they exist,
+// so an edit to their file moves no fingerprint (decision 0088).
+func Instructions(c config.InstructionsConfig) *bool {
+	if !c.Set() {
+		return nil
+	}
+	return new(true)
 }
 
 // PathSources is the document's path_sources: false when the owner has

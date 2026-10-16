@@ -198,6 +198,9 @@ func cmdDoctor(ctx context.Context, g global, args []string, w io.Writer) error 
 		for _, line := range envNotes(cfg, g.paths, os.Getenv) {
 			fmt.Fprintf(w, "\n%s\n", line)
 		}
+		if line := instructionsNote(cfg.Instructions, g.paths); line != "" {
+			fmt.Fprintf(w, "\n%s\n", line)
+		}
 	}
 	fmt.Fprintf(w, "\nprofile %s — config %s\n", g.paths.Profile, g.paths.Config)
 	// Each way to reach zero has a different next action, and telling someone
@@ -346,6 +349,30 @@ func envNotes(cfg config.Config, p config.Paths, getenv func(string) string) []s
 			which, socket, hostool.DefaultDockerSocket, p.ConfigFile(), socket))
 	}
 	return out
+}
+
+// instructionsNote is what doctor says of config.toml's [instructions]
+// (decision 0088): how much every run is given and from where, or why runs
+// are refused. Read as a run reads it, so a file edited since the daemon
+// started is judged as the next run will find it. The text is not printed:
+// it is in the files doctor names.
+func instructionsNote(c config.InstructionsConfig, p config.Paths) string {
+	if !c.Set() {
+		return ""
+	}
+	text, err := c.Read(p)
+	if err != nil {
+		return "error: " + err.Error() + ". Until then every run on this runner is refused"
+	}
+	var from []string
+	if c.Text != "" {
+		from = append(from, "instructions.text in "+p.ConfigFile())
+	}
+	if c.File != "" {
+		from = append(from, c.FilePath(p))
+	}
+	return fmt.Sprintf("note: every run is given %s of standing instructions after its hub's context, from %s (limit %s)",
+		config.Size(len(text)), strings.Join(from, " and "), config.Size(config.MaxInstructions))
 }
 
 // keychainLogin is account.KeychainLogin, swapped by a test so the macOS

@@ -371,6 +371,18 @@ harness on every run of a session, not only the first; and the
 **instruction**, which is the run's one user turn.
 _Avoid_: prompt, for the whole thing — the prompt is only the instruction
 
+**Standing instructions** — config.toml's `[instructions]`: what the
+runner's owner tells every run on the machine, whichever hub sent it — a
+`text`, a `file`, or both. Appended to each run's context after the hub's,
+under the runner's heading `## This machine`. The file is read at every run's
+start; the text when the daemon starts.
+_Avoid_: system prompt — that is where Claude takes them, not what they are;
+run instructions — the instruction is the hub's user turn
+_Rules_: yad's own and hub-neutral: no protocol field sets them, and a hub
+learns only `instructions: true`. 16 KiB in all; over it, or unreadable, a run
+is refused (`prepare_failed`), never given them cut.
+_See_: [0088](docs/decisions/0088-a-runners-owner-may-give-every-run-standing-instructions.md)
+
 **Sources** — the material a run's workdir is built from: git repositories
 (URL, base ref, branch) or an existing local path. Optional — a run that answers
 a question or uses host tools has none.

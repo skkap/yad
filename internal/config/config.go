@@ -43,6 +43,9 @@ type Config struct {
 	// print its environment into a run's events. Validate refuses what
 	// supervise.OwnerRefusal does.
 	Env map[string]string `toml:"env,omitempty"`
+	// Instructions is what the owner tells every run on this runner, after
+	// the hub's context (decision 0088).
+	Instructions InstructionsConfig `toml:"instructions,omitempty"`
 }
 
 // HarnessConfig is the owner's settings for one harness.
@@ -527,6 +530,7 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("env.%s holds a NUL byte, which no environment can carry", name))
 		}
 	}
+	errs = append(errs, c.Instructions.validate()...)
 	return errors.Join(errs...)
 }
 
